@@ -1,103 +1,402 @@
-// hello.ag — idiomatic end-to-end Agentic program.
+// ============================================================================
+// hello.ag — The Agape Language, taught top to bottom.
 //
-// Agent lifecycle:
-//   `agent`  defines a reusable template (like a class).
-//   `spawn`  creates a named instance; the constructor body runs async.
-//   `awake`  opens the agent mailbox — queued sends now process.
-//   `sleep`  closes the mailbox; new sends queue again.
-//            A sleeping agent with no live references is GC'd automatically.
+// Read this file from the first line to the last. Each concept is introduced
+// before it is used. By the end you will understand every primitive in the
+// language. Agape is a language for building multi-agent systems where the
+// agents are first-class, cognition is a swappable substrate, and *meaning*
+// is something the program can check — not just hope for.
+//
+// Two ideas sit under everything else:
+//
+//   1. THE EVENT SPINE. Every meaningful action appends an immutable event to
+//      a single append-only log. The log is the source of truth. State is a
+//      projection of the log; replay re-derives state from it. Nothing that
+//      matters happens off the spine.
+//
+//   2. THE PROVIDER SEAM. Whenever the program needs cognition — to generate a
+//      response or to embed text — it calls through a seam (`think`/`embed`)
+//      that the program never names directly. Swap the provider (a mock, the
+//      Anthropic API, a local model) and not one line of Agape changes.
+// ============================================================================
 
-// === Agent templates ========================================================
 
-agent NamedAgent(string n) {
+// ============================================================================
+// PART 1 — VALUES, TYPES, AND THE TWO COLORS OF CODE
+// ============================================================================
+
+// Agape has ordinary scalar types: bool, int, float, text, and null.
+// Literals and arithmetic work as you'd expect.
+
+int    a         = 2 + 3;          // 5
+float  ratio     = 7.0 / 2.0;      // 3.5
+bool   t         = true;
+text   greet     = "hello";
+text   formatted = f"a={a}, r={ratio}";   // f-strings interpolate with {expr}
+
+// Functions & Routines
+//
+//   A function is synchronous. It may NOT touch the
+//   provider seam (no `<-`, no `~`, no `entail`, no `embed`). The compiler
+//   rejects any `fn` whose body reaches the seam. If you can read a `fn`,
+//   you KNOW it never calls a model.
+//
+//   Add a `async` keyword to turn a function into a ROUTINE (asynchronous). It
+//   MAY touch the seam. It has a pending window: it emits a Started event when
+//   it begins and a Resolved event when it completes (see the spine, Part 3).
+//   Anything that depends on a routine's result is itself a routine — async color
+//   is contagious, and the compiler enforces the contagion upward.
+
+int double(int x) {
+    return x * 2;               // pure arithmetic
+}
+
+// `is_about_poker` reaches the seam (`~` calls embed), so it MUST be `async`.
+// Declaring it without `async` would be a compile error: "sync function cannot touch cognition."
+bool async is_about_poker(text x) {
+    return x ~ "a game of poker";   // `~` is a semantic check — see Part 4
+}
+
+
+// ============================================================================
+// PART 2 — AGENTS: TEMPLATES, INSTANCES, AND LIFECYCLE
+// ============================================================================
+
+// `agent` declares a TEMPLATE — a reusable kind of agent, like a class.
+// An agent has its own private memory (Part 6) and its own mailbox.
+//
+// LIFECYCLE — every agent moves through these states, and each transition is
+// an event on the spine:
+//
+//   spawn  — create a named instance. The constructor body runs.
+//   awake  — open the mailbox. Queued sends now process.
+//   sleep  — close the mailbox. New sends queue until the next awake.
+//            A sleeping agent with no live references is garbage-collected,
+//            and its release runs the `when (sleep self)` block.
+
+// `self` is the agent's reference to itself.
+// `<-` is the ONE communication operator: `destination <- message` sends a
+// message into an agent and (when a typed result is bound) waits for the typed
+// reply. There is exactly one send operator; there is no second arrow. Sending
+// into the seam is how an agent "thinks."
+
+agent NamedAgent(text n) {
+
+    // A field. `event<T>` is a typed slot whose value arrives from cognition or
+    // from another agent. Here it will hold the verdict of a name check.
     event<Verification> name_verification;
 
+    // The constructor body runs at spawn. This send seeds the agent's identity.
+    // `event<null>` means "we send, but expect no reply" — fire-and-forget.
     event<null> init = self <- f"Your name is {n}.";
 
+    // `when (X)` is a SUBSCRIPTION to the spine, keyed by subject X. It fires
+    // when X resolves. It is NOT a callback you wire up by hand — it is a
+    // standing subscription over the log, so it works retroactively (an event
+    // already in the log) and prospectively (an event yet to come).
     when (init) {
-        event<text> reply = "What is your name?" -> self;
+        // Ask the agent its name. `event<text>` constrains the reply to text;
+        // the seam is told to produce text via structured output (Part 5).
+        event<text> reply = self <- "What is your name?";
+
+        // `verify ... ~ ...` asserts semantic closeness (Part 4). On failure it
+        // emits FailedVerification(reply) to the spine; a `catch` elsewhere can
+        // react. On success it emits SuccessfulVerification(reply).
         verify reply ~ f"My name is {n}.";
-        self.name_verification = reply;
+
+        // Store the verdict in our field (use `Verification` parent type as we
+        // don't know if it is successful or failed), and announce progress with
+        // a custom event. `emit` appends a user-defined event to the spine.
+        self.name_verification = Verification(reply);
         emit Event(f"NamedAgent {n} validated.");
     }
 
-    when (sleep self) {
+    // The startup hook. Fires when this agent is awoken (but not initialized).
+    on awake {
+        emit Event(f"NamedAgent {n} activated.");
+    }
+
+    // The release hook. Fires when this agent is slept and collected.
+    on sleep {
         emit Event(f"NamedAgent {n} released.");
     }
 }
 
-agent Coach(string n) {
+// `extend` is composition/inheritance: a Coach IS a NamedAgent plus more.
+// The parent's fields, constructor, and `when` blocks all apply to the child.
+agent Coach(text n) {
     extend NamedAgent(n);
+
     event<null> role = self <- "You are a poker coach.";
+
     when (role) {
+        // `event<bool>` constrains the reply to a boolean. The seam returns a
+        // real bool via structured output — no string parsing on our side.
         event<bool> confirmed = self <- "Are you a poker coach?";
-        if !(confirmed) {
+        if (!confirmed) {
             emit Error(f"Coach {n} did not understand its role.");
+        } else {
+            emit Event(f"Coach {n} ready to roll!");
         }
     }
 }
 
-agent Student(string n) {
+agent Student(text n) {
     extend NamedAgent(n);
+
     event<null> role = self <- "You are a poker student.";
+
     when (role) {
         event<bool> confirmed = self <- "Are you a poker student?";
-        if !(confirmed) {
+        if (!confirmed) {
             emit Error(f"Student {n} did not understand its role.");
+        } else {
+            emit Event(f"Student {n} ready to roll!");
         }
     }
 }
 
-// === Instantiate and activate ===============================================
 
-spawn Coach john("John");
-awake john;
+// ============================================================================
+// PART 3 — THE SPINE IN ACTION: SPAWN, AWAKE, SEND
+// ============================================================================
+//
+// Everything below is the top-level program. Each statement appends to the
+// spine. Cognitive operations (anything that reaches the seam) append a PAIR:
+//
+//     <Op>Started   — the operation began; its result is not yet known
+//     <Op>Resolved  — the operation completed; the result is now on the log
+//
+// "Pending" is simply a Started with no matching Resolved yet. If an agent
+// crashes between the two, the spine shows exactly what it was waiting on.
+// Synchronous, deterministic operations (==, arithmetic) append a single event.
+
+spawn Coach   john("John");     // SpawnStarted/SpawnResolved for the constructor
+awake john;                     // mailbox opens; agent can receive events
 
 spawn Student mary("Mary");
 awake mary;
 
-// === Teach a rule ===========================================================
+// Teach john a fact. This send carries knowledge into john's memory, where it
+// is internalized (Part 6). `event<null>` — we record the teaching, bind no reply.
+event<null> taught = john <- "A flush beats a straight.";
 
-john <- "A flush beats a straight.";
 
-// === Ask questions ==========================================================
+// ============================================================================
+// PART 4 — SEMANTIC CHECKING, PART ONE: SIMILARITY (`~`) AND `verify`
+// ============================================================================
+//
+// `~` is the SIMILARITY operator. It asks: is the left value semantically close
+// to the right one? It resolves by embedding both sides (through the seam) and
+// comparing in the asking agent's own semantic memory. It is a routine (async).
+//
+//   - On a SCALAR: one similarity verdict.
+//   - On an ARRAY: the check DECOMPOSES — it considers the parts — but still
+//     returns ONE Verification for the whole. The verdict's evidence records
+//     *where* a partial mismatch was, so the result type stays uniform.
+//
+// `verify EXPR` turns a check into an ASSERTION that emits to the spine:
+//   pass  -> SuccessfulVerification(subject)
+//   fail  -> FailedVerification(subject)
+// The subject is the left operand. A `catch` keys off that subject — so the
+// verify and its handler need not be lexically near each other.
 
 event<text> Name = john <- "What is your name?";
 event<bool> Rule = john <- "Does a flush beat a straight?";
 
-// === Verify =================================================================
+verify Name ~ "John";                              // similarity assertion
+verify Rule ~ "Yes, a flush beats a straight.";    // similarity assertion
 
+// `verify ... ==` is the SYNCHRONOUS sibling: exact, deterministic equality.
+// No embedding, no pending window — a single spine event. Use it when you mean
+// "literally equal," not "close in meaning."
 verify Name == "John";
-verify Rule ~ "Yes, a flush beats a straight.";
+
+
+// ============================================================================
+// PART 5 — ERRORS ARE EVENTS: `catch`, `when`, AND SUBJECT KEYING
+// ============================================================================
+//
+// `catch` and `when` are the SAME mechanism — a spine subscription keyed by
+// (event type, subject) — at opposite polarities:
+//
+//   when (X)  fires on the SUCCESS/resolution events of subject X
+//   catch ... fires on the FAILURE events of subject X
+//
+// Both are retroactive AND prospective: a subscription matches the most recent
+// matching event already on the log at registration, then fires once per new
+// match. (To sweep ALL of history, you write a query — Part 7 — not a catch.)
+//
+// Because these are subscriptions, "errors" are not exceptions that unwind a
+// stack. They are events. The system keeps running; handlers observe.
 
 catch FailedVerification(Name) as e {
-    say("name check failed:");
-    say(e);
+    say("name check failed:");    // only look at the `==` verification check
+    say(e);                       // `say` prints; e carries the verdict + evidence
 }
-catch Error(Rule) as e {
+
+catch FailedVerification(Rule) as e {
+    say("rule check failed:");
     say(e);
 }
 
-// === Query the memory graph =================================================
 
+// ============================================================================
+// PART 6 — AGENT MEMORY: THREE MODALITIES, ONE UNIT
+// ============================================================================
+//
+// Every agent has its OWN memory architecture — three modalities working as one:
+//
+//   FACTS         -> a deterministic table   (queried with `select`)
+//   RELATIONSHIPS -> a graph                 (queried with `find ... where`)
+//   SEMANTICS     -> a vector store          (queried with `match`, and the
+//                                             substrate behind `~` and `entail`)
+//
+// Internalization is IMPLICIT: every event an agent receives is decomposed by
+// the seam into facts, relationships, and embeddings, and written to that
+// agent's memory. The agent literally learns from everything it experiences.
+//
+// QUERIES ARE PROGRAMMER-LEVEL INTROSPECTION. Because Agape knows every spawned
+// agent at compile time, a query with no named target fans out across ALL
+// agents' memories and aggregates. The runtime needs no central database — it
+// knows the population of agents and asks each one.
+
+// Graph query: traverse relationships. `find BINDING where { PATTERN }`.
+// This asks every agent's graph for a Coach related by `is_named` to some n.
 find n where { Coach is_named n };
 verify n == "John";
 
 find m where { Student is_named m };
 verify m == "Mary";
 
+// Bind every named agent's name into a list.
 find names where { Agent is_named names };
 
-fn bool is_it_john(string x) {
-    if (x ~ "John") { return true; }
-    else { return false; }
+// Fact query (the table modality). `select COLS from AGENT where { CONDS }`.
+// `from john` targets one agent's fact table by its instance variable.
+select first_name, source_timestamp from john where { type == "identity" };
+
+// Vector query (the semantic modality). `match { BINDING: VECTOR } > THRESHOLD`.
+// Returns memories whose embedding similarity clears the threshold.
+match { m: "poker strategy" } > 0.8;
+
+
+// ============================================================================
+// PART 7 — PIPES, AGGREGATION, AND ASYNC FAN-OUT
+// ============================================================================
+//
+// `|>` pipes each element of a collection into a function. When the function is
+// a routine, this is a CONCURRENT FAN-OUT: every element's cognition call
+// is launched together, then awaited. `all`/`any` reduce the results.
+//
+// `is_it_john` reaches the seam (`~`), so it is a routine. Therefore mapping it
+// over `names` is async, and `everyone_john` is an async result — which means
+// this whole region is routine-colored.
+
+bool async is_it_john(text x) {
+    return x ~ "John";
 }
 
-bool everyone_john = all(names |> is_it_john);
+bool everyone_john = all(names |> is_it_john);   // concurrent fan-out, await all
 
+// `verify` on a plain bool is a SYNCHRONOUS check (no embedding) that still
+// produces a Verification verdict you can subscribe to.
 event<Verification> ve = verify everyone_john;
-catch (ve) as err { say(err); }
-when  (ve) { say("all agents confirmed."); }
+catch (ve) as err  { say(err); }
+when  (ve)         { say("all agents confirmed."); }
 
-find who where { Name emitted_by Agent is_named who };
-verify who == "John";
+
+// ============================================================================
+// PART 8 — SEMANTIC CHECKING, PART TWO: ENTAILMENT (`entail`) AND `case`
+// ============================================================================
+//
+// Similarity (`~`) asks "are these close?" Entailment asks the harder, logical
+// question: "does this output COMMIT to that claim?" Its answer is THREE-VALUED,
+// because logical commitment has three outcomes:
+//
+//   Entailment    — the answer commits to the claim being TRUE
+//   Contradiction — the answer commits to the claim being FALSE
+//   Neutral       — the answer neither confirms nor denies (silence ≠ denial)
+//
+// `entail` is a routine. It returns a single `event<Entailment>` whose value is
+// one of those three variants (a sum type, one schema, the enum the seam fills
+// via structured output). Pending has no variant — an unresolved check has no
+// outcome yet.
+//
+// `case` SYNCHRONOUSLY pattern-matches the resolved variant. The compiler checks
+// the arms for exhaustiveness — for a safety-critical check, "you forgot the
+// CONTRADICTION arm" is exactly the bug you want caught at compile time.
+
+event<Verdict> async claims_flush_beats_straight() {
+    event<text> answer = john <- "Does a flush beat a straight, and why?";
+    return answer entail "A flush beats a straight.";
+}
+
+case (claims_flush_beats_straight()) as e {
+    Entailment:    { say("john's reasoning is sound."); }
+    Contradiction: { say("john contradicted a known rule!"); }
+    default:       { say("john was non-committal."); }     // Neutral
+}
+
+// handle unexpected errors during function call
+catch Error(claims_flush_beats_straight) as e { say(e); }
+
+// MECHANISM vs POLICY. When `entail` resolves to Contradiction, the runtime ALSO
+// emits a first-class `Contradiction` event to the spine — independently of any
+// `case`. That lets a GLOBAL, standing subscription react to ANY contradiction,
+// anywhere, retroactively — which a local `case` arm (lexically bound) cannot do.
+//
+// The runtime supplies the FACT (a contradiction exists). The programmer supplies
+// the POLICY (what to do) and its COMPLETION signal. There is no built-in
+// "handled" event — "handled" means something different in every application, so
+// you define and emit your own.
+
+catch Contradiction(john) as c {
+    emit Error(f"john asserted something false: {c}");
+    emit ContradictionHandled(john);     // user-defined completion event
+}
+
+
+// ============================================================================
+// PART 9 — RETRY: BOUNDED RE-ATTEMPTS AS HONEST SUGAR
+// ============================================================================
+//
+// `retry(n) { ... }` re-runs a block until it produces a successful verification
+// (or n attempts are exhausted, then it emits the failure to the spine). The
+// FIRST run is not a retry; only re-attempts count against n. Everything `retry`
+// does — counting attempts, logging each one — is expressible by hand with a
+// loop, a counter in the agent's own memory, and `catch`. It is sugar, not a
+// hidden runtime: nothing the language does for you is something you couldn't
+// write yourself.
+
+retry(3) {
+    event<bool> still_coach = john <- "Are you still a poker coach?";
+    verify still_coach == true;
+}
+
+// The second form attaches a handler that runs BEFORE each re-attempt (never
+// before the first), so you can adjust the prompt between tries. The prompt is
+// just a variable; mutate it with ordinary string manipulation.
+
+text q = "Name one rule of poker.";
+event<text> rule = john <- q retry(3) {
+    q = q + " Answer in one short sentence.";   // tightens the ask each retry
+};
+
+
+// ============================================================================
+// PART 10 — GRACEFUL SHUTDOWN
+// ============================================================================
+//
+// Sleeping an agent closes its mailbox and, when it is collected, fires its
+// `when (sleep self)` release hook — which for NamedAgent emits a release event.
+// Shutdown is therefore visible on the spine, in order, like everything else.
+
+sleep john;
+sleep mary;
+
+// At the end of a run, the spine holds the COMPLETE, ordered, replayable history:
+// every spawn, every think Started/Resolved pair, every verification verdict,
+// every contradiction, every emit. State was only ever a projection of this log.
+// To understand what happened — or to replay it deterministically — you read
+// the spine.

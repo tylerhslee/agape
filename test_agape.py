@@ -59,8 +59,9 @@ check("no match -> empty",
 
 print("\n== event spine: verify PASS (fixture answer) ==")
 ev = run_quiet(FixtureProvider("John"), '''
-agent Coach("you are John") {}
-event Name = Coach <- "what is your name?";
+agent Coach(string n) {}
+spawn Coach Coach("you are John");
+event<text> Name = Coach <- "what is your name?";
 verify Name == "John";
 ''')
 check("PASS emits a Success for the checked source",
@@ -70,8 +71,9 @@ check("the send recorded a ResponseEvent", any(isinstance(e, ResponseEvent) for 
 
 print("\n== event spine: verify FAIL (stub) ==")
 ev = run_quiet(StubProvider(), '''
-agent Coach("x") {}
-event N = Coach <- "q";
+agent Coach(string n) {}
+spawn Coach Coach("x");
+event<text> N = Coach <- "q";
 verify N == "John";
 ''')
 check("FAIL emits a FailedVerificationEvent", any(
@@ -79,8 +81,9 @@ check("FAIL emits a FailedVerificationEvent", any(
 
 print("\n== catch: retroactive + supertype ==")
 ev = run_quiet(StubProvider(), '''
-agent Coach("x") {}
-event N = Coach <- "q";
+agent Coach(string n) {}
+spawn Coach Coach("x");
+event<text> N = Coach <- "q";
 verify N == "John";
 catch Error(N) as e { say(e); }
 ''')
@@ -89,8 +92,9 @@ check("supertype Error caught the failure, retroactively",
 
 print("\n== catch: prospective ==")
 ev = run_quiet(StubProvider(), '''
-agent Coach("x") {}
-event N = Coach <- "q";
+agent Coach(string n) {}
+spawn Coach Coach("x");
+event<text> N = Coach <- "q";
 catch FailedVerificationEvent(N) as e { say(e); }
 verify N == "John";
 ''')
@@ -98,7 +102,7 @@ check("catch registered before the failure still fires", len(ev.handled) == 1)
 
 print("\n== find integrated with the evaluator (seeded facts) ==")
 ev = Evaluator(StubProvider())
-for stmt in parse('agent Coach("x") {}'):
+for stmt in parse('agent Coach(string n) {}\nspawn Coach Coach("x");'):
     ev.exec_stmt(stmt)
 ev.learn("Coach", "is_named", "John")            # 2e/cognition will do this for real
 for stmt in parse('find n where { Coach is_named n }; verify n == "John";'):

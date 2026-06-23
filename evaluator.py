@@ -88,11 +88,16 @@ class Evaluator:
                 self._fire(handler, event)
         return event
 
+    def _event_source_name(self, source):
+        if isinstance(source, A.Name):
+            return source.ident
+        return None
+
     def _matches(self, handler, event):
         cls = EVENT_TYPES.get(handler.event_type)
         return (cls is not None
                 and isinstance(event, cls)
-                and event.source == handler.source)
+                and event.source == self._event_source_name(handler.source))
 
     def _fire(self, handler, event):
         self.handled.append((handler, event))   # observable for tests
@@ -113,7 +118,9 @@ class Evaluator:
 
     def exec_stmt(self, node):
         if isinstance(node, A.AgentDecl):  return self.exec_agent_decl(node)
+        if isinstance(node, A.SpawnStmt):  return self.exec_spawn(node)
         if isinstance(node, A.EventBind):  return self.exec_event_bind(node)
+        if isinstance(node, A.EventDecl):  return self.exec_event_decl(node)
         if isinstance(node, A.VerifyStmt): return self.exec_verify(node)
         if isinstance(node, A.Catch):      return self.exec_catch(node)
         if isinstance(node, A.Find):       return self.exec_find(node)
@@ -121,11 +128,22 @@ class Evaluator:
         raise RuntimeError(f"unknown statement: {node!r}")
 
     def exec_agent_decl(self, node):
-        self.env[node.name] = AgentValue(node.name)
+        # Template declaration only — instances are created by spawn.
         self.world.append((node.name, "is_a", "Agent"))   # type fact for queries
-        # (2e: the agent will think about node.prompt and learn() facts from it.)
         print(f"[agent]  {node.name} declared")
         return self.emit(Success(source=node.name, payload="declared"))
+
+    def exec_spawn(self, node):
+        agent = AgentValue(node.name)
+        self.env[node.name] = agent
+        self.world.append((node.name, "is_a", node.agent_type))
+        print(f"[spawn]  {node.name} : {node.agent_type}")
+        return self.emit(Success(source=node.name, payload="spawned"))
+
+    def exec_event_decl(self, node):
+        if node.expr is None:
+            return None
+        return self.exec_event_bind(A.EventBind(node.name, node.expr))
 
     def exec_event_bind(self, node):
         value = self.eval_expr(node.expr)       # a ResponseEvent from a send
