@@ -159,6 +159,31 @@ impl Parser {
         if t.is_kw("if") {
             return self.if_stmt();
         }
+        if t.is_kw("on") {
+            return self.on_stmt();
+        }
+        if t.is_kw("when") {
+            return self.when_stmt();
+        }
+        if t.is_kw("catch") {
+            return self.catch_stmt();
+        }
+        if t.is_kw("case") {
+            return self.case_stmt();
+        }
+        if t.is_kw("retry") {
+            let (count, body) = self.parse_retry_tail()?;
+            return Ok(Stmt::Retry { count, body, target: None });
+        }
+        if t.is_kw("find") {
+            return self.find_stmt();
+        }
+        if t.is_kw("select") {
+            return self.select_stmt();
+        }
+        if t.is_kw("match") {
+            return self.match_stmt();
+        }
 
         // `sync` or a type keyword begins a declaration (fn or var).
         if t.is_kw("sync") || (t.kind == TokenKind::Keyword && TYPE_KEYWORDS.contains(&t.value.as_str())) {
@@ -171,8 +196,15 @@ impl Parser {
             return self.decl();
         }
 
-        // Fallback: an expression statement (e.g. a send `john <- "..."`).
+        // Fallback: an assignment (`self.x = ...`, `q = q + "...";`) or a bare
+        // expression statement (e.g. a send `john <- "..."`).
         let e = self.expr()?;
+        if self.check_op("=") {
+            self.advance();
+            let rhs = self.expr()?;
+            self.eat_op(";")?;
+            return Ok(Stmt::Assign { target: e, expr: rhs });
+        }
         self.eat_op(";")?;
         Ok(Stmt::ExprStmt(e))
     }
@@ -208,6 +240,15 @@ impl Parser {
         }
         self.eat_op("=")?;
         let e = self.expr()?;
+
+        // Trailing-send retry form: `X = dest <- msg retry(n) { ... };`
+        if self.check_kw("retry") {
+            let (count, body) = self.parse_retry_tail()?;
+            self.eat_op(";")?;
+            let vd = Stmt::VarDecl { ty, name, expr: Some(e) };
+            return Ok(Stmt::Retry { count, body, target: Some(Box::new(vd)) });
+        }
+
         self.eat_op(";")?;
         Ok(Stmt::VarDecl { ty, name, expr: Some(e) })
     }
@@ -283,6 +324,165 @@ impl Parser {
             else_body = self.block()?;
         }
         Ok(Stmt::If { cond, then_body, else_body })
+    }
+
+    fn on_stmt(&mut self) -> PResult<Stmt> {
+        self.eat_kw("on")?;
+        // `awake` / `sleep` are keywords here.
+        let event = self.advance().value;
+        let body = self.block()?;
+        Ok(Stmt::On { event, body })
+    }
+
+    fn when_stmt(&mut self) -> PResult<Stmt> {
+        self.eat_kw("when")?;
+        self.eat_op("(")?;
+        let subject = self.expr()?;
+        self.eat_op(")")?;
+        let body = self.block()?;
+        Ok(Stmt::When { subject, body })
+    }
+
+    fn catch_stmt(&mut self) -> PResult<Stmt> {
+        self.eat_kw("catch")?;
+        let mut event_type = None;
+        let mut subject = None;
+
+        if self.check_op("(") {
+            // `catch (SUBJECT) as b` — parenthesized subject, no event type.
+            self.advance();
+            subject = Some(self.expr()?);
+            self.eat_op(")")?;
+        } else {
+            // `catch EventType[(SUBJECT)] as b`
+            event_type = Some(self.eat_ident()?);
+            if self.check_op("(") {
+                self.advance();
+                subject = Some(self.expr()?);
+                self.eat_op(")")?;
+            }
+        }
+
+        self.eat_as()?;
+        let binding = self.eat_ident()?;
+        let body = self.block()?;
+        Ok(Stmt::Catch { event_type, subject, binding, body })
+    }
+
+    fn case_stmt(&mut self) -> PResult<Stmt> {
+        self.eat_kw("case")?;
+        self.eat_op("(")?;
+        let expr = self.expr()?;
+        self.eat_op(")")?;
+        self.eat_as()?;
+        let binding = self.eat_ident()?;
+
+        self.eat_op("{")?;
+        let mut arms = Vec::new();
+        let mut default = None;
+        while !self.check_op("}") && !self.at_eof() {
+            if self.check_kw("default") {
+                self.advance();
+                self.eat_op(":")?;
+                default = Some(self.block()?);
+            } else {
+                let variant = self.eat_ident()?;
+                self.eat_op(":")?;
+                arms.push((variant, self.block()?));
+            }
+        }
+        self.eat_op("}")?;
+        Ok(Stmt::Case { expr, binding, arms, default })
+    }
+
+    /// Parse `retry ( INT ) { body }` and return the count and body.
+    fn parse_retry_tail(&mut self) -> PResult<(i64, Vec<Stmt>)> {
+        self.eat_kw("retry")?;
+        self.eat_op("(")?;
+        let count = if self.cur().kind == TokenKind::Int {
+            self.advance().value.parse::<i64>().map_err(|_| self.err("bad retry count"))?
+        } else {
+            return Err(self.err("expected retry count"));
+        };
+        self.eat_op(")")?;
+        let body = self.block()?;
+        Ok((count, body))
+    }
+
+    fn find_stmt(&mut self) -> PResult<Stmt> {
+        self.eat_kw("find")?;
+        let binding = self.eat_ident()?;
+        self.eat_kw("where")?;
+        self.eat_op("{")?;
+        let mut pattern = Vec::new();
+        while !self.check_op("}") && !self.at_eof() {
+            let subj = self.eat_ident()?;
+            let pred = self.eat_ident()?;
+            let obj = self.eat_ident()?;
+            pattern.push((subj, pred, obj));
+            if self.check_op(";") {
+                self.advance();
+            }
+        }
+        self.eat_op("}")?;
+        self.eat_op(";")?;
+        Ok(Stmt::Find { binding, pattern })
+    }
+
+    fn select_stmt(&mut self) -> PResult<Stmt> {
+        self.eat_kw("select")?;
+        let mut cols = vec![self.eat_ident()?];
+        while self.check_op(",") {
+            self.advance();
+            cols.push(self.eat_ident()?);
+        }
+        self.eat_kw("from")?;
+        let agent = self.eat_ident()?;
+        self.eat_kw("where")?;
+        self.eat_op("{")?;
+        let mut conds = Vec::new();
+        while !self.check_op("}") && !self.at_eof() {
+            let col = self.eat_ident()?;
+            let op = self.advance().value; // ==, !=, <, >, <=, >=
+            let val = self.expr()?;
+            conds.push((col, op, val));
+            if self.check_op(",") || self.check_op(";") {
+                self.advance();
+            }
+        }
+        self.eat_op("}")?;
+        self.eat_op(";")?;
+        Ok(Stmt::Select { cols, agent, conds })
+    }
+
+    fn match_stmt(&mut self) -> PResult<Stmt> {
+        self.eat_kw("match")?;
+        self.eat_op("{")?;
+        let binding = self.eat_ident()?;
+        self.eat_op(":")?;
+        let query = self.expr()?;
+        self.eat_op("}")?;
+        self.eat_op(">")?;
+        let threshold = match self.cur().kind {
+            TokenKind::Float | TokenKind::Int => self
+                .advance()
+                .value
+                .parse::<f64>()
+                .map_err(|_| self.err("bad threshold"))?,
+            _ => return Err(self.err("expected threshold number")),
+        };
+        self.eat_op(";")?;
+        Ok(Stmt::Match { binding, query, threshold })
+    }
+
+    /// Consume the soft keyword `as` (it lexes as an identifier).
+    fn eat_as(&mut self) -> PResult<()> {
+        if self.cur().kind == TokenKind::Ident && self.cur().value == "as" {
+            self.advance();
+            Ok(())
+        } else {
+            Err(self.err("expected 'as'"))
+        }
     }
 
     fn block(&mut self) -> PResult<Vec<Stmt>> {
@@ -365,6 +565,18 @@ impl Parser {
     // ── expressions (precedence climbing) ─────────────────────────────────────
 
     fn expr(&mut self) -> PResult<Expr> {
+        // `verify` may stand as an expression that binds an event<Verification>.
+        if self.check_kw("verify") {
+            self.advance();
+            let left = self.addsub()?;
+            let mut op = None;
+            let mut right = None;
+            if self.check_op("~") || self.check_op("==") {
+                op = BinOp::from_str(&self.advance().value);
+                right = Some(Box::new(self.addsub()?));
+            }
+            return Ok(Expr::Verify { left: Box::new(left), op, right });
+        }
         self.send()
     }
 
@@ -621,5 +833,81 @@ mod tests {
     fn member_access_and_emit() {
         let stmts = parse_src("emit Event(f\"NamedAgent {n} validated.\");");
         assert!(matches!(stmts[0], Stmt::Emit { .. }));
+    }
+
+    #[test]
+    fn catch_forms() {
+        // type only
+        let s = parse_src("catch Error as e { say(e); }");
+        assert!(matches!(&s[0], Stmt::Catch { event_type: Some(t), subject: None, .. } if t == "Error"));
+        // type + subject
+        let s = parse_src("catch FailedVerification(Name) as e { say(e); }");
+        assert!(matches!(&s[0], Stmt::Catch { event_type: Some(_), subject: Some(_), .. }));
+        // parenthesized subject, no type
+        let s = parse_src("catch (ve) as err { say(err); }");
+        assert!(matches!(&s[0], Stmt::Catch { event_type: None, subject: Some(_), .. }));
+    }
+
+    #[test]
+    fn when_and_on_hooks() {
+        let s = parse_src("when (init) { emit Event(\"x\"); }");
+        assert!(matches!(s[0], Stmt::When { .. }));
+        let s = parse_src("on awake { emit Event(\"up\"); }");
+        assert!(matches!(&s[0], Stmt::On { event, .. } if event == "awake"));
+    }
+
+    #[test]
+    fn case_with_default() {
+        let s = parse_src(
+            "case (f()) as e { Entailment: { say(\"a\"); } Contradiction: { say(\"b\"); } default: { say(\"c\"); } }",
+        );
+        match &s[0] {
+            Stmt::Case { arms, default, .. } => {
+                assert_eq!(arms.len(), 2);
+                assert_eq!(arms[0].0, "Entailment");
+                assert!(default.is_some());
+            }
+            other => panic!("expected Case, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn retry_block_and_trailing() {
+        let s = parse_src("retry(3) { verify x == true; }");
+        assert!(matches!(&s[0], Stmt::Retry { count: 3, target: None, .. }));
+
+        let s = parse_src("event<text> r = john <- q retry(3) { q = q + \"!\"; };");
+        match &s[0] {
+            Stmt::Retry { count: 3, target: Some(inner), .. } => {
+                assert!(matches!(**inner, Stmt::VarDecl { .. }));
+            }
+            other => panic!("expected trailing Retry, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn query_statements() {
+        let s = parse_src("find n where { Coach is_named n };");
+        assert!(matches!(&s[0], Stmt::Find { pattern, .. } if pattern == &vec![("Coach".into(), "is_named".into(), "n".into())]));
+
+        let s = parse_src("select first_name, source_timestamp from john where { type == \"identity\" };");
+        match &s[0] {
+            Stmt::Select { cols, agent, conds } => {
+                assert_eq!(cols, &vec!["first_name".to_string(), "source_timestamp".to_string()]);
+                assert_eq!(agent, "john");
+                assert_eq!(conds.len(), 1);
+                assert_eq!(conds[0].1, "==");
+            }
+            other => panic!("expected Select, got {other:?}"),
+        }
+
+        let s = parse_src("match { m: \"poker strategy\" } > 0.8;");
+        assert!(matches!(&s[0], Stmt::Match { binding, threshold, .. } if binding == "m" && (*threshold - 0.8).abs() < 1e-9));
+    }
+
+    #[test]
+    fn member_assignment() {
+        let s = parse_src("self.name_verification = Verification(reply);");
+        assert!(matches!(&s[0], Stmt::Assign { target: Expr::Member { .. }, .. }));
     }
 }

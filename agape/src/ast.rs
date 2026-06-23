@@ -80,6 +80,8 @@ pub enum Expr {
     Entail { expr: Box<Expr>, claim: Box<Expr> },
     /// `source |> func` — concurrent fan-out over a collection.
     Pipe { source: Box<Expr>, func: Box<Expr> },
+    /// `verify EXPR [op EXPR]` used as an expression (binds an event<Verification>).
+    Verify { left: Box<Expr>, op: Option<BinOp>, right: Option<Box<Expr>> },
 }
 
 /// A formal parameter: a type and a name.
@@ -122,6 +124,36 @@ pub enum Stmt {
     Return(Option<Expr>),
     /// `if (cond) { then } [else { else }]`
     If { cond: Expr, then_body: Vec<Stmt>, else_body: Vec<Stmt> },
+    /// `TARGET = EXPR;` — assignment (e.g. `self.field = ...`, `q = q + "...";`).
+    Assign { target: Expr, expr: Expr },
+    /// `on awake { ... }` / `on sleep { ... }` — agent lifecycle hooks.
+    On { event: String, body: Vec<Stmt> },
+    /// `when (SUBJECT) { ... }` — a spine subscription on success/resolution.
+    When { subject: Expr, body: Vec<Stmt> },
+    /// `catch [EventType][(SUBJECT)] as BINDING { ... }` — a failure-polarity
+    /// subscription. `event_type` and `subject` are each optional.
+    Catch {
+        event_type: Option<String>,
+        subject: Option<Expr>,
+        binding: String,
+        body: Vec<Stmt>,
+    },
+    /// `case (EXPR) as BINDING { Variant: {..} ... [default: {..}] }`.
+    Case {
+        expr: Expr,
+        binding: String,
+        arms: Vec<(String, Vec<Stmt>)>,
+        default: Option<Vec<Stmt>>,
+    },
+    /// `retry(N) { ... }` (block form), or the trailing-send form where `target`
+    /// is the statement the retry re-attempts. Sugar over a loop + counter.
+    Retry { count: i64, body: Vec<Stmt>, target: Option<Box<Stmt>> },
+    /// `find BINDING where { S P O; ... }` — relationship-graph query.
+    Find { binding: String, pattern: Vec<(String, String, String)> },
+    /// `select COLS from AGENT where { COL op VALUE, ... }` — fact-table query.
+    Select { cols: Vec<String>, agent: String, conds: Vec<(String, String, Expr)> },
+    /// `match { BINDING: QUERY } > THRESHOLD` — vector / semantic query.
+    Match { binding: String, query: Expr, threshold: f64 },
     /// A bare expression used as a statement (e.g. a send).
     ExprStmt(Expr),
 }

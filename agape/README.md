@@ -65,11 +65,15 @@ cargo test                               # unit + integration tests
 
 - **Lexer** — complete. Cross-checked *token-for-token* against the verified POC
   lexer on the full `hello.ag` (645 tokens, zero mismatches).
-- **Parser** — the core surface: scalar/`event` types, `sync`/async function
-  declarations, agent headers, variable declarations, `spawn`/`awake`/`sleep`,
-  `verify`, `emit`, `say`, `return`, `if`/`else`, and the full expression
-  precedence ladder (send `<-`, pipe `|>`, entail/`~`, comparison, arithmetic,
-  unary, postfix call/member). `examples/basics.ag` parses end to end.
+- **Parser** — parses the **entire canonical `hello.ag`** (44 top-level
+  statements). Covers scalar/`event` types, `sync`/async function declarations,
+  agents (headers, fields, `extend`, `on awake`/`on sleep` hooks), variable
+  declarations and assignment, `spawn`/`awake`/`sleep`, `verify` (statement and
+  expression forms), `emit`, `say`, `return`, `if`/`else`, the reactive blocks
+  `when`/`catch`/`case`/`retry` (block and trailing-send forms), the query
+  statements `find`/`select`/`match`, and the full expression precedence ladder
+  (send `<-`, pipe `|>`, entail/`~`, comparison, arithmetic, unary, postfix
+  call/member).
 - **Spine** — the append-only event log with system-assigned monotonic ticks and
   Started/Resolved correlation (the pending set falls out of it).
 - **Provider seam** — the `Provider` trait plus a deterministic `MockProvider`,
@@ -79,18 +83,13 @@ cargo test                               # unit + integration tests
 
 In rough dependency order:
 
-1. **Parser: reactive & query blocks** — `when`/`catch` subscriptions, `case`
-   (with exhaustiveness), `retry` (block and trailing-send forms), and the query
-   statements `find`/`where`, `select`/`from`/`where`, `match`.
-2. **Agent-body parsing** — fields, `extend`, constructor statements, `on awake`
-   / `on sleep` hooks.
-3. **Type checker** — the two locked invariants: `sync` cannot reach the seam and
+1. **Type checker** — the two locked invariants: `sync` cannot reach the seam and
    only calls `sync`; `event<T>` vs bare `T`; `case` exhaustiveness; the
    type → JSON-Schema bridge for structured output.
-4. **Tree-walking interpreter** — drive the spine, the provider seam, agent
+2. **Tree-walking interpreter** — drive the spine, the provider seam, agent
    lifecycle, subscriptions, and per-agent memory (mirroring the POC), so the
    real implementation runs `hello.ag` end to end.
-5. **A real `AnthropicProvider`** — structured output via constrained decoding,
+3. **A real `AnthropicProvider`** — structured output via constrained decoding,
    per-agent conversation memory (as the POC already does).
-6. **IR + codegen** — lower the AST to an IR and emit a native artifact (the
+4. **IR + codegen** — lower the AST to an IR and emit a native artifact (the
    point of choosing Rust). Until then the interpreter is the execution model.
