@@ -145,12 +145,12 @@ class Parser:
             name = self._eat("ID").value
             self._advance()  # "="
             self._advance()  # "verify"
-            left = self._expr()
+            left = self._postfix_expr()
             op = None
             right = None
             if self._check("OP", "~") or self._check("OP", "=="):
                 op = self._advance().value
-                right = self._expr()
+                right = self._postfix_expr()
             self._eat("OP", ";")
             return A.VarDecl(type_node=type_node, name=name,
                              expr=A.VerifyExpr(left, op, right))
@@ -377,12 +377,14 @@ class Parser:
 
     def _verify_as_stmt(self):
         self._eat("KW", "verify")
-        left = self._expr()
+        # Parse left only up to addition level so ~ and == are NOT consumed by
+        # _cmp_expr.  They must remain for verify to treat as the verify operator.
+        left = self._postfix_expr()
         op = None
         right = None
         if self._check("OP", "~") or self._check("OP", "=="):
             op = self._advance().value
-            right = self._expr()
+            right = self._postfix_expr()
         self._eat("OP", ";")
         return A.VerifyStmt(left, op, right)
 
