@@ -36,24 +36,23 @@ text   formatted = f"a={a}, r={ratio}";   // f-strings interpolate with {expr}
 
 // Functions & Routines
 //
-//   A function is synchronous. It may NOT touch the
-//   provider seam (no `<-`, no `~`, no `entail`, no `embed`). The compiler
-//   rejects any `fn` whose body reaches the seam. If you can read a `fn`,
-//   you KNOW it never calls a model.
+//   Functions are ASYNC by default. They MAY touch the provider seam
+//   (`<-`, `~`, `entail`, `embed`). They emit a Started event when they begin
+//   and a Resolved event when they complete (see the spine, Part 3).
+//   Async color is contagious: anything that depends on an async result is
+//   itself async, and the compiler enforces this upward.
 //
-//   Add a `async` keyword to turn a function into a ROUTINE (asynchronous). It
-//   MAY touch the seam. It has a pending window: it emits a Started event when
-//   it begins and a Resolved event when it completes (see the spine, Part 3).
-//   Anything that depends on a routine's result is itself a routine — async color
-//   is contagious, and the compiler enforces the contagion upward.
+//   Add the `sync` keyword to declare a function SYNCHRONOUS. A `sync` fn may
+//   NOT touch the seam. The compiler rejects any `sync` fn whose body reaches
+//   cognition. If you see `sync`, you KNOW it never calls a model.
 
-int double(int x) {
-    return x * 2;               // pure arithmetic
+sync int double(int x) {
+    return x * 2;               // pure arithmetic — sync is safe here
 }
 
-// `is_about_poker` reaches the seam (`~` calls embed), so it MUST be `async`.
-// Declaring it without `async` would be a compile error: "sync function cannot touch cognition."
-bool async is_about_poker(text x) {
+// `is_about_poker` reaches the seam (`~` calls embed). No keyword needed —
+// async is the default. Marking it `sync` would be a compile error.
+bool is_about_poker(text x) {
     return x ~ "a game of poker";   // `~` is a semantic check — see Part 4
 }
 
@@ -295,11 +294,11 @@ match { m: "poker strategy" } > 0.8;
 // a routine, this is a CONCURRENT FAN-OUT: every element's cognition call
 // is launched together, then awaited. `all`/`any` reduce the results.
 //
-// `is_it_john` reaches the seam (`~`), so it is a routine. Therefore mapping it
-// over `names` is async, and `everyone_john` is an async result — which means
-// this whole region is routine-colored.
+// `is_it_john` reaches the seam (`~`), so it is async (the default). Mapping it
+// over `names` fans out concurrently; `everyone_john` is an async result, which
+// means this whole region is async-colored.
 
-bool async is_it_john(text x) {
+bool is_it_john(text x) {
     return x ~ "John";
 }
 
@@ -333,7 +332,7 @@ when  (ve)         { say("all agents confirmed."); }
 // the arms for exhaustiveness — for a safety-critical check, "you forgot the
 // CONTRADICTION arm" is exactly the bug you want caught at compile time.
 
-event<Verdict> async claims_flush_beats_straight() {
+event<Verdict> claims_flush_beats_straight() {
     event<text> answer = john <- "Does a flush beat a straight, and why?";
     return answer entail "A flush beats a straight.";
 }
