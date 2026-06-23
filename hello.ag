@@ -229,10 +229,11 @@ verify Name == "John";
 // Because these are subscriptions, "errors" are not exceptions that unwind a
 // stack. They are events. The system keeps running; handlers observe.
 
-// Catch every Error event, regardless of source/subject. `catch` keys on the
-// (event type, subject) pair, so this fires on `Error` events only —
-// FailedVerification is a DISTINCT event type, handled by the subject-keyed
-// catches just below.
+// Catch every error, regardless of source/subject. `Error` is the ROOT error
+// type; FailedVerification, Contradiction, etc. all EXTEND it, so this fires on
+// any of them. `catch` keys on the (event type, subject) pair and matching is by
+// subtype — the narrower, subject-keyed catches just below stay scoped to one
+// subject and one leaf type.
 catch Error as e {
     say("Error happened:");
     say(e);
