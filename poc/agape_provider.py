@@ -1,5 +1,6 @@
 """agape_provider.py — the provider seam: think() and embed()."""
 from __future__ import annotations
+import json
 import math
 import re
 
@@ -53,9 +54,8 @@ class MockProvider(Provider):
         m = re.search(r"your name is ([a-z]+)", p)
         if m and agent_inst is not None:
             agent_inst.seeded_name = m.group(1).capitalize()
-            # Also seed into world graph via the interpreter hook if available
-            if hasattr(agent_inst, "_on_seed_name"):
-                agent_inst._on_seed_name(agent_inst.seeded_name)
+            # Graph internalization (the is_named triple) is the interpreter's
+            # job, not the provider's — see Interpreter._eval_send_named.
             return None  # event<null>
 
         if "you are a poker coach" in p:
@@ -168,54 +168,154 @@ class MockProvider(Provider):
 
 class AnthropicProvider(Provider):
     """
-    Real provider via the Anthropic API. Uses constrained output (json_schema)
-    for typed replies. Swap in by passing --provider anthropic to run.py.
+    Real provider via the Anthropic API. Cognition is real: each agent keeps its
+    own conversation history, so an agent told "Your name is John." actually
+    remembers it when later asked "What is your name?". Typed replies
+    (event<bool>, event<int>, ...) use structured output (output_config.format)
+    so the model returns schema-conforming JSON via constrained decoding — no
+    string parsing, no regex fallback (SPEC §8).
+
+    Swap in by passing --provider anthropic to run.py. Reads ANTHROPIC_API_KEY
+    from the environment; model defaults to claude-opus-4-8 (override with
+    ANTHROPIC_MODEL).
     """
 
-    def __init__(self, model: str = "claude-sonnet-4-6"):
+    def __init__(self, model: str | None = None):
+        import os
         from anthropic import Anthropic
         self.client = Anthropic()
-        self.model = model
-        self._emb_model = None  # lazy-loaded sentence-transformers
+        self.model = model or os.environ.get("ANTHROPIC_MODEL", "claude-opus-4-8")
+        # Per-agent conversation history, keyed by agent instance name.
+        self.conversations: dict[str, list[dict]] = {}
+
+    # ── conversation memory ───────────────────────────────────────────────────
+
+    def _history(self, agent_inst) -> list[dict]:
+        key = agent_inst.name if agent_inst is not None else "__global__"
+        return self.conversations.setdefault(key, [])
+
+    def _system_for(self, agent_inst) -> str:
+        if agent_inst is not None:
+            return (
+                f"You are an agent in a multi-agent system. Your instance is "
+                f"'{agent_inst.name}'. Stay in character, answer concisely, and "
+                f"honor facts you have been told in this conversation."
+            )
+        return "Answer concisely."
+
+    # ── think: the cognition seam ─────────────────────────────────────────────
 
     def think(self, prompt: str, agent_inst=None, schema: str = "text") -> object:
-        from agape_schema import schema_for_type
-        json_schema = schema_for_type(schema)
-        msg = self.client.messages.create(
+        history = self._history(agent_inst)
+
+        # event<null> is fire-and-forget: seed the agent's context with the
+        # statement but don't spend a model turn. The next real question sees it.
+        if schema == "null":
+            history.append({"role": "user", "content": prompt})
+            history.append({"role": "assistant", "content": "Understood."})
+            return None
+
+        from agape_schema import json_schema_for_scalar
+        json_schema = json_schema_for_scalar(schema)
+
+        kwargs = dict(
             model=self.model,
-            max_tokens=512,
-            messages=[{"role": "user", "content": prompt}],
+            max_tokens=1024,
+            system=self._system_for(agent_inst),
+            messages=history + [{"role": "user", "content": prompt}],
         )
-        raw = "".join(b.text for b in msg.content if b.type == "text")
-        return _coerce(raw, schema)
+        if json_schema is not None:
+            kwargs["output_config"] = {
+                "format": {"type": "json_schema", "schema": json_schema}
+            }
+
+        msg = self.client.messages.create(**kwargs)
+        raw = "".join(b.text for b in msg.content if b.type == "text").strip()
+
+        # Record the turn so the agent remembers what it said.
+        history.append({"role": "user", "content": prompt})
+        history.append({"role": "assistant", "content": raw})
+
+        return _coerce(raw, schema, json_schema is not None)
 
     def embed(self, text: str) -> list[float]:
-        if self._emb_model is None:
-            from sentence_transformers import SentenceTransformer
-            self._emb_model = SentenceTransformer("all-MiniLM-L6-v2")
-        return self._emb_model.encode(text).tolist()
+        # No Anthropic embeddings endpoint; `~` is served by similarity() below
+        # (a real entailment-style judgment), so this is only a deterministic
+        # fallback for the base-class cosine path.
+        return MockProvider().embed(text)
 
-    def entail(self, answer: str, claim: str) -> str:
-        prompt = (
-            f'Does the following answer logically commit to the claim being true, '
-            f'false, or neither?\n\nAnswer: "{answer}"\nClaim: "{claim}"\n\n'
-            f'Reply with exactly one word: Entailment, Contradiction, or Neutral.'
-        )
+    def similarity(self, a: str, b: str) -> float:
+        """Semantic closeness via the model itself, returned as a 0..1 score.
+        The caller thresholds it (default >= 0.8), so this stays uniform with
+        the mock's cosine path."""
+        schema = {
+            "type": "object",
+            "properties": {"score": {"type": "number"}},
+            "required": ["score"],
+            "additionalProperties": False,
+        }
         msg = self.client.messages.create(
             model=self.model,
-            max_tokens=10,
-            messages=[{"role": "user", "content": prompt}],
+            max_tokens=256,
+            system="You judge semantic agreement. Reply only via the schema.",
+            messages=[{"role": "user", "content": (
+                f"Does statement A convey, affirm, or match the core meaning of "
+                f"statement B? Score 1.0 if A clearly affirms or matches B (even "
+                f"if A is a fuller sentence and B is a short phrase), and 0.0 if "
+                f"A is unrelated to or contradicts B.\n\n"
+                f"A: {a!r}\nB: {b!r}"
+            )}],
+            output_config={"format": {"type": "json_schema", "schema": schema}},
         )
-        word = msg.content[0].text.strip()
-        if "entailment" in word.lower():
-            return "Entailment"
-        if "contradiction" in word.lower():
-            return "Contradiction"
-        return "Neutral"
+        raw = "".join(b.text for b in msg.content if b.type == "text").strip()
+        try:
+            return float(json.loads(raw)["score"])
+        except (ValueError, KeyError, json.JSONDecodeError):
+            return 0.0
+
+    def entail(self, answer: str, claim: str) -> str:
+        """Three-valued entailment via structured output (SPEC §8)."""
+        schema = {
+            "type": "object",
+            "properties": {
+                "verdict": {
+                    "type": "string",
+                    "enum": ["Entailment", "Contradiction", "Neutral"],
+                }
+            },
+            "required": ["verdict"],
+            "additionalProperties": False,
+        }
+        msg = self.client.messages.create(
+            model=self.model,
+            max_tokens=256,
+            system="You judge logical entailment. Reply only via the schema.",
+            messages=[{"role": "user", "content": (
+                f"Does the answer logically COMMIT to the claim being true "
+                f"(Entailment), false (Contradiction), or neither (Neutral)?\n\n"
+                f"Answer: {answer!r}\nClaim: {claim!r}"
+            )}],
+            output_config={"format": {"type": "json_schema", "schema": schema}},
+        )
+        raw = "".join(b.text for b in msg.content if b.type == "text").strip()
+        try:
+            verdict = json.loads(raw)["verdict"]
+        except (ValueError, KeyError, json.JSONDecodeError):
+            return "Neutral"
+        return verdict if verdict in ("Entailment", "Contradiction", "Neutral") else "Neutral"
 
 
-def _coerce(raw: str, schema: str) -> object:
-    """Best-effort coerce a raw string to the expected Python type."""
+def _coerce(raw: str, schema: str, structured: bool) -> object:
+    """Coerce a raw model reply to the expected Python type. When `structured`
+    is True the reply is schema-conforming JSON ({"value": ...}); otherwise it
+    is free text."""
+    if schema == "null":
+        return None
+    if structured:
+        try:
+            return json.loads(raw)["value"]
+        except (ValueError, KeyError, json.JSONDecodeError):
+            pass  # fall through to best-effort coercion below
     if schema == "bool":
         return raw.strip().lower() in ("true", "yes", "1")
     if schema == "int":
@@ -228,6 +328,4 @@ def _coerce(raw: str, schema: str) -> object:
             return float(raw.strip())
         except ValueError:
             return 0.0
-    if schema == "null":
-        return None
     return raw

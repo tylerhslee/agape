@@ -1,0 +1,41 @@
+// basics.ag — the slice of Agape the current Rust front-end parses end to end.
+// (The full hello.ag additionally uses when/catch/case/find/select/match, which
+//  are the next parser milestone — see README Roadmap.)
+
+// Scalars, arithmetic, and f-strings.
+int   a         = 2 + 3;
+float ratio     = 7.0 / 2.0;
+bool  t         = true;
+text  greet     = "hello";
+text  formatted = f"a={a}, r={ratio}";
+
+// A sync (cognition-free) function.
+sync int double(int x) {
+    return x * 2;
+}
+
+// An async function that reaches the seam via the similarity operator.
+bool is_about_poker(text x) {
+    return x ~ "a game of poker";
+}
+
+// Agent lifecycle and the single send operator.
+spawn Coach   john("John");
+awake john;
+
+event<null> taught = john <- "A flush beats a straight.";
+event<text> name   = john <- "What is your name?";
+
+// Semantic checks: similarity, exact equality, and entailment.
+verify name ~ "John";
+verify name == "John";
+
+event<null> claim = name entail "His name is John.";
+
+// Concurrent fan-out and aggregation.
+bool everyone = all(names |> is_it_john);
+
+// User-defined events on the spine.
+emit Event(f"Coach {greet} ready.");
+
+sleep john;

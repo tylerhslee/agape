@@ -167,7 +167,7 @@ class FindStmt:
 class SelectStmt:
     cols: List[str]
     agent: str
-    raw: str   # raw condition text (stub for POC)
+    conds: List[tuple]   # [(col_str, op_str, value), ...]
 
 @dataclass
 class MatchStmt:

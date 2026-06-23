@@ -19,6 +19,11 @@ build/
 .env.*
 *.key
 
+# Rust
+/agape/target/
+**/*.rs.bk
+Cargo.lock
+
 # OS
 .DS_Store
 Thumbs.db

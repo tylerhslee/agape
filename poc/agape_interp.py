@@ -17,12 +17,14 @@ class AgentInstance:
         self.seeded_name: Optional[str] = None
         self.seeded_role: Optional[str] = None
         self.known_facts: dict = {}
+        # Per-agent memory (SPEC §6): facts are a deterministic table; memories
+        # are the semantic store behind `match`. Populated by internalization on
+        # every received message.
+        self.facts: list[dict] = []     # rows, e.g. {"type":"identity", ...}
+        self.memories: list[str] = []   # internalized text for vector queries
         self.awake: bool = False
         self.on_awake_hooks: list = []  # list of (body, env_dict)
         self.on_sleep_hooks: list  = []
-
-    def _on_seed_name(self, name: str):
-        pass  # overridden by interpreter after instantiation
 
     def __repr__(self) -> str:
         return f"<Agent {self.agent_type}:{self.name}>"
@@ -100,10 +102,10 @@ class Interpreter:
             self._exec_find(stmt, env)
 
         elif t == "SelectStmt":
-            print(f"[stub] select {', '.join(stmt.cols)} from {stmt.agent} where {{...}}")
+            self._exec_select(stmt, env)
 
         elif t == "MatchStmt":
-            print(f"[stub] match {{m: ...}} > {stmt.threshold}")
+            self._exec_match(stmt, env, ai)
 
         elif t == "CaseStmt":
             self._exec_case(stmt, env, ai)
@@ -176,11 +178,6 @@ class Interpreter:
             raise RuntimeError(f"unknown agent type: {stmt.agent_type!r}")
 
         inst = AgentInstance(stmt.name, stmt.agent_type)
-
-        # Wire name-seeding callback so world graph is updated
-        def _seed(name: str, _inst: AgentInstance = inst) -> None:
-            self.world.append((_inst.name, "is_named", name))
-        inst._on_seed_name = _seed
 
         # is_a triples
         self.world.append((inst.name, "is_a", stmt.agent_type))
@@ -328,6 +325,48 @@ class Interpreter:
             env[binding] = results[0]
         else:
             env[binding] = results
+
+    # ── select (fact table query) ─────────────────────────────────────────────
+
+    def _exec_select(self, stmt: A.SelectStmt, env: dict) -> None:
+        inst = self.instances.get(stmt.agent)
+        rows = inst.facts if inst is not None else []
+
+        def matches(row: dict) -> bool:
+            for (col, op, val) in stmt.conds:
+                cur = row.get(col)
+                if op == "==" and not (cur == val):
+                    return False
+                if op == "!=" and not (cur != val):
+                    return False
+            return True
+
+        projected = [
+            {c: row.get(c) for c in stmt.cols}
+            for row in rows if matches(row)
+        ]
+        self.spine.append("SelectResult", subject=stmt.agent, payload=projected,
+                          agent=stmt.agent)
+        cols = ", ".join(stmt.cols)
+        print(f"[select] {cols} from {stmt.agent}: {projected}")
+
+    # ── match (vector / semantic query) ───────────────────────────────────────
+
+    def _exec_match(self, stmt: A.MatchStmt, env: dict, ai: Optional[AgentInstance]) -> None:
+        query = self._to_str(self._eval(stmt.query, env, ai))
+        hits: list = []
+        # Fan out across every agent's semantic memory (SPEC §10).
+        for inst in self.instances.values():
+            for mem in inst.memories:
+                score = self.provider.similarity(mem, query)
+                if score > stmt.threshold:
+                    hits.append({"agent": inst.name, "memory": mem,
+                                 "score": round(score, 3)})
+
+        env[stmt.binding] = [h["memory"] for h in hits]
+        self.spine.append("MatchResult", subject=stmt.binding, payload=hits)
+        print(f"[match] {stmt.binding} ~ {query!r} > {stmt.threshold}: "
+              f"{len(hits)} hit(s)")
 
     # ── case statement ────────────────────────────────────────────────────────
 
@@ -527,6 +566,23 @@ class Interpreter:
         if ("your name is" in p_low or "you are a poker" in p_low
                 or ("a flush beats a straight" in p_low and schema != "bool")):
             effective_schema = "null"
+
+        # Implicit internalization (SPEC §6): every message an agent receives is
+        # written to its memory — the semantic store (for `match`) and, for
+        # recognized statements, the deterministic fact table (for `select`) and
+        # the relationship graph (for `find`). This is the interpreter's job and
+        # must not depend on any particular provider's side effects.
+        if dest is not None:
+            dest.memories.append(prompt)
+            m = re.search(r"your name is\s+([A-Za-z]+)", prompt, re.IGNORECASE)
+            if m:
+                name = m.group(1).capitalize()
+                self.world.append((dest.name, "is_named", name))
+                dest.facts.append({
+                    "type": "identity",
+                    "first_name": name,
+                    "source_timestamp": len(self.spine.log),
+                })
 
         # Scope subject to agent when inside one (prevents cross-agent collisions)
         if var_name and ai is not None:

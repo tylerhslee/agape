@@ -416,19 +416,31 @@ class Parser:
         self._eat("KW", "from")
         agent = self._eat("ID").value
         self._eat("KW", "where")
-        # Consume the where block as raw tokens (POC stub)
+        # Parse simple conditions: { COL == VALUE [, COL == VALUE ...] }
         self._eat("OP", "{")
-        depth = 1
-        while depth > 0:
-            if self._check("OP", "{"):
-                depth += 1
-            elif self._check("OP", "}"):
-                depth -= 1
-            if depth > 0:
+        conds = []
+        while not self._check("OP", "}"):
+            col = self._eat("ID").value
+            op  = self._advance().value          # ==, !=, <, >, <=, >=
+            conds.append((col, op, self._literal_value()))
+            if self._check("OP", ",") or self._check("OP", ";"):
                 self._advance()
         self._eat("OP", "}")
         self._eat("OP", ";")
-        return A.SelectStmt(cols, agent, raw="<stub>")
+        return A.SelectStmt(cols, agent, conds)
+
+    def _literal_value(self):
+        """Read one literal condition value (string, number, or bool)."""
+        t = self._cur()
+        if t.kind == "STR":
+            return self._advance().value
+        if t.kind == "INT":
+            return int(self._advance().value)
+        if t.kind == "FLOAT":
+            return float(self._advance().value)
+        if t.kind == "KW" and t.value in ("true", "false"):
+            return self._advance().value == "true"
+        return self._advance().value          # bare identifier → its text
 
     def _match_stmt(self):
         # match { BINDING: EXPR } > THRESHOLD;

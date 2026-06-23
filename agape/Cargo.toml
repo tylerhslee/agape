@@ -1,0 +1,16 @@
+[package]
+name = "agape"
+version = "0.1.0"
+edition = "2021"
+description = "The Agape language — a compiled language for multi-agent systems"
+
+[[bin]]
+name = "agape"
+path = "src/main.rs"
+
+[lib]
+name = "agape"
+path = "src/lib.rs"
+
+[profile.release]
+opt-level = 3
