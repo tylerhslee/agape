@@ -230,6 +230,12 @@ verify Name == "John";
 // Because these are subscriptions, "errors" are not exceptions that unwind a
 // stack. They are events. The system keeps running; handlers observe.
 
+// Catch all errors, including FailedVerification, regardless of the source/subject
+catch Error as e {
+    say("Error happened:");
+    say(e);
+}
+
 catch FailedVerification(Name) as e {
     say("name check failed:");    // only look at the `==` verification check
     say(e);                       // `say` prints; e carries the verdict + evidence
