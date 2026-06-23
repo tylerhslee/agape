@@ -1,10 +1,14 @@
 """run.py — entry point for the Agape interpreter.
 
 Usage:
-    python run.py hello.ag                   # mock provider (default)
+    python run.py hello.ag                                  # mock provider (default)
     python run.py hello.ag --provider mock
-    python run.py hello.ag --provider anthropic   # needs ANTHROPIC_API_KEY
+    python run.py hello.ag --provider anthropic             # needs ANTHROPIC_API_KEY
+    python run.py hello.ag --provider anthropic --model claude-opus-4-8
+
+Swapping the provider changes no Agape source — only this one line below.
 """
+import os
 import sys
 import argparse
 from agape_parser import parse
@@ -16,6 +20,8 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Agape interpreter")
     ap.add_argument("file", help="path to .ag source file")
     ap.add_argument("--provider", choices=["mock", "anthropic"], default="mock")
+    ap.add_argument("--model", default="claude-opus-4-8",
+                    help="Anthropic model id (only used with --provider anthropic)")
     args = ap.parse_args()
 
     with open(args.file) as f:
@@ -24,8 +30,17 @@ def main() -> None:
     stmts = parse(source)
 
     if args.provider == "anthropic":
-        from agape_provider import AnthropicProvider
-        provider = AnthropicProvider()
+        if not os.environ.get("ANTHROPIC_API_KEY"):
+            sys.exit(
+                "ANTHROPIC_API_KEY is not set.\n"
+                "  export ANTHROPIC_API_KEY=sk-...   # then re-run\n"
+                "(and `pip install anthropic` if you haven't — see requirements.txt)"
+            )
+        try:
+            from agape_provider import AnthropicProvider
+        except ImportError:
+            sys.exit("The 'anthropic' package is not installed. Run: pip install anthropic")
+        provider = AnthropicProvider(model=args.model)
     else:
         from agape_provider import MockProvider
         provider = MockProvider()

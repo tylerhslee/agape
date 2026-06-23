@@ -30,6 +30,32 @@ def new_corr() -> str:
     return f"c{next(_corr_counter)}"
 
 
+# Event-type hierarchy. `Error` is the ROOT error type; the runtime's failure
+# events extend it (subtype -> supertype below). A subscription matches an event
+# when the event's type IS the subscribed type or DESCENDS from it — so
+# `catch Error` observes any failure, while `catch FailedVerification(x)` stays
+# narrow. The relation is one-directional: subscribing to a leaf never matches a
+# bare `Error`.
+EVENT_SUPERTYPE: dict[str, str] = {
+    "FailedVerification": "Error",
+    "Contradiction":      "Error",
+    "TypeMismatch":       "Error",
+    "RetryExhausted":     "Error",
+}
+
+
+def is_event_subtype(etype: str, target: str) -> bool:
+    """True if `etype` equals `target` or descends from it via EVENT_SUPERTYPE."""
+    seen: set[str] = set()
+    cur: str | None = etype
+    while cur is not None and cur not in seen:
+        if cur == target:
+            return True
+        seen.add(cur)
+        cur = EVENT_SUPERTYPE.get(cur)
+    return False
+
+
 @dataclass
 class Event:
     """
@@ -131,7 +157,9 @@ class Spine:
         return len(self.log)
 
     def _matches(self, sub: Subscription, ev: Event) -> bool:
-        if sub.etype != ev.etype:
+        # An event matches if its type is the subscribed type or a subtype of it
+        # (e.g. a FailedVerification event matches a `catch Error`).
+        if not is_event_subtype(ev.etype, sub.etype):
             return False
         if sub.subject is None:
             return True

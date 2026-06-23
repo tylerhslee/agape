@@ -1,0 +1,5 @@
+# Core interpreter (run.py hello.ag) has NO third-party dependencies —
+# the mock provider runs on the Python standard library alone.
+
+# Only needed for: python run.py hello.ag --provider anthropic
+anthropic>=0.40
