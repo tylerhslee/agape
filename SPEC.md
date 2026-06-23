@@ -253,6 +253,11 @@ Both are **spine subscriptions keyed by (event type, subject)**:
 - `when (X) { ... }` fires on the **success/resolution** events of subject `X`.
 - `catch EVENT_TYPE(subject) as e { ... }` fires on the **failure** events.
 
+Event-type matching is by **subtype**: `Error` is the root error type and
+`FailedVerification` / `Contradiction` / `TypeMismatch` / `RetryExhausted` extend
+it, so `catch Error` observes any of them while `catch FailedVerification(x)`
+stays narrow (one-directional — a leaf never matches a bare `Error`). See §9.
+
 Firing semantics (LOCKED):
 - On registration, a subscription fires for the **most recent matching event
   already on the log** (retroactive), then **once per new matching event**
@@ -352,9 +357,15 @@ enum Verdict { Entailment, Contradiction, Neutral }   // + evidence carried alon
 
 // Built-in spine events:
 //   Event(text)          — user progress/info event (via `emit`)
-//   Error(text|subject)  — error event
+//   Error(text|subject)  — ROOT error type (see hierarchy below)
 //   Contradiction(subj)  — emitted automatically on entail→Contradiction
 //   ...Started / ...Resolved pairs for async ops
+//
+// Event-type hierarchy: `Error` is the root error type. The runtime's failure
+// events EXTEND it — `FailedVerification`, `Contradiction`, `TypeMismatch`,
+// `RetryExhausted`. `catch`/`when` match by SUBTYPE: `catch Error` observes any
+// of these, while `catch FailedVerification(x)` stays narrow. The relation is
+// one-directional — a leaf subscription never matches a bare `Error`.
 
 // Subject-keyed retrieval built-ins — `EventType(subject)` retrieves the spine
 // event for that subject (overloaded with the type name on purpose):
