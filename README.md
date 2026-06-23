@@ -1,4 +1,4 @@
-# Organism — a tiny agentic language (proving-ground prototype)
+# Agape — a tiny agentic language (proving-ground prototype)
 
 This is the Python proving-ground for an agent-first language. It is NOT the
 final language — it's the fastest way to make the design real, feel it run,
@@ -14,14 +14,14 @@ on an emulated agentic substrate. This prototype settles the *design*.
 - `lexer.py`      — text → typed tokens (handles strings, `<-`, `*`, `;`, keywords)
 - `ast_nodes.py`  — the tree shapes (expressions vs. statements)
 - `parser.py`     — recursive-descent: tokens → AST
-- `evaluator.py`  — walks the AST, runs the organism (agents, mems, events)
+- `evaluator.py`  — walks the AST, runs the Agape program (agents, mems, events)
 - `provider.py`   — THE SEAM: where cognition (LLM) and meaning (embeddings) enter
 - `run.py`        — ties it together; runs the hello world by default
 
 ## Run it (here, against the stub — no key needed)
 
     python3 run.py                 # runs the built-in hello world
-    python3 run.py myprogram.org   # runs a file
+    python3 run.py myprogram.ag   # runs a file
 
 ## The hello world
 

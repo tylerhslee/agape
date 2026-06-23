@@ -33,7 +33,7 @@ def cosine_similarity(a: list[float], b: list[float]) -> float:
 
 # ---------------------------------------------------------------------------
 # StubProvider: used HERE, in the sandbox (no network, no key).
-# Lets us watch the whole organism run and verify the plumbing is correct.
+# Lets us watch the whole Agape program run and verify the plumbing is correct.
 # It is deterministic and inspectable on purpose.
 # ---------------------------------------------------------------------------
 

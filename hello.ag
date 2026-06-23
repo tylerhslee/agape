@@ -1,0 +1,103 @@
+// hello.ag — idiomatic end-to-end Agentic program.
+//
+// Agent lifecycle:
+//   `agent`  defines a reusable template (like a class).
+//   `spawn`  creates a named instance; the constructor body runs async.
+//   `awake`  opens the agent mailbox — queued sends now process.
+//   `sleep`  closes the mailbox; new sends queue again.
+//            A sleeping agent with no live references is GC'd automatically.
+
+// === Agent templates ========================================================
+
+agent NamedAgent(string n) {
+    event<Verification> name_verification;
+
+    event<null> init = self <- f"Your name is {n}.";
+
+    when (init) {
+        event<text> reply = "What is your name?" -> self;
+        verify reply ~ f"My name is {n}.";
+        self.name_verification = reply;
+        emit Event(f"NamedAgent {n} validated.");
+    }
+
+    when (sleep self) {
+        emit Event(f"NamedAgent {n} released.");
+    }
+}
+
+agent Coach(string n) {
+    extend NamedAgent(n);
+    event<null> role = self <- "You are a poker coach.";
+    when (role) {
+        event<bool> confirmed = self <- "Are you a poker coach?";
+        if !(confirmed) {
+            emit Error(f"Coach {n} did not understand its role.");
+        }
+    }
+}
+
+agent Student(string n) {
+    extend NamedAgent(n);
+    event<null> role = self <- "You are a poker student.";
+    when (role) {
+        event<bool> confirmed = self <- "Are you a poker student?";
+        if !(confirmed) {
+            emit Error(f"Student {n} did not understand its role.");
+        }
+    }
+}
+
+// === Instantiate and activate ===============================================
+
+spawn Coach john("John");
+awake john;
+
+spawn Student mary("Mary");
+awake mary;
+
+// === Teach a rule ===========================================================
+
+john <- "A flush beats a straight.";
+
+// === Ask questions ==========================================================
+
+event<text> Name = john <- "What is your name?";
+event<bool> Rule = john <- "Does a flush beat a straight?";
+
+// === Verify =================================================================
+
+verify Name == "John";
+verify Rule ~ "Yes, a flush beats a straight.";
+
+catch FailedVerification(Name) as e {
+    say("name check failed:");
+    say(e);
+}
+catch Error(Rule) as e {
+    say(e);
+}
+
+// === Query the memory graph =================================================
+
+find n where { Coach is_named n };
+verify n == "John";
+
+find m where { Student is_named m };
+verify m == "Mary";
+
+find names where { Agent is_named names };
+
+fn bool is_it_john(string x) {
+    if (x ~ "John") { return true; }
+    else { return false; }
+}
+
+bool everyone_john = all(names |> is_it_john);
+
+event<Verification> ve = verify everyone_john;
+catch (ve) as err { say(err); }
+when  (ve) { say("all agents confirmed."); }
+
+find who where { Name emitted_by Agent is_named who };
+verify who == "John";

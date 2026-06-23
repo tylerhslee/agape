@@ -5,23 +5,31 @@ from evaluator import Evaluator
 from provider import StubProvider
 
 
-def run(source, provider=None):
-    provider = provider or StubProvider()
+def parse(source):
+    """Front half of the pipeline: text -> tokens -> AST."""
     tokens = Lexer(source).lex()
-    tree = Parser(tokens).parse()
-    Evaluator(provider).run(tree)
+    return Parser(tokens).parse()
 
 
-HELLO_WORLD = '''
-agent HelloWorld;
-mem X = *HelloWorld;
-event Y = HelloWorld <- "what is your name?";
-verify(Y, "John");
-'''
+def run(source, provider=None):
+    """Full pipeline. NOTE: the evaluator has not yet been upgraded to the new
+    AST (that's Bite 2d), so calling this on new-syntax programs will error in
+    the evaluator. It stays here as the real entry point for later."""
+    provider = provider or StubProvider()
+    Evaluator(provider).run(parse(source))
+
+
+def dump_ast(source):
+    """Parse and print the AST, one top-level statement per line."""
+    for i, stmt in enumerate(parse(source)):
+        print(f"{i:2}  {stmt!r}")
+
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1:
-        with open(sys.argv[1]) as f:
-            run(f.read())
-    else:
-        run(HELLO_WORLD)
+    # The evaluator now runs the new AST (event spine). `find` is still a stub
+    # and cognition is the StubProvider, so verifies FAIL for now — that failure
+    # path is exactly what shows the catch machinery working. `python3 run.py
+    # <file>` runs that file instead of the default target.
+    path = sys.argv[1] if len(sys.argv) > 1 else "hello.org"
+    with open(path) as f:
+        run(f.read())

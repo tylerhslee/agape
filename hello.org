@@ -1,0 +1,62 @@
+// hello.org — a complete, end-to-end Agape program.
+//
+// STATUS: this is the TARGET design (for your review). It is NOT runnable yet —
+// the interpreter is being upgraded to meet it (Bites 2c-2e). Read it as the
+// spec: "this is exactly how an idiomatic Agape program should look."
+//
+// Scenario: two poker agents with separate identities. We give them identity,
+// teach the coach a rule, ask questions, verify answers (exact & semantic),
+// handle failures, and query what each agent knows.
+
+// === Agents ================================================================
+// The constructor string is the agent's system prompt. On construction the
+// agent thinks about it and stores facts into its OWN PRIVATE memory, e.g.
+// (self, is_named, "John"). The empty body {} means no extra setup. Coach and
+// Student share nothing.
+agent Coach("You are a poker coach. Your name is John.") {}
+agent Student("You are a poker student. Your name is Mary.") {}
+
+// === Teaching: a statement is stored, a question is answered ================
+// The agent's cognition recognizes this as a fact and stores it (verbatim,
+// because it's a precise rule). A send always yields an event; here we don't
+// need to bind it to a name.
+Coach <- "A flush beats a straight.";
+
+// === Asking: each send yields an event =====================================
+event Name = Coach <- "What is your name?";
+event Rule = Coach <- "Does a flush beat a straight?";
+
+// === Verify: == is exact, ~ is semantic ====================================
+// `verify` is a statement, not a function. On failure it EMITS a
+// FailedVerificationEvent (caught below) rather than throwing.
+verify Name == "John";
+verify Rule ~  "Yes, a flush beats a straight.";
+
+// === Handle failures, decoupled in time ====================================
+// `catch` is a standing subscription, not a try-block: it fires for matching
+// events whether they already happened or happen later. `as e` binds the event.
+catch FailedVerificationEvent(Name) as e {
+    say("name check failed:");
+    say(e);
+}
+// Supertype catch: Error is the parent of FailedVerificationEvent, so this
+// handles ANY error originating from the Rule event.
+catch Error(Rule) as e {
+    say(e);
+}
+
+// === Query the memory graph ================================================
+// Triple-pattern queries. `Coach`/`Student` are bound values; `n`/`m` are fresh
+// variables bound by the match. Traversal is exact.
+find n where { Coach is_named n };
+verify n == "John";
+
+find m where { Student is_named m };
+verify m == "Mary";          // separate agent, separate private memory
+
+// Chained traversal with a TYPE constraint: from the Name event, walk back to
+// its emitter (which must be an Agent), then read that agent's stored name.
+// `Agent` is a type constraint, not a variable. This cross-checks what the
+// agent SAID (the reply) against what it KNOWS (its memory).
+find who where { Name emitted_by Agent is_named who };
+verify who == "John";
