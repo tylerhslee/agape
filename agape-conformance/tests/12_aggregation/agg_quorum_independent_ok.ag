@@ -1,0 +1,16 @@
+//! id:        agg_quorum_independent_ok
+//! section:   12_aggregation
+//! expect:    accept
+//! spec:      §12 (quorum over independent Credence<bool> judges fuses to one Credence<bool>)
+//! ---
+agent Triage {
+  on awake {
+    Credence<bool> j1 = self <- "is this spam?";
+    Credence<bool> j2 = self <- "does this look like spam?";
+    Credence<bool> j3 = self <- "would a user mark this spam?";
+    independent j1, j2, j3;
+    Credence<bool> agreed = quorum(2 of j1, j2, j3);
+    verify agreed;
+  }
+}
+spawn Triage t; awake t;

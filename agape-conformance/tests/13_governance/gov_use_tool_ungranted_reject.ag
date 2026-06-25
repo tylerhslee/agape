@@ -1,0 +1,11 @@
+//! id:        gov_use_tool_ungranted_reject
+//! section:   13_governance
+//! expect:    reject
+//! error:     AuthorityViolation
+//! spec:      §6b, §13 (default-deny: a tool call needs a `use` grant)
+//! ---
+tool search(text q) -> text;
+agent R {
+  text hits = search("q");
+}
+spawn R r; awake r;

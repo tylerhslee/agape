@@ -1,0 +1,11 @@
+//! id:        type_scalars
+//! section:   03_types
+//! expect:    accept
+//! spec:      §3 (scalars int/float/bool/text/null)
+//! ---
+int i = 1;
+float f = 2.5;
+bool b = true;
+text t = "hi";
+null n = null;
+say(t);

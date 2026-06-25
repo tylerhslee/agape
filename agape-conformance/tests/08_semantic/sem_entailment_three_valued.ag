@@ -1,0 +1,16 @@
+//! id:        sem_entailment_three_valued
+//! section:   08_semantic
+//! expect:    accept
+//! spec:      §8, §9 (Credence<Entailment> over {Entails, Contradicts, Neutral})
+//! ---
+agent A {
+  on awake {
+    Credence<Entailment> v = self <- "does \"sky is blue\" entail \"it is daytime\"?";
+    case (v) as d {
+      Entails: { say("e"); }
+      Contradicts: { say("c"); }
+      Neutral: { say("n"); }
+    }
+  }
+}
+spawn A a; awake a;

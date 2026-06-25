@@ -1,0 +1,9 @@
+//! id:        axes_pure_call_sync_untainted
+//! section:   01_axes
+//! expect:    accept
+//! spec:      §1 Axis A/B (a pure `sync` fn is cognition-free and adds no taint)
+//! note:      arithmetic only; provably seam-free.
+//! ---
+sync int dbl(int x) { return x * 2; }
+int y = dbl(21);
+say(f"{y}");

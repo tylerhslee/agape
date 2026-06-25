@@ -1,0 +1,31 @@
+// ============================================================================
+// console_demo.ag — a small always-live program for Agape Studio.
+//
+// Most Agape examples run top-to-bottom and quiesce. This one is different: it
+// spawns two agents and AWAKES them WITHOUT ever sleeping them, so when the
+// Studio backend loads it the program reaches quiescence with two agents still
+// alive. You then drive them from the IDE — send messages, run queries, inject
+// events — and watch the spine grow in real time.
+//
+// It deliberately speaks the Mock provider's vocabulary (name seeding + the
+// "what is your name?" query) so the console is fully demonstrable with no API
+// key. Swap to --provider anthropic and the same program thinks for real.
+// ============================================================================
+
+agent Helper(text n) grants { emit Event } {
+    // Seed the agent's identity on first awake. `event<null>` — recorded on the
+    // spine, no typed reply. The Mock provider internalizes "Your name is {n}."
+    // into the agent's memory, so a later `find ... is_named` resolves.
+    event<null> init = self <- f"Your name is {n}.";
+
+    on awake  { emit Event(f"Helper {n} is online.");  }
+    on sleep  { emit Event(f"Helper {n} went offline."); }
+}
+
+spawn Helper ada("Ada");
+awake ada;
+
+spawn Helper bo("Bo");
+awake bo;
+
+// No `sleep` — both agents stay live for the console to drive.

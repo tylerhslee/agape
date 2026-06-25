@@ -1,0 +1,9 @@
+//! id:        agent_spawn_instantiate_only
+//! section:   05_agents
+//! expect:    accept
+//! contains:  Spawned(a)
+//! absent:  AgentAwake(a)
+//! spec:      §5 (spawn instantiates only: no constructor body, no mailbox)
+//! ---
+agent A { on awake { say("constructed"); } }
+spawn A a;

@@ -1,0 +1,17 @@
+//! id:        prelude_catch_error_catches_contradiction
+//! section:   09_prelude
+//! expect:    accept
+//! spec:      §9 (Contradiction extends Error; catch Error catches it by subtype)
+//! ---
+catch Error as e { say("caught"); }
+agent J {
+  on awake {
+    Credence<Entailment> v = self <- "does \"sky is blue\" entail \"sky is green\"?";
+    case (v) as d {
+      Entails: { say("e"); }
+      Contradicts: { say("c"); }
+      Neutral: { say("n"); }
+    }
+  }
+}
+spawn J j; awake j;

@@ -1,0 +1,72 @@
+// ============================================================================
+// backend.ag — Agape Studio's HTTP backend, written in Agape, on the Rust runtime.
+//
+// This is Phase 2 from session.py's docstring made real: "the backend is Agape."
+// The Rust runtime owns the TCP socket (a somatic resource) and exposes it via the
+// `listen` sensor (SPEC §5b); this program is the router. Session machinery — the
+// guest interpreter, spine/world JSON, JSON field extraction — are runtime syscalls
+// (studio_*, json_get, query_int, quote, respond_static): the somatic "syscalls" a
+// userland program calls. An Agape program hosting Agape programs is the OS pattern.
+//
+// Run it with:  agape studio  (sets `port`, the web dir, and the guest provider).
+// Every command reaches the guest as Agape source — exactly the invariant the
+// Python app.py preserved, now literally an Agape program.
+// ============================================================================
+
+listen http on port as req;
+
+when (req) {
+    bool handled = false;
+
+    // ── reads (project the spine) ──
+    if (req.path == "/api/state") {
+        respond(req, 200, "application/json", studio_state());
+        handled = true;
+    }
+    if (req.path == "/api/spine") {
+        respond(req, 200, "application/json", studio_events(query_int(req.query, "since")));
+        handled = true;
+    }
+
+    // ── the REPL: load a program / eval a snippet against the live world ──
+    if (req.path == "/api/load") {
+        text body = studio_load(json_get(req.body, "source"));
+        respond(req, studio_status(), "application/json", body);
+        handled = true;
+    }
+    if (req.path == "/api/eval") {
+        text r = studio_eval(json_get(req.body, "source"));
+        respond(req, studio_status(), "application/json", r);
+        handled = true;
+    }
+
+    // ── typed lifecycle sugar: each reaches the guest as Agape source ──
+    if (req.path == "/api/spawn") {
+        text src = "spawn " + json_get(req.body, "type") + " " + json_get(req.body, "name") + "();";
+        respond(req, studio_status(), "application/json", studio_eval(src));
+        handled = true;
+    }
+    if (req.path == "/api/awake") {
+        respond(req, studio_status(), "application/json", studio_eval("awake " + json_get(req.body, "name") + ";"));
+        handled = true;
+    }
+    if (req.path == "/api/sleep") {
+        respond(req, studio_status(), "application/json", studio_eval("sleep " + json_get(req.body, "name") + ";"));
+        handled = true;
+    }
+    if (req.path == "/api/send") {
+        text src = "event<text> _send = " + json_get(req.body, "dest") + " <- " + quote(json_get(req.body, "message")) + ";";
+        respond(req, studio_status(), "application/json", studio_eval(src));
+        handled = true;
+    }
+    if (req.path == "/api/prompt") {
+        text r = studio_inject(json_get(req.body, "source"), json_get(req.body, "value"));
+        respond(req, studio_status(), "application/json", r);
+        handled = true;
+    }
+
+    // ── everything else is the static React app ──
+    if (!handled) {
+        respond_static(req, req.path);
+    }
+}

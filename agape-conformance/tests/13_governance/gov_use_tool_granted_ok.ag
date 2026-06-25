@@ -1,0 +1,10 @@
+//! id:        gov_use_tool_granted_ok
+//! section:   13_governance
+//! expect:    accept
+//! spec:      §6b, §13 (a granted `use TOOL` permits the tool call)
+//! ---
+tool search(text q) -> text;
+agent R grants { use search } {
+  text hits = search("q");
+}
+spawn R r; awake r;

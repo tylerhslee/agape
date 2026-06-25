@@ -1,0 +1,8 @@
+//! id:        fn_sync_calls_async_reject
+//! section:   04_functions
+//! expect:    reject
+//! error:     ColorViolation
+//! spec:      §4 (a sync fn may only call other sync fns)
+//! ---
+text ask(text q) { return self <- q; }
+sync text wrap(text q) { return ask(q); }

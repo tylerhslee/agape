@@ -1,0 +1,13 @@
+//! id:        axes_send_is_event_tainted
+//! section:   01_axes
+//! expect:    accept
+//! spec:      §1 Axis B/C (`d <- p` : event<T>, on the spine, and its reply is tainted P)
+//! note:      a send is a spine op yielding a tainted reply.
+//! ---
+agent A {
+  on awake {
+    event<text> r = self <- "what is your name?";
+    say(r);
+  }
+}
+spawn A a; awake a;

@@ -1,0 +1,11 @@
+//! id:        lex_comment_fstring
+//! section:   00_lexical
+//! expect:    accept
+//! spec:      §2 (line comments; f-string interpolation; INT/FLOAT literals)
+//! note:      lexical basics that survive into v1.0 unchanged.
+//! ---
+// a line comment
+int a = 2 + 3;
+float r = 7.0 / 2.0;
+text g = f"a={a}, r={r}";
+say(g);

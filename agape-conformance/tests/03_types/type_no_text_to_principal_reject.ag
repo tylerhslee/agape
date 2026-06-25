@@ -1,0 +1,13 @@
+//! id:        type_no_text_to_principal_reject
+//! section:   03_types
+//! expect:    reject
+//! error:     TypeError
+//! spec:      §3, §13 (no text -> Principal coercion at a gate)
+//! ---
+agent Drafter {
+  on awake {
+    event<text> memo = self <- "draft the memo";
+    verify memo by "alice";
+  }
+}
+spawn Drafter d; awake d;

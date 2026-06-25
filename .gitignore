@@ -1,0 +1,13 @@
+# Rust
+target/
+
+# Node / Vite (studio)
+node_modules/
+dist/
+*.local
+.vite/
+
+# Python (conformance generator)
+__pycache__/
+*.pyc
+.venv/

@@ -1,0 +1,353 @@
+//! The conformance harness — the scoreboard that drives development.
+//!
+//! It reads each test's `//!` header (the authoritative per-test spec), runs the
+//! body through `process`, and scores it against the declared outcome. Versioning
+//! follows the suite contract (README "Versions"): a build of version V runs a
+//! test iff `since <= V` and (`until` absent or `V <= until`).
+//!
+//! Spine assertions (`spine:`/`contains:`/`absent:`) are matched (M4): `spine:`
+//! is an ordered subsequence of the produced log, `contains:`/`absent:` are
+//! membership / non-membership, all subtype-aware (§9).
+
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use crate::diag::ErrorClass;
+use crate::interp::is_subtype;
+use crate::process;
+use crate::spine::Spine;
+
+/// A semantic version as (major, minor), e.g. "1.0" -> (1, 0), "0.3" -> (0, 3).
+/// Ordered lexicographically, which matches 0.3 < 0.4 < 1.0.
+pub type Version = (u32, u32);
+
+pub fn parse_version(s: &str) -> Version {
+    let s = s.trim();
+    let mut it = s.split('.');
+    let major = it.next().and_then(|x| x.trim().parse().ok()).unwrap_or(0);
+    let minor = it.next().and_then(|x| x.trim().parse().ok()).unwrap_or(0);
+    (major, minor)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Expect {
+    Accept,
+    Reject,
+    Blocked,
+    Provisional,
+}
+
+/// A single conformance test, parsed from a `.ag` file's `//!` header + body.
+#[derive(Debug, Clone)]
+pub struct TestSpec {
+    pub id: String,
+    pub section: String,
+    pub path: PathBuf,
+    pub since: Version,
+    pub until: Option<Version>,
+    pub expect: Expect,
+    pub error: Option<ErrorClass>,
+    pub body: String,
+    /// Spine assertions, kept verbatim for the M4 matcher.
+    pub spine: Option<String>,
+    pub contains: Option<String>,
+    pub absent: Option<String>,
+}
+
+/// Parse one test file's header and body. Returns `None` if it has no usable
+/// header (not a conformance test).
+pub fn parse_test(path: &Path) -> Option<TestSpec> {
+    let text = fs::read_to_string(path).ok()?;
+    let mut header: Vec<(String, String)> = Vec::new();
+    let mut body = String::new();
+    let mut in_body = false;
+
+    for line in text.lines() {
+        if in_body {
+            body.push_str(line);
+            body.push('\n');
+            continue;
+        }
+        let t = line.trim_start();
+        if let Some(rest) = t.strip_prefix("//!") {
+            let rest = rest.trim();
+            if rest == "---" {
+                in_body = true;
+                continue;
+            }
+            if let Some((k, v)) = rest.split_once(':') {
+                header.push((k.trim().to_string(), v.trim().to_string()));
+            }
+        } else {
+            // A non-`//!` line before the `//! ---` terminator: no header block.
+            in_body = true;
+            body.push_str(line);
+            body.push('\n');
+        }
+    }
+
+    let get = |key: &str| -> Option<String> {
+        header.iter().find(|(k, _)| k == key).map(|(_, v)| v.clone())
+    };
+
+    let expect = match get("expect")?.as_str() {
+        "accept" => Expect::Accept,
+        "reject" => Expect::Reject,
+        "blocked" => Expect::Blocked,
+        "provisional" => Expect::Provisional,
+        other => {
+            eprintln!("[warn] {}: unknown expect {:?}", path.display(), other);
+            return None;
+        }
+    };
+
+    Some(TestSpec {
+        id: get("id").unwrap_or_else(|| path.file_stem().unwrap().to_string_lossy().into()),
+        section: get("section").unwrap_or_default(),
+        path: path.to_path_buf(),
+        since: get("since").map(|s| parse_version(&s)).unwrap_or((0, 3)),
+        until: get("until").map(|s| parse_version(&s)),
+        expect,
+        error: get("error").and_then(|e| ErrorClass::from_suite(&e)),
+        body,
+        spine: get("spine"),
+        contains: get("contains"),
+        absent: get("absent"),
+    })
+}
+
+/// Recursively collect every `.ag` test under `dir`, sorted by (section, id).
+pub fn collect_tests(dir: &Path) -> Vec<TestSpec> {
+    let mut out = Vec::new();
+    collect_into(dir, &mut out);
+    out.sort_by(|a, b| a.section.cmp(&b.section).then_with(|| a.id.cmp(&b.id)));
+    out
+}
+
+fn collect_into(dir: &Path, out: &mut Vec<TestSpec>) {
+    let Ok(entries) = fs::read_dir(dir) else { return };
+    for entry in entries.flatten() {
+        let p = entry.path();
+        if p.is_dir() {
+            collect_into(&p, out);
+        } else if p.extension().and_then(|e| e.to_str()) == Some("ag") {
+            if let Some(t) = parse_test(&p) {
+                out.push(t);
+            }
+        }
+    }
+}
+
+impl TestSpec {
+    /// Does this test apply to a build of version `v`?
+    pub fn applies_to(&self, v: Version) -> bool {
+        if v < self.since {
+            return false; // newer-spec: this build predates the feature
+        }
+        if let Some(until) = self.until {
+            if v > until {
+                return false; // superseded by a later spec version
+            }
+        }
+        true
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Status {
+    Pass,
+    Fail(String),
+    Blocked,
+    SkippedNewer,
+    SkippedSuperseded,
+}
+
+#[derive(Debug, Clone)]
+pub struct Outcome {
+    pub id: String,
+    pub section: String,
+    pub status: Status,
+}
+
+/// Score one test against the pipeline. Spine assertions are not matched yet
+/// (M4), so accepted tests pass on non-rejection alone for now.
+pub fn score(test: &TestSpec, v: Version) -> Status {
+    if v < test.since {
+        return Status::SkippedNewer;
+    }
+    if let Some(until) = test.until {
+        if v > until {
+            return Status::SkippedSuperseded;
+        }
+    }
+    match test.expect {
+        Expect::Blocked | Expect::Provisional => Status::Blocked,
+        Expect::Accept => match process(&test.body) {
+            Ok(spine) => match check_assertions(test, &spine) {
+                Ok(()) => Status::Pass,
+                Err(msg) => Status::Fail(msg),
+            },
+            Err(e) => Status::Fail(format!("expected accept, got reject ({})", e.class)),
+        },
+        Expect::Reject => match process(&test.body) {
+            Ok(_) => Status::Fail("expected reject, but accepted".into()),
+            Err(e) => match test.error {
+                Some(want) if want == e.class => Status::Pass,
+                Some(want) => Status::Fail(format!(
+                    "rejected with wrong class: got {}, want {}",
+                    e.class, want
+                )),
+                None => Status::Fail("reject test missing an `error:` class".into()),
+            },
+        },
+    }
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct Report {
+    pub version: Version,
+    pub outcomes: Vec<Outcome>,
+}
+
+impl Report {
+    pub fn count(&self, pred: impl Fn(&Status) -> bool) -> usize {
+        self.outcomes.iter().filter(|o| pred(&o.status)).count()
+    }
+
+    pub fn passed(&self) -> usize {
+        self.count(|s| matches!(s, Status::Pass))
+    }
+    pub fn failed(&self) -> usize {
+        self.count(|s| matches!(s, Status::Fail(_)))
+    }
+    pub fn blocked(&self) -> usize {
+        self.count(|s| matches!(s, Status::Blocked))
+    }
+    pub fn skipped(&self) -> usize {
+        self.count(|s| matches!(s, Status::SkippedNewer | Status::SkippedSuperseded))
+    }
+    /// Applicable = scored (pass or fail), the meaningful denominator.
+    pub fn applicable(&self) -> usize {
+        self.passed() + self.failed()
+    }
+}
+
+// ── spine assertion matcher (§7 vocabulary; README "Spine matcher") ──────────
+
+/// One assertion token: a single event `Etype(subj)?`, or a `pair(op@subj)`
+/// (a started + resolved pair for async op `op` on subject `subj`).
+#[derive(Debug, Clone)]
+enum Token {
+    Single { etype: String, subj: Option<String> },
+    Pair { op: String, subj: String },
+}
+
+fn parse_token(s: &str) -> Option<Token> {
+    let s = s.trim();
+    if s.is_empty() {
+        return None;
+    }
+    if let Some(inner) = s.strip_prefix("pair(").and_then(|x| x.strip_suffix(')')) {
+        let (op, subj) = inner.split_once('@')?;
+        return Some(Token::Pair { op: op.trim().to_string(), subj: subj.trim().to_string() });
+    }
+    if let Some(inner) = s.strip_prefix("single(").and_then(|x| x.strip_suffix(')')) {
+        // `single(op@subj)` — one synchronous event of `op` on `subj`.
+        let (op, subj) = inner.split_once('@')?;
+        return Some(Token::Single { etype: op.trim().to_string(), subj: Some(subj.trim().to_string()) });
+    }
+    if let Some(idx) = s.find('(') {
+        let etype = s[..idx].trim().to_string();
+        let subj = s[idx + 1..].trim_end_matches(')').trim().to_string();
+        return Some(Token::Single { etype, subj: Some(subj) });
+    }
+    Some(Token::Single { etype: s.to_string(), subj: None })
+}
+
+fn parse_tokens(s: &str) -> Vec<Token> {
+    s.split(';').filter_map(parse_token).collect()
+}
+
+fn event_matches(ev: &crate::spine::Event, etype: &str, subj: &Option<String>) -> bool {
+    is_subtype(&ev.etype, etype) && match subj {
+        Some(want) => ev.subject.as_deref() == Some(want.as_str()),
+        None => true,
+    }
+}
+
+/// The (started, resolved) event etypes for a `pair(op@…)` op.
+fn pair_etypes(op: &str) -> (String, String) {
+    match op {
+        "send" => ("Sent".into(), "Resolved".into()),
+        "Tool" | "tool" => ("ToolStarted".into(), "ToolResolved".into()),
+        other => (format!("{other}Started"), format!("{other}Resolved")),
+    }
+}
+
+fn token_present(spine: &Spine, t: &Token) -> bool {
+    match t {
+        Token::Single { etype, subj } => spine.log.iter().any(|ev| event_matches(ev, etype, subj)),
+        Token::Pair { op, subj } => {
+            let (started, resolved) = pair_etypes(op);
+            let s = Some(subj.clone());
+            spine.log.iter().any(|ev| event_matches(ev, &started, &s))
+                && spine.log.iter().any(|ev| event_matches(ev, &resolved, &s))
+        }
+    }
+}
+
+/// `spine:` — the tokens must appear as an ordered subsequence of the log.
+fn matches_ordered(spine: &Spine, tokens: &[Token]) -> bool {
+    let mut cursor = 0usize;
+    for t in tokens {
+        let Token::Single { etype, subj } = t else {
+            // A `pair` in an ordered spec: require both present (order-free).
+            if !token_present(spine, t) {
+                return false;
+            }
+            continue;
+        };
+        match spine.log[cursor..].iter().position(|ev| event_matches(ev, etype, subj)) {
+            Some(off) => cursor += off + 1,
+            None => return false,
+        }
+    }
+    true
+}
+
+fn check_assertions(test: &TestSpec, spine: &Spine) -> Result<(), String> {
+    if let Some(s) = &test.spine {
+        let toks = parse_tokens(s);
+        if !matches_ordered(spine, &toks) {
+            return Err(format!("spine assertion failed: expected ordered [{s}], got [{}]", spine.dump().replace('\n', ", ")));
+        }
+    }
+    if let Some(s) = &test.contains {
+        for t in parse_tokens(s) {
+            if !token_present(spine, &t) {
+                return Err(format!("contains assertion failed: missing {t:?} in [{}]", spine.dump().replace('\n', ", ")));
+            }
+        }
+    }
+    if let Some(s) = &test.absent {
+        for t in parse_tokens(s) {
+            if token_present(spine, &t) {
+                return Err(format!("absent assertion failed: present {t:?} in [{}]", spine.dump().replace('\n', ", ")));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Run the whole suite under `dir` at build version `v`.
+pub fn run(dir: &Path, v: Version) -> Report {
+    let outcomes = collect_tests(dir)
+        .into_iter()
+        .map(|t| Outcome {
+            status: score(&t, v),
+            id: t.id,
+            section: t.section,
+        })
+        .collect();
+    Report { version: v, outcomes }
+}

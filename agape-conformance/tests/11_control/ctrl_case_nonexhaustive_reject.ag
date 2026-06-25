@@ -1,0 +1,17 @@
+//! id:        ctrl_case_nonexhaustive_reject
+//! section:   11_control
+//! expect:    reject
+//! error:     ExhaustivenessError
+//! spec:      §11 (a case with no default must cover all variants)
+//! ---
+enum Color { Red, Green, Blue }
+agent A {
+  on awake {
+    Credence<Color> c = self <- "what color is grass?";
+    case (c) as v {
+      Red: { say("r"); }
+      Green: { say("g"); }
+    }
+  }
+}
+spawn A a; awake a;

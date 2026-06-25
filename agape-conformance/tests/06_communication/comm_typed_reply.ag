@@ -1,0 +1,12 @@
+//! id:        comm_typed_reply
+//! section:   06_communication
+//! expect:    accept
+//! spec:      §6 (a typed reply binds the seam answer into event<T>)
+//! ---
+agent A {
+  on awake {
+    event<bool> yes = self <- "is the sky blue?";
+    say(f"{yes}");
+  }
+}
+spawn A a; awake a;

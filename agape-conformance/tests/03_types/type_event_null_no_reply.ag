@@ -1,0 +1,11 @@
+//! id:        type_event_null_no_reply
+//! section:   03_types
+//! expect:    accept
+//! spec:      §3 (event<null> = sent, no typed reply bound)
+//! ---
+agent A {
+  on awake {
+    event<null> seeded = self <- "your name is Ada.";
+  }
+}
+spawn A a; awake a;

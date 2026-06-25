@@ -1,0 +1,8 @@
+//! id:        agent_sleep_runs_hook
+//! section:   05_agents
+//! expect:    accept
+//! contains:  SleepEvent(a)
+//! spec:      §5 (sleep closes the mailbox and runs the on-sleep hook)
+//! ---
+agent A { on sleep { say("released"); } }
+spawn A a; awake a; sleep a;

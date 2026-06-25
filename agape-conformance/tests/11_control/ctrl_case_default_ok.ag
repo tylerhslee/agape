@@ -1,0 +1,16 @@
+//! id:        ctrl_case_default_ok
+//! section:   11_control
+//! expect:    accept
+//! spec:      §11 (a default arm makes a partial case exhaustive)
+//! ---
+enum Color { Red, Green, Blue }
+agent A {
+  on awake {
+    Credence<Color> c = self <- "what color is grass?";
+    case (c) as v {
+      Green: { say("g"); }
+      default: { say("other"); }
+    }
+  }
+}
+spawn A a; awake a;

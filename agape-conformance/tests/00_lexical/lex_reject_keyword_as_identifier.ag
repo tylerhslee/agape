@@ -1,0 +1,8 @@
+//! id:        lex_reject_keyword_as_identifier
+//! section:   00_lexical
+//! expect:    reject
+//! error:     ParseError
+//! spec:      §2 (reserved keywords may not be used as identifiers)
+//! note:      `agent` is reserved.
+//! ---
+int agent = 5;

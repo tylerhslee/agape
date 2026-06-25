@@ -1,0 +1,163 @@
+#!somatic
+// ============================================================================
+// compiler/lexer.ag — the Agape compiler's lexer, written in SOMATIC AGAPE.
+//
+// The full token set, faithful to the reference lexer: keywords, identifiers,
+// integers, strings (with escapes), the multi-char operators, `//` comments and
+// `#!` pragmas. `#!somatic` proves the whole file is cognition-free.
+//
+// This is a LIBRARY (no driver). The self-hosting demo lives in selfhost.ag,
+// which reads real Agape source — including THIS file — and lexes it.
+// ============================================================================
+import "std/char";
+
+// A token: one variant per kind, each carrying its text.
+enum Token {
+    Id(text),
+    Kw(text),
+    Int(text),
+    Str(text),
+    Op(text),
+    Pragma(text),
+}
+
+// Is `w` one of Agape's keywords? (Kw vs Id; both are one token, so this never
+// changes token boundaries — only how a word is classified.)
+sync bool is_keyword(text w) {
+    array<text> kws = ["import", "enum", "sync", "agent", "extend", "grants",
+        "authority", "spawn", "awake", "sleep", "self", "on", "prompt", "when",
+        "catch", "case", "if", "else", "return", "retry", "default", "while",
+        "break", "verify", "entail", "emit", "calibrate", "find", "where",
+        "select", "from", "match", "all", "any", "int", "float", "bool", "text",
+        "null", "event", "array", "true", "false", "say"];
+    int i = 0;
+    int m = len(kws);
+    while (i < m) {
+        if (w == kws[i]) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// Bounds-safe two-character lookahead: are src[i],src[i+1] == a,b ?
+sync bool two_at(text src, int i, int n, text a, text b) {
+    if (i + 1 >= n) { return false; }
+    return and(src[i] == a, src[i + 1] == b);
+}
+
+// Is `s` (a two-char string) one of the multi-char operators?
+sync bool is_op2(text s) {
+    return or(or(or(s == "<-", s == "|>"), or(s == "==", s == "!=")),
+              or(s == "<=", s == ">="));
+}
+
+// ── scanners: each consumes one token (or a skip) and returns the new index ──
+// They push onto the shared `toks` array (mutated in place), so the main loop
+// stays flat.
+
+sync int scan_comment(text src, int i, int n) {
+    // `//` to end of line; the newline is left for the main loop to skip.
+    while (i < n) {
+        if (src[i] == "\n") { return i; }
+        i = i + 1;
+    }
+    return i;
+}
+
+sync int scan_pragma(text src, int i, int n, array<Token> toks) {
+    i = i + 2;                      // skip `#!`
+    text w = "";
+    while (i < n) {
+        text d = src[i];
+        if (or(is_alnum(d), d == "_")) { w = w + d; i = i + 1; }
+        else { break; }
+    }
+    push(toks, Pragma(w));
+    return i;
+}
+
+sync int scan_string(text src, int i, int n, array<Token> toks) {
+    text s = "";
+    i = i + 1;                      // skip opening quote
+    while (i < n) {
+        text d = src[i];
+        if (d == "\"") { i = i + 1; break; }       // closing quote
+        if (d == "\\") {                            // escape: take next char raw
+            i = i + 1;
+            if (i < n) { s = s + src[i]; i = i + 1; }
+        } else {
+            s = s + d;
+            i = i + 1;
+        }
+    }
+    push(toks, Str(s));
+    return i;
+}
+
+sync int scan_int(text src, int i, int n, array<Token> toks) {
+    text num = "";
+    while (i < n) {
+        text d = src[i];
+        if (is_digit(d)) { num = num + d; i = i + 1; }
+        else { break; }
+    }
+    push(toks, Int(num));
+    return i;
+}
+
+sync int scan_ident(text src, int i, int n, array<Token> toks) {
+    text w = "";
+    while (i < n) {
+        text d = src[i];
+        if (or(is_alnum(d), d == "_")) { w = w + d; i = i + 1; }
+        else { break; }
+    }
+    if (is_keyword(w)) { push(toks, Kw(w)); } else { push(toks, Id(w)); }
+    return i;
+}
+
+sync int scan_op(text src, int i, int n, array<Token> toks) {
+    text c = src[i];
+    if (i + 1 < n) {
+        text two = c + src[i + 1];
+        if (is_op2(two)) { push(toks, Op(two)); return i + 2; }
+    }
+    push(toks, Op(c));
+    return i + 1;
+}
+
+// ── the lexer ────────────────────────────────────────────────────────────────
+sync array<Token> lex(text src) {
+    array<Token> toks = [];
+    int i = 0;
+    int n = len(src);
+    while (i < n) {
+        text c = src[i];
+        if (is_space(c)) {
+            i = i + 1;
+        } else {
+            if (two_at(src, i, n, "/", "/")) {
+                i = scan_comment(src, i, n);
+            } else {
+                if (two_at(src, i, n, "#", "!")) {
+                    i = scan_pragma(src, i, n, toks);
+                } else {
+                    if (c == "\"") {
+                        i = scan_string(src, i, n, toks);
+                    } else {
+                        if (is_digit(c)) {
+                            i = scan_int(src, i, n, toks);
+                        } else {
+                            if (or(is_alpha(c), c == "_")) {
+                                i = scan_ident(src, i, n, toks);
+                            } else {
+                                i = scan_op(src, i, n, toks);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return toks;
+}

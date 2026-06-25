@@ -1,0 +1,17 @@
+//! id:        sem_credence_over_user_enum
+//! section:   08_semantic
+//! expect:    accept
+//! spec:      §8 (a seam send bound to Credence<E> is a constrained classifier over E)
+//! ---
+enum Sentiment { Pos, Neg, Neutral }
+agent A {
+  on awake {
+    Credence<Sentiment> s = self <- "sentiment of: I love this";
+    case (s) as v {
+      Pos: { say("pos"); }
+      Neg: { say("neg"); }
+      Neutral: { say("neu"); }
+    }
+  }
+}
+spawn A a; awake a;

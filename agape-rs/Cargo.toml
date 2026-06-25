@@ -1,0 +1,21 @@
+[package]
+name = "agape-rs"
+version = "0.0.1"
+edition = "2021"
+description = "A clean-room Rust implementation of the Agape language, built to pass the v1.0 conformance suite."
+
+[lib]
+name = "agape_rs"
+path = "src/lib.rs"
+
+[[bin]]
+name = "conformance"
+path = "src/bin/conformance.rs"
+
+[[bin]]
+name = "agape"
+path = "src/bin/agape.rs"
+
+# No external dependencies: the whole front end + runtime + conformance harness is
+# hand-rolled, so the build is fast and offline. (We may add `toml` later only to
+# cross-check MANIFEST.toml; the //! headers are the authoritative per-test spec.)

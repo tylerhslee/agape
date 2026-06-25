@@ -1,0 +1,14 @@
+//! id:        mem_queried_fact_taint_reject
+//! section:   10_memory
+//! expect:    reject
+//! error:     TaintViolation
+//! spec:      §10, §13 (queried facts default to P-tainted; must be re-gated before a consequential emit)
+//! ---
+struct Memo { amount: int, to: text }
+authority Transfer;
+event Transfer(memo: Memo);
+agent Bank grants { emit Transfer } {
+  Memo m = select amount, to from self where { kind: "pending" };
+  emit Transfer(m);
+}
+spawn Bank b; awake b;

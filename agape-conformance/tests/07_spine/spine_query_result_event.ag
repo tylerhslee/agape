@@ -1,0 +1,7 @@
+//! id:        spine_query_result_event
+//! section:   07_spine
+//! expect:    accept
+//! contains:  QueryResult(spine)
+//! spec:      §10 (a query STATEMENT lands a QueryResult event on the spine)
+//! ---
+select * from spine where { etype: "Spawned" };

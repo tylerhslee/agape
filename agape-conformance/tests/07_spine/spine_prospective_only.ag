@@ -1,0 +1,10 @@
+//! id:        spine_prospective_only
+//! section:   07_spine
+//! expect:    accept
+//! absent:  Event
+//! spec:      §7 (subscriptions are prospective; never fire for prior events)
+//! note:      a catch registered after an emit does NOT fire for that earlier event.
+//! ---
+event Note(text msg);
+emit Note("early");
+catch Note(x) as e { say("should not fire for early"); }

@@ -1,0 +1,8 @@
+//! id:        fn_sync_tool_call_reject
+//! section:   04_functions
+//! expect:    reject
+//! error:     ColorViolation
+//! spec:      §4, §6b (a tool call reaches the tool seam → async)
+//! ---
+tool search(text q) -> text;
+sync text find(text q) { return search(q); }

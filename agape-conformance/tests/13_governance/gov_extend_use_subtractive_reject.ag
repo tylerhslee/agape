@@ -1,0 +1,12 @@
+//! id:        gov_extend_use_subtractive_reject
+//! section:   13_governance
+//! expect:    reject
+//! error:     AuthorityViolation
+//! spec:      §5, §13 (capabilities, incl. `use`, are subtractive under extend)
+//! ---
+tool search(text q) -> text;
+agent Base grants { } {}
+agent Child grants { use search } {
+  extend Base();
+}
+spawn Child c; awake c;

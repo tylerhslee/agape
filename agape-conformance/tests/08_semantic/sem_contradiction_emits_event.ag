@@ -1,0 +1,17 @@
+//! id:        sem_contradiction_emits_event
+//! section:   08_semantic
+//! expect:    accept
+//! contains:  Contradiction(j)
+//! spec:      §8 (deciding a Credence<Entailment> to Contradicts also emits a first-class Contradiction)
+//! ---
+agent A {
+  on awake {
+    Credence<Entailment> j = self <- "does \"the sky is green\" entail \"the sky is blue\"?";
+    case (j) as d {
+      Entails: { say("e"); }
+      Contradicts: { say("c"); }
+      Neutral: { say("n"); }
+    }
+  }
+}
+spawn A a; awake a;

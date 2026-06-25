@@ -1,0 +1,179 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Agape",
+  "scopeName": "source.agape",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#fstring" },
+    { "include": "#string" },
+    { "include": "#numbers" },
+    { "include": "#constants" },
+    { "include": "#retired" },
+    { "include": "#keywords" },
+    { "include": "#self" },
+    { "include": "#types" },
+    { "include": "#prelude" },
+    { "include": "#function-call" },
+    { "include": "#operators" }
+  ],
+  "repository": {
+    "comments": {
+      "comments": "v1.0 §2: comments are `//` to end of line only (no block comments). `//!` conformance headers are ordinary line comments.",
+      "name": "comment.line.double-slash.agape",
+      "match": "//.*$"
+    },
+
+    "fstring": {
+      "comments": "f-string: f\"...{expr}...\" — one token, {expr} highlighted recursively (§2).",
+      "name": "string.interpolated.agape",
+      "begin": "f\"",
+      "end": "\"",
+      "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.agape" } },
+      "endCaptures": { "0": { "name": "punctuation.definition.string.end.agape" } },
+      "patterns": [
+        { "name": "constant.character.escape.agape", "match": "\\\\[nt\"\\\\]" },
+        {
+          "name": "meta.interpolation.agape",
+          "begin": "\\{",
+          "end": "\\}",
+          "beginCaptures": { "0": { "name": "punctuation.section.interpolation.begin.agape" } },
+          "endCaptures": { "0": { "name": "punctuation.section.interpolation.end.agape" } },
+          "patterns": [ { "include": "$self" } ]
+        }
+      ]
+    },
+
+    "string": {
+      "name": "string.quoted.double.agape",
+      "begin": "\"",
+      "end": "\"",
+      "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.agape" } },
+      "endCaptures": { "0": { "name": "punctuation.definition.string.end.agape" } },
+      "patterns": [
+        { "name": "constant.character.escape.agape", "match": "\\\\[nt\"\\\\]" }
+      ]
+    },
+
+    "numbers": {
+      "patterns": [
+        { "name": "constant.numeric.float.agape", "match": "\\b[0-9]+\\.[0-9]+\\b" },
+        { "name": "constant.numeric.integer.agape", "match": "\\b[0-9]+\\b" }
+      ]
+    },
+
+    "constants": {
+      "name": "constant.language.agape",
+      "match": "\\b(?:true|false|null)\\b"
+    },
+
+    "retired": {
+      "comments": "v1.0 §2: `~`, `calibrate`, `entail`, and `->` are removed; using them is a Lex/ParseError. The grammar flags them as invalid so the editor surfaces the mistake.",
+      "patterns": [
+        { "name": "invalid.illegal.retired-keyword.agape", "match": "\\b(?:calibrate|entail)\\b" },
+        { "name": "invalid.illegal.retired-operator.agape", "match": "->|~" }
+      ]
+    },
+
+    "keywords": {
+      "patterns": [
+        {
+          "comments": "control / reactive (§7, §11, §15.2)",
+          "name": "keyword.control.agape",
+          "match": "\\b(?:when|catch|case|if|else|return|retry|default|while|break)\\b"
+        },
+        {
+          "comments": "module import (§15.2)",
+          "name": "keyword.control.import.agape",
+          "match": "\\bimport\\b"
+        },
+        {
+          "comments": "type / declaration introducers (§3, §5, §6b, §13)",
+          "name": "storage.type.agape",
+          "match": "\\b(?:agent|struct|enum|event|tool|principal)\\b"
+        },
+        {
+          "comments": "color / composition modifiers (§4, §5)",
+          "name": "storage.modifier.agape",
+          "match": "\\b(?:sync|extend)\\b"
+        },
+        {
+          "comments": "agent lifecycle + external input sensor (§5)",
+          "name": "keyword.other.lifecycle.agape",
+          "match": "\\b(?:spawn|awake|sleep|on|prompt)\\b"
+        },
+        {
+          "comments": "capability typing (§13)",
+          "name": "keyword.other.capability.agape",
+          "match": "\\b(?:grants|authority)\\b"
+        },
+        {
+          "comments": "gate + spine emit (§13)",
+          "name": "keyword.other.gate.agape",
+          "match": "\\b(?:verify|decide|emit)\\b"
+        },
+        {
+          "comments": "memory / graph queries (§10)",
+          "name": "keyword.other.query.agape",
+          "match": "\\b(?:find|where|select|from|match)\\b"
+        },
+        {
+          "comments": "aggregation + dependence + quorum (§12)",
+          "name": "keyword.other.aggregation.agape",
+          "match": "\\b(?:all|any|quorum|independent|dependent)\\b"
+        }
+      ]
+    },
+
+    "self": {
+      "name": "variable.language.self.agape",
+      "match": "\\bself\\b"
+    },
+
+    "types": {
+      "comments": "built-in scalar + aggregate + spine wrapper types (§3)",
+      "name": "support.type.primitive.agape",
+      "match": "\\b(?:int|float|bool|text|array|event)\\b"
+    },
+
+    "prelude": {
+      "patterns": [
+        {
+          "comments": "prelude judgment/identity/spine types (§9)",
+          "name": "support.type.prelude.agape",
+          "match": "\\b(?:Verification|Entailment|Contradiction|Neutral|Credence|Principal|Rule|Event|Error|Attestation|SuccessfulVerification|FailedVerification|Delivered|Resolved|Expired|DeliveryRefused|QueryResult|ToolStarted|ToolResolved)\\b"
+        },
+        {
+          "comments": "prelude runtime service (§9)",
+          "name": "support.function.prelude.agape",
+          "match": "\\bsay\\b"
+        },
+        {
+          "comments": "user nominal types are conventionally capitalized (§2)",
+          "name": "entity.name.type.agape",
+          "match": "\\b[A-Z][A-Za-z0-9_]*\\b"
+        }
+      ]
+    },
+
+    "function-call": {
+      "comments": "a lowercase identifier immediately before `(` reads as a callable / constructor.",
+      "name": "entity.name.function.agape",
+      "match": "\\b[a-z_][A-Za-z0-9_]*(?=\\s*\\()"
+    },
+
+    "operators": {
+      "patterns": [
+        {
+          "comments": "the single communication arrow (§6) + pipe (§12), matched before bare < - > /.",
+          "name": "keyword.operator.send.agape",
+          "match": "<-|\\|>"
+        },
+        { "name": "keyword.operator.comparison.agape", "match": "==|!=|>=|<=|<|>" },
+        { "name": "keyword.operator.assignment.agape", "match": "=" },
+        { "name": "keyword.operator.logical.agape", "match": "!" },
+        { "name": "keyword.operator.arithmetic.agape", "match": "[+\\-*/]" },
+        { "name": "punctuation.accessor.agape", "match": "\\." }
+      ]
+    }
+  }
+}

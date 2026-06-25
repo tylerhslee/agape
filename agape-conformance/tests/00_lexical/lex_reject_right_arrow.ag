@@ -1,0 +1,11 @@
+//! id:        lex_reject_right_arrow
+//! section:   00_lexical
+//! expect:    reject
+//! error:     LexError
+//! spec:      §2 (exactly one communication arrow `<-`; `->` is a LexError)
+//! note:      the retired `->` does not lex.
+//! ---
+agent A {}
+spawn A a;
+awake a;
+a -> "hello";

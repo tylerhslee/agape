@@ -1,0 +1,8 @@
+//! id:        type_struct_missing_field_reject
+//! section:   03_types
+//! expect:    reject
+//! error:     TypeError
+//! spec:      §3 (all struct fields required; no optional-by-omission)
+//! ---
+struct Memo { amount: int, to: text }
+Memo m = Memo { amount: 100 };

@@ -1,0 +1,9 @@
+//! id:        type_struct_decl_and_literal
+//! section:   03_types
+//! expect:    accept
+//! spec:      §3 (struct declaration + struct literal supplying all fields)
+//! note:      a declared struct constructed with every field.
+//! ---
+struct Memo { amount: int, to: text }
+Memo m = Memo { amount: 100, to: "bob" };
+say(m.to);

@@ -1,0 +1,8 @@
+//! id:        lex_reject_missing_semicolon
+//! section:   00_lexical
+//! expect:    reject
+//! error:     ParseError
+//! spec:      §2 (statement terminator `;` is explicit and required)
+//! ---
+int a = 5
+int b = 6;

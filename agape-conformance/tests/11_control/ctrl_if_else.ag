@@ -1,0 +1,7 @@
+//! id:        ctrl_if_else
+//! section:   11_control
+//! expect:    accept
+//! spec:      §11 (if/else over a bool)
+//! ---
+int x = 3;
+if (x > 2) { say("big"); } else { say("small"); }

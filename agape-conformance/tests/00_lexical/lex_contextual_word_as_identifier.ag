@@ -1,0 +1,8 @@
+//! id:        lex_contextual_word_as_identifier
+//! section:   00_lexical
+//! expect:    accept
+//! spec:      §2 (contextual words `as`/`by`/`reach`/`use`/`origin` lex as identifiers out of position)
+//! note:      `by` outside a gate position is an ordinary identifier.
+//! ---
+int by = 3;
+say(f"{by}");

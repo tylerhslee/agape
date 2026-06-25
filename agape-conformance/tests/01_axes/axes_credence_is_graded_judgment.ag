@@ -1,0 +1,14 @@
+//! id:        axes_credence_is_graded_judgment
+//! section:   01_axes
+//! expect:    accept
+//! spec:      §1, §8 (a semantic judgment is a seam send bound to Credence<E>)
+//! note:      the v1.0 replacement for the retired `~`: a graded judgment.
+//! ---
+agent A {
+  on awake {
+    Credence<bool> ok = self <- "is \"approve #42\" an approval?";
+    bool b = decide(ok, > 0.9);
+    say(f"{b}");
+  }
+}
+spawn A a; awake a;

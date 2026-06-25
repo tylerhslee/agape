@@ -1,0 +1,12 @@
+//! id:        comm_self_send_thinks
+//! section:   06_communication
+//! expect:    accept
+//! spec:      §6 (sending to self is the agent's own cognition; needs no reach grant)
+//! ---
+agent A {
+  on awake {
+    event<text> r = self <- "summarize: agape is event-driven";
+    say(r);
+  }
+}
+spawn A a; awake a;

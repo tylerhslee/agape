@@ -1,0 +1,18 @@
+//! id:        type_enum_decl_and_case
+//! section:   03_types
+//! expect:    accept
+//! spec:      §3, §11 (enum declaration; case exhaustive over all variants)
+//! note:      a user enum, judged and matched exhaustively.
+//! ---
+enum Ticket { Billing, Bug, Feature }
+agent Classifier {
+  on awake {
+    Credence<Ticket> k = self <- "classify: my card was charged twice";
+    case (k) as v {
+      Billing: { say("billing"); }
+      Bug: { say("bug"); }
+      Feature: { say("feature"); }
+    }
+  }
+}
+spawn Classifier c; awake c;

@@ -1,0 +1,11 @@
+//! id:        agent_prompt_opens_sensor
+//! section:   05_agents
+//! expect:    accept
+//! contains:  PromptOpened(question)
+//! spec:      §5b (a `prompt` declaration opens a standing external input sensor)
+//! ---
+prompt text question;
+agent A {
+  when (question) { say("got input"); }
+}
+spawn A a; awake a;

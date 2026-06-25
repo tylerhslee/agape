@@ -1,0 +1,8 @@
+//! id:        type_credence_only_from_seam_reject
+//! section:   03_types
+//! expect:    reject
+//! error:     TypeError
+//! spec:      §3, §8 (Credence<E> is produced ONLY by a seam judgment, never constructed literally)
+//! ---
+bool b = true;
+Credence<bool> c = b;

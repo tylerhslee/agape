@@ -1,0 +1,44 @@
+#!somatic
+// ============================================================================
+// selfhost.ag — Agape lexing Agape.
+//
+// Reads real Agape source from disk (via the read_file somatic seam) and runs
+// the somatic-Agape lexer over it — INCLUDING the lexer's own source file. This
+// is the lexing phase of self-compilation: Agape processing Agape.
+//
+// Run from poc/:  python3 run.py ../compiler/selfhost.ag
+// ============================================================================
+import "lexer";
+
+// Render one token as "Kind  value".
+sync text show(Token t) {
+    case (t) as x {
+        Id(s):     { return "Id     " + s; }
+        Kw(s):     { return "Kw     " + s; }
+        Int(s):    { return "Int    " + s; }
+        Str(s):    { return "Str    " + s; }
+        Op(s):     { return "Op     " + s; }
+        Pragma(s): { return "Pragma " + s; }
+    }
+}
+
+// ── lex the lexer's OWN source (self-hosting) ───────────────────────────────
+text src = read_file("../compiler/lexer.ag");
+array<Token> toks = lex(src);
+
+say("=== Agape lexing its OWN source: compiler/lexer.ag ===");
+int count = len(toks);
+say(f"tokens: {count}");
+say("--- first 18 tokens ---");
+int j = 0;
+while (j < 18) {
+    say(show(toks[j]));
+    j = j + 1;
+}
+
+// ── also lex another real module, to show the lexer is general ──────────────
+text src2 = read_file("../std/bool.ag");
+array<Token> toks2 = lex(src2);
+int count2 = len(toks2);
+say("");
+say(f"=== Also lexed std/bool.ag: {count2} tokens ===");

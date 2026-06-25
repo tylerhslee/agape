@@ -1,0 +1,11 @@
+//! id:        fn_sync_emit_ok
+//! section:   04_functions
+//! expect:    accept
+//! spec:      §4 (emit is a spine op, permitted in sync)
+//! ---
+event Note(text msg);
+sync null log(text m) { emit Note(m); return null; }
+agent Logger grants { emit Note } {
+  on awake { log("hi"); }
+}
+spawn Logger l; awake l;

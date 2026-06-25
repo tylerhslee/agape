@@ -1,0 +1,14 @@
+//! id:        agg_quorum_no_dep_decl_reject
+//! section:   12_aggregation
+//! expect:    reject
+//! error:     TypeError
+//! spec:      §12 (fusion — incl. quorum — requires a total independent/dependent declaration)
+//! ---
+agent Triage {
+  on awake {
+    Credence<bool> j1 = self <- "is this spam?";
+    Credence<bool> j2 = self <- "does this look like spam?";
+    Credence<bool> agreed = quorum(2 of j1, j2);
+  }
+}
+spawn Triage t; awake t;

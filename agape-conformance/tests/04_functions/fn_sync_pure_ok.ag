@@ -1,0 +1,6 @@
+//! id:        fn_sync_pure_ok
+//! section:   04_functions
+//! expect:    accept
+//! spec:      §4 (a sync fn that touches no seam is well-formed)
+//! ---
+sync int add1(int x) { return x + 1; }

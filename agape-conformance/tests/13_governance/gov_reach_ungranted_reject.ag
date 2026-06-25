@@ -1,0 +1,12 @@
+//! id:        gov_reach_ungranted_reject
+//! section:   13_governance
+//! expect:    reject
+//! error:     AuthorityViolation
+//! spec:      §13 (sending into another agent requires a `reach` grant)
+//! ---
+agent Worker {}
+agent Boss(Worker hand) {
+  on awake { event<text> s = hand <- "status?"; }
+}
+spawn Worker w;
+spawn Boss b(w); awake b;
