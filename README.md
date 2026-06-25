@@ -1,75 +1,65 @@
 # Agape
 
-**A programming language where cognition is a first-class operation — for building AI agent systems that are reliable, bounded, and auditable.**
+Agape is a programming language for the cognitive layer of software — the layer where a
+model's judgment, rather than deterministic code, decides what happens next. It treats a
+model call as a typed, first-class operation and enforces, at compile time, the properties
+that judgment-driven systems need and rarely have: bounded authority, mandatory
+verification, and a complete, replayable record of every decision.
 
----
+## The problem
 
-## Why Agape exists
+Most agent systems do not survive production. Across the 1,600+ deployments studied in the
+[MAST taxonomy](https://arxiv.org/pdf/2503.13657), multi-agent systems fail between 41% and
+87% of the time — almost never because the model was not capable enough. They fail for
+structural reasons: agents coordinate through unstructured text and misread one another, act
+on unverified model output, exceed the authority they were meant to have, and leave no record
+that can be replayed when something goes wrong.
 
-AI agents are everywhere, and most of them don't survive contact with production.
-Across 1,600+ real deployments, multi-agent systems
-[fail 41–87% of the time](https://arxiv.org/pdf/2503.13657) — almost never because
-the model wasn't smart enough, and almost always for mundane structural reasons:
-agents miscoordinate, skip verification, step on each other's resources, and act
-on unvetted model output.
+These are not model problems. They are the absence of guarantees that every other class of
+critical software takes for granted: types, contracts, access control, an audit log. Today
+those guarantees are, at best, conventions a framework enforces at runtime — which a developer
+can forget and a reviewer cannot see. Agape makes them properties of the program, checked
+before it runs.
 
-That isn't a model problem. It's a **language** problem. We're building agents with
-tools designed for deterministic code — frameworks bolted onto Python where
-coordination, verification, and authority are conventions you *hope* hold at
-runtime. Agape makes them **guarantees the compiler checks before anything runs.**
+## What it is
 
-## The shift: agentic is the new management layer
+Computation divides into two kinds of work. Deterministic work — parsing, sorting,
+arithmetic, calling a service — is mechanical and belongs in conventional code. Deciding
+*what to do* — interpreting a request, judging whether an action is warranted, recovering
+from an ambiguous result — is cognitive. As software becomes agentic, the cognitive layer is
+the one that grows, and it is the layer Agape governs.
 
-Here's the paradigm worth naming. Computing is becoming "agentic" — but not the part
-you'd think. The low-level work stays deterministic: compiling a file, sorting a
-list, encoding a video are mechanical processes and always will be. What's becoming
-agentic is the **layer where a human directs and manages computation.**
-
-Take a compiler. You don't make *compiling* agentic — it's mechanical. You make
-*using the compiler* agentic: the cognitive load of deciding what to build,
-interpreting errors, choosing flags, recovering from failure. **That management
-layer is cognitive, and it's where the value of "agentic" actually lives** — taking
-that load off the person.
-
-Agape is the language for that layer. It treats **a model call — cognition — as the
-atomic operation**, the way conventional languages treat arithmetic, and gives it the
-structure deterministic code always had: types, contracts, bounded authority, and an
-audit trail. The deterministic work stays in your existing code, reached through a
-typed tool seam; Agape governs the cognitive layer on top.
+Agape does not replace deterministic code; it orchestrates it. Deterministic work stays in the
+host language and is reached through a typed **tool seam**. Agape owns the cognitive layer
+above it, and the boundary between the two is stable. The agentic logic — the part that
+changes as fast as the field does — is encapsulated behind that boundary, and can evolve
+without disturbing the rest of the system.
 
 ## What it guarantees
 
-Agape's promises are the ones the failure data says you need — and it makes them
-*structural*, not aspirational:
+- **Cognition is typed.** A model's answer is a schema-constrained value (`Credence<E>`), not a
+  string to parse and trust.
+- **Authority is bounded at compile time.** An agent may perform only the actions its `grants`
+  declare, and no value it computes or learns at runtime can extend that set.
+- **Verification is unavoidable.** A value derived from cognition is *tainted* until an explicit
+  gate endorses it. The type checker rejects any program that lets a tainted value drive a
+  consequential action; a missing check is a compile error, not a latent risk.
+- **Every run replays.** Execution is an append-only log, and state is a function of that log.
+  A run reproduces exactly, and any prefix can be replayed under altered facts to test a
+  counterfactual.
 
-- **Cognition is typed.** A model's answer isn't a raw string you parse and pray
-  over; it's a typed, schema-constrained value (`Credence<E>`).
-- **Authority is bounded at compile time.** An agent can only do what its `grants`
-  permit — and *nothing it learns at runtime can widen that.* It cannot acquire
-  authority it was never given.
-- **Verified cognition is unavoidable.** Untrusted model output is "tainted" until an
-  explicit, recorded gate endorses it. The type checker *rejects* any path that routes
-  raw cognition into a consequential action. You can't forget to verify — it won't
-  compile.
-- **Everything replays.** A run is an append-only event log (the *spine*); state is a
-  pure projection of it. Any run replays exactly — and you can fork the log to ask
-  "what if the agent hadn't known X?"
+Agape makes no claim that a model's output is correct; no system can. It bounds and records the
+consequences of output that is wrong. The model may err; what it is permitted to do when it errs
+is fixed in advance, and what it did is on the record.
 
-And the honest part, because it's the whole point: **Agape does not make the model
-correct. Nothing can.** It makes the *consequences* of an unreliable model contained,
-gated, and auditable. Think of it as **memory safety for agency** — it can't make an
-agent right, but it can prove what a *wrong* agent is structurally unable to do, and
-show you exactly what it did.
+## Who it is for
 
-## Who it's for
+Builders of agent systems that must be trusted rather than hoped for — where the requirement is
+not "the agent probably will not do X" but "the agent cannot do X, and here is the proof." That
+requirement is sharpest in regulated and high-stakes work, and it applies to anyone who needs an
+agent system to stay stable and auditable past its first week.
 
-Anyone building agent systems that have to be **trusted** — where "the agent probably
-won't do X" isn't good enough and you need *"the agent provably cannot do X, and here's
-the audit trail."* That's sharpest in high-stakes and regulated work (money, access,
-safety), but it's also for any builder tired of agent systems that fall over in week
-two and can't be debugged.
-
-## A taste
+## Example
 
 ```agape
 authority Refund;
@@ -77,25 +67,22 @@ event Refund(amount: int, to: text);
 
 agent Desk grants { emit Refund } {
   on awake {
-    Credence<bool> ok = self <- "is refund #4217 within policy?";  // a model judgment — tainted
-    event<Verification> v = verify ok by > 0.9;                    // the explicit gate
-    when Pass(v) { emit Refund(50, "alice"); }                     // reachable only on a passed gate
-    // emit Refund(...) on the raw `ok` would be a compile error.
+    Credence<bool> ok = self <- "is refund #4217 within policy?";
+    event<Verification> v = verify ok by > 0.9;
+    when Pass(v) { emit Refund(50, "alice"); }
   }
 }
 spawn Desk d; awake d;
 ```
 
-## Where to go next
+`emit Refund` applied directly to `ok` does not compile: a value from the model cannot reach a
+consequential action without passing the gate.
 
-- **[`SPEC.md`](SPEC.md)** — the precise definition (dense by design; this README is
-  the friendly version).
-- **[`agape-conformance/`](agape-conformance)** — the black-box test suite that defines
-  what any correct implementation must do.
-- **[`agape-rs/`](agape-rs)** — the reference implementation in Rust.
+## Documents
 
-**Status: early.** The v1.0 spec and conformance suite are the source of truth; the
-Rust reference implementation runs most of the suite today; a minimal formal core with
-machine-checked soundness proofs is in progress. Agape isn't the only project taking
-cognition seriously as a computational substrate — it's betting, uniquely, on making
-the guarantees **foundational to the language** rather than bolted on at runtime.
+- [`SPEC.md`](SPEC.md) — the language specification.
+- [`agape-conformance/`](agape-conformance) — the conformance suite an implementation must satisfy.
+- [`agape-rs/`](agape-rs) — the reference implementation.
+
+Agape is in early development. The specification and conformance suite define the language; the
+reference implementation runs most of the suite.

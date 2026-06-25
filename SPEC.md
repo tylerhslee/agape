@@ -1402,42 +1402,15 @@ A conformant implementation ships a test mode the black-box suite drives:
 
 ---
 
-## 17. The system-integration model
+## 17. Deployment
 
-Agape is the cognitive/agentic layer (§0.1). This section defines how a runtime is deployed
-and how it occupies a privileged system-layer position.
+An Agape runtime runs entirely in userspace. It executes programs, exposes the tool seam as
+the gated capability surface, enforces the membrane (the capability and gating discipline of
+§13), and writes every consequential action to the spine for audit and replay. No kernel
+support is required.
 
-### 17.1 Deployment
-The architecture — the runtime mediating agent actions through gates, exposing tools as the
-capability surface, writing the spine — runs entirely in userspace. The userspace
-runtime/daemon runs Agape programs, exposes the MCP tool surface as the gated capability
-boundary, enforces the membrane, and writes every consequential action to the spine (audit
-+ replay). No kernel is required.
-
-### 17.2 The enforcement boundary
-A system-layer position rests on the membrane — a safety property the system can trust, as
-eBPF earns an in-kernel seat by being verifiable and reaches the kernel only through
-enumerated helpers, never arbitrary linkage. Agape's tool seam is that enumerated-helper
-surface (§6b). The enforcement boundary may migrate inward through three stages while the
-policy (what is a capability, what is gated, what is audited) stays constant:
-
-```
-userspace runtime   →   seccomp-confined container   →   LSM / eBPF in kernel
-   (trust compiler)        (OS-enforced syscall gate)       (privileged mediation)
-```
-
-- **Userspace runtime** — enforcement in the runtime; trusts that code passed the checker.
-- **Container** — `seccomp-bpf` (itself eBPF) maps capability grants onto OS-enforced
-  syscall filtering; enforcement moves to a boundary the OS controls.
-- **Kernel** — the membrane as a Linux Security Module (the kernel's framework for
-  mediating consequential actions, as SELinux/AppArmor are) or eBPF programs.
-
-The policy is separated from its enforcement so only the enforcement is re-pinned at each
-stage. For an untrusted boundary, the membrane is enforced at load time (the analogue of
-eBPF's verifier), not assumed because code was compiled upstream.
-
-### 17.3 Position
-The kernel mediates app→hardware; Agape mediates agent→system. The membrane is the agentic
-analogue of the MMU/syscall boundary, and the spine is the system audit log: a conventional
-kernel for the somatic substrate, Agape as the trusted cognitive interface. Stages 17.2
-container and kernel are a roadmap; the userspace runtime is the concrete target.
+The membrane is a verifiable safety property — capability-gated and audited — in the sense
+that an eBPF program earns an in-kernel seat by being verifiable rather than trusted. Pushing
+that enforcement boundary into the operating system, so that the system rather than a trusted
+compiler mediates an agent's consequential actions, is the aim of a separate project (AIOS)
+and is out of scope here.
