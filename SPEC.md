@@ -43,9 +43,10 @@ Two ideas underlie the language:
 ### 0.1 Scope and layering
 
 Agape is a domain language for the cognitive/agentic layer; it is not a general-purpose
-language. General-purpose somatic computation — arithmetic-heavy kernels, data
-structures, parsers — is imported as a tool (§6b) or written in the minimal somatic
-kernel (§15.2) used as orchestration glue. It is not reimplemented in Agape. The
+language. General-purpose computation — arithmetic-heavy kernels, data structures,
+parsers — is imported as a tool (§6b), never reimplemented in Agape: Agape has no
+imperative substrate of its own. The deterministic work lives in the host and is
+reached, and governed, through the tool seam. The
 primitive Agape provides is **verified judgment under uncertainty**: a non-deterministic
 semantic decision, taint-tracked, collapsed by an auditable gate, recorded on an
 append-only spine.
@@ -178,11 +179,10 @@ verify decide emit                        // gate / spine emit
 find where select from match              // queries
 all any quorum independent dependent      // aggregation, dependence declaration, quorum (§12)
 true false                                // bool literals
-while break import array                  // somatic kernel (§15.2)
 ```
 
 `calibrate`, `~`, and `entail` are not keywords and are not admitted as identifiers in
-statement position; using any of them is a `ParseError`. `decide` is the somatic gate.
+statement position; using any of them is a `ParseError`. `decide` is the deterministic gate.
 `independent` / `dependent` declare the dependence structure of values fused by
 `all`/`any`/`quorum` (§12).
 
@@ -949,9 +949,7 @@ Judgment **`Γ; Σ; A ⊢ e : T ! c · t`**.
 
 ```
 program   ::= decl*
-decl      ::= module_attr | import | typedecl | authority | tool | agent | fn | stmt
-module_attr ::= "#!" Ident                             // file/module attribute, e.g. #!somatic
-import      ::= "import" String ";"                    // modules: file = module
+decl      ::= typedecl | authority | tool | agent | fn | stmt
 typedecl  ::= "struct" Ident "{" field ("," field)* "}"
             | "enum" Ident "{" Ident ("," Ident)* "}"
             | "event" Ident "(" field ("," field)* ")" ";"   // custom spine event
@@ -967,7 +965,7 @@ on        ::= "on" ("awake"|"sleep") block
 fn        ::= "sync"? type Ident params block          // async is the default
 params    ::= "(" (type Ident ("," type Ident)*)? ")"
 type      ::= "int"|"float"|"bool"|"text"|"null" | "event" "<" type ">"
-            | "array" "<" type ">"                     // somatic kernel
+            | "array" "<" type ">"                     // collection (query results, fan-out source)
             | "Credence" "<" type ">"                  // graded judgment over enum
             | Ident                                    // enum/struct/agent names, incl. Principal, Rule
 
@@ -977,7 +975,6 @@ stmt      ::= vardecl | assign | spawn | prompt | principal | depdecl
             | "verify" gatearg ("by" expr)? ";"
             | "say" "(" expr ")" ";" | "return" expr? ";"
             | "if" "(" expr ")" block ("else" block)?
-            | "while" "(" expr ")" block | "break" ";" // somatic kernel
             | when | catch | case | retry
             | find | select | match
             | expr ";"
@@ -1016,18 +1013,11 @@ primary   ::= Int|Float|String|FString|"true"|"false"|"null"|"self"|Ident
             | "[" (expr ("," expr)*)? "]"               // array literal
 ```
 
-**Somatic kernel.** The `array<T>`/`Credence<E>` types, `while`/`break`, array literals,
-postfix indexing, and the `len`/`push` builtins are the somatic kernel — the minimal
-cognition-free, effect-free imperative core used as orchestration glue and to write a
-stdlib in Agape. They are `sync` by construction. Heavy or world-affecting somatic
-computation is not written here; it is imported as a tool (§6b). The kernel is glue, not a
-general-purpose runtime.
-
-**Modules and `#!somatic`.** A file is a module; `import "path";` pulls its top-level
-declarations into scope (resolved relative to the importer, then stdlib roots; loaded once,
-transitively). `#!somatic` declares a module cognition-free and effect-free: every function
-is `sync` and reaching any seam in the file is a compile error. `#!cognitive` is the
-explicit-default no-op marker.
+**Collections.** `array<T>` is the collection type *produced* by queries (`find`, which may
+bind many results) and *consumed* by fan-out (`|>`, `all`/`any`, `quorum`, §12). It is a
+value to map and reduce over — not an imperative data structure. Agape has no general-purpose
+imperative substrate of its own; heavy or world-affecting computation is imported as a tool
+(§6b) and governed at the tool seam, never reimplemented in the language.
 
 ## 15.3 Static semantics
 
