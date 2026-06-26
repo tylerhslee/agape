@@ -183,8 +183,7 @@ all any quorum independent dependent      // aggregation, dependence declaration
 true false                                // bool literals
 ```
 
-`calibrate`, `~`, and `entail` are not keywords and are not admitted as identifiers in
-statement position; using any of them is a `ParseError`. `endorse` is the gate; the collapse
+ `endorse` is the gate; the collapse
 `c by R` yields a `Decision` that `endorse` records and authorizes, or `abstain`s (§13).
 `independent` / `dependent` declare the dependence structure of values fused by
 `all`/`any`/`quorum` (§12).
