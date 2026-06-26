@@ -1,0 +1,11 @@
+//! id:        gov_perform_ungranted_reject
+//! section:   13_governance
+//! expect:    reject
+//! error:     AuthorityViolation
+//! spec:      §13 (default-deny: an agent may only perform actions in its grants)
+//! ---
+action Note(text msg);
+agent A {
+  on awake { perform Note("hi"); }
+}
+spawn A a; awake a;

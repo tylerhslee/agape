@@ -72,14 +72,14 @@ not the message text.
 
 ```
 Spawned(x) AgentAwake(x) SleepEvent(x) PromptOpened(x) Prompt(x)
-Event Error  SuccessfulVerification(x) FailedVerification(x) Verification(x)
+Event Error  Decided(x) Abstained(x)
 Contradiction(x) Attestation(x)  QueryResult(x)  RetryExhausted TypeMismatch
 pair(op@subj)   ← a Started/Resolved pair for async op `op` on subject `subj`
 single(op@subj) ← a single (synchronous) event
 ```
 
 `spine:` is an exact ordered match. `contains:`/`absent:` are order-free. Subtype
-matching follows §9: `Verification` matches `SuccessfulVerification`/`FailedVerification`;
+matching follows §9: a gate records `Decided(x)` (a singleton commit) or `Abstained(x)`;
 `Error` matches any `Error` subtype (e.g. `Contradiction`).
 
 ## How an implementation consumes the suite

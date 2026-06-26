@@ -1,14 +1,14 @@
 //! id:        ctrl_retry_bounded
 //! section:   11_control
 //! expect:    accept
-//! spec:      §11 (bounded retry re-attempts a verify a fixed number of times)
+//! spec:      §11, §15.2 (the only loop is the bounded `{ block } retry(N)`)
 //! ---
 agent A {
   on awake {
-    retry(3) {
+    {
       Credence<bool> still = self <- "are you ready?";
-      verify still;
-    }
+      endorse (still by confidence 0.9) { true: ; false: ; }
+    } retry(3)
   }
 }
 spawn A a; awake a;

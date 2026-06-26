@@ -1,0 +1,6 @@
+//! id:        repro_collapse_off_spine
+//! section:   15_reproducibility
+//! expect:    accept
+//! spec:      §15 (`c by R` is a pure projection of a Credence; off-spine and synchronous)
+//! ---
+sync Decision<bool> gate(Credence<bool> c) { return c by confidence 0.8; }

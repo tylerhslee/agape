@@ -9,8 +9,8 @@ agent Triage {
     Credence<bool> j2 = self <- "does this look like spam?";
     Credence<bool> j3 = self <- "would a user mark this spam?";
     independent j1, j2, j3;
-    Credence<bool> agreed = quorum(2 of j1, j2, j3);
-    verify agreed;
+    Credence<bool> agreed = quorum(2, [j1, j2, j3]);
+    endorse (agreed by confidence 0.9) { true: ; false: ; }
   }
 }
 spawn Triage t; awake t;

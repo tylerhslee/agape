@@ -4,8 +4,11 @@ Agape v1.0 conformance suite — single source of truth.
 
 Encodes ONLY SPEC-1.0.md (it has never seen any implementation). There is one
 language version: v1.0. There is no notion of 0.3/0.4, no `since`/`until`, no
-`~`/`entail`/`calibrate`/`Prob<T>` — a semantic judgment is a seam send bound to
-`Credence<E>`, gated with `decide(c, rule)` / `verify` (§8, §13).
+`~`/`entail`/`calibrate`/`Prob<T>` — a semantic judgment is a provider send bound
+to `Credence<E>` (§8). It is collapsed by `c by R` (a `Decision`, off-spine),
+recorded by `endorse (c by R) { … }`, or settled externally by `attest e by p`
+(§13). A consequential act is `perform` of an `action`; a plain record is `emit`
+of an `event` and needs no power (§3, §13).
 
 Emits one `.ag` file per test under tests/<section>/ with a `//!` header, plus
 MANIFEST.toml (machine-readable) and MANIFEST.md (human index).
@@ -67,13 +70,13 @@ say(f"{by}");''')
 
 
 # ============================================================================
-# 01_axes (§1 — the three orthogonal axes: color, taint, spine)
+# 01_axes (§1 — the three orthogonal axes: color, trust, spine)
 # ============================================================================
 S = "01_axes"
 
-add(id="axes_send_is_event_tainted", section=S, expect="accept",
-    spec="§1 Axis B/C (`d <- p` : event<T>, on the spine, and its reply is tainted P)",
-    note="a send is a spine op yielding a tainted reply.",
+add(id="axes_send_reply_is_raw", section=S, expect="accept",
+    spec="§1 Axis B/C, §15.3.2 T-Send (`d <- p` is on the spine; its reply is `raw`)",
+    note="a send is a spine op yielding a raw (unstructured) reply.",
     src='''agent A {
   on awake {
     event<text> r = self <- "what is your name?";
@@ -82,28 +85,28 @@ add(id="axes_send_is_event_tainted", section=S, expect="accept",
 }
 spawn A a; awake a;''')
 
-add(id="axes_pure_call_sync_untainted", section=S, expect="accept",
-    spec="§1 Axis A/B (a pure `sync` fn is cognition-free and adds no taint)",
-    note="arithmetic only; provably seam-free.",
+add(id="axes_pure_call_sync_settled", section=S, expect="accept",
+    spec="§1 Axis A/B (a pure `sync` fn reaches no dependency and stays `settled`)",
+    note="arithmetic only; provably dependency-free.",
     src='''sync int dbl(int x) { return x * 2; }
 int y = dbl(21);
 say(f"{y}");''')
 
 add(id="axes_credence_is_graded_judgment", section=S, expect="accept",
-    spec="§1, §8 (a semantic judgment is a seam send bound to Credence<E>)",
+    spec="§1, §8 (a semantic judgment is a provider send bound to Credence<E> → graded)",
     note="the v1.0 replacement for the retired `~`: a graded judgment.",
     src='''agent A {
   on awake {
     Credence<bool> ok = self <- "is \\"approve #42\\" an approval?";
-    bool b = decide(ok, > 0.9);
+    Decision<bool> b = ok by confidence 0.9;
     say(f"{b}");
   }
 }
 spawn A a; awake a;''')
 
-add(id="axes_decide_is_bool", section=S, expect="accept",
-    spec="§8, §13 (decide(Credence<bool>, rule) commits to a bool — untainted, in hand)",
-    src='''sync bool over(Credence<bool> c) { return decide(c, > 0.9); }''')
+add(id="axes_collapse_is_decision", section=S, expect="accept",
+    spec="§13, §15.2 (`c by R` collapses a Credence to a Decision — settled, off-spine, in hand)",
+    src='''sync Decision<bool> over(Credence<bool> c) { return c by confidence 0.9; }''')
 
 
 # ============================================================================
@@ -142,13 +145,13 @@ add(id="type_struct_missing_field_reject", section=S, expect="reject", error="Ty
 Memo m = Memo { amount: 100 };''')
 
 add(id="type_enum_decl_and_case", section=S, expect="accept",
-    spec="§3, §11 (enum declaration; case exhaustive over all variants)",
-    note="a user enum, judged and matched exhaustively.",
+    spec="§3, §11 (enum declaration; a gated case exhaustive over all variants)",
+    note="a user enum, judged, gated, and matched exhaustively.",
     src='''enum Ticket { Billing, Bug, Feature }
 agent Classifier {
   on awake {
     Credence<Ticket> k = self <- "classify: my card was charged twice";
-    case (k) as v {
+    case (k by confidence 0.8) as v {
       Billing: { say("billing"); }
       Bug: { say("bug"); }
       Feature: { say("feature"); }
@@ -160,37 +163,38 @@ spawn Classifier c; awake c;''')
 add(id="type_event_decl", section=S, expect="accept",
     spec="§3 (custom spine-event declaration with a typed payload)",
     src='''struct Memo { amount: int, to: text }
-event Transfer(memo: Memo);''')
+event Transferred(memo: Memo);''')
 
 add(id="type_undeclared_emit_reject", section=S, expect="reject", error="TypeError",
     spec="§3 (events are not self-declaring; emit of an undeclared type is a TypeError)",
-    src='''agent A grants { emit Transfer } {
-  on awake { emit Transfer("100 to bob"); }
+    note="emit of a plain event needs no power, but the type must be declared.",
+    src='''agent A {
+  on awake { emit Transferred("100 to bob"); }
 }
 spawn A a; awake a;''')
 
 add(id="type_no_text_to_principal_reject", section=S, expect="reject", error="TypeError",
-    spec="§3, §13 (no text -> Principal coercion at a gate)",
+    spec="§3, §13 (no text -> Principal coercion at an attest gate)",
     src='''agent Drafter {
   on awake {
     event<text> memo = self <- "draft the memo";
-    verify memo by "alice";
+    attest memo by "alice";
   }
 }
 spawn Drafter d; awake d;''')
 
-add(id="type_decide_requires_rule_reject", section=S, expect="reject", error="ParseError",
-    spec="§3, §15.2 (decide's rule is mandatory)",
+add(id="type_collapse_requires_rule_reject", section=S, expect="reject", error="ParseError",
+    spec="§3, §15.2 (a gate requires its rule; `c by` with no rule is a ParseError)",
     src='''agent A {
   on awake {
     Credence<bool> c = self <- "is this an approval?";
-    bool b = decide(c);
+    Decision<bool> b = c by;
   }
 }
 spawn A a; awake a;''')
 
 add(id="type_credence_only_from_seam_reject", section=S, expect="reject", error="TypeError",
-    spec="§3, §8 (Credence<E> is produced ONLY by a seam judgment, never constructed literally)",
+    spec="§3, §8 (Credence<E> is produced ONLY by a provider judgment, never constructed literally)",
     src='''bool b = true;
 Credence<bool> c = b;''')
 
@@ -201,11 +205,11 @@ Credence<bool> c = b;''')
 S = "04_functions"
 
 add(id="fn_sync_pure_ok", section=S, expect="accept",
-    spec="§4 (a sync fn that touches no seam is well-formed)",
+    spec="§4 (a sync fn that reaches no declared dependency is well-formed)",
     src='''sync int add1(int x) { return x + 1; }''')
 
 add(id="fn_sync_reaches_seam_reject", section=S, expect="reject", error="ColorViolation",
-    spec="§1 Axis A, §4 (a sync fn may not reach the provider seam via `<-`)",
+    spec="§1 Axis A, §4 (a sync fn may not reach the provider via `<-`)",
     src='''sync text classify(text x) { return self <- f"classify {x}"; }''')
 
 add(id="fn_sync_calls_async_reject", section=S, expect="reject", error="ColorViolation",
@@ -214,28 +218,28 @@ add(id="fn_sync_calls_async_reject", section=S, expect="reject", error="ColorVio
 sync text wrap(text q) { return ask(q); }''')
 
 add(id="fn_sync_emit_ok", section=S, expect="accept",
-    spec="§4 (emit is a spine op, permitted in sync)",
+    spec="§4 (emit is a spine append, permitted in sync; a plain event needs no power)",
     src='''event Note(text msg);
 sync null log(text m) { emit Note(m); return null; }
-agent Logger grants { emit Note } {
+agent Logger {
   on awake { log("hi"); }
 }
 spawn Logger l; awake l;''')
 
-add(id="fn_sync_inhand_verify_ok", section=S, expect="accept",
-    spec="§4, §13 (in-hand verify = decide+emit, synchronous)",
-    note="a sync fn may verify a Credence value already in hand.",
-    src='''sync bool over(Credence<bool> c) { verify c; return decide(c, > 0.9); }''')
+add(id="fn_sync_inhand_endorse_ok", section=S, expect="accept",
+    spec="§4, §13 (in-hand endorse = collapse + record, no dependency reach → sync-permitted)",
+    note="a sync fn may endorse a Credence value already in hand.",
+    src='''sync Decision<bool> over(Credence<bool> c) { return endorse(c by confidence 0.9); }''')
 
 add(id="fn_sync_tool_call_reject", section=S, expect="reject", error="ColorViolation",
-    spec="§4, §6b (a tool call reaches the tool seam → async)",
+    spec="§4, §6b (a tool call reaches the tool dependency → async)",
     src='''tool search(text q) -> text;
 sync text find(text q) { return search(q); }''')
 
-add(id="fn_sync_verify_by_principal_reject", section=S, expect="reject", error="ColorViolation",
-    spec="§4, §13 (verify … by Principal reaches the identity seam → async)",
+add(id="fn_sync_attest_by_principal_reject", section=S, expect="reject", error="ColorViolation",
+    spec="§4, §13 (attest … by Principal reaches the identity dependency → async)",
     src='''principal alice;
-sync null ok(text memo) { verify memo by alice; return null; }''')
+sync null ok(text memo) { attest memo by alice; return null; }''')
 
 
 # ============================================================================
@@ -244,19 +248,19 @@ sync null ok(text memo) { verify memo by alice; return null; }''')
 S = "05_agents"
 
 add(id="agent_spawn_instantiate_only", section=S, expect="accept",
-    spec="§5 (spawn instantiates only: no constructor body, no mailbox)",
+    spec="§5 (spawn instantiates + constructs only: no mailbox, no awake hook)",
     contains=["Spawned(a)"], absent=["AgentAwake(a)"],
-    src='''agent A { on awake { say("constructed"); } }
+    src='''agent A { on awake { say("awoke"); } }
 spawn A a;''')
 
 add(id="agent_first_awake_runs_constructor", section=S, expect="accept",
-    spec="§5 (first awake opens the mailbox and runs the constructor)",
+    spec="§5 (first awake opens the mailbox and runs the on-awake hook)",
     contains=["Spawned(a)", "AgentAwake(a)"],
     src='''agent A { on awake { say("hello"); } }
 spawn A a; awake a;''')
 
 add(id="agent_reawake_no_reconstruct", section=S, expect="accept",
-    spec="§5 (re-awake runs the subsequent path: no re-bind, no re-construct)",
+    spec="§5 (re-awake resumes the agent: no re-bind, no re-construct)",
     src='''agent W {}
 spawn W w; awake w; sleep w; awake w;''')
 
@@ -267,9 +271,11 @@ add(id="agent_sleep_runs_hook", section=S, expect="accept",
 spawn A a; awake a; sleep a;''')
 
 add(id="agent_extend_inherits_when", section=S, expect="accept",
-    spec="§5 (extend inherits fields + constructor + when blocks + hooks)",
-    src='''agent Base {
-  when (self) { say("base reacted"); }
+    spec="§5, §7 (extend inherits fields + constructor + when blocks + hooks)",
+    note="the child inherits Base's typed when subscription.",
+    src='''event Ping(text msg);
+agent Base {
+  when (Ping p) { say("base reacted"); }
 }
 agent Child {
   extend Base();
@@ -281,7 +287,7 @@ add(id="agent_prompt_opens_sensor", section=S, expect="accept",
     contains=["PromptOpened(question)"],
     src='''prompt text question;
 agent A {
-  when (question) { say("got input"); }
+  when (Prompt p about question) { say("got input"); }
 }
 spawn A a; awake a;''')
 
@@ -292,7 +298,7 @@ spawn A a; awake a;''')
 S = "06_communication"
 
 add(id="comm_typed_reply", section=S, expect="accept",
-    spec="§6 (a typed reply binds the seam answer into event<T>)",
+    spec="§6 (a typed reply binds the provider answer into event<T>)",
     src='''agent A {
   on awake {
     event<bool> yes = self <- "is the sky blue?";
@@ -319,11 +325,11 @@ S = "07_spine"
 
 add(id="spine_prospective_only", section=S, expect="accept",
     spec="§7 (subscriptions are prospective; never fire for prior events)",
-    note="a catch registered after an emit does NOT fire for that earlier event.",
+    note="a when registered after an emit does NOT fire for that earlier event.",
     absent=["Event"],
     src='''event Note(text msg);
 emit Note("early");
-catch Note(x) as e { say("should not fire for early"); }''')
+when (Note x) { say("should not fire for early"); }''')
 
 add(id="spine_query_result_event", section=S, expect="accept",
     spec="§10 (a query STATEMENT lands a QueryResult event on the spine)",
@@ -346,12 +352,12 @@ spawn R r; awake r;''')
 S = "08_semantic"
 
 add(id="sem_credence_over_user_enum", section=S, expect="accept",
-    spec="§8 (a seam send bound to Credence<E> is a constrained classifier over E)",
+    spec="§8 (a provider send bound to Credence<E> is a constrained classifier over E)",
     src='''enum Sentiment { Pos, Neg, Neutral }
 agent A {
   on awake {
     Credence<Sentiment> s = self <- "sentiment of: I love this";
-    case (s) as v {
+    case (s by confidence 0.8) as v {
       Pos: { say("pos"); }
       Neg: { say("neg"); }
       Neutral: { say("neu"); }
@@ -365,7 +371,7 @@ add(id="sem_entailment_three_valued", section=S, expect="accept",
     src='''agent A {
   on awake {
     Credence<Entailment> v = self <- "does \\"sky is blue\\" entail \\"it is daytime\\"?";
-    case (v) as d {
+    case (v by confidence 0.8) as d {
       Entails: { say("e"); }
       Contradicts: { say("c"); }
       Neutral: { say("n"); }
@@ -375,12 +381,12 @@ add(id="sem_entailment_three_valued", section=S, expect="accept",
 spawn A a; awake a;''')
 
 add(id="sem_contradiction_emits_event", section=S, expect="accept",
-    spec="§8 (deciding a Credence<Entailment> to Contradicts also emits a first-class Contradiction)",
+    spec="§8, §11 (committing a Credence<Entailment> to Contradicts also emits a first-class Contradiction)",
     contains=["Contradiction(j)"],
     src='''agent A {
   on awake {
     Credence<Entailment> j = self <- "does \\"the sky is green\\" entail \\"the sky is blue\\"?";
-    case (j) as d {
+    case (j by confidence 0.8) as d {
       Entails: { say("e"); }
       Contradicts: { say("c"); }
       Neutral: { say("n"); }
@@ -395,13 +401,13 @@ spawn A a; awake a;''')
 # ============================================================================
 S = "09_prelude"
 
-add(id="prelude_catch_error_catches_contradiction", section=S, expect="accept",
-    spec="§9 (Contradiction extends Error; catch Error catches it by subtype)",
-    src='''catch Error as e { say("caught"); }
+add(id="prelude_when_error_catches_contradiction", section=S, expect="accept",
+    spec="§9 (Contradiction extends Error; when (Error e) catches it by subtype)",
+    src='''when (Error e) { say("caught"); }
 agent J {
   on awake {
     Credence<Entailment> v = self <- "does \\"sky is blue\\" entail \\"sky is green\\"?";
-    case (v) as d {
+    case (v by confidence 0.8) as d {
       Entails: { say("e"); }
       Contradicts: { say("c"); }
       Neutral: { say("n"); }
@@ -417,20 +423,19 @@ spawn J j; awake j;''')
 S = "10_memory"
 
 add(id="mem_match_is_gate", section=S, expect="accept",
-    spec="§10 (match > θ is a gate; yields an untainted result off-spine)",
+    spec="§10 (match > θ is a gate; yields a settled result off-spine)",
     src='''agent Recall {
   on awake { match { hit: "agape language" } > 0.8; }
 }
 spawn Recall r; awake r;''')
 
 add(id="mem_queried_fact_taint_reject", section=S, expect="reject", error="TaintViolation",
-    spec="§10, §13 (queried facts default to P-tainted; must be re-gated before a consequential emit)",
+    spec="§10, §13 (queried facts default to `graded`; must be re-gated before a consequential perform)",
     src='''struct Memo { amount: int, to: text }
-authority Transfer;
-event Transfer(memo: Memo);
-agent Bank grants { emit Transfer } {
+action Transfer(memo: Memo);
+agent Bank grants { perform Transfer } {
   Memo m = select amount, to from self where { kind: "pending" };
-  emit Transfer(m);
+  perform Transfer(m);
 }
 spawn Bank b; awake b;''')
 
@@ -445,22 +450,13 @@ add(id="ctrl_if_else", section=S, expect="accept",
     src='''int x = 3;
 if (x > 2) { say("big"); } else { say("small"); }''')
 
-add(id="ctrl_while_break", section=S, expect="accept",
-    spec="§11, §15.2 (while loop with break)",
-    src='''int i = 0;
-while (i < 10) {
-  if (i == 3) { break; }
-  i = i + 1;
-}
-say(f"{i}");''')
-
 add(id="ctrl_case_all_variants_ok", section=S, expect="accept",
-    spec="§11 (case covering every enum variant is exhaustive)",
+    spec="§11 (a gated case covering every enum variant is exhaustive)",
     src='''enum Color { Red, Green, Blue }
 agent A {
   on awake {
     Credence<Color> c = self <- "what color is grass?";
-    case (c) as v {
+    case (c by confidence 0.8) as v {
       Red: { say("r"); }
       Green: { say("g"); }
       Blue: { say("b"); }
@@ -475,7 +471,7 @@ add(id="ctrl_case_nonexhaustive_reject", section=S, expect="reject", error="Exha
 agent A {
   on awake {
     Credence<Color> c = self <- "what color is grass?";
-    case (c) as v {
+    case (c by confidence 0.8) as v {
       Red: { say("r"); }
       Green: { say("g"); }
     }
@@ -489,7 +485,7 @@ add(id="ctrl_case_default_ok", section=S, expect="accept",
 agent A {
   on awake {
     Credence<Color> c = self <- "what color is grass?";
-    case (c) as v {
+    case (c by confidence 0.8) as v {
       Green: { say("g"); }
       default: { say("other"); }
     }
@@ -498,13 +494,13 @@ agent A {
 spawn A a; awake a;''')
 
 add(id="ctrl_retry_bounded", section=S, expect="accept",
-    spec="§11 (bounded retry re-attempts a verify a fixed number of times)",
+    spec="§11, §15.2 (the only loop is the bounded `{ block } retry(N)`)",
     src='''agent A {
   on awake {
-    retry(3) {
+    {
       Credence<bool> still = self <- "are you ready?";
-      verify still;
-    }
+      endorse (still by confidence 0.9) { true: ; false: ; }
+    } retry(3)
   }
 }
 spawn A a; awake a;''')
@@ -523,8 +519,8 @@ add(id="agg_quorum_independent_ok", section=S, expect="accept",
     Credence<bool> j2 = self <- "does this look like spam?";
     Credence<bool> j3 = self <- "would a user mark this spam?";
     independent j1, j2, j3;
-    Credence<bool> agreed = quorum(2 of j1, j2, j3);
-    verify agreed;
+    Credence<bool> agreed = quorum(2, [j1, j2, j3]);
+    endorse (agreed by confidence 0.9) { true: ; false: ; }
   }
 }
 spawn Triage t; awake t;''')
@@ -535,7 +531,7 @@ add(id="agg_quorum_no_dep_decl_reject", section=S, expect="reject", error="TypeE
   on awake {
     Credence<bool> j1 = self <- "is this spam?";
     Credence<bool> j2 = self <- "does this look like spam?";
-    Credence<bool> agreed = quorum(2 of j1, j2);
+    Credence<bool> agreed = quorum(2, [j1, j2]);
   }
 }
 spawn Triage t; awake t;''')
@@ -546,36 +542,39 @@ spawn Triage t; awake t;''')
 # ============================================================================
 S = "13_governance"
 
-add(id="gov_emit_ungranted_reject", section=S, expect="reject", error="AuthorityViolation",
-    spec="§13 (an agent may only emit event types in its grants)",
-    src='''event Note(text msg);
+add(id="gov_perform_ungranted_reject", section=S, expect="reject", error="AuthorityViolation",
+    spec="§13 (default-deny: an agent may only perform actions in its grants)",
+    src='''action Note(text msg);
 agent A {
-  on awake { emit Note("hi"); }
+  on awake { perform Note("hi"); }
 }
 spawn A a; awake a;''')
 
-add(id="gov_gated_emit_ok", section=S, expect="accept",
-    spec="§13 (a verified Credence may cross an authority boundary)",
-    src='''authority Flag;
-event Flag(bool b);
-agent C grants { emit Flag } {
+add(id="gov_endorsed_perform_ok", section=S, expect="accept",
+    spec="§13 (an endorsed Decision may license a consequential perform)",
+    src='''action Flag(bool b);
+agent C grants { perform Flag } {
   on awake {
     Credence<bool> c = self <- "is this fraud?";
-    event<Verification> ok = verify c by > 0.9 margin 0.2;
-    when Pass(ok) { emit Flag(true); }
+    endorse (c by confidence 0.9 margin 0.2) {
+      true: perform Flag(true);
+      false: ;
+    }
   }
 }
 spawn C c; awake c;''')
 
-add(id="gov_consequential_bare_decide_reject", section=S, expect="reject", error="TaintViolation",
-    spec="§13 (a bare decide is committed but NOT authorized → reject at a consequential emit)",
-    src='''authority Flag;
-event Flag(bool b);
-agent C grants { emit Flag } {
+add(id="gov_consequential_bare_collapse_reject", section=S, expect="reject", error="TaintViolation",
+    spec="§13 (a bare `c by R` is settled but off-spine/unendorsed → may not license a perform)",
+    note="only a recorded gate (endorse/attest) may license a consequential action.",
+    src='''action Flag(bool b);
+agent C grants { perform Flag } {
   on awake {
     Credence<bool> c = self <- "is this fraud?";
-    bool d = decide(c, > 0.9);
-    emit Flag(d);
+    case (c by confidence 0.9) as v {
+      true: { perform Flag(true); }
+      false: { }
+    }
   }
 }
 spawn C c; awake c;''')
@@ -596,14 +595,16 @@ agent R {
 }
 spawn R r; awake r;''')
 
-add(id="gov_tool_result_tainted_emit_reject", section=S, expect="reject", error="TaintViolation",
-    spec="§6b, §13 (a tool result is T-tainted; cannot drive a consequential emit without a gate)",
-    src='''authority Alarm;
-event Alarm(text msg);
+add(id="gov_tool_result_tainted_perform_reject", section=S, expect="reject", error="TaintViolation",
+    spec="§6b, §13 (a tool result carries the join of its inputs' trust; a cognition-derived input is un-settled → cannot drive a consequential perform without a gate)",
+    src='''action Alarm(text msg);
 tool fetch(text url) -> text;
-agent Mon grants { use fetch, emit Alarm } {
-  text body = fetch("http://status");
-  emit Alarm(body);
+agent Mon grants { use fetch, perform Alarm } {
+  on awake {
+    event<text> ep = self <- "which endpoint is down?";
+    text body = fetch(f"{ep}");
+    perform Alarm(body);
+  }
 }
 spawn Mon m; awake m;''')
 
@@ -631,9 +632,9 @@ spawn Child c; awake c;''')
 # ============================================================================
 S = "15_reproducibility"
 
-add(id="repro_decide_off_spine", section=S, expect="accept",
-    spec="§15 (decide is a pure projection of a Credence already on the spine; off-spine itself)",
-    src='''sync bool gate(Credence<bool> c) { return decide(c, > 0.8); }''')
+add(id="repro_collapse_off_spine", section=S, expect="accept",
+    spec="§15 (`c by R` is a pure projection of a Credence; off-spine and synchronous)",
+    src='''sync Decision<bool> gate(Credence<bool> c) { return c by confidence 0.8; }''')
 
 
 # ============================================================================

@@ -1,0 +1,18 @@
+//! id:        gov_consequential_bare_collapse_reject
+//! section:   13_governance
+//! expect:    reject
+//! error:     TaintViolation
+//! spec:      §13 (a bare `c by R` is settled but off-spine/unendorsed → may not license a perform)
+//! note:      only a recorded gate (endorse/attest) may license a consequential action.
+//! ---
+action Flag(bool b);
+agent C grants { perform Flag } {
+  on awake {
+    Credence<bool> c = self <- "is this fraud?";
+    case (c by confidence 0.9) as v {
+      true: { perform Flag(true); }
+      false: { }
+    }
+  }
+}
+spawn C c; awake c;

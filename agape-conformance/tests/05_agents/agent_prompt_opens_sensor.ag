@@ -6,6 +6,6 @@
 //! ---
 prompt text question;
 agent A {
-  when (question) { say("got input"); }
+  when (Prompt p about question) { say("got input"); }
 }
 spawn A a; awake a;

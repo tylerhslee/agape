@@ -2,12 +2,12 @@
 //! section:   03_types
 //! expect:    reject
 //! error:     TypeError
-//! spec:      §3, §13 (no text -> Principal coercion at a gate)
+//! spec:      §3, §13 (no text -> Principal coercion at an attest gate)
 //! ---
 agent Drafter {
   on awake {
     event<text> memo = self <- "draft the memo";
-    verify memo by "alice";
+    attest memo by "alice";
   }
 }
 spawn Drafter d; awake d;

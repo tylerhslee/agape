@@ -1,13 +1,13 @@
-//! id:        type_decide_requires_rule_reject
+//! id:        type_collapse_requires_rule_reject
 //! section:   03_types
 //! expect:    reject
 //! error:     ParseError
-//! spec:      §3, §15.2 (decide's rule is mandatory)
+//! spec:      §3, §15.2 (a gate requires its rule; `c by` with no rule is a ParseError)
 //! ---
 agent A {
   on awake {
     Credence<bool> c = self <- "is this an approval?";
-    bool b = decide(c);
+    Decision<bool> b = c by;
   }
 }
 spawn A a; awake a;

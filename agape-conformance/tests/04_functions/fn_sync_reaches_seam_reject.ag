@@ -2,6 +2,6 @@
 //! section:   04_functions
 //! expect:    reject
 //! error:     ColorViolation
-//! spec:      §1 Axis A, §4 (a sync fn may not reach the provider seam via `<-`)
+//! spec:      §1 Axis A, §4 (a sync fn may not reach the provider via `<-`)
 //! ---
 sync text classify(text x) { return self <- f"classify {x}"; }

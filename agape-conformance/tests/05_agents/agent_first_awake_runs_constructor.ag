@@ -2,7 +2,7 @@
 //! section:   05_agents
 //! expect:    accept
 //! contains:  Spawned(a); AgentAwake(a)
-//! spec:      §5 (first awake opens the mailbox and runs the constructor)
+//! spec:      §5 (first awake opens the mailbox and runs the on-awake hook)
 //! ---
 agent A { on awake { say("hello"); } }
 spawn A a; awake a;
