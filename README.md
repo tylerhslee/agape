@@ -8,9 +8,10 @@ verification, and a complete, replayable record of every decision.
 
 ## The problem
 
-Most agent systems do not survive production. Across the 1,600+ deployments studied in the
-[MAST taxonomy](https://arxiv.org/pdf/2503.13657), multi-agent systems fail between 41% and
-87% of the time — almost never because the model was not capable enough. They fail for
+Most agent systems do not survive production. Across the seven open-source frameworks
+studied in the [MAST taxonomy](https://arxiv.org/abs/2503.13657) — 1,642 annotated
+execution traces — multi-agent systems fail between 41% and 87% of the time, almost never
+because the model was not capable enough. They fail for
 structural reasons: agents coordinate through unstructured text and misread one another, act
 on unverified model output, exceed the authority they were meant to have, and leave no record
 that can be replayed when something goes wrong.
@@ -25,7 +26,7 @@ before it runs.
 
 Computation divides into two kinds of work. Deterministic work — parsing, sorting,
 arithmetic, calling a service — is mechanical and belongs in conventional code. Deciding
-*what to do* — interpreting a request, judging whether an action is warranted, recovering
+*how and why to do something* — interpreting a request, judging whether an action is warranted, recovering
 from an ambiguous result — is cognitive. As software becomes agentic, the cognitive layer is
 the one that grows, and it is the layer Agape governs.
 
@@ -37,16 +38,17 @@ without disturbing the rest of the system.
 
 ## What it guarantees
 
-- **Cognition is typed.** A model's answer is a schema-constrained value (`Credence<E>`), not a
-  string to parse and trust.
+- **Cognition is typed.** A model's *judgment* comes back as a schema-constrained value — a
+  `Credence<E>`, a calibrated distribution over a closed set of outcomes read from the model's
+  own token probabilities — not a string to parse and trust.
 - **Authority is bounded at compile time.** An agent may perform only the actions its `grants`
   declare, and no value it computes or learns at runtime can extend that set.
 - **Verification is unavoidable.** A value derived from cognition is *tainted* until an explicit
   gate endorses it. The type checker rejects any program that lets a tainted value drive a
   consequential action; a missing check is a compile error, not a latent risk.
-- **Every run replays.** Execution is an append-only log, and state is a function of that log.
-  A run reproduces exactly, and any prefix can be replayed under altered facts to test a
-  counterfactual.
+- **Every run replays.** Execution is an append-only, hash-chained log, and state is a
+  function of that log. A recorded run replays exactly, and any prefix can be replayed under
+  altered facts to test a counterfactual.
 
 Agape makes no claim that a model's output is correct; no system can. It bounds and records the
 consequences of output that is wrong. The model may err; what it is permitted to do when it errs
@@ -69,7 +71,7 @@ agent Desk grants { emit Refund } {
   on awake {
     Credence<bool> ok = self <- "is refund #4217 within policy?";
     event<Verification> v = verify ok by > 0.9;
-    when Pass(v) { emit Refund(50, "alice"); }
+    when SuccessfulVerification(v) { emit Refund(50, "alice"); }
   }
 }
 spawn Desk d; awake d;
