@@ -1,0 +1,13 @@
+//! id:        gov_grants_star_ok
+//! section:   13_governance
+//! expect:    accept
+//! spec:      §13 (grants { * } is the explicit unconstrained opt-out — lattice top)
+//! ---
+action Pay(int amount);
+agent A grants { * } {
+  on awake {
+    Credence<bool> c = self <- "should we pay?";
+    endorse (c by confidence 0.9) { true: perform Pay(100); false: ; }
+  }
+}
+spawn A a; awake a;

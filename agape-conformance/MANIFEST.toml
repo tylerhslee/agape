@@ -232,6 +232,13 @@ contains = ["PromptOpened(question)"]
 spec = "§5b (a `prompt` declaration opens a standing external input sensor)"
 
 [[test]]
+id = "agent_prompt_value_drives_perform_ok"
+section = "05_agents"
+path = "tests/05_agents/agent_prompt_value_drives_perform_ok.ag"
+expect = "accept"
+spec = "§5b, §13 (a prompt value is external data, settled by origin, and may drive a perform)"
+
+[[test]]
 id = "agent_reawake_no_reconstruct"
 section = "05_agents"
 path = "tests/05_agents/agent_reawake_no_reconstruct.ag"
@@ -261,6 +268,13 @@ section = "06_communication"
 path = "tests/06_communication/comm_self_send_thinks.ag"
 expect = "accept"
 spec = "§6 (sending to self is the agent's own cognition; needs no reach grant)"
+
+[[test]]
+id = "comm_send_expires_ok"
+section = "06_communication"
+path = "tests/06_communication/comm_send_expires_ok.ag"
+expect = "accept"
+spec = "§6 (a send may carry a lifetime: `dest <- msg expires N`; reach into Worker is granted)"
 
 [[test]]
 id = "comm_typed_reply"
@@ -295,6 +309,13 @@ contains = ["pair(Tool@search)"]
 spec = "§6b, §7 (a tool call appends a ToolStarted/ToolResolved pair)"
 
 [[test]]
+id = "spine_when_guard_ok"
+section = "07_spine"
+path = "tests/07_spine/spine_when_guard_ok.ag"
+expect = "accept"
+spec = "§7 (a `when … if (guard)` filters by an ordinary predicate over the bound event's fields)"
+
+[[test]]
 id = "sem_contradiction_emits_event"
 section = "08_semantic"
 path = "tests/08_semantic/sem_contradiction_emits_event.ag"
@@ -317,11 +338,26 @@ expect = "accept"
 spec = "§8, §9 (Credence<Entailment> over {Entails, Contradicts, Neutral})"
 
 [[test]]
+id = "sem_sample_unknown_reject"
+section = "08_semantic"
+path = "tests/08_semantic/sem_sample_unknown_reject.ag"
+expect = "reject"
+error = "TypeError"
+spec = "§8 (there is no sampling combinator in the surface language; a use of `sample` is an unknown-identifier error)"
+
+[[test]]
 id = "prelude_when_error_catches_contradiction"
 section = "09_prelude"
 path = "tests/09_prelude/prelude_when_error_catches_contradiction.ag"
 expect = "accept"
 spec = "§9 (Contradiction extends Error; when (Error e) catches it by subtype)"
+
+[[test]]
+id = "mem_find_graph_origin_ok"
+section = "10_memory"
+path = "tests/10_memory/mem_find_graph_origin_ok.ag"
+expect = "accept"
+spec = "§10 (the relationship graph is queried with `find … where { triple+ }`, optionally projecting origin())"
 
 [[test]]
 id = "mem_match_is_gate"
@@ -361,6 +397,22 @@ error = "ExhaustivenessError"
 spec = "§11 (a case with no default must cover all variants)"
 
 [[test]]
+id = "ctrl_case_ungated_credence_reject"
+section = "11_control"
+path = "tests/11_control/ctrl_case_ungated_credence_reject.ag"
+expect = "reject"
+error = "TypeError"
+spec = "§3, §11 (a Credence<E> is consumed only by a gate/combinator; an un-gated case is a TypeError — gate it first)"
+
+[[test]]
+id = "ctrl_credence_in_if_reject"
+section = "11_control"
+path = "tests/11_control/ctrl_credence_in_if_reject.ag"
+expect = "reject"
+error = "TypeError"
+spec = "§3, §11 (a Credence<bool> is not a bool; a bare Credence in an if is a TypeError — gate it first)"
+
+[[test]]
 id = "ctrl_if_else"
 section = "11_control"
 path = "tests/11_control/ctrl_if_else.ag"
@@ -373,6 +425,27 @@ section = "11_control"
 path = "tests/11_control/ctrl_retry_bounded.ag"
 expect = "accept"
 spec = "§11, §15.2 (the only loop is the bounded `{ block } retry(N)`)"
+
+[[test]]
+id = "agg_all_independent_ok"
+section = "12_aggregation"
+path = "tests/12_aggregation/agg_all_independent_ok.ag"
+expect = "accept"
+spec = "§12 (all over independent Credence<bool> judges fuses to one Credence<bool>)"
+
+[[test]]
+id = "agg_dependent_fuse_ok"
+section = "12_aggregation"
+path = "tests/12_aggregation/agg_dependent_fuse_ok.ag"
+expect = "accept"
+spec = "§12 (a `dependent` declaration fuses conservatively into one Credence<bool>)"
+
+[[test]]
+id = "agg_pipe_fanout_ok"
+section = "12_aggregation"
+path = "tests/12_aggregation/agg_pipe_fanout_ok.ag"
+expect = "accept"
+spec = "§12 (`coll |> fn` maps each element of a collection through fn)"
 
 [[test]]
 id = "agg_quorum_independent_ok"
@@ -390,6 +463,20 @@ error = "TypeError"
 spec = "§12 (fusion — incl. quorum — requires a total independent/dependent declaration)"
 
 [[test]]
+id = "gov_attest_by_principal_ok"
+section = "13_governance"
+path = "tests/13_governance/gov_attest_by_principal_ok.ag"
+expect = "accept"
+spec = "§13 (attest e by p reaches the identity dependency and records an Attestation — the principal basis)"
+
+[[test]]
+id = "gov_conformal_gate_ok"
+section = "13_governance"
+path = "tests/13_governance/gov_conformal_gate_ok.ag"
+expect = "accept"
+spec = "§13 (the conformal basis `by conformal α` is a distribution-free finite-sample gate calibrated from the spine)"
+
+[[test]]
 id = "gov_consequential_bare_collapse_reject"
 section = "13_governance"
 path = "tests/13_governance/gov_consequential_bare_collapse_reject.ag"
@@ -397,6 +484,36 @@ expect = "reject"
 error = "TaintViolation"
 spec = "§13 (a bare `c by R` is settled but off-spine/unendorsed → may not license a perform)"
 note = "only a recorded gate (endorse/attest) may license a consequential action."
+
+[[test]]
+id = "gov_effecting_tool_settled_ok"
+section = "13_governance"
+path = "tests/13_governance/gov_effecting_tool_settled_ok.ag"
+expect = "accept"
+spec = "§6b, §13 (an effecting tool called with settled inputs is permitted)"
+
+[[test]]
+id = "gov_effecting_tool_unsettled_reject"
+section = "13_governance"
+path = "tests/13_governance/gov_effecting_tool_unsettled_reject.ag"
+expect = "reject"
+error = "TaintViolation"
+spec = "§6b, §13 (an effecting tool is a consequential sink; a cognition-derived input is un-settled → reject)"
+
+[[test]]
+id = "gov_endorse_abstain_ok"
+section = "13_governance"
+path = "tests/13_governance/gov_endorse_abstain_ok.ag"
+expect = "accept"
+spec = "§13 (the optional abstain clause runs when the gate cannot commit a singleton prediction set)"
+
+[[test]]
+id = "gov_endorse_records_decided_ok"
+section = "13_governance"
+path = "tests/13_governance/gov_endorse_records_decided_ok.ag"
+expect = "accept"
+contains = ["Decided(c)"]
+spec = "§9, §13 (endorse records the collapse as a Decided event on the spine, subject = the binding)"
 
 [[test]]
 id = "gov_endorsed_perform_ok"
@@ -414,6 +531,13 @@ error = "AuthorityViolation"
 spec = "§5, §13 (capabilities, incl. `use`, are subtractive under extend)"
 
 [[test]]
+id = "gov_grants_star_ok"
+section = "13_governance"
+path = "tests/13_governance/gov_grants_star_ok.ag"
+expect = "accept"
+spec = "§13 (grants { * } is the explicit unconstrained opt-out — lattice top)"
+
+[[test]]
 id = "gov_perform_ungranted_reject"
 section = "13_governance"
 path = "tests/13_governance/gov_perform_ungranted_reject.ag"
@@ -428,6 +552,13 @@ path = "tests/13_governance/gov_reach_ungranted_reject.ag"
 expect = "reject"
 error = "AuthorityViolation"
 spec = "§13 (sending into another agent requires a `reach` grant)"
+
+[[test]]
+id = "gov_read_tool_settled_perform_ok"
+section = "13_governance"
+path = "tests/13_governance/gov_read_tool_settled_perform_ok.ag"
+expect = "accept"
+spec = "§6b, §13 (a read tool over settled inputs yields a settled result — external data settled by origin — that may drive a perform)"
 
 [[test]]
 id = "gov_tool_result_tainted_perform_reject"

@@ -1,0 +1,14 @@
+//! id:        gov_read_tool_settled_perform_ok
+//! section:   13_governance
+//! expect:    accept
+//! spec:      §6b, §13 (a read tool over settled inputs yields a settled result — external data settled by origin — that may drive a perform)
+//! ---
+tool price(text sku) -> int;
+action Charge(int amount);
+agent Store grants { use price, perform Charge } {
+  on awake {
+    int p = price("sku-1");
+    perform Charge(p);
+  }
+}
+spawn Store s; awake s;

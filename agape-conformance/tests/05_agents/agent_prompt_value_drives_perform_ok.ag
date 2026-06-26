@@ -1,0 +1,11 @@
+//! id:        agent_prompt_value_drives_perform_ok
+//! section:   05_agents
+//! expect:    accept
+//! spec:      §5b, §13 (a prompt value is external data, settled by origin, and may drive a perform)
+//! ---
+prompt text cmd;
+action Do(text x);
+agent A grants { perform Do } {
+  when (Prompt p about cmd) { perform Do(p); }
+}
+spawn A a; awake a;

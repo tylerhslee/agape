@@ -1,0 +1,15 @@
+//! id:        agg_dependent_fuse_ok
+//! section:   12_aggregation
+//! expect:    accept
+//! spec:      §12 (a `dependent` declaration fuses conservatively into one Credence<bool>)
+//! ---
+agent A {
+  on awake {
+    Credence<bool> c1 = self <- "is this spam?";
+    Credence<bool> c2 = self <- "is this unsolicited?";
+    dependent c1, c2;
+    Credence<bool> fused = any(c1, c2);
+    endorse (fused by confidence 0.9) { true: ; false: ; }
+  }
+}
+spawn A a; awake a;

@@ -1,0 +1,17 @@
+//! id:        gov_conformal_gate_ok
+//! section:   13_governance
+//! expect:    accept
+//! spec:      §13 (the conformal basis `by conformal α` is a distribution-free finite-sample gate calibrated from the spine)
+//! ---
+enum Ticket { Billing, Bug, Feature }
+agent A {
+  on awake {
+    Credence<Ticket> k = self <- "classify: my card was charged twice";
+    endorse (k by conformal 0.1) {
+      Billing: ;
+      Bug: ;
+      Feature: ;
+    }
+  }
+}
+spawn A a; awake a;

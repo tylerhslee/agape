@@ -1,0 +1,11 @@
+//! id:        mem_find_graph_origin_ok
+//! section:   10_memory
+//! expect:    accept
+//! spec:      §10 (the relationship graph is queried with `find … where { triple+ }`, optionally projecting origin())
+//! ---
+agent Recall {
+  on awake {
+    find x, origin(x) where { x mentions "agape"; };
+  }
+}
+spawn Recall r; awake r;

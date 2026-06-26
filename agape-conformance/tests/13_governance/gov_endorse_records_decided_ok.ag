@@ -1,0 +1,13 @@
+//! id:        gov_endorse_records_decided_ok
+//! section:   13_governance
+//! expect:    accept
+//! contains:  Decided(c)
+//! spec:      §9, §13 (endorse records the collapse as a Decided event on the spine, subject = the binding)
+//! ---
+agent A {
+  on awake {
+    Credence<bool> c = self <- "is \"approve #42\" an approval?";
+    endorse (c by confidence 0.9) { true: ; false: ; }
+  }
+}
+spawn A a; awake a;

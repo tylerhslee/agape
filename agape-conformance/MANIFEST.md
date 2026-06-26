@@ -1,6 +1,6 @@
 # Agape v1.0 — Conformance Test Index
 
-**59 tests** — accept: 38, reject: 21
+**77 tests** — accept: 52, reject: 25
 
 A conformant implementation must satisfy every `accept`/`reject` test (rejects with the declared error class; accepts matching any asserted spine).
 
@@ -58,6 +58,7 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 | `agent_extend_inherits_when` | accept | — | §5, §7 (extend inherits fields + constructor + when blocks + hooks) |
 | `agent_first_awake_runs_constructor` | accept | — | §5 (first awake opens the mailbox and runs the on-awake hook) |
 | `agent_prompt_opens_sensor` | accept | — | §5b (a `prompt` declaration opens a standing external input sensor) |
+| `agent_prompt_value_drives_perform_ok` | accept | — | §5b, §13 (a prompt value is external data, settled by origin, and may drive a perform) |
 | `agent_reawake_no_reconstruct` | accept | — | §5 (re-awake resumes the agent: no re-bind, no re-construct) |
 | `agent_sleep_runs_hook` | accept | — | §5 (sleep closes the mailbox and runs the on-sleep hook) |
 | `agent_spawn_instantiate_only` | accept | — | §5 (spawn instantiates + constructs only: no mailbox, no awake hook) |
@@ -67,6 +68,7 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 | id | expect | error | spec |
 |---|---|---|---|
 | `comm_self_send_thinks` | accept | — | §6 (sending to self is the agent's own cognition; needs no reach grant) |
+| `comm_send_expires_ok` | accept | — | §6 (a send may carry a lifetime: `dest <- msg expires N`; reach into Worker is granted) |
 | `comm_typed_reply` | accept | — | §6 (a typed reply binds the provider answer into event<T>) |
 
 ## 07_spine
@@ -76,6 +78,7 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 | `spine_prospective_only` | accept | — | §7 (subscriptions are prospective; never fire for prior events) |
 | `spine_query_result_event` | accept | — | §10 (a query STATEMENT lands a QueryResult event on the spine) |
 | `spine_tool_pair` | accept | — | §6b, §7 (a tool call appends a ToolStarted/ToolResolved pair) |
+| `spine_when_guard_ok` | accept | — | §7 (a `when … if (guard)` filters by an ordinary predicate over the bound event's fields) |
 
 ## 08_semantic
 
@@ -84,6 +87,7 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 | `sem_contradiction_emits_event` | accept | — | §8, §11 (committing a Credence<Entailment> to Contradicts also emits a first-class Contradiction) |
 | `sem_credence_over_user_enum` | accept | — | §8 (a provider send bound to Credence<E> is a constrained classifier over E) |
 | `sem_entailment_three_valued` | accept | — | §8, §9 (Credence<Entailment> over {Entails, Contradicts, Neutral}) |
+| `sem_sample_unknown_reject` | reject | TypeError | §8 (there is no sampling combinator in the surface language; a use of `sample` is an unknown-identifier error) |
 
 ## 09_prelude
 
@@ -95,6 +99,7 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 
 | id | expect | error | spec |
 |---|---|---|---|
+| `mem_find_graph_origin_ok` | accept | — | §10 (the relationship graph is queried with `find … where { triple+ }`, optionally projecting origin()) |
 | `mem_match_is_gate` | accept | — | §10 (match > θ is a gate; yields a settled result off-spine) |
 | `mem_queried_fact_taint_reject` | reject | TaintViolation | §10, §13 (queried facts default to `graded`; must be re-gated before a consequential perform) |
 
@@ -105,6 +110,8 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 | `ctrl_case_all_variants_ok` | accept | — | §11 (a gated case covering every enum variant is exhaustive) |
 | `ctrl_case_default_ok` | accept | — | §11 (a default arm makes a partial case exhaustive) |
 | `ctrl_case_nonexhaustive_reject` | reject | ExhaustivenessError | §11 (a case with no default must cover all variants) |
+| `ctrl_case_ungated_credence_reject` | reject | TypeError | §3, §11 (a Credence<E> is consumed only by a gate/combinator; an un-gated case is a TypeError — gate it first) |
+| `ctrl_credence_in_if_reject` | reject | TypeError | §3, §11 (a Credence<bool> is not a bool; a bare Credence in an if is a TypeError — gate it first) |
 | `ctrl_if_else` | accept | — | §11 (if/else over a bool) |
 | `ctrl_retry_bounded` | accept | — | §11, §15.2 (the only loop is the bounded `{ block } retry(N)`) |
 
@@ -112,6 +119,9 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 
 | id | expect | error | spec |
 |---|---|---|---|
+| `agg_all_independent_ok` | accept | — | §12 (all over independent Credence<bool> judges fuses to one Credence<bool>) |
+| `agg_dependent_fuse_ok` | accept | — | §12 (a `dependent` declaration fuses conservatively into one Credence<bool>) |
+| `agg_pipe_fanout_ok` | accept | — | §12 (`coll |> fn` maps each element of a collection through fn) |
 | `agg_quorum_independent_ok` | accept | — | §12 (quorum over independent Credence<bool> judges fuses to one Credence<bool>) |
 | `agg_quorum_no_dep_decl_reject` | reject | TypeError | §12 (fusion — incl. quorum — requires a total independent/dependent declaration) |
 
@@ -119,11 +129,19 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 
 | id | expect | error | spec |
 |---|---|---|---|
+| `gov_attest_by_principal_ok` | accept | — | §13 (attest e by p reaches the identity dependency and records an Attestation — the principal basis) |
+| `gov_conformal_gate_ok` | accept | — | §13 (the conformal basis `by conformal α` is a distribution-free finite-sample gate calibrated from the spine) |
 | `gov_consequential_bare_collapse_reject` | reject | TaintViolation | §13 (a bare `c by R` is settled but off-spine/unendorsed → may not license a perform) |
+| `gov_effecting_tool_settled_ok` | accept | — | §6b, §13 (an effecting tool called with settled inputs is permitted) |
+| `gov_effecting_tool_unsettled_reject` | reject | TaintViolation | §6b, §13 (an effecting tool is a consequential sink; a cognition-derived input is un-settled → reject) |
+| `gov_endorse_abstain_ok` | accept | — | §13 (the optional abstain clause runs when the gate cannot commit a singleton prediction set) |
+| `gov_endorse_records_decided_ok` | accept | — | §9, §13 (endorse records the collapse as a Decided event on the spine, subject = the binding) |
 | `gov_endorsed_perform_ok` | accept | — | §13 (an endorsed Decision may license a consequential perform) |
 | `gov_extend_use_subtractive_reject` | reject | AuthorityViolation | §5, §13 (capabilities, incl. `use`, are subtractive under extend) |
+| `gov_grants_star_ok` | accept | — | §13 (grants { * } is the explicit unconstrained opt-out — lattice top) |
 | `gov_perform_ungranted_reject` | reject | AuthorityViolation | §13 (default-deny: an agent may only perform actions in its grants) |
 | `gov_reach_ungranted_reject` | reject | AuthorityViolation | §13 (sending into another agent requires a `reach` grant) |
+| `gov_read_tool_settled_perform_ok` | accept | — | §6b, §13 (a read tool over settled inputs yields a settled result — external data settled by origin — that may drive a perform) |
 | `gov_tool_result_tainted_perform_reject` | reject | TaintViolation | §6b, §13 (a tool result carries the join of its inputs' trust; a cognition-derived input is un-settled → cannot drive a consequential perform without a gate) |
 | `gov_use_tool_granted_ok` | accept | — | §6b, §13 (a granted `use TOOL` permits the tool call) |
 | `gov_use_tool_ungranted_reject` | reject | AuthorityViolation | §6b, §13 (default-deny: a tool call needs a `use` grant) |
