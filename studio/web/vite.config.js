@@ -10,6 +10,8 @@ export default defineConfig({
     port: 5173,
     proxy: {
       "/api": "http://127.0.0.1:8765",
+      // The somatic agent server (Claude-backed operators today; Agape + MCP later).
+      "/agent": "http://127.0.0.1:8799",
     },
   },
   build: {
