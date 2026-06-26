@@ -9,15 +9,28 @@ and matching the declared outcome.
 
 ```
 agape-conformance/
-├── README.md          ← this file
-├── MANIFEST.toml      ← machine-readable index (every test + expectation)
-├── MANIFEST.md        ← human-readable index table
-├── gen.py             ← the generator: all test definitions live here, in one place
-└── tests/<NN_section>/<id>.ag
+├── README.md            ← this file
+├── MANIFEST.toml        ← machine-readable index (generated; do not hand-edit)
+├── MANIFEST.md          ← human-readable index table (generated; do not hand-edit)
+├── build_manifests.py   ← derives both manifests from the .ag headers
+└── tests/<NN_section>/<id>.ag   ← the tests; the single source of truth
 ```
 
-`gen.py` is test infrastructure, not the implementation. Re-run it
-(`python3 gen.py`) to regenerate the `.ag` files + both manifests after edits.
+The `.ag` files are the source of truth — **edit them directly**. The two
+`MANIFEST.*` indexes are *derived* from the `//!` headers, so they cannot drift
+from the tests. After adding, removing, renaming, or editing the header of a
+test, regenerate the indexes:
+
+```
+python3 build_manifests.py            # rebuild MANIFEST.toml + MANIFEST.md
+python3 build_manifests.py --check    # CI: validate headers + assert indexes are up to date
+```
+
+`build_manifests.py` only reads the tests and writes the manifests; it never
+touches an `.ag` file. It also validates each header (id matches the filename,
+section matches the directory, a `reject` carries a known error class, no
+duplicate ids). Tests appear in the indexes in directory order: section then
+filename.
 
 ## Test file format
 
