@@ -21,7 +21,7 @@ a mailbox;
 dependency (the cognition backend, §16) that program code never names directly;
 - **meaning is checkable, and its uncertainty is typed** — a semantic judgment asks
 the provider to commit to one variant of a closed enum and returns a **graded
-judgment** (`Credence<E>`, §3); a **gate** (`decide` / `verify`) is the only thing that
+judgment** (`Credence<E>`, §3); a **gate** (`c by R`, `endorse`/`attest`) is the only thing that
 collapses a graded judgment into a committed decision, or **abstains** (§13);
 - **the world is reached only through declared, capability-gated tools** — every
 world-affecting effect (I/O, an API call, a database, heavyweight computation) is a
@@ -37,11 +37,10 @@ Two ideas underlie the language:
   append-only log. The log is the source of truth; state is a projection of it; replay
    re-derives state by folding it.
 2. **Declared dependencies.** Everything outside the program — the model, an accountable
-  identity, the world, a calibration artifact — is reached through a **declared
-   dependency**: a name the program declares but does not define, whose value configuration
-   supplies at run time (§16). Cognition is the **provider**; accountability is a
-   `**principal`**; the world is a `**tool`**; a risk-controlled gate draws on a
-   `**calibration**`. Swapping a dependency's backend changes no Agape source.
+  identity, the world — is reached through a **declared dependency**: a name the program
+   declares but does not define, whose value configuration supplies at run time (§16). Cognition
+   is the **provider**; accountability is a `**principal`**; the world is a `**tool`**. Swapping a
+   dependency's backend changes no Agape source.
 
 ### 0.1 Scope and layering
 
@@ -50,8 +49,8 @@ language. General-purpose computation — arithmetic-heavy kernels, data structu
 parsers — is imported as a tool (§6b), never reimplemented in Agape: Agape has no
 imperative substrate of its own. The deterministic work lives in the host and is
 reached, and governed, through the tool dependency. The
-primitive Agape provides is **verified judgment under uncertainty**: a non-deterministic
-semantic decision, taint-tracked, collapsed by an auditable gate, recorded on an
+primitive Agape provides is **endorsed judgment under uncertainty**: a non-deterministic
+semantic decision, trust-tracked, collapsed by an auditable gate, recorded on an
 append-only spine.
 
 ### 0.2 Execution model
@@ -63,13 +62,13 @@ program **terminates at quiescence** — when the top-level statements are exhau
 subscription work remains.
 
 A long-running or simulated environment is expressed explicitly, never by making the
-language itself a loop. There are exactly two ways to be non-terminating: an unbounded
-predicate `retry` (§11), and an open external input source (`prompt`, §5b, or a standing
-tool sensor) that keeps the program from quiescing. An always-on agent is not one long
-non-terminating computation; it is an unbounded sequence of finite, terminating reactions
-— one per external event — over a single growing spine, so replay and the reproducibility
-guarantees (§15.5) hold per event. The default — no open source — is deterministic,
-terminating, top-to-bottom evaluation.
+language itself a loop. Computation is **total**: every reaction terminates, since the only
+loop — `retry(N)` — is bounded. The one way a program stays live is an open external input
+source (`prompt`, §5b, or a standing tool sensor) that keeps it from quiescing. An always-on
+agent is not one long non-terminating computation; it is an unbounded sequence of finite,
+terminating reactions — one per external event — over a single growing spine, so replay and
+the reproducibility guarantees (§15.5) hold per event. The default — no open source — is
+deterministic, terminating, top-to-bottom evaluation.
 
 **Concurrency and determinism are independent.** Agape is genuinely concurrent,
 asynchronous, and event-driven: agents overlap in lifetime, a send returns immediately
@@ -91,62 +90,63 @@ Agape tracks three independent properties that are easy to conflate.
 
 - Code is **asynchronous by default**. The common case is cognition, which is async.
 - `**sync`** is the marked keyword. A `sync` function may not touch a declared dependency (no `<-`, no
-binding to a `Credence` slot, no `embed`, no tool call, no `verify … by` human gate)
+binding to a `Credence` slot, no tool call, no `attest`)
 and may only call other `sync` functions.
 - `sync` is an affirmative, auditable claim of cognition-freedom and effect-freedom; it
 propagates downward. Marking the safe property makes visible which code provably cannot
-reach a model, the world, or a human — hot paths, schedulers, loops, the somatic
-kernel, and the gate-collapse `decide`.
-- `emit` and an in-hand `verify` are not dependency reaches and are permitted in `sync`: `emit`
-is a spine append, and `verify` over a `Credence` value already in hand is `decide`
-(somatic) + `emit` (spine). Only reaching a declared dependency forces async.
+reach a model, the world, or a human — hot paths, schedulers, loops, and the gate-collapse
+`c by R`.
+- `emit` and an in-hand `endorse` are not dependency reaches and are permitted in `sync`: `emit`
+is a spine append, and `endorse` over a `Credence` value already in hand collapses (`c by R`)
+and records — no dependency reach. Only reaching a declared dependency forces async.
 
-### Axis B — value taint: how trusted is the value?
+### Axis B — value trust: how settled is the value?
 
-Taint is a property of a value's origin. Agape uses three levels (§13, §15.3.1):
+Trust records a value's cognition-provenance. Agape uses three levels (§13, §15.3.1):
 
-- `**T` (tainted)** — raw, unstructured cognition or untrusted external input: a `<-`
-reply, a `prompt` arrival, a tool result (§6b).
-- `**P` (graded)** — the credence tier: a quantified judgment, a `Credence<E>` (a
-constrained distribution over a closed enum's variants, §3). More structured than `T`
+- `**raw`** — raw, unstructured model output: a `<-` reply before it is bound to a `Credence`.
+- `**graded`** — the credence tier: a quantified judgment, a `Credence<E>` (a
+constrained distribution over a closed enum's variants, §3). More structured than `raw`
 — the model has been forced to commit to a fixed set of outcomes — but not yet
-committed by a gate. Queried memory facts also default to `P` (§10).
-- `**U` (untainted)** — a committed value cleared by a gate.
+committed by a gate. Queried memory facts also default to `graded` (§10).
+- `**settled`** — a committed value carrying no un-endorsed cognition: a gated `Decision`,
+a constant, or external data settled by origin (a `prompt`, a read-tool result over settled inputs).
 
-Only a gate moves a value down the lattice toward `U`. A consequential action may consume
-only `U` values whose untainting is recorded on the spine (§13).
+Trust is contagious upward; only a gate moves a value down toward `settled`. A consequential
+action may consume only a `settled` value whose settling is recorded on the spine — endorsed
+(§13). External data is settled by origin; only un-endorsed cognition is withheld.
 
 ### Axis C — spine presence: `event<T>` vs bare `T`
 
 - `**event<T>`** means the value is (or will be) present on the spine as a message. It
-marks spine presence, not async-ness or taint.
+marks spine presence, not async-ness or trust.
 - A bare `T` is an ordinary in-memory value. A function can be async yet return a bare
 value (handed to the caller, not emitted).
 
 ### The axes are independent
 
 
-| construct                              | async? | taint of result  | on spine? | type                   |
+| construct                              | async? | trust of result  | on spine? | type                   |
 | -------------------------------------- | ------ | ---------------- | --------- | ---------------------- |
-| `Credence<bool> c = self <- "is …?"`   | yes    | `P`              | pair      | `Credence<bool>`       |
-| `decide(c, r)`                         | no     | `U`              | no        | `bool`                 |
-| `verify c`                             | no¹    | `U` (authorized) | single    | `event<Verification>`  |
-| `Credence<Entailment> v = self <- "…"` | yes    | `P`              | pair      | `Credence<Entailment>` |
-| `verify memo by alice`                 | yes    | `U` (authorized) | pair      | `event<Attestation>`   |
-| `dest <- "msg"` (IPC)                  | yes    | `T`              | chain     | `event<T>`             |
-| `search(q)` (tool, §6b)                | yes    | `T`              | pair      | `text`                 |
-| `double(3)` (pure)                     | no     | `U`              | no        | `int`                  |
+| `Credence<bool> c = self <- "is …?"`   | yes    | `graded`         | pair      | `Credence<bool>`       |
+| `c by confidence 0.9`                  | no     | `settled`        | no        | `Decision<bool>`       |
+| `endorse (c by …) { … }`               | no¹    | `settled` (endorsed) | single | `Decision<bool>`     |
+| `Credence<Entailment> v = self <- "…"` | yes    | `graded`         | pair      | `Credence<Entailment>` |
+| `attest memo by alice`                 | yes    | `settled` (endorsed) | pair   | `Decision`           |
+| `dest <- "msg"` (delegation)           | yes    | `raw`            | lifecycle | `T_reply`              |
+| `search(q)` (read tool, §6b)           | yes    | `⊔ inputs`       | pair      | `text`                 |
+| `double(3)` (pure)                     | no     | `settled`        | no        | `int`                  |
 
 
-¹ `verify` over an in-hand `Credence` is synchronous (decide+emit, no dependency reach); `verify (self <- "…")` with an inline provider send is async. See §13.
+¹ `endorse` over an in-hand `Credence` is synchronous (collapse + record, no dependency reach); `endorse (self <- "…" by …)` with an inline provider send is async. See §13.
 
 - A semantic judgment yields a `Credence<E>` — a graded distribution over the variants of
-enum `E`, not a `bool`. To obtain a committed value, `decide` it; the threshold is never
-hidden.
-- `decide` is the gate-collapse (`P → U`); it is somatic (§4) — the cognition already
+enum `E`, not a `bool`. To obtain a committed value, gate it (`c by R`); the threshold is
+never hidden.
+- The collapse `c by R` is the gate (`graded → settled`); it is `sync` — the cognition already
 happened in producing the `Credence`, and applying a `Rule` to it is pure comparison.
-- `verify` = `decide` + emit: it records the collapse on the spine, which is what
-authorizes the value for consequential use (§13).
+- `endorse` records the collapse on the spine, which is what makes the value endorsed and
+admissible for consequential use (§13).
 - A `Credence` is produced by binding a provider send to a `Credence<E>`-typed slot (§3, §8);
 there is no separate `~` or `entail` operator.
 
@@ -209,20 +209,20 @@ true false                                // bool literals
 ### `event<T>` — spine-message type
 
 Wraps any `T` to mean "on the spine." Produced by spine-emitting constructs (`<-`,
-`verify`, `emit`, a tool call's pair, a query statement) and consumed by spine constructs
-(`catch`, `when`, retrieval built-ins, field storage). `event<null>` = "sent, but no
+`endorse`, `emit`, `perform`, a tool call's pair, a query statement) and consumed by spine
+constructs (`when`, retrieval built-ins, field storage). `event<null>` = "sent, but no
 typed reply bound."
 
 ### User nominal types
 
 User-defined nominal types are explicitly declared. Explicit declaration is what makes the
-`authority` event modifier and grant-set checking statically decidable: a consequential event
+`event`/`action` distinction and grant-set checking statically decidable: an `action`
 type is a declared name with a known payload.
 
 ```agape
 struct Memo  { amount: int, to: text }            // a record; all fields required
 enum  Ticket { Billing, Bug, Feature }            // a closed variant set
-authority event Transfer(memo: Memo);              // consequential spine-event; emit needs a gated value
+action Transfer(memo: Memo);                       // a performative; performing it needs a settled value
 ```
 
 - `**struct NAME { field: T, … }**` — a record with named, typed fields. All fields are
@@ -231,12 +231,11 @@ as a nullable union field. A struct literal is `NAME { field: v, … }` and must
 every field; a missing field is a `TypeError`.
 - `**enum NAME { A, B, … }**` — a closed set of named variants; `case` (§11)
 pattern-matches them with compile-time exhaustiveness.
-- `**[authority] event NAME(field: T, …);**` — declares a custom spine-event type with a
-typed payload. The optional `authority` modifier marks it consequential (§13): emitting it
-requires a clean, gate-endorsed value. `emit NAME(v)` requires `NAME` to be declared and
-`v` to match the payload type. Events are not self-declaring; an undeclared `emit` is a
-`TypeError`. Explicit declaration is what lets the `authority` modifier and
-`grants { emit NAME }` be checked statically.
+- `**event NAME(field: T, …);**` — a plain record (assertive); anyone may `emit` it, no power
+needed. `**action NAME(field: T, …);**` — a performative: `perform NAME(v)` is a consequential
+act that needs the `perform NAME` power (§13) and a `settled` value. Both require `NAME` to be
+declared and `v` to match the payload; an undeclared `emit`/`perform` is a `TypeError`. Explicit
+declaration is what lets `grants { perform NAME }` be checked statically.
 
 ### `Credence<E>` — a graded judgment
 
@@ -252,7 +251,7 @@ Credence<Ticket>        // graded over a user enum — a constrained classifier
 
 A `Credence<E>` is produced only by binding a provider send to a `Credence`-typed slot (§8);
 the slot's enum is the output schema, so the model is forced to answer inside `E`. It is
-consumed only by the gate (`decide` / `verify`, §13) and by the graded combinators (`all`
+consumed only by the gate (`c by R`, `endorse`/`attest`, §13) and by the graded combinators (`all`
 / `any` / `quorum`, §12). It is not a probabilistic-programming distribution object:
 there is no inference, conditioning, or sampling combinator. Producing a `Credence<E>`
 any other way (e.g. from arithmetic) is a `TypeError`; consuming one anywhere but the gate
@@ -282,18 +281,19 @@ A `Rule` is **not** a first-class type or a primitive — it is the parameter a 
 value that carries its own *basis*, so the gate is uniform ("apply this rule to this `Credence`")
 whatever basis the rule holds. Two bases (§13):
 
-- **threshold** — `> θ` (optionally `> θ margin δ`): commit the top variant when its mass ≥ `θ`
-and its lead over the runner-up ≥ `δ`. `margin` is a threshold-basis refinement, meaningful only
-for three-plus variants (for `bool` it is redundant with `θ`). Cheap, needs no data, no guarantee
-— its principled value is the loss ratio `θ = c_FA / (c_FA + c_FR)` (§13).
-- **conformal** — `conformal(α) over CAL` (`CAL` a `calibration` dependency): a distribution-free,
-finite-sample error bound at level `α` (§13). The conformal procedure is library code, not kernel.
+- **threshold** — `confidence θ` (optionally `confidence θ margin δ`): commit the top variant when
+its mass ≥ `θ` and its lead over the runner-up ≥ `δ`. `margin` is a threshold-basis refinement,
+meaningful only for three-plus variants (for `bool` it is redundant with `θ`). Cheap, needs no
+data, no guarantee — its principled value is the loss ratio `θ = c_FA / (c_FA + c_FR)` (§13).
+- **conformal** — `conformal α`: a distribution-free, finite-sample error bound at level `α`,
+calibrated from the gate's own recorded decisions on the spine (§13). The conformal procedure is
+library code, not kernel.
 
-A `Rule` is a value — a literal (`> 0.9`), a reference (`conformal(0.1) over CAL`), or one a
-pipeline computed (`self.policy_rule`). A spec-defined default threshold (§16) applies to a
-`verify` that omits `by`; `decide` requires its rule (`decide(e)` with no rule is a `ParseError`).
+A `Rule` is a value — a literal (`confidence 0.9`), a reference (`conformal 0.1`), one a pipeline
+computed (`self.policy_rule`), or a named `policy` (§13) bundling a rule with its cold-start
+fallback. A gate requires its rule (`c by` with no rule is a `ParseError`).
 
-### Declared dependencies — `principal`, `calibration` (and `tool`, `prompt`)
+### Declared dependencies — `principal` (and `tool`, `prompt`)
 
 Everything the program reaches but does not define is a **declared dependency**: a name declared in
 source, bound to a concrete resource by configuration (§16). It is one construct, fixed by a single
@@ -306,36 +306,32 @@ on the spine. Four flavours differ only in what they supply:
 
 | declaration           | supplies                       | used at                              |
 | --------------------- | ------------------------------ | ------------------------------------ |
-| `prompt T name;`      | an external input source (§5b) | `when (name)`                        |
-| `tool name(..) -> R;` | a world capability (§6b)       | a tool call                          |
-| `principal name;`     | an accountable identity        | `verify e by name`                   |
-| `calibration name;`   | a calibration dataset/model    | `verify e by conformal(α) over name` |
+| `prompt T name;`      | an external input source (§5b) | `when (Prompt p about name)`         |
+| `tool R name(..);`    | a world capability (§6b)       | a tool call                          |
+| `principal name;`     | an accountable identity        | `attest e by name`                   |
 
 
 ```agape
-principal   alice;        // an accountable identity, resolved by config (§16)
-calibration refund_cal;   // a calibration dataset/model, resolved by config (§16)
+principal alice;          // an accountable identity, resolved by config (§16)
 ```
 
-A `principal` is the basis of a human gate (`verify e by alice`, §13); its own taint is `U`, and a
-name is a forgeable claim, not a credential (`verify e by "alice"` is a `TypeError`). A
-`calibration` backs a conformal gate and carries a *readiness* state (§13): below its configured
-minimum sample size a conformal gate abstains. No credential or dataset appears in source; both are
-bound in the manifest (`[identity]`, `[calibration.NAME]`, §16), and authentication/signing happen
-at the gate, not the declaration. `Credence<E>` is **not** a declared dependency — it is a value
-*received* from the provider, not a declared name.
+A `principal` is the basis of an external gate (`attest e by alice`, §13); its own trust is
+`settled`, and a name is a forgeable claim, not a credential (`attest e by "alice"` is a
+`TypeError`). A conformal gate needs no separate dependency: it calibrates from its own recorded
+decisions on the spine, and below a configured minimum of labelled cases (§13, §16) it abstains. No
+credential appears in source; it is bound in the manifest (`[identity]`, §16), and
+authentication/signing happen at the gate, not the declaration. `Credence<E>` is **not** a declared
+dependency — it is a value *received* from the provider, not a declared name.
 
 ### The judgment enums (prelude — §9)
 
-Both are pure enums — a categorical outcome and nothing more; all contextual metadata
-lives on the spine event that carries it.
+A pure enum — a categorical outcome and nothing more; all contextual metadata lives on the
+spine event that carries it.
 
-- `**Verification`** — `enum Verification { Pass, Fail }` — what a `Credence<bool>`
-judgment decides to.
-- `**Entailment*`* — `enum Entailment { Entails, Contradicts, Neutral }` — what a
-`Credence<Entailment>` judgment decides to.
+- `**Entailment`** — `enum Entailment { Entails, Contradicts, Neutral }` — what a
+`Credence<Entailment>` judgment commits to. A `Credence<bool>` commits to `true`/`false`.
 
-A `Credence<E>` is the graded judgment before the gate; the enum variant is what `decide`
+A `Credence<E>` is the graded judgment before the gate; the committed variant is what the gate
 produces. The graded layer is where a model's "0.87" lives — the `Credence` carries it;
 the decided enum does not pretend to.
 
@@ -354,19 +350,19 @@ the decided enum does not pretend to.
 
 ```agape
 sync int   double(int x)            { return x * 2; }                 // sync, bare int
-sync bool  over(Credence<bool> c)   { return decide(c, > 0.9); }      // sync; decide is somatic
+sync Decision<bool> over(Credence<bool> c) { return c by confidence 0.9; }  // sync; the collapse is deterministic
 Credence<bool> about_poker(text x)  {                                 // async, graded judgment
     Credence<bool> c = self <- f"is {x} a game of poker?";
     return c;
 }
 ```
 
-`decide` is somatic (§13). The cognition is in producing the `Credence` (the provider send
-bound to a `Credence` slot, which is async); applying a threshold/margin to a `Credence`
-value is pure comparison. So a `sync` function may take a `Credence` and `decide` it; the
-judgment is agentic, the collapse is somatic, and the decision is deterministic given the
-`Credence` (§15.5). A `sync` function may likewise `emit`, and may `verify` a `Credence`
-value in hand (decide+emit, no dependency reach); it may not `verify … by p` (identity dependency = async)
+The collapse `c by R` is `sync` (§13). The cognition is in producing the `Credence` (the provider
+send bound to a `Credence` slot, which is async); applying a threshold/margin to a `Credence`
+value is pure comparison. So a `sync` function may take a `Credence` and collapse it; the
+judgment is agentic, the collapse is deterministic, and the decision is fixed given the
+`Credence` (§15.5). A `sync` function may likewise `emit`, and may `endorse` a `Credence`
+value in hand (collapse + record, no dependency reach); it may not `attest … by p` (identity dependency = async)
 and may not make a tool call (§6b).
 
 ---
@@ -395,23 +391,19 @@ agent NAME ( [TYPE PARAM] , ... ) [grants { CAP , ... }] {
 
 ### Lifecycle
 
-Each transition is a spine event. The lifecycle separates coming into existence from
-announcing into existence:
+Each transition is a spine event. Construction is at `spawn`; `awake` and `sleep` toggle the
+mailbox:
 
-- `**spawn TYPE name;**` — allocate only. Bring the instance into existence: give it an
-address, perform runtime-level validation of its connections. It runs no constructor,
-reaches no cognition, binds no constructor arguments, and opens no mailbox. Appends
-`Spawned(name)`.
-- `**awake name(args);**` — announce and initialize. Bind the constructor parameters to
-`args`, open the mailbox, and on the first awake append `AgentAwake(name)` and run the
-constructor body. The `on awake` hook runs on every awake; the constructor body runs
-only on the first. `awake name;` (no parens) is permitted when the agent has no
-constructor parameters, or as the re-awake of an already-constructed agent: a subsequent
-`awake name;` re-opens the mailbox and runs the `on awake` hook only — it does not
-re-bind arguments and does not re-run the constructor.
+- `**spawn TYPE name(args);**` — allocate and construct. Give the instance an address, bind the
+constructor parameters to `args`, run the constructor body, and hoist its subscriptions. It
+reaches no cognition and opens no mailbox yet. Appends `Spawned(name)`.
+- `**awake name;**` — announce: open the mailbox, append `AgentAwake(name)`, and run the
+`on awake` hook. It takes no arguments; the constructor already ran at `spawn`. A re-`awake`
+after `sleep` resumes the agent — and loses nothing, because the agent's state is a function of
+the spine, not fragile in-memory state.
 - `**sleep name;**` — close the mailbox; run the `on sleep` hook; a slept agent with no
-live references is collected. A collected agent is re-entered by a fresh `spawn`/`awake`;
-a still-referenced slept agent is re-entered by `awake name;`.
+live references is collected. A collected agent is re-entered by a fresh `spawn`; a
+still-referenced slept agent is re-entered by `awake name;`.
 - **Crash (involuntary).** A fault within a single handler invocation — an unrecoverable
 seam failure (e.g. the provider returns nothing) or an uncaught error — does **not** end
 the agent. The faulting invocation is abandoned, `AgentCrashed(name)` is appended, the
@@ -449,12 +441,12 @@ prompt text question;          // opens a standing external input SENSOR
 
 `prompt TYPE name;` declares an external input source — the push mirror of the pull send
 `<-`. Each external arrival lands a `Prompt` event on the spine with subject `name`. React
-with `when (name)`.
+with `when (Prompt p about name)`, where `p` evaluates to the arrived value.
 
 - A `prompt` source makes a program always-on (§0.2): while open it cannot quiesce; when
 it closes (EOF) the program reaches quiescence and ends.
-- Its values are external and untrusted, hence `T`-tainted (§13). An external input may
-not reach an `authority` `emit` without passing a gate.
+- Its values are external data, `settled` by origin (§13): they carry no un-endorsed cognition,
+so they may drive an action. Agape gates the model's judgment, not the correctness of input.
 - `prompt` is one of a family of sensors (socket, timer, queue, file watch, and a standing
 tool sensor, §6b), sharing one runtime contract: an external source that appends events
 to the spine as they arrive, so replay folds the recorded input stream deterministically.
@@ -472,7 +464,7 @@ agent thinks. It is the only cognition primitive; the provider is not an agent.
 output for `T` (§8); binding to a `Credence<E>` slot constrains that output to `E`'s
 variants (§3, §8). For an IPC send, the reply is the recipient agent's bound response;
 for a self-send it is the model's structured output.
-- A send is a spine message → its result type is `event<T>`, taint `T`.
+- A send's reply is `raw`; only its lifecycle (`Sent → Delivered → Resolved`) is on the spine, not its content (§15.4).
 
 ### The message lifecycle — `Sent → Delivered → Resolved`
 
@@ -551,10 +543,10 @@ undeclared tool call is a `TypeError`.
 `extend`, like `emit` and `reach`.
 - **Color.** A tool call reaches the tool dependency → async (`A`). A `sync` function may not
 call a tool.
-- **Taint.** A tool result is external and untrusted → `T`-tainted, exactly like a
-cognition reply or a `prompt` arrival. To drive a consequential action it must pass a
-gate. The membrane governs all three untrusted origins uniformly: provider, input
-boundary, and tool.
+- **Trust.** A read-tool result carries the join of its inputs' trust: `settled` when its inputs
+are settled (external data, settled by origin), `graded`/`raw` when a `Credence` flowed in. An
+**effecting** tool is a consequential sink — its inputs must be `settled` and endorsed, exactly
+like a `perform`. Agape gates the model's judgment, not the correctness of external data.
 - **Spine.** A tool call appends a correlated `ToolStarted(NAME)` / `ToolResolved(NAME)`
 pair (§7). Every world-effect is on the log, so the spine is a complete, replayable
 account of what the program did to the world, not only what it thought.
@@ -565,19 +557,19 @@ side-effecting tool is replayed as its recorded result.
 socket, a file watch) rather than a pull call, in which case it behaves like `prompt`
 (§5b): it appends events as they arrive and makes the program always-on.
 
-A tool is not a new trust hole; it is the same membrane discipline (capability + taint +
-spine + replay) applied to world-effects. This is what lets the somatic layer be a
+A tool is not a new trust hole; it is the same membrane discipline (capability + trust +
+spine + replay) applied to the world. This is what lets the host's deterministic work be a
 general-purpose language reached through a governed boundary rather than reimplemented
 inside Agape (§0.1).
 
 ---
 
-## 7. The spine, events, `when`, `catch`
+## 7. The spine, events, and `when`
 
 ### Events
 
 Every meaningful action appends an immutable `Event`: `{ tick, etype, subject, payload, corr, agent }`. `tick` is system-assigned and monotonic; `subject` is the source the event
-is about (the `when`/`catch` correlation key); `corr` links a `Started` to its `Resolved`.
+is about (the `when` correlation key); `corr` links a `Started` to its `Resolved`.
 
 ### Subjects: every event has a source
 
@@ -589,16 +581,23 @@ tool name. A literal operand has an ephemeral address; its event still lands on 
 ### Async event discipline
 
 A send (`<-`) appends the three-phase `Sent`/`Delivered`/`Resolved` chain (§6). Any other
-operation with a pending window that reaches a declared dependency (`embed`, `verify … by p`, a tool
+operation with a pending window that reaches a declared dependency (`attest … by p`, a tool
 call) appends a `Started`/`Resolved` pair correlated by `corr`. Synchronous ops (`==`,
-arithmetic, `decide`, an in-hand `verify`) append a single event or none.
+arithmetic, the collapse `c by R`, an in-hand `endorse`) append a single event or none.
 
-### `when` and `catch` — one mechanism, opposite polarity
+### `when` — the subscription
 
-Both are spine subscriptions keyed by `(event type, optional subject)`:
+`when (Type binding [about subject]) [if (guard)] { ... }` is a spine subscription. It matches
+events of `Type` (by subtype, §9); the `binding` is the matched event, which evaluates to its
+payload (`binding.field`); `about subject` filters to events about a held subject; and `if (guard)`
+is an ordinary predicate over the bound event's fields. With no `about` and no guard it matches
+every event of that type, any source — including faults (`when (Error e)`).
 
-- `when (X) { ... }` — fires on the success/resolution events of subject `X`; `when EventType(X) { ... }` narrows to a type.
-- `catch EventType as e { ... }` — every event of `EventType`, any source; `catch EventType(X) as e { ... }` — only those sourced at `X`.
+```agape
+when (Refund r)                       { ... }   // every Refund; r is the payload
+when (Refund r about desk)            { ... }   // only Refunds about the agent `desk`
+when (Refund r) if (r.amount > 1000)  { ... }   // a payload guard
+```
 
 Event-type matching is by subtype (§9). **Subscriptions are prospective and hoisted per
 scope**: registered before the scope's statements run, so lexical order between a
@@ -614,10 +613,9 @@ part of the semantics so that replay is well-defined.
 
 ```agape
 Credence<bool> c = self <- f"is {name} 'John'?";
-verify c;                                    // emits Verification events (subject: c)
-catch FailedVerification(c) as e { ... }     // iff that check decided Fail
-catch Contradiction(john) as k { ... }       // any Credence<Entailment> that decided Contradicts at john
-catch Error as e { ... }                     // every error, any source (incl. Contradiction)
+endorse (c by confidence 0.9) { true: emit Logged("john"); false: ; }  // records the Decision (subject: c)
+when (Contradiction k about john) { ... }    // a Credence<Entailment> that committed to Contradicts at john
+when (Error e) { ... }                       // every error, any source (incl. Contradiction)
 ```
 
 ---
@@ -642,16 +640,16 @@ Credence<Entailment> rel = self <- f"does {p} entail {h}?";          // over { E
 Credence<Ticket> kind    = self <- f"classify this ticket: {body}";  // over a user enum Ticket
 ```
 
-`Credence<E>` over any user enum is a constrained classifier whose output is taint-tracked
+`Credence<E>` over any user enum is a constrained classifier whose output is trust-tracked
 and gate-disciplined. The threshold is not applied here — it lives in the gate's `Rule`
-(§13). To use a judgment as a committed value, gate it: `decide(c, r)`.
+(§13). To use a judgment as a committed value, gate it: `c by R`.
 
 - On an array operand a judgment decomposes over elements but returns one `Credence<E>`
 for the whole: the parts inform the distribution; the evidence records where a partial
 mismatch was. The result type stays uniform.
-- **Mechanism vs policy:** when a gate decides a `Credence<Entailment>` to `Contradicts`,
-the runtime also emits a first-class `Contradiction` event, independent of any `case`,
-so a global `catch Contradiction(subject)` can react.
+- **Mechanism vs policy:** when a gate commits a `Credence<Entailment>` to `Contradicts`,
+the runtime also emits a first-class `Contradiction` event, independent of any arm,
+so a global `when (Contradiction about subject)` can react.
 
 ### Materializing a distribution (cost)
 
@@ -676,33 +674,33 @@ of the constrained decode, calibrated (§3).
 ## 9. The prelude
 
 ```
-enum Verification { Pass, Fail }                           // decided from a Credence<bool>
-enum Entailment   { Entails, Contradicts, Neutral }        // decided from a Credence<Entailment>
+enum Entailment { Entails, Contradicts, Neutral }          // committed from a Credence<Entailment>
 type Credence<E>                                           // a graded judgment over enum E (§3)
+type Decision<E>                                           // a gate's committed outcome over E (§13)
 type Principal                                             // an accountable identity — a declared dependency (§3)
-type Calibration                                           // a calibration dataset/model — a declared dependency (§3)
-// Rule is the gate's PARAMETER, not a type: `> θ [margin δ]` | `conformal(α) over CAL`  (§3, §13)
+// Rule is the gate's PARAMETER, not a type: `confidence θ [margin δ]` | `conformal α`  (§3, §13)
 
 // Built-in spine events:
 //   Event(text)            user progress/info event (via `emit`)
 //   Error(text)            ROOT error type (hierarchy below)
-//   Verification(subj)     a decided Credence<bool> gate → Successful/FailedVerification
-//   Contradiction(subj)    emitted when a Credence<Entailment> decides to Contradicts
-//   Attestation(subj)      a human-principal gate (verify … by p)
+//   Decided(subj)          a gate committed a Decision at subj
+//   Abstained(subj)        a gate could not commit at subj
+//   Contradiction(subj)    emitted when a Credence<Entailment> commits to Contradicts
+//   Attestation(subj)      a principal gate (attest … by p)
 //   QueryResult(subj)      the event a query STATEMENT lands
 //   ToolStarted/ToolResolved   the tool pair (§6b)
-//   Spawned / AgentAwake / SleepEvent          lifecycle (§5)
+//   Spawned / AgentAwake / SleepEvent / AgentCrashed   lifecycle (§5)
 //   Sent / Delivered / Resolved                message lifecycle (§6)
 //   Expired(corr) / DeliveryRefused(corr)      message expiry / refused-late-delivery (§6)
 //   PromptOpened(name) / Prompt(name)          external input sensor (§5b)
-//   <Op>Started / <Op>Resolved                 async dependency pairs (embed, verify…by, tool)
+//   <Op>Started / <Op>Resolved                 async dependency pairs (tool, attest…by)
 ```
 
-**Event-type hierarchy.** `Error` is the root; `FailedVerification`, `Contradiction`,
-`TypeMismatch`, `RetryExhausted`, `FailedAttestation`, and the lifecycle **Violation**
-extend it. `catch`/`when` match by subtype, so `catch Error` catches a `Contradiction`; a
-contradiction is an `Error` subtype, and code that wants only faults catches the specific
-types. `Expired` and a lost send are not errors.
+**Event-type hierarchy.** `Error` is the root; `Contradiction`, `TypeMismatch`,
+`RetryExhausted`, `FailedAttestation`, and `AgentCrashed` extend it. `when` matches by
+subtype, so `when (Error e)` catches a `Contradiction`; a contradiction is an `Error`
+subtype, and code that wants only faults matches the specific types. `Expired` and a lost
+send are not errors.
 
 `**say(x)`** prints its argument; it is not a spine operation.
 
@@ -714,8 +712,8 @@ Each agent has its own memory:
 
 - **FACTS** → a deterministic table, queried with `select`.
 - **RELATIONSHIPS** → a graph, queried with `find ... where`.
-- **SEMANTICS** → a vector store, queried with `match`. `match` is a gate: `match { m: q } > θ` thresholds similarity, deciding hits against `θ`, and yields `U` (committed) but
-off-spine — like `decide`, it must be `verify`-recorded to authorize a consequential use.
+- **SEMANTICS** → a vector store, queried with `match`. `match` is a gate: `match { m: q } > θ` thresholds similarity, settling hits against `θ`, and yields `settled` but
+off-spine — like `c by R`, it must be `endorse`-recorded to admit a consequential use.
 
 ### Internalization
 
@@ -729,26 +727,31 @@ a typed predicate set).
 Every memory cell carries an immutable backpointer to the spine event that produced it;
 `find n, origin(n) where { … }` returns the fact and its originating event.
 
-### Taint of queried facts
+### Trust of queried facts
 
-A queried fact carries the taint of the spine event it traces to (provenance-based).
-Because most facts trace to internalized cognition, the default taint of a `find` /
-`select` result is `P` (graded — structured but not gate-committed): it may flow through
-control flow but must be re-gated before a consequential `emit`. A fact whose origin is an
-already-committed (`U`) event carries `U`. `match` hits are `U` but off-spine (a gate,
-above). A value's provenance, not its having-been-stored, determines whether it may act.
+A queried fact carries the trust of the spine event it traces to (provenance-based).
+Because most facts trace to internalized cognition, the default trust of a `find` /
+`select` result is `graded` (structured but not gate-committed): it may flow through
+control flow but must be re-gated before a consequential sink. A fact whose origin is an
+already-endorsed (`settled`) event carries `settled`. `match` hits are `settled` but off-spine (a
+gate, above). A value's provenance, not its having-been-stored, determines whether it may act.
 
 ### Query surface
 
-- **Graph:** `find BINDING [, origin(BINDING)] where { PATTERN };`
-- **Facts:** `select COLS from AGENT where { CONDS };`
-- **Vector:** `match { BINDING: VECTOR } > THRESHOLD;`
-- **Spine:** `select COLS from spine where { CONDS };` — scan the log itself.
+- **Facts (SQL):** `select COLS from AGENT where { COND }` → `array<Record>` — rows of the
+projected columns. `COND` is a boolean filter over fields: `field op value` (`op ∈ {==, !=, <, >,
+<=, >=}`) combined by `&&` / `||`. No joins or aggregates — heavy analysis is host work (§6b).
+- **Relationships (graph):** `find x [, origin(x)] where { TRIPLE+ }` → `array<T>` of the bound
+node's type — the entities matching the pattern. Each `TRIPLE` is a `subject predicate object`
+atom (any position a variable or a literal); the body is their conjunction.
+- **Semantics (vector):** `match VECTOR > θ` → `array<Hit>` — the nearest neighbours above
+similarity `θ`, each a matched item with its score. `match` is a gate (above).
+- **Spine:** `select COLS from spine where { COND }` — the same `select` over the log itself.
 
-Each query has a statement form and an expression form (bound in a declaration, yields its
-result set). The statement form lands a `QueryResult(subject)` event, where `subject` is
-the query target (the agent name, or `spine`). The expression form lands nothing; it only
-reads. A query reads the log; it never re-emits. Replay folds the spine and appends
+Each query is an **expression** yielding its `array<…>` result set, bound by an ordinary
+declaration (`array<Refund> prior = select * from Refund where { … };`) and consumed by fan-out
+(`|>`, `all`/`any`/`quorum`, §12). A bare **statement** form binds nothing and lands a
+`QueryResult(subject)` event, where `subject` is the query target (the agent name, or `spine`). A query reads the log; it never re-emits. Replay folds the spine and appends
 nothing.
 
 ---
@@ -757,7 +760,7 @@ nothing.
 
 ### `if` / `else`
 
-The condition is `bool`; `!` is boolean negation. A `Credence<bool>` is not a `bool` — `if (decide(c, r)) { … }`; a bare `Credence` in an `if` is a `TypeError`.
+The condition is `bool`; `!` is boolean negation. A `Credence<bool>` is not a `bool` — gate it (`c by R`, then dispatch on the `Decision`); a bare `Credence` in an `if` is a `TypeError`.
 
 ### `case` — enum pattern matching
 
@@ -768,19 +771,20 @@ case (EXPR) as e {
 }
 ```
 
-- General over any enum; `Entailment`/`Verification`/user enums are the common cases.
+- General over any enum; `Entailment`/`Decision`/user enums are the common cases.
 - Exhaustiveness is checked at compile time; a non-exhaustive `case` with no `default` is
 an `ExhaustivenessError`.
-- If `EXPR : Credence<E>`, `case` decides it first (a default `Rule`, or an explicit `case (decide(EXPR, r)) …`): the categorical collapses to the argmax variant if its margin
-over the runner-up clears the rule, else to the abstaining variant (`Neutral` for
-`Entailment`; `Fail` for `bool`). Deciding to `Contradicts` also fires the first-class
-`Contradiction` event (§8). `case` over a pure enum is synchronous.
+- A `Credence<E>` is not matched directly; gate it first (`case (EXPR by r) …`): the collapse
+yields a singleton variant if its margin over the runner-up clears the rule, else `abstain`.
+Committing to `Contradicts` also fires the first-class `Contradiction` event (§8). `case` over a
+pure enum is synchronous.
 
 ### `retry` — re-attempts
 
-Bounded block, bounded send-form (a handler runs before each re-attempt), and an unbounded
-predicate form `retry(TYPE x: PRED)` — the construct that makes Agape Turing complete.
-`retry` is sugar (counter + `catch`, or a loop); bounded exhaustion emits `RetryExhausted`.
+`{ block } retry(N)` re-attempts the block up to `N` times on a fault (an `Error` — e.g. a
+`TypeMismatch` from a malformed reply): assignments the block makes persist, and on exhaustion it
+emits `RetryExhausted` and the fault propagates. The bound is mandatory — there is no unbounded
+form, so every Agape program terminates.
 
 ---
 
@@ -790,7 +794,7 @@ predicate form `retry(TYPE x: PRED)` — the construct that makes Agape Turing c
 (await-all; no short-circuit).
 - `all(...)` / `any(...)` reduce a collection. Over `bool` they are ordinary
 conjunction/disjunction. Over `Credence<bool>` they fuse evidence into a single
-`Credence<bool>` to `decide` once, instead of collapsing each judgment early.
+`Credence<bool>` to gate once, instead of collapsing each judgment early.
 
 ### Fusion must declare its dependence structure
 
@@ -831,11 +835,11 @@ collapses as their number grows). `quorum` expresses this:
 
 ```agape
 independent j1, j2, j3;                          // diverse judges/evidence
-Credence<bool> agreed = quorum(2 of j1, j2, j3); // graded "at least 2 of 3 commit"
-verify agreed;                                   // decide the fused quorum once
+Credence<bool> agreed = quorum(2, [j1, j2, j3]); // graded "at least 2 of 3 commit"
+endorse (agreed by confidence 0.9) { ... }       // gate the fused quorum once
 ```
 
-- `**quorum(k of c1, …, cn)**` fuses `n` `Credence<bool>` judgments into a single
+- `**quorum(k, [c1, …, cn])**` fuses `n` `Credence<bool>` judgments into a single
 `Credence<bool>` for the proposition "at least `k` of the `n` commit," combined under the
 declared dependence structure. It is a thresholded reduction over the same fusion algebra
 as `all`/`any`; the same total-coverage declaration requirement applies.
@@ -855,7 +859,7 @@ optional distributed-spine boundary (§15.4.2a).
 
 ## 13. Capabilities and governance
 
-Five properties are bounded by the compiler, not hoped for at runtime: authority, taint,
+Five properties are bounded by the compiler, not hoped for at runtime: authority, trust,
 color, tool use, and the gate that connects them. The formal rules are §15.3.
 
 ### Authority (`grants`)
@@ -864,7 +868,7 @@ An agent's `grants` clause is its total authority — in Hohfeld's terms, its **
 actions it may `perform`, agents it may `reach`, and tools it may `use` (§6b). Acting outside it
 is a compile error. Capabilities are subtractive under `extend`. An `**action`** declaration
 (`action Transfer(…);`) is a consequential, performative event type (vs a plain `event`, a
-record) — performing one engages the taint rule below.
+record) — performing one engages the trust rule below.
 
 ```agape
 grants { perform Transfer, reach Worker, use search } // concrete capabilities
@@ -881,14 +885,17 @@ variable of agent type), not only parameters.
 
 ### Taint — the three-level lattice
 
-A value's taint records how trusted its origin is: `U ⊑ P ⊑ T` (§15.3.1).
+A value's trust records its cognition-provenance: `settled ⊑ graded ⊑ raw` (§15.3.1).
 
-- `<-` (raw reply), `prompt`, a tool result (§6b) → `T` (raw / untrusted).
-- a provider send bound to a `Credence<E>` slot → `P` (a graded judgment); a queried fact
-defaults to `P` (§10).
-- a gate → `U` (committed).
+- raw model output (`self <- p` before it is a `Credence`) → `raw`.
+- a provider send bound to a `Credence<E>` slot → `graded` (a graded judgment); a queried
+fact defaults to `graded` (§10).
+- a gate → `settled` (committed and recorded).
+- a constant, a `prompt`, and a read-`tool` called with `settled` inputs → `settled` by
+origin: external data carries no un-endorsed cognition.
 
-Taint is contagious upward; only a gate moves toward `U`. A `Principal` is `U`.
+Trust is contagious upward (a value is as `raw` as its least-settled input); only a gate
+settles. A `Principal` is `settled`.
 
 ### The gate — `endorse`, `attest`, `abstain`
 
@@ -896,66 +903,66 @@ A gate turns a graded judgment into a committed decision **or abstains**. Over a
 forms a **prediction set** — the variants it deems plausible under its rule — and **commits iff
 that set is a singleton**; otherwise it **abstains**. A prediction set is the principled object
 over three-plus variants, where a bare scalar threshold has no meaning. Two properties travel with
-a committed value:
+a settled value:
 
-- **Untaint** (a value property): the value is no longer raw cognition (`P → U`).
-- **Authorization** (a provenance property): the untainting is recorded on the spine, hence
+- **Settled** (a value property): the value carries no un-endorsed cognition (`graded → settled`).
+- **Endorsement** (a provenance property): the settling is recorded on the spine, hence
 checkable.
 
 ```agape
 Decision d = c by confidence 0.9 margin 0.1;   // collapse a Credence; UNTAINTS (P→U); off-spine; sync
 endorse (c by confidence 0.9) { ... }            // ENDORSES: records the Decision, authorizes it for a `perform`
 attest memo by alice;                            // principal basis: alice attests; UNTAINTS + ENDORSES
-endorse (kind by conformal 0.1 over refund_cal) { ... }
+endorse (kind by conformal 0.1) { ... }          // conformal calibrates from the spine
   abstain { ... } by triage_lead { ... };        // ambiguity / cold-start → defer to a principal
 ```
 
-- `**decide(e, r)**` collapses a `Credence<E>` to a committed variant by a `Rule` `r` (§3). It
-clears taint (`P → U`) and is color-`S` (somatic). A `decide` result is untainted but off-spine:
-it may drive control flow, not a consequential action. `decide`'s rule is mandatory.
-- `**verify e [by r]**` ≝ `decide` + `emit`. Over an in-hand `Credence` it is synchronous (reaches
-no dependency — permitted in `sync`); the inline `verify (self <- "…")` form is async. The
-emitted event is the authorization token.
-- `**verify e by p**` (`p` a `principal`) is the human basis: it reaches the identity dependency,
-obtains `p`'s signed decision, and emits an `Attestation { who, what, decision, signature }`. On
-approve, `e` is `U` + authorized; on reject, a `FailedAttestation` is emitted and `e` is not
-cleared.
+- **`c by R`** collapses a `Credence<E>` to a `Decision` (a committed variant, or `abstain`) by a
+`Rule` `R` (§3). It settles trust (`graded → settled`) and is color-`S`. A bare `Decision` is
+settled but *off-spine* (unendorsed): it may drive control flow, not a consequential action. The
+rule is mandatory.
+- **`endorse (c by R) { … }`** records the `Decision` and **endorses** it — settled *and* on the
+spine — then dispatches on the `Decision`'s variants (the arms, written with `:`). Over an in-hand
+`Credence` it is synchronous (`sync`-permitted); the inline `endorse (self <- "…" by R)` form is
+async. An endorsed `Decision` may drive a `perform`.
+- **`attest e by p`** / the **`by p`** clause (`p` a `principal`) is the external basis: it reaches
+the identity dependency, obtains `p`'s signed `Decision`, and records an `Attestation { who, what,
+decision, signature }`. The decision is `p`'s, deferred to the model for the clear cases.
 
-**The rule selects the basis (§3); the gate stays uniform.** `by > θ` is the **threshold** basis;
-`by conformal(α) over CAL` is the **conformal** basis — the prediction set is
-`{ v : nonconformity(v) ≤ q̂ }`, where `q̂` is the level-`α` quantile of `CAL`'s recorded labelled
-cases, a distribution-free, finite-sample bound (wrong at most `α` of the time under
-exchangeability) that does **not** require the model's probabilities to be honest; `by p` is the
-**human** basis. The emitted event records which basis cleared the taint and the applied rule,
-pinning a conformal rule's calibration version so a refit does not change how an earlier run
-replays.
+**The rule selects the basis (§3); the gate stays uniform.** `by confidence θ` is the
+**threshold** basis; `by conformal α` is the **conformal** basis — the prediction set is
+`{ v : nonconformity(v) ≤ q̂ }`, where `q̂` is the level-`α` quantile of the gate's own recorded
+decisions and their labels on the spine, a distribution-free, finite-sample bound (wrong at most
+`α` of the time under exchangeability) that does **not** require the model's probabilities to be
+honest; `by p` is the **principal** basis. The recorded `Decision` pins which basis settled it and
+the applied rule, so a recalibration does not change how an earlier run replays.
 
-**The `abstain` clause** makes "could not commit" mandatory and explicit. On a singleton set the
-gated binding becomes that variant (`U` + authorized) and flow continues; otherwise the `abstain`
-block runs. If the block does not re-authorize the binding it stays tainted, and the
-consequential-action rule below already forbids consuming it at a consequential `emit` — so an
+**The `abstain` clause** is optional, like an `else`: on a singleton set the matching arm runs;
+otherwise the `abstain` block runs, and a `by p` clause defers to a principal whose ruling
+re-enters the arms. An omitted `abstain` is a recorded no-op — the gate still records its
+abstention. Because an un-settled value cannot reach a consequential sink (the rule below), an
 unhandled abstain cannot leak into an action. This removes any need for a designated abstain
-*variant* on a user enum; `bool`'s `Fail` and `Entailment`'s `Neutral` are conveniences over it.
+*variant* on a user enum; `Entailment`'s `Neutral` is a convenience over it.
 
-**Calibration readiness and the supervised-to-autonomous bootstrap.** A conformal gate can certify
-nothing without data, so a `calibration` dependency carries a readiness state: below its
-`min_samples` (§16) the gate abstains, routing every case to `abstain` — typically a human
-`verify … by p`. Those attestations become the first labelled cases; once the calibration is ready
-the gate commits autonomously, escalating thereafter only genuinely ambiguous (non-singleton)
-cases. A fresh agent is thus fully human-supervised by construction and earns autonomy as it
-accumulates grounded labels. The per-variant scores of every judgment are journaled (§15.5.1); a
-recorded outcome that labels a judgment must reference that judgment's spine id, so the calibration
-pipeline's judgment↔label join stays auditable rather than living in untyped host state.
+**The supervised-to-autonomous bootstrap.** A conformal gate certifies nothing without data, and
+its data is the spine itself — its own past decisions and their recorded outcomes. Below a minimum
+of labelled cases (§16) the gate abstains, routing every case to `abstain`/`by p` — typically a
+principal `attest`. Those attestations become the first labelled cases; once enough accrue the gate
+commits autonomously, escalating thereafter only genuinely ambiguous (non-singleton) cases. A fresh
+agent is thus human-supervised by construction and earns autonomy as it accumulates grounded
+labels. A recorded outcome that labels a judgment references that judgment's spine id, so the
+judgment↔label join stays auditable on the spine rather than in untyped host state.
 
-**The consequential-action rule.** An `authority` `emit` may consume a value only if it is `U` and
-authorized (cleared by a recorded gate — `verify`/`verify…by`, not a bare `decide`) — and, if the
-gate carried a margin, only if `margin ≥ m`. The authorization requirement is static (the type
-system rejects a bare-`decide` value at a consequential emit); the margin-floor `m` check is
-runtime, with `m` from the manifest (`[runtime] consequential_margin`, §16). A judgment below `m`
-abstains and is the typed trigger for human escalation.
+**The consequential-action rule.** A consequential sink — a `perform` argument or an effecting-tool
+input — may consume a value only if it is **`settled`**: it carries no un-endorsed cognition. A
+`Credence` reaches `settled` only through a recorded gate (`endorse`/`attest`, not a bare
+`c by R`); external data is `settled` by origin and passes freely — only un-endorsed cognition is
+rejected (the check is static). Additionally, if the value is a gated decision, the margin floor is
+checked at runtime — `margin ≥ m`, with `m` from the manifest (`[runtime] consequential_margin`, §16). A judgment below `m` abstains and is the typed trigger for
+escalation.
 
 **Loss direction.** Whether a false accept or a false reject is costlier is a property of the
-action's loss, declared per consequential event type. It is also what *grounds* a threshold: the
+action's loss, declared per `action` type. It is also what *grounds* a threshold: the
 Bayes-optimal `θ = c_FA / (c_FA + c_FR)`. `m` sets how confident the gate must be; the
 loss-direction declaration sets which way to fail when it is not. Absent a declaration, a
 consequential gate fails closed.
@@ -963,21 +970,20 @@ consequential gate fails closed.
 ### The external dependencies, one discipline
 
 
-| dependency  | supplies          | reached at              | color                  | taint of result                 |
-| ----------- | ----------------- | ----------------------- | ---------------------- | ------------------------------- |
-| provider    | a model           | `self <- p`             | `A`                    | `T` (raw) / `P` (Credence slot) |
-| identity    | a `principal`     | `attest … by p`         | `A`                    | `U` (endorsed)                  |
-| tool        | the world (MCP)   | `name(args)`            | `A`                    | `T` (raw)                       |
-| calibration | a fitted artifact | `conformal(α) over CAL` | `S` (read at the gate) | —                               |
+| dependency | supplies        | reached at      | color | trust of result                        |
+| ---------- | --------------- | --------------- | ----- | -------------------------------------- |
+| provider   | a model         | `self <- p`     | `A`   | `raw` / `graded` (Credence slot)       |
+| identity   | a `principal`   | `attest … by p` | `A`   | `settled` (endorsed)                   |
+| tool       | the world (MCP) | `name(args)`    | `A`   | `⊔` inputs (read) / a sink (effecting) |
 
 
-The first three are external, non-deterministic, journaled, and swappable by config; a
-`calibration` is a config-bound artifact read somatically at the gate. The membrane — capability +
-taint + spine + gate — is identical across them.
+All three are external, non-deterministic, journaled, and swappable by config. A conformal gate
+needs no external dependency — it calibrates from its own recorded decisions on the spine (§13).
+The membrane — capability + trust + spine + gate — is identical across them.
 
 ### Provenance
 
-Authority (including tool use) is bounded at compile time, cognition is decided-and-
+Authority (including tool use) is bounded at compile time, cognition is endorsed-and-
 recorded before it acts, and every fact's provenance is auditable on an append-only spine.
 
 ---
@@ -989,22 +995,23 @@ identity, world/tools) enters only through a declared dependency; no hidden runt
 desugars).
 
 **Type & effect** — `sync` is the marked color and cannot reach a declared dependency (including a tool
-call), though it may `emit` and `verify` an in-hand `Credence`; `event<T>` marks spine
+call), though it may `emit` and `endorse` an in-hand `Credence`; `event<T>` marks spine
 presence; a provider send bound to a `Credence<E>` slot yields a graded judgment, never a
-committed value; `decide` is somatic and untaints, `verify` = `decide` + emit, and only an
-on-spine gate authorizes a value for a consequential emit; fusion of two or more
-`Credence`s (including `quorum`) requires a total `independent`/`dependent` declaration;
-`verify … by p` takes a `Principal` (no `text → Principal`); user `struct`/`enum`/`event`
-types are explicitly declared; a `tool` call requires a `use` grant and yields a
-`T`-tainted result; authority, taint (three-level), color, and tool-use are checked
-statically and interprocedurally; a violation is a compile error.
+committed value; the collapse `c by R` settles (`graded → settled`) off-spine, `endorse` records
+it, and only a `settled` value may drive a consequential sink (a `perform` arg or an effecting-tool
+input); fusion of two or more `Credence`s (including `quorum`) requires a total
+`independent`/`dependent` declaration over the `array<Credence>`; `attest … by p` takes a
+`Principal` (no `text → Principal`); user `struct`/`enum`/`event`/`action` types are explicitly
+declared; a read `tool` requires a `use` grant and carries its inputs' trust; authority, trust
+(three-level), color, and tool-use are checked statically and interprocedurally; a violation is a
+compile error.
 
 **Runtime** — ticks are system-level; structured output uses constrained decoding;
 subscriptions are prospective and hoisted (never retroactive), and history is reached by
 query; multi-handler firing is registration-order; a message trace is a prefix of
 `Sent→Delivered→Resolved`; every memory write carries a provenance backpointer; all three
 dependencies journal their oracle/tool results to the spine for replay (§15.4.2); the margin floor
-`m` is enforced at the consequential emit.
+`m` is enforced at the consequential sink.
 
 ---
 
@@ -1017,11 +1024,11 @@ dependencies journal their oracle/tool results to the spine for replay (§15.4.2
 ## 15.0 Modeling choices
 
 - Two qualifiers travel with every expression. Color `c ∈ {S, A}` (does it reach a declared dependency?)
-and taint `t ∈ {U, P, T}` (how cognition-derived is the value?). A gate has color `A`
-when its judgment touched a declared dependency, but `decide`/in-hand-`verify` on a `Credence` value
+and trust `t ∈ {settled, graded, raw}` (cognition-provenance). A gate has color `A`
+when its judgment touched a declared dependency, but `c by R`/in-hand-`endorse` on a `Credence` value
 is `S`.
-- Authorization is a runtime provenance property checked at the consequential-emit site;
-modeled as a predicate `auth(·)`.
+- Endorsement is a provenance property checked at the consequential sink;
+modeled as a predicate `endorsed(·)`.
 - Authority is a property of the agent context (its `grants`, including `use`).
 - The three external dependencies (provider, identity, tool) are the only sources of dynamic
 non-determinism, modeled as oracle relations (§15.4.2).
@@ -1029,11 +1036,11 @@ non-determinism, modeled as oracle relations (§15.4.2).
 ## 15.1 Notation
 
 ```
-c ∈ {S,A}   color   (S ⊑ A)        t ∈ {U,P,T}   taint   (U ⊑ P ⊑ T)
+c ∈ {S,A}   color   (S ⊑ A)        t ∈ {settled,graded,raw}   trust   (settled ⊑ graded ⊑ raw)
 Γ           x ↦ (T, t)             r : Rule       a decision rule {threshold, margin}
-Σ           agent signatures       A              event-type names declared `authority`
-G           grants set incl. ("emit",E) ("reach",D) ("use",K)
-auth(v)     v's untaint is spine-recorded (true only via verify / verify…by)
+Σ           agent signatures       A              action type names (consequential)
+G           grants set incl. ("perform",A) ("reach",D) ("use",K)
+endorsed(v) v's settling is spine-recorded (true only via endorse / attest)
 ```
 
 Judgment `**Γ; Σ; A ⊢ e : T ! c · t**`.
@@ -1042,15 +1049,19 @@ Judgment `**Γ; Σ; A ⊢ e : T ! c · t**`.
 
 ```
 program   ::= decl*
-decl      ::= typedecl | tool | agent | fn | stmt
+decl      ::= typedecl | tool | agent | policy | fn | stmt
 typedecl  ::= "struct" Ident "{" field ("," field)* "}"
             | "enum" Ident "{" Ident ("," Ident)* "}"
-            | "authority"? "event" Ident "(" field ("," field)* ")" ";"  // spine event; authority ⇒ emit needs clean provenance
+            | "event"  Ident "(" field ("," field)* ")" ";"   // a plain record (assertive)
+            | "action" Ident "(" field ("," field)* ")" ";"   // a performative; a power is needed
 field     ::= type Ident                                     // "name: T" also accepted
-tool      ::= "tool" Ident params ("->" type)? ";"           // tool-seam capability
+tool      ::= "effecting"? "tool" type Ident params config?  // read-only default; effecting = world-impacting
 agent     ::= "agent" Ident params grants? "{" abody* "}"
+policy    ::= "policy" Ident config                          // a decision policy (§13)
 grants    ::= "grants" "{" ( "*" | cap ("," cap)* ) "}"
-cap       ::= "emit" Ident | "reach" Ident | "use" Ident
+cap       ::= "perform" Ident | "reach" Ident | "use" Ident
+config    ::= "{" directive* "}"                             // colon-free `keyword operand…` directives
+directive ::= Ident operand*
 abody     ::= extend | on | stmt
 extend    ::= "extend" Ident args ";"
 on        ::= "on" ("awake"|"sleep"|"crash") block
@@ -1059,48 +1070,53 @@ params    ::= "(" (type Ident ("," type Ident)*)? ")"
 type      ::= "int"|"float"|"bool"|"text"|"null" | "event" "<" type ">"
             | "array" "<" type ">"                     // collection (query results, fan-out source)
             | "Credence" "<" type ">"                  // graded judgment over enum
-            | Ident                                    // enum/struct/agent names, incl. Principal, Rule
+            | "Decision" "<" type ">"                  // a gate's committed outcome
+            | Ident                                    // enum/struct/agent/action names, incl. Principal, Rule
 
 stmt      ::= vardecl | assign | spawn | prompt | principal | depdecl
-            | "awake" Ident args? ";" | "sleep" Ident ";"
-            | "emit" Ident "(" expr ")" ";"
-            | "verify" gatearg ("by" expr)? ";"
+            | "awake" Ident ";" | "sleep" Ident ";"
+            | "emit" Ident "(" expr ")" ";"            // a plain event (no power)
+            | "perform" Ident "(" expr ")" ";"         // an action (needs a power and a settled value)
+            | endorse | attest
             | "say" "(" expr ")" ";" | "return" expr? ";"
             | "if" "(" expr ")" block ("else" block)?
-            | when | catch | case | retry
-            | find | select | match
+            | when | case | retry
             | expr ";"
 vardecl   ::= type Ident ("=" expr)? ";"
 assign    ::= (Ident | "self" "." Ident | postfix) "=" expr ";"
-spawn     ::= "spawn" Ident Ident ";"                  // allocate only (args bound at awake)
+spawn     ::= "spawn" Ident Ident args? ";"            // allocate + construct (args here)
 prompt    ::= "prompt" type Ident ";"
-principal ::= "principal" Ident ";"
+principal ::= "principal" Ident config? ";"            // config lists `attest NAME, …`
 depdecl   ::= ("independent"|"dependent") Ident ("," Ident)* ";"
-when      ::= "when" Ident? "(" expr ")" block
-catch     ::= "catch" (Ident ("(" expr ")")? | "(" expr ")") "as" Ident block
+when      ::= "when" "(" type Ident? ("about" expr)? ")" ("if" "(" expr ")")? block
+endorse   ::= "endorse" "(" expr "by" rule ")" arms ("abstain" block)? ("by" Ident block)?
+attest    ::= "attest" expr "by" Ident (arms | ";")
+arms      ::= "{" (Ident ":" block)* "}"               // dispatch on a Decision's variants
 case      ::= "case" "(" expr ")" "as" Ident "{" (Ident ":" block)* ("default" ":" block)? "}"
-retry     ::= retrytail
-find      ::= "find" Ident ("," "origin" "(" Ident ")")? "where" "{" triple* "}" ";"
-select    ::= "select" (Ident ("," Ident)* | "*") "from" Ident "where" "{" cond* "}" ";"
-match     ::= "match" "{" Ident ":" expr "}" ">" Number ";"
+retry     ::= block "retry" "(" Int ")"          // re-attempt the block up to N times on a fault
+find      ::= "find" Ident ("," "origin" "(" Ident ")")? "where" "{" triple+ "}"   // → array<T>
+select    ::= "select" (Ident ("," Ident)* | "*") "from" Ident "where" "{" cond "}"  // → array<Record>
+match     ::= "match" expr ">" Number                                             // → array<Hit>
+triple    ::= operand operand operand ";"          // subject predicate object (vars or literals)
+cond      ::= cmp (("&&"|"||") cmp)*                // a boolean filter over fields
+operand   ::= Ident | String | Int | Float
 
-retrytail ::= "retry" "(" Int ")" block
-            | "retry" "(" type Ident ":" expr ")"
-
-expr      ::= expr "<-" expr ("expires" Number)? retrytail?   // send; optional lifetime
+expr      ::= expr "<-" expr ("expires" Number)?              // send; optional lifetime
             | expr "|>" expr                            // pipe
-            | "decide" "(" expr "," rule ")"            // gate: collapse a Credence
-            | "verify" gatearg ("by" expr)?             // verify gate (expr form)
-            | "quorum" "(" Int "of" expr ("," expr)* ")"  // quorum over Credence<bool>
-gatearg   ::= cmp | expr                                // a Credence expr, ==, bool, or a value (by p)
-rule      ::= cmpop Number ("margin" Number)? | expr    // sugar FLOAT→Rule; or a Rule value
+            | expr "by" rule                            // collapse a Credence → Decision
+            | "endorse" "(" expr "by" rule ")"          // gate (expr form): the endorsed Decision
+            | "all" "(" expr ")" | "any" "(" expr ")"   // fuse an array<Credence<bool>>
+            | "quorum" "(" Int "," expr ")"             // ≥ k of an array<Credence<bool>>
+            | find | select | match                     // spine/memory queries → array<…>
+            | cmp
+rule      ::= "confidence" Number ("margin" Number)? | "conformal" Number | expr  // or a Rule value
 cmp       ::= add (("=="|"!="|"<"|">"|"<="|">=") add)?
 add       ::= mul (("+"|"-") mul)*
 mul       ::= unary (("*"|"/") unary)*
 unary     ::= "!" unary | postfix
 postfix   ::= primary ("." Ident | args | "[" expr "]")*
 primary   ::= Int|Float|String|FString|"true"|"false"|"null"|"self"|Ident
-            | "all" args | "any" args | "(" expr ")"
+            | "(" expr ")"
             | Ident "{" (Ident ":" expr ("," Ident ":" expr)*)? "}"  // struct literal
             | "[" (expr ("," expr)*)? "]"               // array literal
 ```
@@ -1115,45 +1131,48 @@ imperative substrate of its own; heavy or world-affecting computation is importe
 
 ### 15.3.1 Qualifier lattices
 
-`color: S ⊑ A`. `taint: U ⊑ P ⊑ T`. `⊔` is the join; both contagious upward unless a gate
-rule overrides taint.
+`color: S ⊑ A`. `trust: settled ⊑ graded ⊑ raw`, tracking cognition-provenance: `settled`
+carries no un-endorsed cognition (constants, external data settled by origin, gated
+`Decision`s); `graded` is a `Credence`; `raw` is unstructured model output. `⊔` is the join;
+both contagious upward (a value is as `raw` as its least-settled input) unless a gate settles.
 
 ### 15.3.2 Expression rules (selected)
 
 ```
-Γ ⊢ d : Agent   Γ ⊢ p : Text                    // self-send = cognition; other-send = IPC
-──────────────────────────────  (T-Send)        Γ ⊢ (d <- p) : T_reply ! A · T
+Γ ⊢ d : Agent   Γ ⊢ p : Text                    // self-send = cognition; other-send = async delegation
+──────────────────────────────  (T-Send)        Γ ⊢ (d <- p) : T_reply ! A · raw
 
 Γ ⊢ d : Agent   Γ ⊢ p : Text    E an enum
 ─────────────────────────────────────────────  (T-Credence)
-Γ ⊢ (Credence<E> _ = d <- p) : Credence<E> ! A · P
+Γ ⊢ (Credence<E> _ = d <- p) : Credence<E> ! A · graded
 
-Γ ⊢ aᵢ : Tᵢ      tool K(T₁..Tₙ) -> R declared      ("use",K) ∈ G ∨ G = {*}
-─────────────────────────────────────────────────────────────────────────  (T-Tool)
-Γ ⊢ K(a₁..aₙ) : R ! A · T            // tool call: async, T-tainted; ILL-FORMED if use not granted
+Γ ⊢ aᵢ : Tᵢ · tᵢ    tool R K(T₁..Tₙ) declared, read-only      ("use",K) ∈ G ∨ G = {*}
+─────────────────────────────────────────────────────────────────────────  (T-Tool-Read)
+Γ ⊢ K(a₁..aₙ) : R ! A · (⊔tᵢ)        // result carries its inputs' provenance; ILL-FORMED if use not granted
 
 Γ ⊢ e : Credence<E> ! c · _    r : Rule
-──────────────────────────────────────  (T-Decide / GATE, somatic)
-Γ ⊢ decide(e, r) : E ! c · U            // taint → U; color inherited; rule MANDATORY
+──────────────────────────────────────  (T-Collapse / GATE)
+Γ ⊢ (e by r) : Decision<E> ! c · settled        // graded → settled, off-spine; rule MANDATORY
 
-Γ ⊢ e : Credence<Bool> ! S · _    r : Rule       // in-hand Credence: synchronous
-─────────────────────────────────────────────  (T-Verify-InHand / GATE, recorded, sync)
-Γ ⊢ (verify e by r) : event<Verification> ! S · U   with auth := true
+Γ ⊢ e : Credence<E> ! S · _    r : Rule          // in-hand Credence: synchronous
+─────────────────────────────────────────────  (T-Endorse / GATE, recorded, sync)
+Γ ⊢ endorse(e by r) : Decision<E> ! S · settled   with endorsed := true
 
-Γ ⊢ e : T' ! _ · _    Γ ⊢ p : Principal    p may-attest dom(e)
+Γ ⊢ e : _ ! _ · _    Γ ⊢ p : Principal    p may-attest dom(e)
 ──────────────────────────────────────────────────────────────  (T-Attest / GATE, recorded, async)
-Γ ⊢ (verify e by p) : event<Attestation> ! A · U    with auth := true
+Γ ⊢ (attest e by p) : Decision ! A · settled    with endorsed := true
 
-Γ ⊢ cᵢ : Credence<Bool> ! cᵢ_col · P    dep-declared(c₁..cₙ)
+Γ ⊢ cs : array<Credence<Bool>> ! col · graded    dep-declared(cs)
 ──────────────────────────────────────────────────────────────  (T-Fuse)   // all/any/quorum
-Γ ⊢ fuse(c₁..cₙ) : Credence<Bool> ! (⊔cᵢ_col) · P
-        // ILL-FORMED if any pair in {c₁..cₙ} is neither independent- nor dependent-declared
+Γ ⊢ fuse(cs) : Credence<Bool> ! col · graded
+        // ILL-FORMED if any pair in cs is neither independent- nor dependent-declared
 ```
 
-The GATE rules are the only routes to `U`. T-Tool is the third dependency: a tool call is async,
-`T`-tainted, and requires a `use` grant. T-Verify-InHand is synchronous (no dependency reach); the
-inline form inherits `A` from its `<-`. T-Fuse (covering `quorum`) requires total
-dependence coverage.
+The GATE rules (`T-Collapse`, `T-Endorse`, `T-Attest`) are the only routes to `settled`; only
+`endorse`/`attest` set `endorsed`. A read-`tool` is async and carries its inputs' provenance (an
+effecting tool is a consequential sink, §15.3.3); both require a `use` grant. `T-Endorse` is
+synchronous (no dependency reach); the inline form inherits `A` from its `<-`. T-Fuse (covering
+`all`/`any`/`quorum`) requires total dependence coverage over the `array<Credence>`.
 
 ### 15.3.3 Statement & agent well-formedness — the guarantees
 
@@ -1161,8 +1180,8 @@ dependence coverage.
 
 - `c_f ∈ {S,A}` — `A` if its body reaches any declared dependency (including a tool call) or calls any
 `A`-colored `g`; else `S`. A `sync`-declared `f` asserts `c_f = S`.
-- `ρ_f` — taint-transparent parameters (taint flows to the result, three-level).
-- `κ_f` — consequentially-consumed parameters (fed into an authority emit/reach, or a
+- `ρ_f` — trust-transparent parameters (trust flows to the result, three-level).
+- `κ_f` — consequentially-consumed parameters (fed into a `perform`/reach/effecting-tool, or a
 `use` tool whose result is consequentially consumed).
 
 `Φ` is the least fixpoint over the call graph; a builtin is `(A, ∅, ∅)` unless modeled.
@@ -1171,39 +1190,40 @@ dependence coverage.
 // COLOR — interprocedural (a tool call forces A):
 c_f = S
 ──────────────────────────────────────  (W-SyncSeamFree)
-⊢ f  ok    // body reaches no declared dependency (no <-, no Credence-slot, no verify…by, NO tool call) AND calls only S fns
+⊢ f  ok    // body reaches no declared dependency (no <-, no Credence-slot, no attest, NO tool call) AND calls only S fns
 
-// AUTHORITY — emit / reach / use (DEFAULT-DENY):
+// AUTHORITY — perform / reach / use (DEFAULT-DENY):
 allowed(C,kind,X) ⟺ G ≠ ⊥ ∧ ((kind,X) ∈ G ∨ G = {*})
 ──────────────────────────────────────────────────────────  (W-Auth)
-in C:  ⊢ emit E(e) ok ⟺ allowed(C,"emit",E)
-       ⊢ (x <- p) ok ⟺ x = self ∨ allowed(C,"reach",typeof(x))
-       ⊢ K(a…)   ok ⟺ allowed(C,"use",K)
+in C:  ⊢ perform A(e) ok ⟺ allowed(C,"perform",A)
+       ⊢ (x <- p)    ok ⟺ x = self ∨ allowed(C,"reach",typeof(x))
+       ⊢ K(a…)       ok ⟺ allowed(C,"use",K)
+       ⊢ emit E(e)   ok                        // a plain event needs no power
 
 // AUTHORITY — subtractive extend:
 agent C extends P
 ──────────────────────  (W-Extend)
-grants(C) ⊆ grants(P)        // ⊥ ⊆ G ⊆ {*}; covers emit/reach/use uniformly
+grants(C) ⊆ grants(P)        // ⊥ ⊆ G ⊆ {*}; covers perform/reach/use uniformly
 
-// THE CONSEQUENTIAL-ACTION RULE (static authorization; runtime margin):
-E ∈ A     Γ ⊢ e : _ · t     ¬( t = U ∧ auth(e) )
-──────────────────────────────────────────────────────────────  (W-Emit-Reject-static)
-emit E(e)  is ILL-FORMED                       // a bare decide (t=U, ¬auth) rejected at COMPILE time
-// at runtime additionally:  margin(e) ≥ m_E   else the emit faults
+// THE CONSEQUENTIAL-ACTION RULE (static endorsement; runtime margin):
+sink(s)     Γ ⊢ e : _ · t     t ≠ settled
+──────────────────────────────────────────────────────────────  (W-Consequential-static)
+s(…e…)  is ILL-FORMED       // sink = perform arg / effecting-tool input; an un-settled value rejected
+// at runtime, for a gated decision:  endorsed(e) ⇒ margin(e) ≥ m   else the action faults
 
 // ATTEST capability:
 Γ ⊢ p : Principal    p may-attest D    e in domain D
 ──────────────────────────────────────────────────  (W-Attest)
-⊢ (verify e by p)  ok
+⊢ (attest e by p)  ok
 
-// CALL — taint transfer and consequential-arg rejection:
+// CALL — trust transfer and consequential-arg rejection:
 Γ ⊢ aᵢ : _ ! _ · tᵢ        t_result = ⊔ { tᵢ : i ∈ ρ_f }
-∀ i ∈ κ_f.  tᵢ = U ∧ auth(aᵢ)
+∀ i ∈ κ_f.  tᵢ = settled
 ──────────────────────────────────────────────────────────────  (W-Call)
-Γ ⊢ f(a₁..aₙ) : T ! c_f · t_result     // ILL-FORMED if some i∈κ_f is not U-authorized
+Γ ⊢ f(a₁..aₙ) : T ! c_f · t_result     // ILL-FORMED if some i∈κ_f is not settled
 ```
 
-The authorization half of the consequential rule is static (W-Emit-Reject-static); the
+The endorsement half of the consequential rule is static (W-Consequential-static); the
 margin floor is runtime.
 
 ## 15.4 Dynamic semantics
@@ -1240,48 +1260,46 @@ single-runtime evidence fusion, not multi-node agreement.) Counterfactual/forens
 library.
 
 ```
-// DECIDE — somatic collapse; no oracle; single (or no) event:
-v' = collapse(eval(e), r)        // argmax/threshold; below margin ⇒ abstain (Neutral / Fail)
-─────────────────────────────────────────────  (E-Decide)
-⟨…|S| decide(e, r) ⟩ → value v', spine S        // off-spine; auth(v') = false
+// COLLAPSE (c by r) — gate collapse; no oracle; off-spine:
+v' = collapse(eval(e), r)        // singleton prediction set ⇒ that variant; else abstain
+─────────────────────────────────────────────  (E-Collapse)
+⟨…|S| e by r ⟩ → Decision v', spine S           // off-spine; endorsed(v') = false
 
-// VERIFY (in-hand Credence) — decide + record; synchronous; single event:
-v' = collapse(eval(e), r) ;  ev = v'=Pass ? SuccessfulVerification : FailedVerification
-─────────────────────────────────────────────  (E-Verify)
-⟨…|S| verify e by r; k⟩ → ⟨…| append(S, ev(src)) | k⟩      // auth := true; no Started/Resolved pair
+// ENDORSE (in-hand Credence) — collapse + record; synchronous; single event:
+v' = collapse(eval(e), r) ;  ev = (v' = abstain) ? Abstained(src) : Decided(src, v')
+─────────────────────────────────────────────  (E-Endorse)
+⟨…|S| endorse(e by r); k⟩ → ⟨…| append(S, ev) | dispatch(v', arms); k⟩   // endorsed := true; no Started/Resolved pair
 
-// VERIFY … BY p (human gate) — identity dependency + record; async pair:
+// ATTEST … BY p (external gate) — identity dependency + record; async (reactive):
 (Ψ, p, eval(e)) ⇝ (decision, sig, Ψ')
 ─────────────────────────────────────────────  (E-Attest)
-⟨…|Ψ|S| verify e by p; k⟩ → ⟨…|Ψ'| append(S, Attestation(who:p,what:eval(e),decision,sig)) | k⟩
+⟨…|Ψ|S| attest e by p; k⟩ → ⟨…|Ψ'| append(S, Attestation(who:p,what:eval(e),decision,sig)); dispatch(decision, arms) | k⟩
 
-// TOOL CALL — tool dependency + record; async pair; result T-tainted:
-("use",K) granted    (Ω, K, eval(a…)) ⇝ (v, Ω')
+// TOOL CALL (read-only) — tool dependency + record; async pair; result carries inputs' trust:
+("use",K) granted    (Ω, K, eval(a…)) ⇝ (v, Ω')    t = ⊔ trust(aᵢ)
 S' = append(append(S, ToolStarted(K)), ToolResolved(K, v))
 ─────────────────────────────────────────────  (E-Tool)
-⟨…|Ω|μ|S| x = K(a…); k⟩ → ⟨…|Ω'|μ[x↦v (taint T)]|S'| k⟩
+⟨…|Ω|μ|S| x = K(a…); k⟩ → ⟨…|Ω'|μ[x↦v (trust t)]|S'| k⟩   // an effecting tool is a consequential sink (W-Consequential)
 
-// SPAWN — allocate only; no args bound, no constructor, no cognition:
-Â' = Â[name ↦ { type, awake:false, constructed:false }]
+// SPAWN — allocate + bind ctor args + run constructor; mailbox closed; hoist subs:
+Â' = Â[name ↦ { type, params := eval(args), awake:false }] ;  register-hoisted-subs(ctor-body)
 ─────────────────────────────────────────────────────────────  (E-Spawn)
-⟨…|Â|μ|S| spawn T name; k⟩ → ⟨…|Â'|μ| append(S, Spawned(name)) |k⟩
+⟨…|Â|μ|S| spawn T name(args); k⟩ → ⟨…|Â'|μ| run(ctor-body); append(S, Spawned(name)) |k⟩
 
-// AWAKE (first) — bind ctor args, emit AgentAwake, run constructor, hoist subs:
-Â(name).constructed = false   Â'' = Â[name.params := eval(args)]
-S1 = append(S, AgentAwake(name)) ;  register-hoisted-subs(ctor-body)
-─────────────────────────────────────────────────────────────  (E-Awake-1)
-⟨…|Â| awake name(args); k⟩ → ⟨…|Â''| run(ctor-body) then on-awake-hook; k⟩   // constructed:=true
+// AWAKE — open mailbox, emit AgentAwake, run on-awake hook (no args; state is the spine):
+─────────────────────────────────────────────────────────────  (E-Awake)
+⟨…|Â| awake name; k⟩ → ⟨…|Â[name.awake:=true]| append(S, AgentAwake(name)); on-awake-hook; k⟩
 
-// AWAKE (subsequent / re-awake) — re-open mailbox, on-awake hook only:
-Â(name).constructed = true
-─────────────────────────────────────────────────────────────  (E-Awake-n)
-⟨…| awake name; k⟩ → ⟨…| append(S, AgentAwake(name)); on-awake-hook; k⟩   // no re-bind, no re-construct
+// CRASH — a contained fault: record, run on-crash, keep the mailbox open and state intact:
+fault in a handler invocation
+─────────────────────────────────────────────────────────────  (E-Crash)
+⟨…|Â|S| …fault…; k⟩ → ⟨…|Â| append(S, AgentCrashed(name)); on-crash-hook; resume⟩   // not a death
 
-// SEND (typed binding x : event<T>) — three-phase chain; reply T-tainted:
+// SEND — three-phase lifecycle; reply raw; content not stored (only the lifecycle):
 awake(dest)   (Π, render(p), schema(T)) ⇝ (v, Π')       // self-send routes through Π (cognition)
-S' = append³(S, Sent(x,@d), Delivered(x,@d), Resolved(x,v))
+S' = append³(S, Sent(x,@d), Delivered(x,@d), Resolved(x,@d))   // subjects only; v is not logged
 ─────────────────────────────────────────────────────────────  (E-Send)
-⟨Π|…|μ|S| x = (d <- p); k⟩ → ⟨Π'|…|μ[x↦v]|S'| k⟩
+⟨Π|…|μ|S| x = (d <- p); k⟩ → ⟨Π'|…|μ[x↦v (trust raw)]|S'| k⟩
 
 // SEND (lost) — dest not awake at delivery: chain stalls at Sent:
 ¬awake(dest)
@@ -1302,7 +1320,7 @@ Sent(corr) ∈ S   ¬Delivered(corr)   lifetime(corr) elapsed
 ⟨…|μ|S| select … from G where {…}; k⟩ → ⟨…| append(S, QueryResult(G)) | k⟩   // expr form appends nothing
 
 // SUBSCRIPTIONS — prospective, hoisted, registration-ordered:
-on scope entry:  register every when/catch in the scope (before its statements run).
+on scope entry:  register every when in the scope (before its statements run).
 on append(S, ev'): for each live sub (in REGISTRATION order) with matches(sub, ev'): fire once.
 matches(sub, ev) ⟺ subtype(ev.etype, sub.etype) ∧ (sub.subj = ⊥ ∨ sub.subj = ev.subj)
 // A subscription NEVER fires for an event with tick < its registration tick.
@@ -1316,7 +1334,7 @@ src(x)=x   src(self)=current agent   src(d<-p)=binding name else @vN   src(compo
 ### 15.5.1 Observable outcome vs incidental trace
 
 For a terminal spine `S`, the observable outcome `obs(S)` is the subsequence of committed
-events: authority emits (`E ∈ A`), verification verdicts and attestations, `case`-selected
+events: performed actions, gate decisions and attestations, `case`-selected
 variants, and top-level bindings of bounded type. It excludes the incidental trace:
 `Think*` payloads (the wording), `say` output, internalized memory text, raw tool-result
 payloads not yet gated, graded `Credence` distributions no gate committed, and raw
@@ -1349,16 +1367,16 @@ sink property (dedup by key).
 flips between runs only if run-to-run variation in `p` exceeds `δ`: big margin ⇒ stable,
 small margin ⇒ fragile.
 
-A committed `U` value is one of two kinds:
+A settled value is one of two kinds:
 
 - **exactly-gated** — a finite-schema verdict chosen with high margin. The model is forced
 to answer inside a small fixed set (a `bool`, a verdict enum — constrained decoding, §8)
 and answers confidently (large `δ`). The wording still varies; the bounded choice does
 not.
-  > ⚠ This is not string-matching free text. `verify (reply == "approved")` compares model
+  > ⚠ This is not string-matching free text. `(reply == "approved")` compares model
   > prose to a literal — it flips almost every run and is not exactly-gated. The exact gate
   > is over a bounded judgment — bind the reply to a `Credence<bool>` slot ("is this an
-  > approval?") and `verify` that. `==` is exactly-gated only when both operands are already
+  > approval?") and gate that. `==` is exactly-gated only when both operands are already
   > bounded/committed.
 - **bounded-gated** — a low-margin verdict, or one carrying open `Text` / a raw tool
 result. Reproducible only up to the margin. The lint (§15.7) flags a consequential value
@@ -1369,18 +1387,22 @@ output is a random variable whose scalar confidence has bounded variance, and tw
 independent draws satisfy `P(|p₁ − p₂| > δ) ≤ β(δ)` for some nonincreasing `β` with `β(δ) → 0` as `δ →` maximal. For a finite-schema reply via constrained decoding the draw
 concentrates, so `β(δ_max) = 0`.
 
-**Lemma 1 — Factoring (non-interference with declassification).** For well-typed `P`,
+**Lemma 1 — Factoring (non-interference with endorsement).** For well-typed `P`,
 `obs(P,I) = F(I, d)` is a deterministic function of inputs `I` and the gate-outcome
-sequence `d`, independent of every incidental (`T`/`P`) value.
+sequence `d`, independent of every un-settled (`raw`/`graded`) value.
 
-> *Proof.* Read taint as an IFC lattice: `T`,`P` = high, `U` = low; gates are the only
-> declassifiers (`P → U`). By W-Emit-Reject-static and W-Call, every constituent of `obs`
-> is `U`, hence `I`, a gate outcome `dⱼ`, or a pure `S`-function of these.
-> Progress+preservation (§15.6) preserves the invariant under `→`. Non-interference modulo
-> delimited release (Sabelfeld–Myers; Sabelfeld–Sands). The tool dependency adds no new
-> declassifier: a tool result is `T` and reaches `obs` only through a gate, so it is covered
-> by the same argument. ∎ *(The two-run bisimulation is the mechanization obligation,
-> §15.7.)*
+> *Proof.* Read trust as an integrity lattice tracking cognition-provenance: `raw`,`graded`
+> = un-endorsed cognition (high); `settled` = low. The gate (`endorse`/`attest`) is the only
+> operation that settles a `graded` judgment, and it records the discharge on the spine. By
+> the consequential rule (W-Consequential-static) and W-Call, every constituent of `obs` is
+> `settled` — hence an input `I` (a constant or external datum, settled by origin), a gate
+> outcome `dⱼ`, or a pure settled-function of these. Progress+preservation (§15.6) preserves
+> the invariant under `→`. Non-interference modulo delimited release (Sabelfeld–Myers;
+> Sabelfeld–Sands). A read-`tool` adds no declassifier: its result carries the join of its
+> inputs' provenance, so it reaches `obs` only as `settled` (clean inputs) or through a gate
+> (cognition in its inputs); an effecting tool is a consequential sink, covered by the same
+> rule as `perform`. ∎ *(The two-run bisimulation is the mechanization obligation — §15.7,
+> and the first artifact to be built with Agape.)*
 
 **Lemma 2 — Per-gate flip bound.** For a gate with margin `δⱼ`, the probability its
 outcome differs between two fixed-`𝒫` runs is `≤ β(δⱼ)`. For an exactly-gated outcome,
@@ -1408,25 +1430,32 @@ consequential `m`, and (for noisy judgments) fuse independent judges by `quorum`
 
 ## 15.6 Soundness statements
 
-For well-typed `P`: (1) Authority safety (including tool-use), (2) Verification safety — no
-authority event is emitted with a value not `U ∧ auth ∧ margin≥m`, including across calls;
-(3) Color safety — no `sync` function reaches a declared dependency (including a tool call;
-`decide`/in-hand-`verify` are `S`); (4) Provenance completeness; (5) Reproducibility up to
-`≈` (structural if exactly-gated; a recorded run replays to chain-head equality
-unconditionally). Technique for (1)–(3): progress+preservation. (5) is the Stability
-theorem (§15.5.5), modulo O/NI of §15.7.
+For well-typed `P`: **(T1) Authority safety** — an agent `perform`s, `use`s, and `reach`es
+only what its `grants` (powers) name; grants are subtractive under `extend`; no runtime value
+extends them. **(T2) Endorsement** — the only operation that settles a `graded` judgment is a
+gate (`endorse`/`attest`), which records the discharge; a gate commits a singleton `Decision`
+(recorded, `margin ≥ m`) or `abstain`s. **(T3) Consequential non-interference** — no value
+carrying un-endorsed cognition reaches a consequential sink (a `perform` argument or an
+effecting-tool input); equivalently, varying the model's raw judgments
+changes no world-effect except through a gate (Lemma 1, §15.5). **(T4) Reproducibility up to
+`≈`** — state is a function of the spine plus recorded oracle results; a recorded run replays
+to chain-head equality unconditionally; inter-agent message content is derived, not stored.
+**(T5) Color safety** — no `sync` function reaches a declared dependency. Technique for
+T1/T2/T5: progress+preservation. T3 is Lemma 1 (two-run bisimulation, §15.7); T4 is the
+Stability theorem (§15.5.5), modulo O/NI of §15.7.
 
 ## 15.7 Mechanization and open obligations
 
 The Stability proof rests on two assumptions discharged by machine-checked proof. The
 intended mechanization (Lean 4 + Mathlib):
 
-1. **Model Agape-core** — an idealized calculus: values, the taint lattice `U⊑P⊑T`, the
-  gate (`decide`/`verify`), `commit`, and `obs`. The theorem is proved of the core; the
-   implementation is argued to refine it.
+1. **Model Agape-core** — an idealized calculus: values, the trust lattice
+  `settled⊑graded⊑raw`, the gate (`endorse`/`attest`), `commit`, and `obs`. The theorem is
+   proved of the core; the implementation is argued to refine it.
 2. **(NI) Non-interference (Lemma 1)** — the deterministic part. Define low-equivalence
-  `≈_L` (agreement on `U`-data and declassified decisions); prove stepping preserves it by
-   a two-run bisimulation. A standard IFC development; no probability.
+  `≈_L` (agreement on `settled` data and endorsed decisions); prove stepping preserves it by
+   a two-run bisimulation. A standard IFC development; no probability. This is the first
+   artifact to be built with Agape itself.
 3. **Replay corollary** — journaled `d` is a constant ⇒ `obs` equal by Lemma 1;
   deterministic.
 4. **(O) Oracle bound + amplification (Lemma 2)** — the probabilistic part. State the
@@ -1439,7 +1468,7 @@ The proof certifies Agape-core, not the implementation; closing that gap is veri
 compiler-scale work. The probabilistic part assumes the oracle is calibrated; it does not
 prove the model is, but isolates exactly which empirical property the guarantees rest on.
 
-Further obligations: **formalize the revised gate** — the prediction-set commit-or-abstain
+Further obligations: **formalize the gate** — the prediction-set commit-or-abstain
 semantics, the `abstain` form, the threshold and conformal bases, and `Rule` as a parameter
 rather than a struct — in §15.2–§15.4, and re-discharge the soundness statements (§15.6); state
 the conformal bound and calibration-readiness as hypotheses (a property of the calibration, not
@@ -1460,7 +1489,7 @@ manifest.
 ### 16.1 The manifest
 
 Configuration is the binding of declared dependencies (§3) to concrete resources, plus the default
-decision parameters. Each `principal` / `tool` / `calibration` / `prompt` declaration in source
+decision parameters. Each `principal` / `tool` / `prompt` declaration in source
 resolves to a manifest entry; an undeclared-in-config dependency is a configuration error.
 
 ```toml
@@ -1475,11 +1504,8 @@ resolves to a manifest entry; an undeclared-in-config dependency is a configurat
 # the identity dependency (`principal NAME;`)
 [identity]  backend = "local-keyring"
 
-# calibration dependencies (one block per `calibration NAME;`)
-[calibration.refund_cal]
-  store       = "spine"          # where its labelled cases live
-  min_samples = 500              # readiness floor; below it a conformal gate abstains (§13)
-  risk        = 0.1              # default α when a gate omits it
+# conformal needs no manifest entry: it calibrates from the spine, and a gate's readiness
+# floor and default α live in its `policy` declaration in source (§13)
 
 # world capabilities (the `tool NAME;` dependencies)
 [tools]
@@ -1522,7 +1548,7 @@ A model's answer varies for two reasons:
 - **Aleatoric** (sampling) — governed by `temperature`; `temperature = 0` is greedy
 (near-deterministic); replay eliminates it by re-serving the journal.
 - **Epistemic** (genuine ambiguity) — no temperature removes it; a true coin-flip yields a
-low-margin judgment. The remedy is the margin floor `m` → escalate to a human (`verify e by p`), or fuse independent judges by `quorum` (§12) to raise the margin.
+low-margin judgment. The remedy is the margin floor `m` → escalate to a principal (`attest e by p`), or fuse independent judges by `quorum` (§12) to raise the margin.
 
 Three knobs: config (`temperature=0` + pinned model + `m`); gate design (crisp criteria →
 high margin → exactly-gated); escalation/quorum (the human path or independent fusion for
@@ -1539,7 +1565,7 @@ equality" is equality of the spine's terminal hash under the canonical event
 serialization.
 - **Manifest-fixture observation.** A test may set `[runtime] threshold/margin` (and a `by`
 override) in a fixture `agape.toml` and observe which boundary was applied (the gate
-emits the applied `Rule` in its `Verification`/`Attestation` event), so precedence (§16.2)
+records the applied `Rule` in its `Decided`/`Attestation` event), so precedence (§16.2)
 is testable.
 
 ---
