@@ -2,19 +2,21 @@
 
 Agape is a programming language for the cognitive layer of software — the layer where a
 model's judgment, rather than deterministic code, decides what happens next. It treats a
-model call as a typed, first-class operation and enforces, at compile time, the properties
-that judgment-driven systems need and rarely have: bounded authority, mandatory
-verification, and a complete, replayable record of every decision.
+model's output as *testimony*: a typed, first-class, graded judgment that carries no authority
+until the program establishes grounds to act on it. Around that judgment it enforces, at
+compile time, the properties judgment-driven systems need and rarely have: authority bounded
+to what an agent is granted, cognition that cannot drive a consequential action until it is
+endorsed, and a complete, replayable record of every decision.
 
 ## The problem
 
 Most agent systems do not survive production. Across the seven open-source frameworks
 studied in the [MAST taxonomy](https://arxiv.org/abs/2503.13657) — 1,642 annotated
 execution traces — multi-agent systems fail between 41% and 87% of the time, almost never
-because the model was not capable enough. They fail for
-structural reasons: agents coordinate through unstructured text and misread one another, act
-on unverified model output, exceed the authority they were meant to have, and leave no record
-that can be replayed when something goes wrong.
+because the model was not capable enough. They fail for structural reasons: agents coordinate
+through unstructured text and misread one another, act on testimony they had no grounds to
+trust, exceed the authority they were meant to hold, and leave no record that can be replayed
+when something goes wrong.
 
 These are not model problems. They are the absence of guarantees that every other class of
 critical software takes for granted: types, contracts, access control, an audit log. Today
@@ -36,23 +38,69 @@ above it, and the boundary between the two is stable. The agentic logic — the 
 changes as fast as the field does — is encapsulated behind that boundary, and can evolve
 without disturbing the rest of the system.
 
+## How a decision is made
+
+Work in Agape moves through four stages, each typed and each recorded.
+
+A model produces **testimony** — an assertion solicited with the cognition operator
+(`self <- "…"`). Agape never treats testimony as a string to be trusted; it binds it as a
+**`Credence`**, a graded judgment over a closed set of outcomes.
+
+A credence carries no authority on its own. Before an agent may act on it, the judgment must
+pass a gate — **`decide`** — which **endorses** it: raises it from untrusted to trusted, and
+only when it meets a stated standard of confidence. A judgment that falls short is not
+endorsed, and the gate abstains.
+
+An endorsed decision may license a **declaration**: an authorized action that changes the
+system's state deliberately. Recording an event is how all state changes in Agape, but a
+declaration is the consequential kind — its effect is fixed by the decision that licensed it,
+and an agent may issue only the declarations its authority permits.
+
+Every stage — the testimony, the credence, the decision, the declaration — is appended to an
+immutable log, and the system's state is a function of that log. A run therefore reproduces
+exactly.
+
 ## What it guarantees
 
-- **Cognition is typed.** A model's *judgment* comes back as a schema-constrained value — a
+- **Cognition is typed.** A model's *testimony* comes back as a schema-constrained value — a
   `Credence<E>`, a calibrated distribution over a closed set of outcomes read from the model's
   own token probabilities — not a string to parse and trust.
-- **Authority is bounded at compile time.** An agent may perform only the actions its `grants`
-  declare, and no value it computes or learns at runtime can extend that set.
-- **Verification is unavoidable.** A value derived from cognition is *tainted* until an explicit
-  gate endorses it. The type checker rejects any program that lets a tainted value drive a
-  consequential action; a missing check is a compile error, not a latent risk.
+- **Authority is bounded at compile time.** An agent may issue only the declarations its
+  `grants` permit, and no value it computes or learns at runtime can extend that set.
+- **Endorsement is unavoidable.** A value derived from cognition is untrusted until an explicit
+  gate *endorses* it. The type checker rejects any program that lets untrusted testimony drive
+  a declaration; a missing endorsement is a compile error, not a latent risk.
 - **Every run replays.** Execution is an append-only, hash-chained log, and state is a
   function of that log. A recorded run replays exactly, and any prefix can be replayed under
   altered facts to test a counterfactual.
 
-Agape makes no claim that a model's output is correct; no system can. It bounds and records the
-consequences of output that is wrong. The model may err; what it is permitted to do when it errs
-is fixed in advance, and what it did is on the record.
+Agape makes no claim that a model's testimony is correct; no system can. It bounds and records
+the consequences of testimony that is wrong. The model may err; what it is permitted to do when
+it errs is fixed in advance, and what it did is on the record.
+
+## Example
+
+```agape
+authority event Refund(amount: int, to: text);
+
+agent Desk grants { emit Refund } {
+  on awake {
+    Credence<bool> withinPolicy = self <- "is refund #4217 within policy?";
+    decide (withinPolicy, > 0.9) {
+      true    -> emit Refund(50, "alice");   // a declaration, licensed by the decision
+      false   -> ;                            // no refund
+      abstain -> ;                            // not confident enough to act
+    }
+  }
+}
+
+spawn Desk d; awake d;
+```
+
+The model's answer is testimony, bound as a `Credence`. Emitting `Refund` directly from it does
+not compile: an authority declaration may consume only an endorsed value, and testimony is
+endorsed only by passing the `decide` gate. The threshold `> 0.9` is the standard the judgment
+must meet; if it is not met, the gate abstains and no declaration is made.
 
 ## Who it is for
 
@@ -61,24 +109,18 @@ not "the agent probably will not do X" but "the agent cannot do X, and here is t
 requirement is sharpest in regulated and high-stakes work, and it applies to anyone who needs an
 agent system to stay stable and auditable past its first week.
 
-## Example
+## Foundations
 
-```agape
-authority Refund;
-event Refund(amount: int, to: text);
-
-agent Desk grants { emit Refund } {
-  on awake {
-    Credence<bool> ok = self <- "is refund #4217 within policy?";
-    event<Verification> v = verify ok by > 0.9;
-    when SuccessfulVerification(v) { emit Refund(50, "alice"); }
-  }
-}
-spawn Desk d; awake d;
-```
-
-`emit Refund` applied directly to `ok` does not compile: a value from the model cannot reach a
-consequential action without passing the gate.
+Agape's model is assembled from established ideas, not invented from nothing. Treating a model's
+output as *testimony* that requires grounds before it is trusted is the stance of the
+[epistemology of testimony](https://iep.utm.edu/ep-testi/). *Credence* is the term from formal
+epistemology for a graded degree of belief. *Endorsement* — raising a value from untrusted to
+trusted — is the integrity operation studied in
+[information-flow control](https://www.cs.cornell.edu/andru/papers/robknowledge.pdf). And
+*declaration* is the [speech-act](https://plato.stanford.edu/entries/speech-acts/) category for
+an utterance that changes state by being issued, valid only when the speaker holds the requisite
+authority. The contribution is their combination and their enforcement at compile time, not the
+parts in isolation.
 
 ## Documents
 

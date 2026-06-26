@@ -209,14 +209,14 @@ Wraps any `T` to mean "on the spine." Produced by spine-emitting constructs (`<-
 typed reply bound."
 
 ### User nominal types
-User-defined nominal types are explicitly declared. Explicit declaration is what makes
-`authority Transfer;` and grant-set checking statically decidable: a consequential event
+User-defined nominal types are explicitly declared. Explicit declaration is what makes the
+`authority` event modifier and grant-set checking statically decidable: a consequential event
 type is a declared name with a known payload.
 
 ```agape
 struct Memo  { amount: int, to: text }            // a record; all fields required
 enum  Ticket { Billing, Bug, Feature }            // a closed variant set
-event Transfer(memo: Memo);                        // a custom spine-event type, payload typed
+authority event Transfer(memo: Memo);              // consequential spine-event; emit needs a gated value
 ```
 
 - **`struct NAME { field: T, … }`** — a record with named, typed fields. All fields are
@@ -225,11 +225,12 @@ event Transfer(memo: Memo);                        // a custom spine-event type,
   every field; a missing field is a `TypeError`.
 - **`enum NAME { A, B, … }`** — a closed set of named variants; `case` (§11)
   pattern-matches them with compile-time exhaustiveness.
-- **`event NAME(field: T, …);`** — declares a custom spine-event type with a typed
-  payload. `emit NAME(v)` requires `NAME` to be declared and `v` to match the payload
-  type. Events are not self-declaring; an undeclared `emit` is a `TypeError`. Explicit
-  declaration is what lets `authority NAME;` and `grants { emit NAME }` be checked
-  statically.
+- **`[authority] event NAME(field: T, …);`** — declares a custom spine-event type with a
+  typed payload. The optional `authority` modifier marks it consequential (§13): emitting it
+  requires a clean, gate-endorsed value. `emit NAME(v)` requires `NAME` to be declared and
+  `v` to match the payload type. Events are not self-declaring; an undeclared `emit` is a
+  `TypeError`. Explicit declaration is what lets the `authority` modifier and
+  `grants { emit NAME }` be checked statically.
 
 ### `Credence<E>` — a graded judgment
 A `Credence<E>` is a graded judgment over a closed enum `E`: a distribution over `E`'s
@@ -351,6 +352,7 @@ agent NAME ( [TYPE PARAM] , ... ) [grants { CAP , ... }] {
     when (SUBJECT) { ... }
     on awake { ... }
     on sleep { ... }
+    on crash { ... }     // a contained fault — recover here; state is intact
 }
 ```
 
@@ -379,6 +381,15 @@ announcing into existence:
 - **`sleep name;`** — close the mailbox; run the `on sleep` hook; a slept agent with no
   live references is collected. A collected agent is re-entered by a fresh `spawn`/`awake`;
   a still-referenced slept agent is re-entered by `awake name;`.
+- **Crash (involuntary).** A fault within a single handler invocation — an unrecoverable
+  seam failure (e.g. the provider returns nothing) or an uncaught error — does **not** end
+  the agent. The faulting invocation is abandoned, `AgentCrashed(name)` is appended, the
+  `on crash` hook runs, and the agent continues with its fields and memory intact. An agent
+  is a persistent cognitive entity; a crash is a contained, recorded interruption, not a
+  death. Recovery is the agent's own (`on crash`); a pathological crash loop is a policy
+  concern for an ordinary `when (AgentCrashed …)` subscription to handle (e.g. by `sleep`ing
+  the agent), not a built-in. Unlike `sleep`, a crash is involuntary and does not close the
+  mailbox.
 
 **Sending to a non-awake agent.** An agent that is not awake has no mailbox, so a send to
 it is lost (it never `Delivered`, §6) — not an error. The compiler emits a warning (not an
@@ -386,14 +397,16 @@ error) when it can statically prove a send is dead.
 
 ### `extend` — inheritance
 `extend PARENT(args);` (first statement) is composition/inheritance. A child inherits the
-parent's fields, constructor, `when` blocks, and `on awake` / `on sleep` hooks; the
+parent's fields, constructor, `when` blocks, and `on awake` / `on sleep` / `on crash` hooks; the
 parent's constructor runs (with `args`) before the child's constructor body, and inherited
 `when`/hooks fire for the child. Authority is subtractive: a child's `grants` must be a
 subset of the parent's (§13).
 
 ### Lifecycle hooks vs `when`
-`on awake` / `on sleep` are hooks tied to the agent's own transitions; `when (X)` is a
-general spine subscription keyed by an arbitrary subject `X` (§7).
+`on awake` / `on sleep` / `on crash` are hooks tied to the agent's own transitions; `when (X)`
+is a general spine subscription keyed by an arbitrary subject `X` (§7). `on crash` runs in the
+agent's own context after a contained fault (see Lifecycle), with state preserved, so it can
+compensate for or retry the abandoned work.
 
 ### §5b — `prompt`: the external input boundary
 
@@ -799,8 +812,9 @@ color, tool use, and the gate that connects them. The formal rules are §15.3.
 ### Authority (`grants`)
 An agent's `grants` clause is its total authority: the events it may `emit`, agents it may
 `reach`, and tools it may `use` (§6b). Acting outside it is a compile error. Capabilities
-are subtractive under `extend`. `authority Transfer;` (top level) marks a declared event
-type consequential — emitting it engages the taint rule below.
+are subtractive under `extend`. The `authority` modifier on an event declaration
+(`authority event Transfer(…);`) marks it consequential — emitting it engages the taint
+rule below.
 
 ```agape
 grants { emit Transfer, reach Worker, use search }   // concrete capabilities
@@ -949,19 +963,18 @@ Judgment **`Γ; Σ; A ⊢ e : T ! c · t`**.
 
 ```
 program   ::= decl*
-decl      ::= typedecl | authority | tool | agent | fn | stmt
+decl      ::= typedecl | tool | agent | fn | stmt
 typedecl  ::= "struct" Ident "{" field ("," field)* "}"
             | "enum" Ident "{" Ident ("," Ident)* "}"
-            | "event" Ident "(" field ("," field)* ")" ";"   // custom spine event
+            | "authority"? "event" Ident "(" field ("," field)* ")" ";"  // spine event; authority ⇒ emit needs clean provenance
 field     ::= type Ident                                     // "name: T" also accepted
-authority ::= "authority" Ident ";"
 tool      ::= "tool" Ident params ("->" type)? ";"           // tool-seam capability
 agent     ::= "agent" Ident params grants? "{" abody* "}"
 grants    ::= "grants" "{" ( "*" | cap ("," cap)* ) "}"
 cap       ::= "emit" Ident | "reach" Ident | "use" Ident
 abody     ::= extend | on | stmt
 extend    ::= "extend" Ident args ";"
-on        ::= "on" ("awake"|"sleep") block
+on        ::= "on" ("awake"|"sleep"|"crash") block
 fn        ::= "sync"? type Ident params block          // async is the default
 params    ::= "(" (type Ident ("," type Ident)*)? ")"
 type      ::= "int"|"float"|"bool"|"text"|"null" | "event" "<" type ">"
