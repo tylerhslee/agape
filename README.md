@@ -6,7 +6,7 @@ Agape is a programming language for the cognitive layer of software — the laye
 
 Most agent systems do not survive production. Across the seven open-source frameworks studied in the [MAST taxonomy](https://arxiv.org/abs/2503.13657) — 1,642 annotated execution traces — multi-agent systems fail between 41% and 87% of the time, almost never because the model was not capable enough. They fail for structural reasons: agents coordinate through unstructured text and misread one another, act on testimony they had no grounds to trust, exceed the authority they were meant to hold, and leave no record that can be replayed when something goes wrong.
 
-These are not model problems. They are the absence of guarantees that every other class of critical software takes for granted: types, contracts, access control, an audit log. Today those guarantees are, at best, conventions a framework enforces at runtime — which a developer can forget and a reviewer cannot see. Agape makes them properties of the program, checked before it runs.
+These are not model problems. They are the absence of guarantees that every other class of critical software takes for granted: types, contracts, access control, an audit log. Where those guarantees exist at all, they are conventions enforced piecemeal at runtime — which a developer can forget, a reviewer cannot see, and which lapse at every boundary where one part of the system hands off to the next. Agape makes them a single property of the program, checked before it runs and carried along every path a value can take — from a model's testimony to the action it licenses.
 
 ## What it is
 
@@ -24,7 +24,7 @@ A credence carries no authority on its own. Before an agent may act on it, the j
 
 An endorsed decision may license an **action** — *performed* only within the authority the agent was granted. Recording an `event` is how all state changes in Agape; performing an `action` is the consequential kind, whose effect is fixed by the decision that licensed it.
 
-Every stage — the testimony, the credence, the decision, the action — is appended to an immutable log, and the system's state is a function of that log. A run therefore reproduces exactly.
+Every stage — the testimony, the credence, the decision, the action — is appended to an immutable log, and the system's state is a function of that log. A run therefore reproduces exactly. And because each value's standing — untrusted testimony, graded credence, endorsed decision — is part of its type, nothing can slip from testimony to action without passing the gate: the four stages are one path the compiler checks end to end, not a sequence the program is trusted to follow in order.
 
 ## What it guarantees
 
