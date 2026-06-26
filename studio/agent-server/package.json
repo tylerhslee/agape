@@ -1,0 +1,20 @@
+{
+  "name": "agape-studio-agent-server",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "description": "Somatic simulation of Agape Studio's agentic operators via the Claude API — placeholder for the Agape + MCP backend.",
+  "scripts": {
+    "dev": "tsx server.ts",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "latest",
+    "better-sqlite3": "latest"
+  },
+  "devDependencies": {
+    "tsx": "latest",
+    "vitest": "^2.1.9",
+    "@types/better-sqlite3": "latest"
+  }
+}

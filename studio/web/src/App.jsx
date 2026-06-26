@@ -9,7 +9,7 @@ import StatusBar from "./components/StatusBar.jsx";
 
 const EMPTY = { agents: [], templates: [], authority_events: [], provider: "?" };
 
-export default function App() {
+export default function App({ onHome }) {
   const [snap, setSnap] = useState(EMPTY);
   const [events, setEvents] = useState([]);
   const [live, setLive] = useState(true);
@@ -115,6 +115,11 @@ export default function App() {
           Agape Studio — {(snap.program_path || "untitled").split("/").pop()}
           {!connected && <span style={{ color: "#f48771" }}> · backend offline</span>}
         </span>
+        {onHome && (
+          <button className="ghost" style={{ marginLeft: "auto" }} onClick={onHome}>
+            <i className="ti ti-layout-dashboard" style={{ verticalAlign: "-1px" }} /> dashboard
+          </button>
+        )}
       </div>
 
       <div className="body">
