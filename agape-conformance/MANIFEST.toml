@@ -303,6 +303,24 @@ absent = ["AgentAwake(a)"]
 spec = "§5 (spawn instantiates + constructs only: no mailbox, no awake hook)"
 
 [[test]]
+id = "comm_expiry_tombstone"
+section = "06_communication"
+path = "tests/06_communication/comm_expiry_tombstone.ag"
+expect = "accept"
+absent = ["Delivered(s)"]
+order = ["Sent(s)", "Expired(s)"]
+spec = "§6 (a send whose `expires` lifetime elapses before Delivered appends an Expired tombstone; no Delivered follows)"
+note = "Worker is never awakened, so the 1-tick lifetime elapses undelivered"
+
+[[test]]
+id = "comm_lifecycle_order"
+section = "06_communication"
+path = "tests/06_communication/comm_lifecycle_order.ag"
+expect = "accept"
+order = ["Sent(s)", "Delivered(s)", "Resolved(s)"]
+spec = "§6 (a delivered send moves through Sent → Delivered → Resolved, in that order, each a spine event correlated by corr)"
+
+[[test]]
 id = "comm_self_send_thinks"
 section = "06_communication"
 path = "tests/06_communication/comm_self_send_thinks.ag"
@@ -334,6 +352,14 @@ expect = "accept"
 spec = "§6 (a typed reply binds the provider answer into event<T>)"
 
 [[test]]
+id = "spine_multi_handler_order"
+section = "07_spine"
+path = "tests/07_spine/spine_multi_handler_order.ag"
+expect = "accept"
+order = ["First(a)", "Second(a)"]
+spec = "§7 (when several subscriptions match one appended event in one tick, they fire in registration/hoist order — within a scope, lexical order)"
+
+[[test]]
 id = "spine_prospective_only"
 section = "07_spine"
 path = "tests/07_spine/spine_prospective_only.ag"
@@ -357,6 +383,14 @@ path = "tests/07_spine/spine_tool_pair.ag"
 expect = "accept"
 contains = ["pair(Tool@search)"]
 spec = "§6b, §7 (a tool call appends a ToolStarted/ToolResolved pair)"
+
+[[test]]
+id = "spine_when_about_filters"
+section = "07_spine"
+path = "tests/07_spine/spine_when_about_filters.ag"
+expect = "accept"
+contains = ["Got(a)"]
+spec = "§7 (a `when (Type b about subj)` fires only for events about the held subject; the bound event evaluates to its payload)"
 
 [[test]]
 id = "spine_when_guard_ok"
@@ -403,6 +437,15 @@ expect = "accept"
 contains = ["TypeMismatch"]
 provider = "schema_violation"
 spec = "§8 (structured output uses constrained decoding; on schema failure the runtime raises a clean TypeMismatch — catchable and retryable)"
+
+[[test]]
+id = "prelude_expired_not_error"
+section = "09_prelude"
+path = "tests/09_prelude/prelude_expired_not_error.ag"
+expect = "accept"
+contains = ["Expired(s)"]
+absent = ["Caught"]
+spec = "§9 (Expired and a lost send are NOT Error subtypes; a `when (Error e)` does not fire for an Expired tombstone)"
 
 [[test]]
 id = "prelude_say_not_spine"
@@ -525,6 +568,13 @@ expect = "accept"
 spec = "§12 (a `dependent` declaration fuses conservatively into one Credence<bool>)"
 
 [[test]]
+id = "agg_mixed_clusters_fuse"
+section = "12_aggregation"
+path = "tests/12_aggregation/agg_mixed_clusters_fuse.ag"
+expect = "accept"
+spec = "§12 (mixed sets compose: each `dependent` cluster fuses conservatively first, then the cluster results combine by the independent rule; coverage must be total over every pair)"
+
+[[test]]
 id = "agg_pipe_fanout_ok"
 section = "12_aggregation"
 path = "tests/12_aggregation/agg_pipe_fanout_ok.ag"
@@ -552,6 +602,23 @@ section = "13_governance"
 path = "tests/13_governance/gov_attest_by_principal_ok.ag"
 expect = "accept"
 spec = "§13 (attest e by p reaches the identity dependency and records an Attestation — the principal basis)"
+
+[[test]]
+id = "gov_attest_deny_failed"
+section = "13_governance"
+path = "tests/13_governance/gov_attest_deny_failed.ag"
+expect = "accept"
+contains = ["FailedAttestation(m)"]
+attest = "deny"
+spec = "§13 (when the principal declines, the attest gate records a FailedAttestation; the decision is the principal's, deferred to the model only for the clear cases)"
+
+[[test]]
+id = "gov_conformal_coldstart_abstains"
+section = "13_governance"
+path = "tests/13_governance/gov_conformal_coldstart_abstains.ag"
+expect = "accept"
+contains = ["Abstained(c)"]
+spec = "§13 (a conformal gate with no recorded decisions is below its labelled-case readiness floor and abstains — the supervised cold start; autonomy is earned as grounded labels accrue)"
 
 [[test]]
 id = "gov_conformal_gate_ok"
@@ -605,6 +672,18 @@ section = "13_governance"
 path = "tests/13_governance/gov_grants_star_ok.ag"
 expect = "accept"
 spec = "§13 (grants { * } is the explicit unconstrained opt-out — lattice top)"
+
+[[test]]
+id = "gov_margin_floor_abstains"
+section = "13_governance"
+path = "tests/13_governance/gov_margin_floor_abstains.ag"
+expect = "accept"
+contains = ["Abstained(c)"]
+absent = ["Decided(c)"]
+manifest = ["runtime.consequential_margin=0.2"]
+provider = "credence(true=0.55, false=0.45)"
+spec = "§13 (a gated decision whose margin is below the runtime floor `m` abstains — the typed trigger for escalation — even when the threshold is met)"
+note = "0.55 clears the 0.5 threshold but its 0.10 margin is below the 0.20 floor"
 
 [[test]]
 id = "gov_perform_reach_subtractive_reject"
@@ -686,8 +765,27 @@ error = "TaintViolation"
 spec = "§6b, §13 (a write tool is a consequential sink; a cognition-derived input is un-settled → reject)"
 
 [[test]]
+id = "repro_chain_head_equal"
+section = "15_reproducibility"
+path = "tests/15_reproducibility/repro_chain_head_equal.ag"
+expect = "accept"
+replay = "chain_head_equal"
+spec = "§15.4.2, §15.5 / T4 (a recorded run replays to an identical chain-head: every oracle/tool result is re-served from the journal in order and nothing is re-invoked)"
+
+[[test]]
 id = "repro_collapse_off_spine"
 section = "15_reproducibility"
 path = "tests/15_reproducibility/repro_collapse_off_spine.ag"
 expect = "accept"
 spec = "§15 (`c by R` is a pure projection of a Credence; off-spine and synchronous)"
+
+[[test]]
+id = "cfg_by_override_wins"
+section = "16_config"
+path = "tests/16_config/cfg_by_override_wins.ag"
+expect = "accept"
+contains = ["Abstained(c)"]
+manifest = ["runtime.threshold=0.5"]
+provider = "credence(true=0.7, false=0.3)"
+spec = "§16.2 (precedence: the per-call gate `by` clause always wins over the manifest default; the gate's 0.9 governs, not the manifest's 0.5)"
+note = "under the manifest's 0.5 the 0.7 judgment would commit; the explicit `by confidence 0.9` overrides and abstains"

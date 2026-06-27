@@ -1,0 +1,21 @@
+//! id:        gov_margin_floor_abstains
+//! section:   13_governance
+//! expect:    accept
+//! provider:  credence(true=0.55, false=0.45)
+//! manifest:  runtime.consequential_margin=0.2
+//! contains:  Abstained(c)
+//! absent:    Decided(c)
+//! spec:      §13 (a gated decision whose margin is below the runtime floor `m` abstains — the typed trigger for escalation — even when the threshold is met)
+//! note:      0.55 clears the 0.5 threshold but its 0.10 margin is below the 0.20 floor
+//! ---
+action Flag(bool b);
+agent A grants { perform Flag } {
+  on awake {
+    Credence<bool> c = self <- "should we flag?";
+    endorse (c by confidence 0.5) {
+      true: perform Flag(true);
+      false: ;
+    }
+  }
+}
+spawn A a; awake a;

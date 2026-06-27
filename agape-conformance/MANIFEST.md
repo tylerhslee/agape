@@ -1,6 +1,6 @@
 # Agape v1.0 — Conformance Test Index
 
-**89 tests** — accept: 60, reject: 29
+**100 tests** — accept: 71, reject: 29
 
 A conformant implementation must satisfy every `accept`/`reject` test (rejects with the declared error class; accepts matching any asserted spine).
 
@@ -72,6 +72,8 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 
 | id | expect | error | spec |
 |---|---|---|---|
+| `comm_expiry_tombstone` | accept | — | §6 (a send whose `expires` lifetime elapses before Delivered appends an Expired tombstone; no Delivered follows) |
+| `comm_lifecycle_order` | accept | — | §6 (a delivered send moves through Sent → Delivered → Resolved, in that order, each a spine event correlated by corr) |
 | `comm_self_send_thinks` | accept | — | §6 (sending to self is the agent's own cognition; needs no reach grant) |
 | `comm_send_expires_ok` | accept | — | §6 (a send may carry a lifetime: `dest <- msg expires N`; reach into Worker is granted) |
 | `comm_send_lost_no_delivery` | accept | — | §6 (a send to a non-awake agent is lost — the chain stalls at Sent, never Delivered; loss is the absence of Delivered, not an event) |
@@ -81,9 +83,11 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 
 | id | expect | error | spec |
 |---|---|---|---|
+| `spine_multi_handler_order` | accept | — | §7 (when several subscriptions match one appended event in one tick, they fire in registration/hoist order — within a scope, lexical order) |
 | `spine_prospective_only` | accept | — | §7 (subscriptions are prospective; never fire for prior events) |
 | `spine_query_result_event` | accept | — | §10 (a query STATEMENT lands a QueryResult event on the spine) |
 | `spine_tool_pair` | accept | — | §6b, §7 (a tool call appends a ToolStarted/ToolResolved pair) |
+| `spine_when_about_filters` | accept | — | §7 (a `when (Type b about subj)` fires only for events about the held subject; the bound event evaluates to its payload) |
 | `spine_when_guard_ok` | accept | — | §7 (a `when … if (guard)` filters by an ordinary predicate over the bound event's fields) |
 
 ## 08_semantic
@@ -100,6 +104,7 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 
 | id | expect | error | spec |
 |---|---|---|---|
+| `prelude_expired_not_error` | accept | — | §9 (Expired and a lost send are NOT Error subtypes; a `when (Error e)` does not fire for an Expired tombstone) |
 | `prelude_say_not_spine` | accept | — | §9 (`say(x)` prints its argument; it is NOT a spine operation and appends no event) |
 | `prelude_when_error_catches_contradiction` | accept | — | §9 (Contradiction extends Error; when (Error e) catches it by subtype) |
 
@@ -131,6 +136,7 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 | `agg_all_bool_conjunction` | accept | — | §12 (over plain bool, `all`/`any` are ordinary conjunction/disjunction — no fusion, no dependence declaration needed) |
 | `agg_all_independent_ok` | accept | — | §12 (all over independent Credence<bool> judges fuses to one Credence<bool>) |
 | `agg_dependent_fuse_ok` | accept | — | §12 (a `dependent` declaration fuses conservatively into one Credence<bool>) |
+| `agg_mixed_clusters_fuse` | accept | — | §12 (mixed sets compose: each `dependent` cluster fuses conservatively first, then the cluster results combine by the independent rule; coverage must be total over every pair) |
 | `agg_pipe_fanout_ok` | accept | — | §12 (`coll |> fn` maps each element of a collection through fn) |
 | `agg_quorum_independent_ok` | accept | — | §12 (quorum over independent Credence<bool> judges fuses to one Credence<bool>) |
 | `agg_quorum_no_dep_decl_reject` | reject | TypeError | §12 (fusion — incl. quorum — requires a total independent/dependent declaration) |
@@ -140,6 +146,8 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 | id | expect | error | spec |
 |---|---|---|---|
 | `gov_attest_by_principal_ok` | accept | — | §13 (attest e by p reaches the identity dependency and records an Attestation — the principal basis) |
+| `gov_attest_deny_failed` | accept | — | §13 (when the principal declines, the attest gate records a FailedAttestation; the decision is the principal's, deferred to the model only for the clear cases) |
+| `gov_conformal_coldstart_abstains` | accept | — | §13 (a conformal gate with no recorded decisions is below its labelled-case readiness floor and abstains — the supervised cold start; autonomy is earned as grounded labels accrue) |
 | `gov_conformal_gate_ok` | accept | — | §13 (the conformal basis `by conformal α` is a distribution-free finite-sample gate calibrated from the spine) |
 | `gov_consequential_bare_collapse_reject` | reject | TaintViolation | §13 (a bare `c by R` is settled but off-spine/unendorsed → may not license a perform) |
 | `gov_endorse_abstain_ok` | accept | — | §13 (the optional abstain clause runs when the gate cannot commit a singleton prediction set) |
@@ -147,6 +155,7 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 | `gov_endorsed_perform_ok` | accept | — | §13 (an endorsed Decision may license a consequential perform) |
 | `gov_extend_use_subtractive_reject` | reject | AuthorityViolation | §5, §13 (capabilities, incl. `use`, are subtractive under extend) |
 | `gov_grants_star_ok` | accept | — | §13 (grants { * } is the explicit unconstrained opt-out — lattice top) |
+| `gov_margin_floor_abstains` | accept | — | §13 (a gated decision whose margin is below the runtime floor `m` abstains — the typed trigger for escalation — even when the threshold is met) |
 | `gov_perform_reach_subtractive_reject` | reject | AuthorityViolation | §5, §13 (grants are subtractive under extend for `perform`/`reach` too — a child may not exceed its parent's authority) |
 | `gov_perform_ungranted_reject` | reject | AuthorityViolation | §13 (default-deny: an agent may only perform actions in its grants) |
 | `gov_reach_ungranted_reject` | reject | AuthorityViolation | §13 (sending into another agent requires a `reach` grant) |
@@ -162,4 +171,11 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 
 | id | expect | error | spec |
 |---|---|---|---|
+| `repro_chain_head_equal` | accept | — | §15.4.2, §15.5 / T4 (a recorded run replays to an identical chain-head: every oracle/tool result is re-served from the journal in order and nothing is re-invoked) |
 | `repro_collapse_off_spine` | accept | — | §15 (`c by R` is a pure projection of a Credence; off-spine and synchronous) |
+
+## 16_config
+
+| id | expect | error | spec |
+|---|---|---|---|
+| `cfg_by_override_wins` | accept | — | §16.2 (precedence: the per-call gate `by` clause always wins over the manifest default; the gate's 0.9 governs, not the manifest's 0.5) |

@@ -1,0 +1,13 @@
+//! id:        spine_when_about_filters
+//! section:   07_spine
+//! expect:    accept
+//! contains:  Got(a)
+//! spec:      §7 (a `when (Type b about subj)` fires only for events about the held subject; the bound event evaluates to its payload)
+//! ---
+event Ping(text msg);
+event Got(text m);
+agent A {
+  when (Ping p about self) { emit Got(p.msg); }
+  on awake { emit Ping("hi"); }
+}
+spawn A a; awake a;

@@ -1,0 +1,16 @@
+//! id:        comm_expiry_tombstone
+//! section:   06_communication
+//! expect:    accept
+//! order:     Sent(s); Expired(s)
+//! absent:    Delivered(s)
+//! spec:      §6 (a send whose `expires` lifetime elapses before Delivered appends an Expired tombstone; no Delivered follows)
+//! note:      Worker is never awakened, so the 1-tick lifetime elapses undelivered
+//! ---
+agent Worker {}
+agent Boss grants { reach Worker } {
+  on awake {
+    spawn Worker w;
+    event<text> s = w <- "status?" expires 1;
+  }
+}
+spawn Boss b; awake b;

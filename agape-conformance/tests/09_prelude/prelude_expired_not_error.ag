@@ -1,0 +1,17 @@
+//! id:        prelude_expired_not_error
+//! section:   09_prelude
+//! expect:    accept
+//! contains:  Expired(s)
+//! absent:    Caught
+//! spec:      §9 (Expired and a lost send are NOT Error subtypes; a `when (Error e)` does not fire for an Expired tombstone)
+//! ---
+event Caught(text m);
+agent Worker {}
+agent Boss grants { reach Worker } {
+  when (Error e) { emit Caught("err"); }
+  on awake {
+    spawn Worker w;
+    event<text> s = w <- "status?" expires 1;
+  }
+}
+spawn Boss b; awake b;

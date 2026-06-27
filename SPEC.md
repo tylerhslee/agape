@@ -166,7 +166,7 @@ values and instances are lowercase.
 ### Keywords
 
 ```
-int float bool text null event action     // types + spine wrappers (event = record, action = performative)
+int float bool text null event action array  // types + spine wrappers (event = record, action = performative; array = collection)
 agent extend sync                         // declarations (sync = marked color)
 struct enum                               // user nominal-type declarations
 grants tool read write                    // capability typing (§13); tool decl + effect class (§6b)

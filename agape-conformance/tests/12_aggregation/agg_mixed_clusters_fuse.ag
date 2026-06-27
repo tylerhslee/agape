@@ -1,0 +1,17 @@
+//! id:        agg_mixed_clusters_fuse
+//! section:   12_aggregation
+//! expect:    accept
+//! spec:      §12 (mixed sets compose: each `dependent` cluster fuses conservatively first, then the cluster results combine by the independent rule; coverage must be total over every pair)
+//! ---
+agent A {
+  on awake {
+    Credence<bool> c1 = self <- "q1?";
+    Credence<bool> c2 = self <- "q2?";
+    Credence<bool> c3 = self <- "q3?";
+    dependent   c1, c2;
+    independent c1, c3;
+    independent c2, c3;
+    Credence<bool> fused = all(c1, c2, c3);
+  }
+}
+spawn A a; awake a;

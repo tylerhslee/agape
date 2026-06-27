@@ -1,0 +1,17 @@
+//! id:        repro_chain_head_equal
+//! section:   15_reproducibility
+//! expect:    accept
+//! replay:    chain_head_equal
+//! spec:      §15.4.2, §15.5 / T4 (a recorded run replays to an identical chain-head: every oracle/tool result is re-served from the journal in order and nothing is re-invoked)
+//! ---
+action Flag(bool b);
+agent A grants { perform Flag } {
+  on awake {
+    Credence<bool> c = self <- "flag it?";
+    endorse (c by confidence 0.9) {
+      true: perform Flag(true);
+      false: ;
+    }
+  }
+}
+spawn A a; awake a;

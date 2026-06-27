@@ -1,0 +1,20 @@
+//! id:        cfg_by_override_wins
+//! section:   16_config
+//! expect:    accept
+//! provider:  credence(true=0.7, false=0.3)
+//! manifest:  runtime.threshold=0.5
+//! contains:  Abstained(c)
+//! spec:      §16.2 (precedence: the per-call gate `by` clause always wins over the manifest default; the gate's 0.9 governs, not the manifest's 0.5)
+//! note:      under the manifest's 0.5 the 0.7 judgment would commit; the explicit `by confidence 0.9` overrides and abstains
+//! ---
+action Flag(bool b);
+agent A grants { perform Flag } {
+  on awake {
+    Credence<bool> c = self <- "flag?";
+    endorse (c by confidence 0.9) {
+      true: perform Flag(true);
+      false: ;
+    }
+  }
+}
+spawn A a; awake a;

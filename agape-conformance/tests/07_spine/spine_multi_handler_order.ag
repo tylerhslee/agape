@@ -1,0 +1,15 @@
+//! id:        spine_multi_handler_order
+//! section:   07_spine
+//! expect:    accept
+//! order:     First(a); Second(a)
+//! spec:      §7 (when several subscriptions match one appended event in one tick, they fire in registration/hoist order — within a scope, lexical order)
+//! ---
+event Tick(text n);
+event First(text x);
+event Second(text x);
+agent A {
+  when (Tick t about self) { emit First("1"); }
+  when (Tick t about self) { emit Second("2"); }
+  on awake { emit Tick("go"); }
+}
+spawn A a; awake a;

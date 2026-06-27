@@ -1,0 +1,16 @@
+//! id:        gov_attest_deny_failed
+//! section:   13_governance
+//! expect:    accept
+//! attest:    deny
+//! contains:  FailedAttestation(m)
+//! spec:      §13 (when the principal declines, the attest gate records a FailedAttestation; the decision is the principal's, deferred to the model only for the clear cases)
+//! ---
+principal alice;
+event Memo(text body);
+agent A {
+  on awake {
+    event<Memo> m = self <- "draft a memo";
+    attest m by alice;
+  }
+}
+spawn A a; awake a;
