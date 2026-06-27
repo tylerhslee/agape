@@ -46,7 +46,7 @@ agent Warden(Faculty observe, Faculty rulebook, Faculty proportion)
     } abstain {
       // The panel split — no single lens may act. Defer to the accountable human, whose signed
       // ruling re-enters the arms (§13). This is the safety valve, not a fallback to one opinion.
-      emit Logged("panel split -> superintendent");
+      emit Logged("panel split, defer to superintendent");
       attest r.report by superintendent {
         true:  { perform Sanction(r.report); emit Logged("sanction: superintendent ruled"); }
         false: { emit Logged("no sanction: superintendent ruled"); }
@@ -55,7 +55,7 @@ agent Warden(Faculty observe, Faculty rulebook, Faculty proportion)
   }
 }
 
-agent Prisoner {                          // NO grants -> default-deny: cannot perform Sanction or reach anyone
+agent Prisoner {                          // NO grants = default-deny: cannot perform Sanction or reach anyone
   on awake { say("prisoner present"); }   // can only observe and be observed
 }
 

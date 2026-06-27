@@ -959,29 +959,13 @@ error = "VisibilityError"
 spec = "v1.1.0 design 4.3 (pub is shallow: a pub type may not expose a private field type)"
 
 [[test]]
-id = "gen_agent_judge_enum_bound"
+id = "gen_agent_not_generic_reject"
 section = "20_generics"
-path = "tests/20_generics/gen_agent_judge_enum_bound.ag"
-expect = "accept"
-spec = "v1.1.0 design 5.1 (a kind bound E: enum makes Credence<E> well-formed in generic code)"
-note = "the leaf judging helper -- generics range a Credence over a role's enum"
-
-[[test]]
-id = "gen_bound_violation_reject"
-section = "20_generics"
-path = "tests/20_generics/gen_bound_violation_reject.ag"
+path = "tests/20_generics/gen_agent_not_generic_reject.ag"
 expect = "reject"
-error = "TypeError"
-spec = "v1.1.0 design 5.1 (instantiating an E: enum parameter with a non-enum is a TypeError)"
-
-[[test]]
-id = "gen_credence_unbounded_param_reject"
-section = "20_generics"
-path = "tests/20_generics/gen_credence_unbounded_param_reject.ag"
-expect = "reject"
-error = "TypeError"
-spec = "v1.1.0 design 5.1, 3 (Credence<E> requires E be an enum; an unbounded param cannot satisfy it)"
-note = "why the enum bound exists"
+error = "ParseError"
+spec = "v1.1.0 design 5.1 (agents are not generic; only struct/fn carry type params)"
+note = "an agent is event-reactive — parameterization lives in its when-handlers' event types"
 
 [[test]]
 id = "gen_fn_identity"

@@ -7,7 +7,7 @@
 event Query(ask: text);
 struct Plan { steps: int }
 agent Engineer { on awake { say("eng"); } }
-interface Cognition { handles Query -> Plan; requires reach Engineer; }
+interface Cognition { when Query decide Plan; requires reach Engineer; }
 agent PM : Cognition grants { } {
   when (Query q) { say("plan"); }
 }

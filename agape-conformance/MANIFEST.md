@@ -1,6 +1,6 @@
 # Agape v1.0 — Conformance Test Index
 
-**133 tests** — accept: 90, reject: 43
+**131 tests** — accept: 89, reject: 42
 
 A conformant implementation must satisfy every `accept`/`reject` test (rejects with the declared error class; accepts matching any asserted spine).
 
@@ -214,9 +214,7 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 
 | id | expect | error | spec |
 |---|---|---|---|
-| `gen_agent_judge_enum_bound` | accept | — | v1.1.0 design 5.1 (a kind bound E: enum makes Credence<E> well-formed in generic code) |
-| `gen_bound_violation_reject` | reject | TypeError | v1.1.0 design 5.1 (instantiating an E: enum parameter with a non-enum is a TypeError) |
-| `gen_credence_unbounded_param_reject` | reject | TypeError | v1.1.0 design 5.1, 3 (Credence<E> requires E be an enum; an unbounded param cannot satisfy it) |
+| `gen_agent_not_generic_reject` | reject | ParseError | v1.1.0 design 5.1 (agents are not generic; only struct/fn carry type params) |
 | `gen_fn_identity` | accept | — | v1.1.0 design 5.1 (user-generic function; monomorphized at the call site) |
 | `gen_monomorphize_two_instances` | accept | — | v1.1.0 design 5.1 (distinct instantiations monomorphize to distinct concrete types) |
 | `gen_multi_param` | accept | — | v1.1.0 design 5.1 (generics take multiple type parameters) |

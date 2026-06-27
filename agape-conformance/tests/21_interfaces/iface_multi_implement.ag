@@ -7,8 +7,8 @@ event Query(ask: text);
 event Audit(what: text);
 struct Plan { steps: int }
 struct Report { ok: bool }
-interface Planner { handles Query -> Plan; }
-interface Auditor { handles Audit -> Report; }
+interface Planner { when Query decide Plan; }
+interface Auditor { when Audit decide Report; }
 agent Lead : Planner, Auditor {
   when (Query q) { say("plan"); }
   when (Audit a) { say("audit"); }

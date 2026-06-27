@@ -1,0 +1,42 @@
+// v1.1.0 showcase — everything the minor version adds, in one readable file.
+//
+// Each line is tagged LIB (the library layer, SPEC §19 — authoritative) or GATE (the readable
+// `decide` surface, design/gate-semantics.md — proposed; desugars to the v1.0.0 engine §13).
+// Illustrative: the GATE surface is not yet in SPEC.md, so this file is a design artifact.
+
+module support;                              // LIB: declares this file's namespace (§19.2)
+import { redact } from text_utils;           // LIB: import a pub helper from another module (§19.1)
+
+conformal 0.02;                              // GATE: the one rigor dial — consequential decisions
+                                             //   wrong <= 2%, calibrated from the spine (conformal coverage)
+
+principal manager;                           // the human authority for the defer path
+
+pub enum Resolution { Refund, Replace, Deny }              // LIB: pub exports it; default is private (§19.4)
+pub struct Ticket { id: text, body: text }
+pub event Filed(ticket: Ticket);
+pub event ProcessingFailed(reason: text) : Error;          // LIB: error subtyping (§19.5)
+
+// consequential sinks — reversibility is on the SINK (action or write tool), written once:
+write tool bool issue_refund(text id)                      // GATE: unmarked -> conformal (refunds are consequential)
+reversible write tool bool send_replacement(text id)       // GATE: reversible -> argmax (a replacement is undoable)
+action Deny(ticket: Ticket)                                // GATE: unmarked -> conformal (a wrong denial can harm)
+
+pub interface Resolver { when Filed decide Resolution }    // LIB: an interface — no `->` (§19.5)
+
+pub agent Desk : Resolver                                  // LIB: nominal interface conformance
+    grants { use issue_refund, use send_replacement, perform Deny } {
+  when (Filed f) {
+    Credence<Resolution> c = self <- redact(f.ticket.body);   // graded judgment over the enum (v1.0.0)
+
+    manager decide c {                       // GATE: reads like a policy; desugars to endorse/by-R/abstain-by-p (§13)
+      Refund:  issue_refund(f.ticket.id);        // conformal-certified to alpha; defers to manager until calibrated
+      Replace: send_replacement(f.ticket.id);    // reversible -> argmax; just acts
+      Deny:    perform Deny(f.ticket);           // conformal -> a contested denial defers to manager
+    }
+    // Refund and Deny are non-reversible => `manager` MUST be reachable, else compile error
+  }
+}
+
+spawn Desk desk; awake desk;                 // wire it up
+emit Filed(Ticket { id: "T-1", body: "charged twice, want my money back" });

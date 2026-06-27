@@ -21,7 +21,8 @@ gate; no conditioning).
 
 ## 1. Two modes — chosen by one keyword
 
-One stakes distinction, on the **action**, picks the gate's behavior:
+One stakes distinction, on the **consequential sink** — an `action` *or* a `write tool`
+(`reversible action X` and `reversible write tool …` are identical) — picks the gate's behavior:
 
 | on the action | gate mode | the decision is… | needs logprobs? |
 |---|---|---|---|
@@ -57,9 +58,9 @@ stakes ladder is dropped as too arbitrary.
 
 ### The deference requirement (a static, compile-time rule)
 
-> **If any arm of a `decide` performs (or transitively reaches) a non-`reversible` action, a
-> principal must be reachable (the `decide` subject or a `defer to` clause). Otherwise it is a
-> compile error.**
+> **If any arm of a `decide` reaches a non-`reversible` consequential sink (an `action` or a
+> `write tool`), a principal must be reachable (the `decide` subject or a `defer to` clause).
+> Otherwise it is a compile error.**
 
 Autonomy is *earned* via human-label deferral; with no principal an unmarked action can never
 legitimately autonomize, and the cold-start uncertain case has nowhere safe to go. A `default:`

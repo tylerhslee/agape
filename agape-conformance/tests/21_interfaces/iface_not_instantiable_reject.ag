@@ -6,5 +6,5 @@
 //! ---
 event Query(ask: text);
 struct Plan { steps: int }
-interface Planner { handles Query -> Plan; }
+interface Planner { when Query decide Plan; }
 spawn Planner p;

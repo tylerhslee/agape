@@ -109,7 +109,7 @@ Abstained(fused)                          E-Endorse; trust settled, endorsed:=tr
 The `abstain` block runs:
 
 ```
-Logged("panel split -> superintendent")   E-Emit
+Logged("panel split, defer to superintendent")   E-Emit
 Attestation(@a)                            E-Attest: (Ψ, superintendent, r.report) ⇝ (decision, sig);
                                             superintendent rules `false`; recorded, settled+endorsed
 Logged("no sanction: superintendent ruled")  the attest arms dispatch on `false`

@@ -187,7 +187,7 @@ endorse attest perform emit abstain       // gate / attest / action perform / ev
 find where select from match              // queries
 all any quorum independent dependent      // aggregation, dependence declaration, quorum (§12)
 true false                                // bool literals
-module import pub interface handles requires   // v1.1.0 library layer (§19): modules/imports, visibility, interfaces
+module import pub interface decide requires    // v1.1.0 library layer (§19): modules/imports, visibility, interfaces (when E decide T)
 ```
 
  `endorse` is the gate; the collapse
@@ -1095,10 +1095,10 @@ typedecl   ::= "struct" Ident typarams? "{" field ("," field)* "}"            //
              | "action" Ident "(" field ("," field)* ")" ";"   // a performative; a power is needed (no supertype)
 field      ::= type Ident                                     // "name: T" also accepted
 tool       ::= ("read"|"write") "tool" type Ident params config?  // mandatory effect class; write = consequential sink
-agent      ::= "agent" Ident typarams? params ifaces? grants? "{" abody* "}"   // v1.1.0: typarams, ifaces (§19.5)
+agent      ::= "agent" Ident params ifaces? grants? "{" abody* "}"   // v1.1.0: ifaces (§19.5); agents are NOT generic
 ifaces     ::= ":" modpath ("," modpath)*                     // v1.1.0: implemented interfaces (nominal)
-interface  ::= "interface" Ident typarams? "{" ifmember* "}"  // v1.1.0 (§19.5); a type, not instantiable
-ifmember   ::= "handles" type "->" type ";" | "requires" cap ";"   // v1.1.0: a request→reply element / a required power
+interface  ::= "interface" Ident "{" ifmember* "}"            // v1.1.0 (§19.5); a type, not instantiable; not generic
+ifmember   ::= ("when" type "decide" type | "requires" cap) ";"?   // v1.1.0: handled-event→decision contract / required power (no `->`)
 policy     ::= "policy" Ident config                          // a decision policy (§13)
 grants     ::= "grants" "{" ( "*" | cap ("," cap)* ) "}"
 cap        ::= "perform" Ident | "reach" Ident | "use" Ident
@@ -1108,16 +1108,14 @@ abody      ::= extend | on | stmt
 extend     ::= "extend" Ident args ";"
 on         ::= "on" ("awake"|"sleep"|"crash") block
 fn         ::= "sync"? type Ident typarams? params block      // v1.1.0: typarams; async is the default
-typarams   ::= "<" typaram ("," typaram)* ">"                 // v1.1.0: user generics (§19.5)
-typaram    ::= Ident (":" kind)?                              // v1.1.0: optional kind bound
-kind       ::= "enum" | "struct" | "agent" | "interface"     // v1.1.0
+typarams   ::= "<" Ident ("," Ident)* ">"                    // v1.1.0: plain type params, struct/fn only (§19.5); no kind bounds
 typeargs   ::= "<" type ("," type)* ">"                       // v1.1.0: generic instantiation
 params     ::= "(" (type Ident ("," type Ident)*)? ")"
 type       ::= "int"|"float"|"bool"|"text"|"null" | "event" "<" type ">"
              | "array" "<" type ">"                     // collection (query results, fan-out source)
              | "Credence" "<" type ">"                  // graded judgment over enum
              | "Decision" "<" type ">"                  // a gate's committed outcome
-             | modpath typeargs?                         // v1.1.0: enum/struct/agent/action/interface names — qualified and/or generic; incl. Principal, Rule
+             | modpath typeargs?                         // v1.1.0: qualified names (enum/struct/agent/action/interface, incl. Principal, Rule); typeargs only for generic structs
 
 stmt       ::= vardecl | assign | spawn | prompt | principal | depdecl
              | "awake" Ident ";" | "sleep" Ident ";"
@@ -1473,6 +1471,58 @@ exceeds each `δᵢ`, so `β(δ_fused) ≤ minᵢ β(δᵢ)` — a quorum tighte
 **Pipeline corollary.** Make every value that writes to a sink exactly-gated, set a high
 consequential `m`, and (for noisy judgments) fuse independent judges by `quorum`. A
 `recorded` run replays to structural equality unconditionally.
+
+## 15.5.6 Conformal calibration, and the margin — the gate's evidence
+
+This subsection establishes the two distinct guarantees a gate offers, so the `Rule` bases
+(§13) rest on stated mathematics rather than assertion. Let the provider's calibrated credence
+for input `x` over the enum's variants be `p̂(y | x)` (§3); let `g(x) = p̂_top(x) − p̂_2nd(x)` be
+the **margin** (the lead of the top variant over the runner-up — for binary at threshold `τ`,
+equivalently `|p̂ − τ|`, §15.5.5).
+
+**(A) The conformal basis — a coverage guarantee.** `by conformal α` is *split conformal
+prediction* (Vovk, Gammerman, Shafer, *Algorithmic Learning in a Random World*, 2005), calibrated
+from the gate's own labeled decisions on the spine:
+
+- **Nonconformity score** `s(x, y) = 1 − p̂(y | x)` (how poorly label `y` fits).
+- **Calibration set** `{(xᵢ, yᵢ)}_{i=1..n}` — the gate's past decisions whose true label `yᵢ`
+  was later recorded (an `attest` ruling or a fed-back outcome, §13); score each at its *true*
+  label, `sᵢ = s(xᵢ, yᵢ)`.
+- **Quantile** `q̂ = ` the `⌈(n+1)(1−α)⌉`-th smallest of `{s₁,…,sₙ}`.
+- **Prediction set** `Cα(x) = { y : s(x, y) ≤ q̂ } = { y : p̂(y | x) ≥ 1 − q̂ }`.
+
+> **Coverage theorem.** If `(x₁,y₁),…,(xₙ,yₙ),(x,y)` are exchangeable, then
+> `Pr( y_true ∈ Cα(x) ) ≥ 1 − α` (and `≤ 1 − α + 1/(n+1)`). Finite-sample, distribution-free,
+> and **assuming nothing about whether `p̂` is calibrated** — this is exactly why a conformal gate
+> converts an untrusted `p̂` into a decision with an honest error rate.
+
+The gate **commits iff `|Cα(x)| = 1`**, else **abstains** (a non-singleton set is the principled
+"ambiguous" signal over three-plus variants, where a scalar threshold has none). The operating
+cutoff `1 − q̂` is *derived* to achieve `α`; nobody sets it. **Cold start:** below a readiness
+minimum of labelled cases the quantile is uncertified, so the gate abstains/defers to a
+principal (§13); those rulings are the first labels — the supervised→autonomous bootstrap.
+
+**(B) The margin — a stability property, and the clarification of `δ` vs `m`.** The margin `g`
+governs a *different* property from coverage: run-to-run **stability**. By the oracle model (O,
+§15.5.5) two fixed-`𝒫` draws flip only if they straddle the boundary, `Pr(flip) ≤ β(g)` with `β`
+nonincreasing and `β(g) → 0` as `g` grows.
+
+> **`δ` and `m` are the same quantity `g`, checked at two sites.** `δ` is the threshold rule's
+> requirement `g ≥ δ` at *decision time* (a parameter of `by confidence θ margin δ`); `m` (the
+> consequential floor, `[runtime] consequential_margin`) is the requirement `g ≥ m` at the
+> *consequential sink*, applied to *any* committed decision before it acts. They are not two
+> margins; one quantity, two checkpoints. For a threshold gate with `δ ≥ m`, `m` is redundant;
+> the conformal basis has no `δ`, so `m` is the only place to add a stability floor on top of
+> coverage — a conformal singleton can satisfy coverage yet sit on a knife-edge `g` (flipping at
+> `temperature > 0`), and `m` is the optional cure.
+
+**Two orthogonal properties, then.** `α` bounds *how often the committed decision is wrong*
+(coverage, basis A); `g` (as `δ` or `m`) bounds *how often two runs disagree* (stability, basis
+B / §15.5.5). `α` is **not** a margin. The threshold basis approximates coverage with a hand-set
+`θ` and supplies stability with `δ`; the conformal basis gives certified coverage via `α` and
+takes stability from `m`. Calibration-readiness and the coverage bound are stated as hypotheses
+(a property of the calibration pipeline, §3 / §16, not provable from the operational semantics),
+exactly as the oracle bound (O) is (§15.7).
 
 ## 15.6 Soundness statements
 
@@ -1909,26 +1959,27 @@ Authority (`grants`, §13) composes on top: visibility gates the *name*, a grant
 
 ### 19.5 Generics, interfaces, and error subtyping
 
-**Generics.** `struct`, `fn`, `agent`, and `interface` may carry type parameters
-(`typarams`, §15.2); a parameter may carry an optional **kind bound** (`E: enum | struct | agent |
-interface`). Type arguments instantiate them (`typeargs`). Generics are **monomorphized** at
-compile time — each instantiation is a distinct concrete type the runtime never sees as a
-variable. Enums stay monomorphic. A kind bound is what makes a `Credence<E>` well-formed in
-generic code: `agent Judge<E: enum>` may hold a `Credence<E>`, whereas an unbounded `E` used in a
-`Credence<E>` slot, or an instantiation that violates a bound (`Judge<SomeStruct>`), is a
-**`TypeError`**. A generic agent is the *leaf* helper; a full role (a cognition) is an ordinary
-rich agent or an interface, not generic-over-one-type.
+**Generics.** Only `struct` and `fn` may carry type parameters (`typarams`, §15.2) — **plain type
+parameters, no kind bounds.** Type arguments instantiate them (`typeargs`). Generics are
+**monomorphized** at compile time — each instantiation is a distinct concrete type the runtime
+never sees as a variable. Enums stay monomorphic. **Agents and interfaces are not generic:** an
+agent is event-reactive, so its parameterization already lives in the *event types* its `when`
+handlers match — there is no meaning to "an agent over `E`" beyond the handlers it declares; a
+generic `agent` or `interface` is a **`ParseError`**. Generics serve data (`struct Box<T>`,
+`struct Pair<A, B>`) and pure helpers (`fn id<T>`).
 
-**Interfaces.** An `interface` names an agent's external surface: the messages it `handles`
-(a request→reply pair `A -> B`) and the powers it `requires`. An interface is a **type** (usable
-as a binding/parameter/`reach` target) but is **not instantiable** — `spawn` of an interface is a
-**`TypeError`**. Conformance is **nominal**: an agent declares the interfaces it implements
-(`agent PM : Planner, Auditor`), and the compiler checks that for each `handles A -> B` the agent
-has a `when (A …)` handler whose committed reply type is `B`, and that each `requires cap` is in
-the agent's `grants`. A failure is an **`InterfaceError`**. Subtyping: an implementing agent is a
-subtype of the interface, so an interface-typed binding accepts any implementor and `reach Iface`
-authorizes sending to any agent satisfying `Iface`. Interfaces are erased after checking; a send to
-an interface-typed binding is the ordinary `E-Send` (§15.4) to its concrete address.
+**Interfaces.** An `interface` names an agent's external surface: the events it handles and the
+outcome each produces, plus the powers it `requires`. A member is written **`when EVENT decide
+RESULT`** (reusing existing keywords — there is no `->`, which is a `LexError`, §2). An interface
+is a **type** (usable as a binding/parameter/`reach` target) but is **not instantiable** —
+`spawn` of an interface is a **`TypeError`**. Conformance is **nominal**: an agent declares the
+interfaces it implements (`agent Desk : Resolver`), and the compiler checks that for each `when A
+decide B` the agent has a `when (A …)` handler producing a `B` decision, and that each `requires
+cap` is in the agent's `grants`. A failure is an **`InterfaceError`**. Subtyping: an implementing
+agent is a subtype of the interface, so an interface-typed binding accepts any implementor and
+`reach Iface` authorizes sending to any agent satisfying `Iface`. Interfaces are erased after
+checking; a send to an interface-typed binding is the ordinary `E-Send` (§15.4) to its concrete
+address.
 
 **Error subtyping.** A user `event` may declare the single supertype `Error`
 (`event Foo(..) : Error;`), adding a *leaf* under the built-in root (§9) so `when (Error e)`
@@ -1942,8 +1993,8 @@ no new dynamic rule is needed.
 The additions are static (§15.3) and erase before §15.4. New conformance error classes:
 **`ModuleError`** (import resolution: unresolved, cyclic, or ambiguous names), **`VisibilityError`**
 (naming a non-`pub` declaration; a `pub` signature exposing a private type), and
-**`InterfaceError`** (an `agent : Iface` that fails the conformance check). Generic-bound
-violations and a non-`Error` user supertype map to `TypeError`; an `action` supertype and other
+**`InterfaceError`** (an `agent : Iface` that fails the conformance check). A non-`Error` user
+supertype maps to `TypeError`; an `action` supertype, a generic `agent`/`interface`, and other
 malformed v1.1.0 syntax map to `ParseError`.
 
 Because every addition erases before the dynamic semantics, the soundness statements (§15.6,

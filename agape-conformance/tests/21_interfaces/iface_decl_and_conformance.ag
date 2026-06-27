@@ -5,7 +5,7 @@
 //! ---
 event Query(ask: text);
 struct Plan { steps: int }
-pub interface Planner { handles Query -> Plan; }
+pub interface Planner { when Query decide Plan; }
 agent PM : Planner {
   when (Query q) { say("planning"); }
 }
