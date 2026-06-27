@@ -90,6 +90,13 @@ fn cmd_run(args: &[String]) {
                     exit(2);
                 });
             }
+            "--temperature" => {
+                i += 1;
+                config.temperature = args.get(i).and_then(|s| s.parse().ok()).unwrap_or_else(|| {
+                    eprintln!("agape: --temperature needs a number (0.0–1.0)");
+                    exit(2);
+                });
+            }
             "--prompt" | "-p" => {
                 i += 1;
                 let kv = args.get(i).unwrap_or_else(|| {

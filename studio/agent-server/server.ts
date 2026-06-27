@@ -158,7 +158,7 @@ function safeProjectPath(rel: string): string | null {
 
 // Run one project file through the `agape` CLI (--json), feeding prompt inputs.
 // `claude` routes the `<-` seam to the live provider (this same agent-server).
-async function runProjectFile(rel: string, prompts: Record<string, string>, claude?: boolean, samples?: number) {
+async function runProjectFile(rel: string, prompts: Record<string, string>, claude?: boolean, samples?: number, temperature?: number) {
   const full = safeProjectPath(rel);
   if (!full || !fs.existsSync(full)) return { ok: false, error: `no such file: ${rel}` };
   const args = ["run", full, "--json"];
@@ -166,6 +166,7 @@ async function runProjectFile(rel: string, prompts: Record<string, string>, clau
   if (claude) {
     args.push("--claude");
     if (samples && samples > 0) args.push("--samples", String(samples));
+    if (temperature && temperature > 0) args.push("--temperature", String(temperature));
   }
   const bin = fs.existsSync(AGAPE_BIN) ? AGAPE_BIN : "cargo";
   const argv = bin === "cargo" ? ["run", "--quiet", "--bin", "agape", "--", ...args] : args;
@@ -353,12 +354,15 @@ const server = http.createServer(async (req, res) => {
       const raw = await readBody(req);
       const nl = raw.indexOf("\n"), nl2 = raw.indexOf("\n", nl + 1);
       const variants = raw.slice(0, nl).split(",").map((s) => s.trim()).filter(Boolean);
-      const samples = Math.max(1, Math.min(20, parseInt(raw.slice(nl + 1, nl2), 10) || 5));
+      // line 2 is `samples [temperature]` — the sampling fallback knobs (§16.8, §17).
+      const cfg = raw.slice(nl + 1, nl2).trim().split(/\s+/);
+      const samples = Math.max(1, Math.min(50, parseInt(cfg[0], 10) || 5));
+      const temperature = cfg[1] !== undefined && cfg[1] !== "" ? Math.max(0, Math.min(1, parseFloat(cfg[1]))) : undefined;
       const prompt = raw.slice(nl2 + 1);
       const system = `You are a careful judge. Respond with EXACTLY ONE word — one of: ${variants.join(", ")}. No explanation, no punctuation.`;
       const draws = await Promise.all(
         Array.from({ length: samples }, () =>
-          cognition.complete(system, [{ role: "user", content: prompt }], 8).then((t) => pickVariant(t, variants)).catch(() => null))
+          cognition.complete(system, [{ role: "user", content: prompt }], 8, temperature).then((t) => pickVariant(t, variants)).catch(() => null))
       );
       const counts: Record<string, number> = {};
       for (const v of variants) counts[v] = 0;
@@ -387,9 +391,9 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, { ok: true });
     }
     if (req.method === "POST" && url === "/project/run") {
-      const { rel, prompts, claude, samples } = (await readJson(req)) || {};
+      const { rel, prompts, claude, samples, temperature } = (await readJson(req)) || {};
       if (!rel) return send(res, 400, { error: "rel (a project .ag file) is required" });
-      return send(res, 200, await runProjectFile(String(rel), prompts || {}, !!claude, Number(samples) || 0));
+      return send(res, 200, await runProjectFile(String(rel), prompts || {}, !!claude, Number(samples) || 0, Number(temperature) || 0));
     }
 
     if (req.method === "POST" && url === "/review/test-save") {

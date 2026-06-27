@@ -57,6 +57,8 @@ pub struct HarnessConfig {
     /// Forced-choice draws for a graded judgment under the sampling fallback (§16.8);
     /// `0` ⇒ the default (5).
     pub samples: u32,
+    /// Sampling temperature for the fallback draws (`0.0` ⇒ the provider default).
+    pub temperature: f64,
 }
 
 /// A resolved decision policy (§13): the runtime side of a `policy` block or an
@@ -991,7 +993,13 @@ impl Interp {
                     return self.mock_of_type(slot);
                 }
                 let samples = if self.config.samples == 0 { 5 } else { self.config.samples };
-                let body = format!("{}\n{}\n{}", variants.join(","), samples, prompt);
+                // line 2: `samples [temperature]` — temperature omitted ⇒ provider default.
+                let line2 = if self.config.temperature > 0.0 {
+                    format!("{} {}", samples, self.config.temperature)
+                } else {
+                    samples.to_string()
+                };
+                let body = format!("{}\n{}\n{}", variants.join(","), line2, prompt);
                 match http_post(&addr, "/provider/judge", &body) {
                     Some(resp) => Value::Credence { en, dist: parse_dist(&resp, &variants) },
                     None => self.mock_of_type(slot),

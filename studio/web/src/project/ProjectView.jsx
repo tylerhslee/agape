@@ -26,6 +26,8 @@ export default function ProjectView({ info, onReview }) {
   const [running, setRunning] = useState(false);
   const [msg, setMsg] = useState(null);
   const [claude, setClaude] = useState(false);
+  const [samples, setSamples] = useState(5);
+  const [temp, setTemp] = useState(0); // 0 = provider default
   const dirtyRef = useRef(false);
   const narrow = useNarrow();
   const [pane, setPane] = useState("code"); // mobile: files | code | run
@@ -71,7 +73,7 @@ export default function ProjectView({ info, onReview }) {
     setPane("run"); // on phone, surface the output
     try {
       if (dirtyRef.current) await project.saveFile(sel, src); // run what you see
-      const r = await project.run(sel, prompts, { claude });
+      const r = await project.run(sel, prompts, { claude, samples, temperature: temp });
       setResult({ ...r, claude }); // remember which provider produced this run
       setDirty(false); dirtyRef.current = false;
     } catch (e) { setResult({ ok: false, error: e.message }); }
@@ -116,6 +118,19 @@ export default function ProjectView({ info, onReview }) {
           <span>🧠 Claude</span>
         </label>
       </div>
+      {claude && (
+        <div className="pj-cfg">
+          <label title="Forced-choice draws per graded judgment (the sampling fallback, §16.8). More draws → finer probability, more cost.">
+            samples
+            <input type="number" min="1" max="50" value={samples} onChange={(e) => setSamples(Math.max(1, Math.min(50, +e.target.value || 1)))} />
+          </label>
+          <label title="Sampling temperature (0 = provider default). Higher → more variation across draws.">
+            temp
+            <input type="number" min="0" max="1" step="0.1" value={temp} onChange={(e) => setTemp(Math.max(0, Math.min(1, +e.target.value || 0)))} />
+          </label>
+          <span className="pj-dim" style={{ fontSize: 11 }}>{samples} draws · {temp > 0 ? `temp ${temp}` : "default temp"}</span>
+        </div>
+      )}
       {file && file.prompts.length > 0 ? (
         <div className="pj-inputs">
           <div className="pj-dim" style={{ marginBottom: 6 }}>user input → the <code>prompt</code> sensors:</div>
@@ -241,6 +256,9 @@ const STYLE = `
 .pj-run-h{display:flex;align-items:center;padding:10px 12px 4px}
 .pj-toggle{display:flex;align-items:center;gap:5px;font-size:12px;color:#9aa4b2;cursor:pointer;user-select:none}
 .pj-toggle input{cursor:pointer;accent-color:#d29922}
+.pj-cfg{display:flex;align-items:center;gap:12px;padding:2px 12px 6px;flex-wrap:wrap}
+.pj-cfg label{display:flex;align-items:center;gap:5px;font-size:12px;color:#9aa4b2}
+.pj-cfg input{width:52px;font:inherit;background:#1d2330;border:1px solid #2a3140;color:#e6e9ef;border-radius:6px;padding:3px 6px}
 .pj-inputs{padding:6px 12px}
 .pj-inp{display:flex;flex-direction:column;gap:3px;margin-bottom:8px}
 .pj-inp span{font:12px ui-monospace,monospace;color:#79c0ff}
