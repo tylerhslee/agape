@@ -71,6 +71,31 @@ function send(res: http.ServerResponse, code: number, body: unknown): void {
   res.end(JSON.stringify(body));
 }
 
+function readBody(req: http.IncomingMessage): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let raw = "";
+    req.on("data", (c) => { raw += c; if (raw.length > 2_000_000) reject(new Error("body too large")); });
+    req.on("end", () => resolve(raw));
+    req.on("error", reject);
+  });
+}
+
+function sendText(res: http.ServerResponse, code: number, body: string): void {
+  // Set Content-Length explicitly so Node never falls back to chunked encoding —
+  // the zero-dep Rust client reads a plain body after the header block.
+  const buf = Buffer.from(body, "utf-8");
+  res.writeHead(code, { "content-type": "text/plain; charset=utf-8", "content-length": buf.length, "access-control-allow-origin": "*" });
+  res.end(buf);
+}
+
+// Which declared variant a model's forced-choice answer picked (or null).
+function pickVariant(text: string, variants: string[]): string | null {
+  const t = text.toLowerCase().trim();
+  for (const v of variants) if (t === v.toLowerCase()) return v;
+  for (const v of variants) if (t.includes(v.toLowerCase())) return v;
+  return null;
+}
+
 function readJson(req: http.IncomingMessage): Promise<any> {
   return new Promise((resolve, reject) => {
     let raw = "";
@@ -132,15 +157,22 @@ function safeProjectPath(rel: string): string | null {
 }
 
 // Run one project file through the `agape` CLI (--json), feeding prompt inputs.
-async function runProjectFile(rel: string, prompts: Record<string, string>) {
+// `claude` routes the `<-` seam to the live provider (this same agent-server).
+async function runProjectFile(rel: string, prompts: Record<string, string>, claude?: boolean, samples?: number, temperature?: number) {
   const full = safeProjectPath(rel);
   if (!full || !fs.existsSync(full)) return { ok: false, error: `no such file: ${rel}` };
   const args = ["run", full, "--json"];
   for (const [k, v] of Object.entries(prompts || {})) args.push("--prompt", `${k}=${v}`);
+  if (claude) {
+    args.push("--claude");
+    if (samples && samples > 0) args.push("--samples", String(samples));
+    if (temperature && temperature > 0) args.push("--temperature", String(temperature));
+  }
   const bin = fs.existsSync(AGAPE_BIN) ? AGAPE_BIN : "cargo";
   const argv = bin === "cargo" ? ["run", "--quiet", "--bin", "agape", "--", ...args] : args;
   try {
-    const r = await pExecFile(bin, argv, { cwd: AGAPE_RS, timeout: 60_000, maxBuffer: 20_000_000 });
+    // Live model runs make several API calls (the sampling fallback), so allow longer.
+    const r = await pExecFile(bin, argv, { cwd: AGAPE_RS, timeout: claude ? 180_000 : 60_000, maxBuffer: 20_000_000 });
     return JSON.parse(r.stdout);
   } catch (e: any) {
     // A static-rejection exits non-zero but still prints the JSON error envelope.
@@ -308,6 +340,39 @@ const server = http.createServer(async (req, res) => {
       fs.writeFileSync(SPEC_PATH, text, "utf8");
       return send(res, 200, { ok: true, bytes: text.length });
     }
+    // ── the live provider seam (a real Claude behind the runtime's `<-`) ──
+    // Plain text/line wire format so the zero-dep Rust runtime can call it.
+    if (req.method === "POST" && url === "/provider/text") {
+      const prompt = await readBody(req);
+      const system = "You are an autonomous agent in a multi-agent system. Answer the request directly and concisely — at most one short paragraph. No preamble, no caveats.";
+      const text = await cognition.complete(system, [{ role: "user", content: prompt }], 300);
+      return sendText(res, 200, text || "(no answer)");
+    }
+    // The sampling fallback (§16.8): a text-only model has no logprobs, so we force
+    // a single-label choice `samples` times and return the empirical frequency.
+    if (req.method === "POST" && url === "/provider/judge") {
+      const raw = await readBody(req);
+      const nl = raw.indexOf("\n"), nl2 = raw.indexOf("\n", nl + 1);
+      const variants = raw.slice(0, nl).split(",").map((s) => s.trim()).filter(Boolean);
+      // line 2 is `samples [temperature]` — the sampling fallback knobs (§16.8, §17).
+      const cfg = raw.slice(nl + 1, nl2).trim().split(/\s+/);
+      const samples = Math.max(1, Math.min(50, parseInt(cfg[0], 10) || 5));
+      const temperature = cfg[1] !== undefined && cfg[1] !== "" ? Math.max(0, Math.min(1, parseFloat(cfg[1]))) : undefined;
+      const prompt = raw.slice(nl2 + 1);
+      const system = `You are a careful judge. Respond with EXACTLY ONE word — one of: ${variants.join(", ")}. No explanation, no punctuation.`;
+      const draws = await Promise.all(
+        Array.from({ length: samples }, () =>
+          cognition.complete(system, [{ role: "user", content: prompt }], 8, temperature).then((t) => pickVariant(t, variants)).catch(() => null))
+      );
+      const counts: Record<string, number> = {};
+      for (const v of variants) counts[v] = 0;
+      let valid = 0;
+      for (const d of draws) if (d) { counts[d]++; valid++; }
+      const denom = valid || 1;
+      const lines = variants.map((v) => `${v} ${(counts[v] / denom).toFixed(4)}`);
+      return sendText(res, 200, lines.join("\n"));
+    }
+
     // ── the project studio (opened via `agape studio`) ──
     if (req.method === "GET" && url === "/project/info") {
       return send(res, 200, { hasProject: !!PROJECT, root: PROJECT || "", name: projectName(), files: projectFiles() });
@@ -326,9 +391,9 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, { ok: true });
     }
     if (req.method === "POST" && url === "/project/run") {
-      const { rel, prompts } = (await readJson(req)) || {};
+      const { rel, prompts, claude, samples, temperature } = (await readJson(req)) || {};
       if (!rel) return send(res, 400, { error: "rel (a project .ag file) is required" });
-      return send(res, 200, await runProjectFile(String(rel), prompts || {}));
+      return send(res, 200, await runProjectFile(String(rel), prompts || {}, !!claude, Number(samples) || 0, Number(temperature) || 0));
     }
 
     if (req.method === "POST" && url === "/review/test-save") {

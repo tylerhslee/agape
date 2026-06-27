@@ -73,6 +73,30 @@ fn cmd_run(args: &[String]) {
     while i < args.len() {
         match args[i].as_str() {
             "--json" => json = true,
+            // Route the `<-` seam to a live provider (the studio agent-server) instead
+            // of the deterministic mock. `--claude` is shorthand for the local studio.
+            "--claude" => config.provider_url = Some("127.0.0.1:8799".to_string()),
+            "--provider" => {
+                i += 1;
+                config.provider_url = Some(args.get(i).cloned().unwrap_or_else(|| {
+                    eprintln!("agape: --provider needs host:port");
+                    exit(2);
+                }));
+            }
+            "--samples" => {
+                i += 1;
+                config.samples = args.get(i).and_then(|s| s.parse().ok()).unwrap_or_else(|| {
+                    eprintln!("agape: --samples needs a number");
+                    exit(2);
+                });
+            }
+            "--temperature" => {
+                i += 1;
+                config.temperature = args.get(i).and_then(|s| s.parse().ok()).unwrap_or_else(|| {
+                    eprintln!("agape: --temperature needs a number (0.0–1.0)");
+                    exit(2);
+                });
+            }
             "--prompt" | "-p" => {
                 i += 1;
                 let kv = args.get(i).unwrap_or_else(|| {
@@ -131,11 +155,12 @@ fn spine_json(spine: &agape_rs::spine::Spine) -> String {
         .iter()
         .map(|e| {
             format!(
-                "{{\"tick\":{},\"etype\":{},\"subject\":{},\"payload\":{}}}",
+                "{{\"tick\":{},\"etype\":{},\"subject\":{},\"payload\":{},\"corr\":{}}}",
                 e.tick,
                 json_str(&e.etype),
                 e.subject.as_deref().map(json_str).unwrap_or_else(|| "null".into()),
-                json_str(&e.payload)
+                json_str(&e.payload),
+                e.corr.map(|c| c.to_string()).unwrap_or_else(|| "null".into())
             )
         })
         .collect();
@@ -313,7 +338,7 @@ agent Responder {
 // Agent 2 — fact-checks every draft; only verified answers are delivered.
 agent FactChecker grants { perform Reply } {
   when (Draft d) {
-    Credence<bool> sound = self <- "is this answer factually correct and well-supported?";
+    Credence<bool> sound = self <- f"is this answer factually correct and well-supported? answer: {d}";
     endorse (sound by confidence 0.8) {
       true:  perform Reply(d);                  // verified -> deliver to the user
       false: emit Event("rejected: not verified");

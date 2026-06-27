@@ -23,7 +23,7 @@ export interface Decomposition {
 
 export interface Cognition {
   readonly model: string;
-  complete(system: string, messages: ChatMessage[], maxTokens?: number): Promise<string>;
+  complete(system: string, messages: ChatMessage[], maxTokens?: number, temperature?: number): Promise<string>;
   // §10 internalization: turn text into typed facts + SPO triples (fixed shape).
   decompose(text: string): Promise<Decomposition>;
 }
@@ -43,8 +43,14 @@ export class AnthropicCognition implements Cognition {
     this.client = new Anthropic();
   }
 
-  async complete(system: string, messages: ChatMessage[], maxTokens = 1024): Promise<string> {
-    const res = await this.client.messages.create({ model: this.model, max_tokens: maxTokens, system, messages });
+  async complete(system: string, messages: ChatMessage[], maxTokens = 1024, temperature?: number): Promise<string> {
+    const res = await this.client.messages.create({
+      model: this.model,
+      max_tokens: maxTokens,
+      system,
+      messages,
+      ...(temperature === undefined ? {} : { temperature }),
+    });
     return res.content
       .filter((b): b is Anthropic.TextBlock => b.type === "text")
       .map((b) => b.text)

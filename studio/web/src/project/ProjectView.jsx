@@ -25,11 +25,47 @@ export default function ProjectView({ info, onReview }) {
   const [result, setResult] = useState(null);
   const [running, setRunning] = useState(false);
   const [msg, setMsg] = useState(null);
+  const [claude, setClaude] = useState(() => { try { return localStorage.getItem("agape.claude") === "1"; } catch { return false; } });
+  const [samples, setSamples] = useState(5);
+  const [temp, setTemp] = useState(0); // 0 = provider default
+  useEffect(() => { try { localStorage.setItem("agape.claude", claude ? "1" : "0"); } catch {} }, [claude]);
   const dirtyRef = useRef(false);
   const narrow = useNarrow();
   const [pane, setPane] = useState("code"); // mobile: files | code | run
 
   const file = useMemo(() => info.files.find((f) => f.rel === sel), [info, sel]);
+
+  // Pair each Sent→Resolved (by correlation id) into one provider/LLM call, and
+  // estimate usage. Token counts are ~chars/4; cost uses Haiku-class rates. These
+  // are ESTIMATES off the deterministic mock — a live connector makes them real.
+  const run = useMemo(() => {
+    if (!result || !result.ok) return null;
+    const sent = {}; const calls = [];
+    for (const e of result.events) {
+      if (e.etype === "Sent" && e.corr != null) sent[e.corr] = e.payload;
+      else if (e.etype === "Resolved" && e.corr != null && sent[e.corr] != null) {
+        calls.push({ input: sent[e.corr], output: e.payload });
+      }
+    }
+    const tok = (s) => Math.ceil((s || "").length / 4);
+    const tokIn = calls.reduce((a, c) => a + tok(c.input), 0);
+    const tokOut = calls.reduce((a, c) => a + tok(c.output), 0);
+    const cost = (tokIn / 1e6) * 0.8 + (tokOut / 1e6) * 4.0; // $0.80 / $4.00 per Mtok
+    return { calls, tokIn, tokOut, cost };
+  }, [result]);
+
+  // The conversation: what was asked, and the verified answer the system delivered.
+  // The "answer" is the payload of the last `perform`ed action (e.g. Reply) — an
+  // action only fires when its gate commits, so its presence means "verified".
+  const convo = useMemo(() => {
+    if (!result || !result.ok) return null;
+    const actions = [...(src || "").matchAll(/^\s*action\s+([A-Za-z_]\w*)/gm)].map((m) => m[1]);
+    const acts = result.events.filter((e) => actions.includes(e.etype));
+    const answer = acts.length ? acts[acts.length - 1] : null;
+    const abstained = result.events.some((e) => e.etype === "Abstained");
+    const rejected = !answer && result.events.some((e) => /reject/i.test(e.payload || ""));
+    return { asked: result.asked || {}, answer, abstained, rejected };
+  }, [result, src]);
 
   // Load the selected file's source.
   useEffect(() => {
@@ -51,7 +87,8 @@ export default function ProjectView({ info, onReview }) {
     setPane("run"); // on phone, surface the output
     try {
       if (dirtyRef.current) await project.saveFile(sel, src); // run what you see
-      setResult(await project.run(sel, prompts));
+      const r = await project.run(sel, prompts, { claude, samples, temperature: temp });
+      setResult({ ...r, claude, asked: { ...prompts } }); // remember provider + what was asked
       setDirty(false); dirtyRef.current = false;
     } catch (e) { setResult({ ok: false, error: e.message }); }
     setRunning(false);
@@ -87,7 +124,20 @@ export default function ProjectView({ info, onReview }) {
 
   const runPanel = (
     <section className="pj-run-panel">
-      <div className="pj-side-h">run</div>
+      <div className="pj-side-h">run · {claude ? "🧠 live Claude" : "deterministic mock"}</div>
+      {claude && (
+        <div className="pj-cfg">
+          <label title="Forced-choice draws per graded judgment (the sampling fallback, §16.8). More draws → finer probability, more cost.">
+            samples
+            <input type="number" min="1" max="50" value={samples} onChange={(e) => setSamples(Math.max(1, Math.min(50, +e.target.value || 1)))} />
+          </label>
+          <label title="Sampling temperature (0 = provider default). Higher → more variation across draws.">
+            temp
+            <input type="number" min="0" max="1" step="0.1" value={temp} onChange={(e) => setTemp(Math.max(0, Math.min(1, +e.target.value || 0)))} />
+          </label>
+          <span className="pj-dim" style={{ fontSize: 11 }}>{samples} draws · {temp > 0 ? `temp ${temp}` : "default temp"}</span>
+        </div>
+      )}
       {file && file.prompts.length > 0 ? (
         <div className="pj-inputs">
           <div className="pj-dim" style={{ marginBottom: 6 }}>user input → the <code>prompt</code> sensors:</div>
@@ -106,9 +156,45 @@ export default function ProjectView({ info, onReview }) {
 
       <div className="pj-spine">
         {!result ? (
-          <div className="pj-dim" style={{ padding: 12 }}>▶ Run to see the spine — the append-only log of everything the agents do.</div>
+          <div className="pj-dim" style={{ padding: 12 }}>▶ Run to see the LLM calls, cost, and the spine — the append-only log of everything the agents do.</div>
         ) : result.ok ? (
           <>
+            <div className="pj-qa">
+              {Object.entries(convo.asked).filter(([, v]) => v).map(([k, v]) => (
+                <div key={k} className="pj-msg-row"><span className="pj-who you">you</span><span className="pj-bubble">{v}</span></div>
+              ))}
+              {convo.answer ? (
+                <div className="pj-msg-row">
+                  <span className="pj-who agape">agape</span>
+                  <span className="pj-bubble"><span className="pj-verified">✓ verified</span>{convo.answer.payload}</span>
+                </div>
+              ) : (
+                <div className="pj-msg-row">
+                  <span className="pj-who warn">agape</span>
+                  <span className="pj-bubble pj-dim">{convo.abstained ? "abstained — the gate couldn't commit, no answer delivered" : convo.rejected ? "rejected — the answer failed fact-check, not delivered" : "no answer delivered"}</span>
+                </div>
+              )}
+            </div>
+
+            <div className="pj-section-h">under the hood</div>
+            <div className="pj-metrics">
+              <div className="pj-metric"><b>{run.calls.length}</b><span>LLM calls</span></div>
+              <div className="pj-metric"><b>{run.tokIn}</b><span>tok in</span></div>
+              <div className="pj-metric"><b>{run.tokOut}</b><span>tok out</span></div>
+              <div className="pj-metric"><b>~${run.cost < 0.001 ? run.cost.toFixed(5) : run.cost.toFixed(3)}</b><span>est. cost</span></div>
+            </div>
+            <div className="pj-metric-note">{result.claude ? "live Claude (haiku) · sampling fallback · tokens estimated from text" : "estimated · deterministic mock provider (no live connector)"}</div>
+
+            <div className="pj-section-h">llm calls</div>
+            {run.calls.length === 0 && <div className="pj-dim" style={{ padding: "0 12px 8px" }}>no provider calls this run</div>}
+            {run.calls.map((c, i) => (
+              <div key={i} className="pj-call">
+                <div className="pj-io"><span className="pj-io-tag in">in</span><span className="pj-io-txt">{c.input}</span></div>
+                <div className="pj-io"><span className="pj-io-tag out">out</span><span className="pj-io-txt">{c.output}</span></div>
+              </div>
+            ))}
+
+            <div className="pj-section-h">spine</div>
             {result.events.map((e, i) => <SpineRow key={i} e={e} />)}
             <div className="pj-dim" style={{ padding: "8px 12px" }}>{result.events.length} events · {result.head?.slice(0, 16)}</div>
           </>
@@ -126,6 +212,10 @@ export default function ProjectView({ info, onReview }) {
         <span className="pj-badge">{info.name}</span>
         {!narrow && <span className="pj-dim pj-path" title={info.root}>{info.root}</span>}
         <span style={{ flex: 1 }} />
+        <label className={"pj-toggle pj-toggle-hdr" + (claude ? " on" : "")} title="Route the ← cognition seam to a real Claude (sampling fallback for graded judgments) instead of the deterministic mock. Tune samples/temp in the Run panel.">
+          <input type="checkbox" checked={claude} onChange={(e) => setClaude(e.target.checked)} />
+          <span>🧠 Claude</span>
+        </label>
         <button onClick={save} disabled={!sel}>{dirty ? "Save*" : "Save"}</button>
         <button className="pj-run" onClick={runIt} disabled={!sel || running}>{running ? "running…" : "▶ Run"}</button>
         {onReview && <button onClick={onReview}>{narrow ? "✓" : "Conformance →"}</button>}
@@ -192,12 +282,37 @@ const STYLE = `
 .pj-sensor{font:12px ui-monospace,monospace;color:#79c0ff;padding-left:8px}
 .pj-editor{flex:1;display:flex;min-width:0}
 .pj-run-panel{width:360px;border-left:1px solid #2a3140;background:#13161d;display:flex;flex-direction:column;min-height:0}
+.pj-toggle{display:flex;align-items:center;gap:5px;font-size:12px;color:#9aa4b2;cursor:pointer;user-select:none}
+.pj-toggle input{cursor:pointer;accent-color:#d29922}
+.pj-toggle-hdr{border:1px solid #2a3140;border-radius:7px;padding:5px 10px;background:#1d2330}
+.pj-toggle-hdr.on{border-color:#d29922;color:#e6e9ef;background:#2a2517}
+.pj-cfg{display:flex;align-items:center;gap:12px;padding:2px 12px 6px;flex-wrap:wrap}
+.pj-cfg label{display:flex;align-items:center;gap:5px;font-size:12px;color:#9aa4b2}
+.pj-cfg input{width:52px;font:inherit;background:#1d2330;border:1px solid #2a3140;color:#e6e9ef;border-radius:6px;padding:3px 6px}
 .pj-inputs{padding:6px 12px}
 .pj-inp{display:flex;flex-direction:column;gap:3px;margin-bottom:8px}
 .pj-inp span{font:12px ui-monospace,monospace;color:#79c0ff}
 .pj-inp input{font:inherit;background:#1d2330;border:1px solid #2a3140;color:#e6e9ef;border-radius:7px;padding:6px 9px}
 .pj-msg{padding:4px 12px;font-size:12.5px}
 .pj-spine{flex:1;overflow:auto;border-top:1px solid #2a3140;margin-top:4px}
+.pj-qa{display:flex;flex-direction:column;gap:8px;padding:12px}
+.pj-msg-row{display:flex;gap:8px;align-items:flex-start}
+.pj-who{flex:none;width:46px;font:600 10px ui-monospace,monospace;text-transform:uppercase;letter-spacing:.3px;padding-top:6px}
+.pj-who.you{color:#79c0ff}.pj-who.agape{color:#3fb950}.pj-who.warn{color:#d29922}
+.pj-bubble{flex:1;background:#1a1f2b;border:1px solid #2a3140;border-radius:10px;padding:8px 11px;font-size:13px;line-height:1.5;white-space:pre-wrap;word-break:break-word}
+.pj-verified{display:inline-block;font:600 10px ui-monospace,monospace;color:#3fb950;background:#15291c;border-radius:5px;padding:1px 6px;margin-right:7px;vertical-align:1px}
+.pj-metrics{display:flex;gap:8px;padding:10px 12px 4px}
+.pj-metric{flex:1;background:#1a1f2b;border:1px solid #2a3140;border-radius:8px;padding:7px 6px;text-align:center;display:flex;flex-direction:column;gap:1px}
+.pj-metric b{font:600 15px ui-monospace,monospace;color:#e6e9ef}
+.pj-metric span{font-size:10.5px;color:#6b7588;text-transform:uppercase;letter-spacing:.3px}
+.pj-metric-note{font-size:11px;color:#6b7588;padding:0 12px 2px}
+.pj-section-h{font:600 11px ui-monospace,monospace;text-transform:uppercase;letter-spacing:.5px;color:#6b7588;padding:10px 12px 4px}
+.pj-call{margin:0 12px 8px;border:1px solid #232b39;border-radius:8px;overflow:hidden}
+.pj-io{display:flex;gap:8px;padding:6px 9px;font:12px/1.45 ui-monospace,Menlo,Consolas,monospace}
+.pj-io+.pj-io{border-top:1px solid #232b39;background:#11151d}
+.pj-io-tag{flex:none;font:600 10px ui-monospace,monospace;padding:1px 6px;border-radius:5px;height:fit-content;text-transform:uppercase}
+.pj-io-tag.in{background:#1d2a3a;color:#79c0ff}.pj-io-tag.out{background:#15291c;color:#7ee787}
+.pj-io-txt{white-space:pre-wrap;word-break:break-word;color:#cdd3dc}
 .pj-err{padding:12px;color:#f85149;font:12.5px ui-monospace,monospace;white-space:pre-wrap}
 .ev{display:grid;grid-template-columns:30px 150px 1fr;grid-template-areas:"t k s" ". p p";gap:0 8px;padding:3px 12px;font:12px ui-monospace,monospace;border-bottom:1px solid #161b24}
 .ev-t{grid-area:t;color:#48515f;text-align:right}

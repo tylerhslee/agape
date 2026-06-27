@@ -16,4 +16,4 @@ async function post(path, body) {
 export const info = () => get("/project/info");
 export const file = (rel) => get("/project/file?rel=" + encodeURIComponent(rel));
 export const saveFile = (rel, body) => post("/project/file", { rel, body });
-export const run = (rel, prompts) => post("/project/run", { rel, prompts });
+export const run = (rel, prompts, opts) => post("/project/run", { rel, prompts, ...(opts || {}) });

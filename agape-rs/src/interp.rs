@@ -13,6 +13,9 @@
 //! to a spine.
 
 use std::collections::HashMap;
+use std::io::{Read, Write};
+use std::net::TcpStream;
+use std::time::Duration;
 
 use crate::ast::*;
 use crate::lexer::lex;
@@ -47,6 +50,15 @@ pub struct HarnessConfig {
     /// quiesces, each is delivered as a `Prompt` event on its sensor, firing the
     /// `when (Prompt p about name)` subscriptions (§5b). The user-input seam.
     pub prompt_inputs: Vec<(String, String)>,
+    /// A live provider behind the `<-` seam: `host:port` of an HTTP service exposing
+    /// `/provider/text` and `/provider/judge` (the agent-server). `None` ⇒ the
+    /// deterministic mock (the default; keeps conformance reproducible).
+    pub provider_url: Option<String>,
+    /// Forced-choice draws for a graded judgment under the sampling fallback (§16.8);
+    /// `0` ⇒ the default (5).
+    pub samples: u32,
+    /// Sampling temperature for the fallback draws (`0.0` ⇒ the provider default).
+    pub temperature: f64,
 }
 
 /// A resolved decision policy (§13): the runtime side of a `policy` block or an
@@ -861,9 +873,11 @@ impl Interp {
     /// `Sent → Delivered → Resolved` chain (§6), subjected at `subject`. The provider
     /// mode (§17.5) may instead crash (empty) or fault (schema violation).
     fn eval_send(&mut self, dest: &Expr, payload: &Expr, subject: Option<String>, slot: Option<&Type>, expires: Option<f64>, frame: &mut HashMap<String, Value>, agent: Option<&str>) -> Value {
-        let _ = self.eval(payload, frame, agent); // render the prompt (incidental)
+        // The rendered prompt is the provider/LLM input — carried on `Sent` so the
+        // studio can show what each agent actually asked.
+        let prompt = self.eval(payload, frame, agent).show();
         let corr = self.spine.fresh_corr();
-        self.append("Sent", subject.clone(), "sent".into(), Some(corr), agent.map(|a| a.to_string()));
+        self.append("Sent", subject.clone(), prompt.clone(), Some(corr), agent.map(|a| a.to_string()));
         // Determine whether the destination has an open mailbox.
         let live = match dest {
             Expr::SelfRef => true,
@@ -891,8 +905,11 @@ impl Interp {
             self.faulted = true;
             return Value::Null;
         }
-        let reply = self.mock_reply();
-        self.append("Resolved", subject.clone(), reply.show(), Some(corr), None);
+        // The reply is the provider/LLM output: a graded judgment for a Credence
+        // slot (shown as `top@p`), else the raw text. A live provider is called
+        // here; otherwise the deterministic mock answers.
+        let reply = self.provider_reply(&prompt, slot);
+        self.append("Resolved", subject.clone(), reply_summary(&reply), Some(corr), None);
         // The eager memory trigger: a received `<-` auto-internalizes (§16.7, §17).
         if self.config.internalize_on_receive {
             self.emit_event("Internalized", subject.clone(), "internalized".into(), agent.map(|a| a.to_string()));
@@ -957,8 +974,42 @@ impl Interp {
 
     // ── mock seam + helpers ──────────────────────────────────────────────────
 
-    fn mock_reply(&self) -> Value {
-        Value::Text("ok".into())
+    /// The provider's answer to a send: a live model (via the agent-server) when
+    /// `provider_url` is set, else the deterministic mock. A `Credence` slot uses
+    /// the sampling fallback (§16.8) — no logprobs needed. Any transport failure
+    /// degrades gracefully to the mock so a run never hard-fails on the seam.
+    fn provider_reply(&mut self, prompt: &str, slot: Option<&Type>) -> Value {
+        let Some(addr) = self.config.provider_url.clone() else {
+            return self.mock_of_type(slot);
+        };
+        match slot {
+            Some(Type::Credence(inner)) => {
+                let en = type_enum_name(inner);
+                let variants: Vec<String> = match en.as_str() {
+                    "bool" => vec!["true".into(), "false".into()],
+                    other => self.enums.get(other).cloned().unwrap_or_default(),
+                };
+                if variants.is_empty() {
+                    return self.mock_of_type(slot);
+                }
+                let samples = if self.config.samples == 0 { 5 } else { self.config.samples };
+                // line 2: `samples [temperature]` — temperature omitted ⇒ provider default.
+                let line2 = if self.config.temperature > 0.0 {
+                    format!("{} {}", samples, self.config.temperature)
+                } else {
+                    samples.to_string()
+                };
+                let body = format!("{}\n{}\n{}", variants.join(","), line2, prompt);
+                match http_post(&addr, "/provider/judge", &body) {
+                    Some(resp) => Value::Credence { en, dist: parse_dist(&resp, &variants) },
+                    None => self.mock_of_type(slot),
+                }
+            }
+            _ => match http_post(&addr, "/provider/text", prompt) {
+                Some(text) => Value::Text(text.trim().to_string()),
+                None => self.mock_of_type(slot),
+            },
+        }
     }
 
     fn mock_of_type(&self, ty: Option<&Type>) -> Value {
@@ -1139,6 +1190,53 @@ impl Interp {
 
     fn append(&mut self, etype: &str, subject: Option<String>, payload: String, corr: Option<u64>, agent: Option<String>) -> u64 {
         self.spine.append(etype, subject, payload, corr, agent)
+    }
+}
+
+/// A minimal HTTP/1.1 POST to a localhost service (zero-dep: just `std::net`).
+/// `Connection: close` lets us read to EOF; the body follows the blank line. Any
+/// error returns `None` so the caller can fall back to the mock seam.
+fn http_post(addr: &str, path: &str, body: &str) -> Option<String> {
+    let mut stream = TcpStream::connect(addr).ok()?;
+    stream.set_read_timeout(Some(Duration::from_secs(120))).ok()?;
+    stream.set_write_timeout(Some(Duration::from_secs(30))).ok()?;
+    let host = addr.split(':').next().unwrap_or("127.0.0.1");
+    let req = format!(
+        "POST {path} HTTP/1.1\r\nHost: {host}\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.as_bytes().len()
+    );
+    stream.write_all(req.as_bytes()).ok()?;
+    let mut buf = Vec::new();
+    stream.read_to_end(&mut buf).ok()?;
+    let text = String::from_utf8_lossy(&buf);
+    let idx = text.find("\r\n\r\n")?;
+    Some(text[idx + 4..].to_string())
+}
+
+/// Parse the judge response (`variant prob` per line) into a distribution over the
+/// requested variants (missing variants → 0.0).
+fn parse_dist(resp: &str, variants: &[String]) -> Vec<(String, f64)> {
+    let mut got: HashMap<String, f64> = HashMap::new();
+    for line in resp.lines() {
+        // `variant prob` — split off the trailing probability token.
+        if let Some((name, p)) = line.trim().rsplit_once(' ') {
+            if let Ok(p) = p.trim().parse::<f64>() {
+                got.insert(name.trim().to_string(), p);
+            }
+        }
+    }
+    variants.iter().map(|v| (v.clone(), got.get(v).copied().unwrap_or(0.0))).collect()
+}
+
+/// Summarize a provider reply for the spine payload: a graded judgment shows its
+/// top variant and probability (`true 0.90`); anything else shows as itself.
+fn reply_summary(v: &Value) -> String {
+    match v {
+        Value::Credence { dist, .. } => match dist.iter().max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal)) {
+            Some((name, p)) => format!("{name} {p:.2}"),
+            None => "?".into(),
+        },
+        other => other.show(),
     }
 }
 
