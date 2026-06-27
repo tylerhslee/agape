@@ -277,6 +277,16 @@ expect = "accept"
 spec = "§6 (a send may carry a lifetime: `dest <- msg expires N`; reach into Worker is granted)"
 
 [[test]]
+id = "comm_send_lost_no_delivery"
+section = "06_communication"
+path = "tests/06_communication/comm_send_lost_no_delivery.ag"
+expect = "accept"
+contains = ["Sent(s)"]
+absent = ["Delivered"]
+spec = "§6 (a send to a non-awake agent is lost — the chain stalls at Sent, never Delivered; loss is the absence of Delivered, not an event)"
+note = "Worker is spawned but never awakened, so it has no mailbox; the send is a queryable orphan"
+
+[[test]]
 id = "comm_typed_reply"
 section = "06_communication"
 path = "tests/06_communication/comm_typed_reply.ag"

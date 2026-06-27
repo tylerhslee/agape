@@ -1,0 +1,16 @@
+//! id:        comm_send_lost_no_delivery
+//! section:   06_communication
+//! expect:    accept
+//! contains:  Sent(s)
+//! absent:    Delivered
+//! spec:      §6 (a send to a non-awake agent is lost — the chain stalls at Sent, never Delivered; loss is the absence of Delivered, not an event)
+//! note:      Worker is spawned but never awakened, so it has no mailbox; the send is a queryable orphan
+//! ---
+agent Worker {}
+agent Boss grants { reach Worker } {
+  on awake {
+    spawn Worker w;
+    event<text> s = w <- "status?";
+  }
+}
+spawn Boss b; awake b;

@@ -1,6 +1,6 @@
 # Agape v1.0 — Conformance Test Index
 
-**78 tests** — accept: 52, reject: 26
+**79 tests** — accept: 53, reject: 26
 
 A conformant implementation must satisfy every `accept`/`reject` test (rejects with the declared error class; accepts matching any asserted spine).
 
@@ -69,6 +69,7 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 |---|---|---|---|
 | `comm_self_send_thinks` | accept | — | §6 (sending to self is the agent's own cognition; needs no reach grant) |
 | `comm_send_expires_ok` | accept | — | §6 (a send may carry a lifetime: `dest <- msg expires N`; reach into Worker is granted) |
+| `comm_send_lost_no_delivery` | accept | — | §6 (a send to a non-awake agent is lost — the chain stalls at Sent, never Delivered; loss is the absence of Delivered, not an event) |
 | `comm_typed_reply` | accept | — | §6 (a typed reply binds the provider answer into event<T>) |
 
 ## 07_spine
