@@ -68,6 +68,10 @@ have both). This extends the consequential-action rule: v1.0.0 = *non-reversible
 settled + endorsed*; v1.1.0 adds *+ a deference path*. Scoped to the `decide` surface, so explicit
 v1.0.0 programs are unaffected.
 
+Conversely, a `decide` whose arms are **all** `reversible` needs no principal — nothing defers
+(ties go to `default:`, never to a human) — so declaring one is an *unused-principal* warning. A
+*mixed* block is fine: the non-reversible arms use the principal, the reversible ones don't.
+
 ## 3. The only number: `conformal α`, set once (IaC-style)
 
 ```agape
@@ -76,10 +80,13 @@ conformal 0.05;          // file-level error budget for all consequential gates;
 
 α is an **error guarantee**, not a threshold: "wrong at most α of the time," finite-sample,
 distribution-free, calibrated from the gate's own labeled decisions on the spine (§13). The
-operating cutoff is whatever achieves α — never seen or set by the user. Local override via the
-explicit form; project default via the manifest (same precedence as v1.0.0, §17). A **missing**
-`conformal` line is fine — α defaults (0.05 at the spec level, manifest-overridable). **Only this
-path needs a distribution** (logprobs, or the §16 sampling fallback). **Cold start** → can't
+operating cutoff is whatever achieves α — never seen or set by the user.
+
+**α is the rigor dial — first-class, not advanced.** Calibration *is* what a serious agape user
+tunes, so α is settable at three first-class scopes: **per file** (`conformal 0.05;`), **per
+gate** (`decide c conformal 0.01 { … }`), and **project default** in the manifest (same
+precedence as v1.0.0, §17). A **missing** `conformal` line is fine — α defaults (0.05 at the spec
+level). **Only the conformal path needs a distribution** (logprobs, or the §16 sampling fallback). **Cold start** → can't
 certify α → defer; rulings become the first labels; readiness crossing flips it to autonomous —
 automatic, recorded.
 
@@ -94,8 +101,12 @@ against gate usage at compile time. If non-reversible actions exist:
   certify and **degrades to pure deferral** (every consequential decision routes to the principal
   forever; no autonomy). Safe, but flagged.
 
-This pairs with the deference requirement (§2): a non-reversible action needs both a **principal**
-(deference path — *error* if missing) and a **distribution source** (*warning* if missing).
+The sampling fallback is expensive (N× provider calls per consequential decision), so it is
+**manifest-switchable**: `[provider] sampling_fallback = false` turns it off; with it off and no
+logprobs, conformal degrades to pure deferral (the case above) — a deliberate "don't spend on
+sampling; ask a human when uncertain" cost choice. This pairs with the deference requirement
+(§2): a non-reversible action needs both a **principal** (deference path — *error* if missing) and
+a **distribution source** (*warning* if missing).
 
 ## 4. What the gate provides — and what actually needs logprobs
 
@@ -147,8 +158,10 @@ The default is reproducible; `reversible` is a *visible, spine-recorded* opt-out
 **The two relaxations are separable; `reversible` bundles them.** They are independent engine
 knobs — **(A) certification mode** (face value vs conformal) and **(B) sink margin floor** (`m=0`
 vs `m>0`) — and `reversible` sets both to relaxed because reversibility justifies both for the
-same reason. The two corner combos are reachable via the **explicit form** (retained), so the
-surface stays two bundles, not four knobs:
+same reason. (`m` is a *floor* — a minimum required margin at the sink, independent of α — so
+`m=0` means *no extra floor*, the most permissive, in **both** modes; it is never "require 100%",
+and higher `m` is stricter.) The two corner combos are reachable via the **explicit form**
+(retained), so the surface stays two bundles, not four knobs:
 
 | mode (A) | floor (B) | meaning | written as |
 |---|---|---|---|
@@ -160,12 +173,17 @@ surface stays two bundles, not four knobs:
 We deliberately do **not** add surface keywords for the corner combos (that is what the explicit
 escape hatch is for); both are niche, and the common cases are the two bundles.
 
-## 6. Margin is off the surface
+## 6. The rigor dial is α — which *replaces* hand-set margin
+
+Calibration is first-class (§3); hand-set margin (`δ`) is the arbitrary knob α replaces with a
+data-grounded guarantee. So margin is not *hidden*, it is *upgraded*:
 
 - **reversible** → no margin (commits even on a near-tie; bounded by `temperature`, §5).
-- **conformal** → margin *subsumed*: two close-but-plausible variants make the set non-singleton →
-  defer. "Is the gap big enough" becomes "is the calibrated set a singleton."
-- **explicit form only** → `confidence θ margin δ` keeps δ for power users.
+- **conformal** → margin *is* the calibrated prediction set: close-but-plausible variants make the
+  set non-singleton → defer. "Is the gap big enough" is answered from your own labels, not a
+  guessed δ. You tune it with **α** (file / gate / manifest) — the recommended dial.
+- **explicit form** → `confidence θ margin δ` retains a hand-set δ for the rare case that wants
+  one — first-class, but α is the headline.
 
 ## 7. Derive-and-enforce, and the desugaring (v1.0.0 completeness)
 
