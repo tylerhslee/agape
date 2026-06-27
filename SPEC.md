@@ -18,7 +18,7 @@ Agape is a language for multi-agent systems in which:
 - **agents are first-class** — a spawn / awake / sleep lifecycle, private memory,
 a mailbox;
 - **cognition is a swappable substrate** reached only through the **provider** — a declared
-dependency (the cognition backend, §16) that program code never names directly;
+dependency (the cognition backend, §17) that program code never names directly;
 - **meaning is checkable, and its uncertainty is typed** — a semantic judgment asks
 the provider to commit to one variant of a closed enum and returns a **graded
 judgment** (`Credence<E>`, §3); a **gate** (`c by R`, `endorse`/`attest`) is the only thing that
@@ -38,7 +38,7 @@ Two ideas underlie the language:
    re-derives state by folding it.
 2. **Declared dependencies.** Everything outside the program — the model, an accountable
   identity, the world — is reached through a **declared dependency**: a name the program
-   declares but does not define, whose value configuration supplies at run time (§16). Cognition
+   declares but does not define, whose value configuration supplies at run time (§17). Cognition
    is the **provider**; accountability is a `**principal`**; the world is a `**tool`**. Swapping a
    dependency's backend changes no Agape source.
 
@@ -266,9 +266,9 @@ the token-level distribution in a constrained (yes/no, multiple-choice) setting 
 calibrated — not honest out of the box: raw logits remain overconfident (e.g. after RLHF), so
 calibration (temperature/Platt/isotonic) is a **fitted, distribution-specific** pipeline stage
 applied between the raw logits and the `Credence`. A provider that exposes token probabilities
-(`exposes_logprobs`, §16) yields a `Credence` directly; one that does not (a text-only backend)
+(`exposes_logprobs`, §17) yields a `Credence` directly; one that does not (a text-only backend)
 is served by the **sampling fallback** — drawing the forced choice `fallback_samples` times and
-taking the empirical frequency (§16). Per-variant scores are journaled on the spine (§15.5.1) so
+taking the empirical frequency (§17). Per-variant scores are journaled on the spine (§15.5.1) so
 the calibration pipeline (§13) can read them.
 
 ### `Rule` — the gate's parameter (not a primitive)
@@ -292,7 +292,7 @@ fallback. A gate requires its rule (`c by` with no rule is a `ParseError`).
 ### Declared dependencies — `principal` (and `tool`, `prompt`)
 
 Everything the program reaches but does not define is a **declared dependency**: a name declared in
-source, bound to a concrete resource by configuration (§16). It is one construct, fixed by a single
+source, bound to a concrete resource by configuration (§17). It is one construct, fixed by a single
 fact — *it is supplied from outside the program* — from which the rest follows: **declared, not
 constructed** (no literal form — `text → Principal`, etc. are `TypeError`s);
 **config-bound**; **opaque** (the program cannot read a signing key or a tool endpoint's credentials);
@@ -308,14 +308,14 @@ on the spine. Four flavours differ only in what they supply:
 
 
 ```agape
-principal alice;          // an accountable identity, resolved by config (§16)
+principal alice;          // an accountable identity, resolved by config (§17)
 ```
 
 A `principal` is the basis of an external gate (`attest e by alice`, §13); its own trust is
 `settled`, and a name is a forgeable claim, not a credential (`attest e by "alice"` is a
 `TypeError`). A conformal gate needs no separate dependency: it calibrates from its own recorded
-decisions on the spine, and below a configured minimum of labelled cases (§13, §16) it abstains. No
-credential appears in source; it is bound in the manifest (`[identity]`, §16), and
+decisions on the spine, and below a configured minimum of labelled cases (§13, §17) it abstains. No
+credential appears in source; it is bound in the manifest (`[identity]`, §17), and
 authentication/signing happen at the gate, not the declaration. `Credence<E>` is **not** a declared
 dependency — it is a value *received* from the provider, not a declared name.
 
@@ -539,7 +539,7 @@ declares its **effect class**: a `read` tool observes the world, a `write` tool 
 consequential sink, below). The class is mandatory; omitting it is a `ParseError`. The return type
 leads, like a function signature; use `null` for a tool with no meaningful return. The
 binding to a concrete MCP server/endpoint is configuration (`[tools]` in the manifest,
-§16); no endpoint or secret appears in source, exactly as `<-` names no model. An
+§17); no endpoint or secret appears in source, exactly as `<-` names no model. An
 undeclared tool call is a `TypeError`.
 - **Authority.** A tool call requires a `use NAME` capability in the agent's `grants`
 (§13). Default-deny applies: no `grants` ⇒ no tool calls. `use` is subtractive under
@@ -947,7 +947,7 @@ unhandled abstain cannot leak into an action. This removes any need for a design
 
 **The supervised-to-autonomous bootstrap.** A conformal gate certifies nothing without data, and
 its data is the spine itself — its own past decisions and their recorded outcomes. Below a minimum
-of labelled cases (§16) the gate abstains, routing every case to `abstain`/`by p` — typically a
+of labelled cases (§17) the gate abstains, routing every case to `abstain`/`by p` — typically a
 principal `attest`. Those attestations become the first labelled cases; once enough accrue the gate
 commits autonomously, escalating thereafter only genuinely ambiguous (non-singleton) cases. A fresh
 agent is thus human-supervised by construction and earns autonomy as it accumulates grounded
@@ -959,7 +959,7 @@ input — may consume a value only if it is `**settled`**: it carries no un-endo
 `Credence` reaches `settled` only through a recorded gate (`endorse`/`attest`, not a bare
 `c by R`); external data is `settled` by origin and passes freely — only un-endorsed cognition is
 rejected (the check is static). Additionally, if the value is a gated decision, the margin floor is
-checked at runtime — `margin ≥ m`, with `m` from the manifest (`[runtime] consequential_margin`, §16). A judgment below `m` abstains and is the typed trigger for
+checked at runtime — `margin ≥ m`, with `m` from the manifest (`[runtime] consequential_margin`, §17). A judgment below `m` abstains and is the typed trigger for
 escalation.
 
 **Loss direction.** Whether a false accept or a false reject is costlier is a property of the
@@ -1480,14 +1480,86 @@ interprocedural authority for top-level (non-agent) functions.
 
 ---
 
-## 16. Configuration & the project manager
+## 16. The runtime
+
+§0–§15 define what an Agape program *means*; this section defines what an implementation *does* to
+execute it — the concrete contract a conformant runtime is built against, making the abstract
+operational semantics of §15.4 buildable. Where §16 and §15 appear to differ, §15 governs the
+meaning and §16 the mechanism; a conformant runtime satisfies both. Items marked **(open)** are
+points not fixed by §0–§15 and settled here by an explicit, conformance-visible choice.
+
+### 16.1 Execution model and the scheduler
+
+The runtime is a **discrete-event simulator** over a single growing spine (§0.2, §15.4.1). Its state
+is the configuration `⟨Π|Ψ|Ω|Â|μ|S|k⟩` of §15.4.1 plus a **reaction queue** `Q` of pending work.
+Logical time is the **tick**: every appended event is assigned `tick = |S|` at append — system-
+assigned, monotonic, gap-free (§7).
+
+- **Top-level evaluation.** The program's top-level statements run in source order (§0.2). A statement
+  executes to a value or to a spine append; an append fires any matching subscriptions (§16.3) before
+  the next statement begins.
+- **Asynchrony.** Reaching a declared dependency (a send `<-`, a tool call, `attest … by p`) does not
+  block: the runtime appends the operation's opening event(s) (`Sent`, `ToolStarted`, …), issues the
+  oracle call (§16.4), and enqueues a **resolution** on `Q`. The continuation after the call resumes
+  when that resolution is dispatched. Many operations may be in flight at once (a `|>` fan-out, §12,
+  issues all its calls before any resolves).
+- **The scheduler loop.** While `Q` is non-empty or the top level is unfinished: take the next ready
+  resolution, apply its effect (append the closing event(s) — `Resolved`, `ToolResolved`, a bound
+  `Credence` — and resume its continuation), then drain any subscriptions the appends fired.
+  **(open) Resolution order:** ready resolutions are dispatched in **issue order** — FIFO by the tick
+  of their opening event. This fixes one total order on observable effects independent of wall-clock
+  timing, so replay (§16.5) is well-defined.
+- **Quiescence and termination.** The program **terminates** when the top level is exhausted, `Q` is
+  empty, and no external source is open (`prompt`/standing sensor, §5b/§6b). An open source keeps the
+  program live: each external arrival enqueues a reaction and the loop continues (§0.2). Every reaction
+  terminates (the only loop, `retry(N)`, is bounded, §11), so an always-on program is an unbounded
+  sequence of terminating reactions over one spine.
+- **Determinism.** Concurrency and determinism are independent (§0.2): the scheduler serializes
+  observable effects by the issue-order rule, and there is no shared mutable state (each agent owns its
+  memory, §10), so given the journaled oracle results the spine is reproduced exactly (§16.5).
+
+### 16.2 The spine journal — serialization, hashing, ticks
+
+The spine is an append-only, hash-chained log (§7, §15.4.2a). A conformant runtime fixes three things
+a replay (§16.5) and an audit depend on:
+
+- **Event record.** Each event is `{ tick, etype, subject, payload, corr, agent }` (§7): `tick` the
+  append index; `etype` the prelude or user event-type name (§9); `subject` the source / correlation
+  key (§7); `payload` the typed value carried (or empty); `corr` the id linking an opening event to its
+  close (or the event's own id); `agent` the acting agent's address.
+- **(open) Canonical serialization.** An event serializes to bytes as **canonical JSON**: object keys
+  in the fixed order above, no insignificant whitespace, UTF-8 strings, numbers in shortest
+  round-tripping form, the payload encoded by its structured-output schema (§8). Canonical means
+  byte-identical for equal events — which is what makes the chain-head a function of content alone.
+- **(open) Hash chain.** Genesis `h₀ = SHA-256("agape/v1")`; thereafter `hᵢ = SHA-256(hᵢ₋₁ ‖
+  serialize(eventᵢ))`. The **chain-head** is `h_{|S|−1}`: SHA-256 over the canonical serialization of
+  every field, so nothing observable sits outside the commitment.
+- **Chain-head equality (T4).** Two runs are replay-equivalent iff their chain-heads are equal (§15.4.2,
+  §16.5) — the operational form of observational equivalence `≈` (§15.5.2) for a recorded run: identical
+  journals ⇒ identical spine ⇒ identical head.
+
+### 16.3 Subscription dispatch and the tick cascade   *(to be specified — registration/hoist data structure; within-tick cascade: a handler's own appends fire matching subs before the tick closes; ordering across cascading appends)*
+
+### 16.4 The seam protocol — provider, identity, tool   *(to be specified — schema→JSON-Schema compilation, constrained-decode + logprobs contract for the provider; MCP wire binding for tools; the principal signing contract for attest; how each result is journaled)*
+
+### 16.5 Record and replay   *(to be specified — the per-oracle record format; the replay algorithm that re-serves journaled results in issue order and re-invokes nothing; journaling of wall-clock/nondeterministic inputs)*
+
+### 16.6 Fault and recovery   *(to be specified — the handler-invocation boundary; what counts as an unrecoverable seam failure → crash; state preservation across a crash; retry re-attempt mechanics and assignment persistence)*
+
+### 16.7 The memory runtime   *(to be specified — per-agent fact table / relationship graph / vector store; the internalization decomposition (event → facts/SPO-triples/embeddings) and its schema; query execution for select/find/match; the match similarity computation)*
+
+### 16.8 The calibration pipeline   *(to be specified — logprobs → Credence distribution; where/how the calibrator (temperature/Platt/isotonic) is fit; the sampling-fallback algorithm; the conformal nonconformity + quantile + readiness procedure)*
+
+---
+
+## 17. Configuration & the project manager
 
 Every Agape project is governed by the project manager — the `agape` toolchain. A project
 is a directory with an `agape.toml` manifest; configuration is baked into the project, not
 passed ad hoc. The declared dependencies and the default decision parameters resolve from the
 manifest.
 
-### 16.1 The manifest
+### 17.1 The manifest
 
 Configuration is the binding of declared dependencies (§3) to concrete resources, plus the default
 decision parameters. Each `principal` / `tool` / `prompt` declaration in source
@@ -1528,7 +1600,7 @@ distribution is the empirical frequency. Sampling needs variation, so `fallback_
 consequential-margin floor `m` (§13). These are values, not dependencies.
 - Swapping a dependency's backend changes no source.
 
-### 16.2 Scopes and precedence (lowest → highest)
+### 17.2 Scopes and precedence (lowest → highest)
 
 1. spec defaults; 2. global user config (`~/.agape/config.toml`); 3. project manifest
 
@@ -1536,13 +1608,13 @@ consequential-margin floor `m` (§13). These are values, not dependencies.
 is never a hidden global. Secrets (API keys, signing keys, MCP credentials) come from the
 environment or OS keychain, never the manifest.
 
-### 16.3 Configuration and reproducibility
+### 17.3 Configuration and reproducibility
 
 The Stability theorem is stated for a fixed provider, and the committed manifest fixes it.
 A run is identified by `(I, manifest, recording)`. Changing the manifest changes the
 program's meaning, visible in version control.
 
-### 16.4 Reproducibility in practice — two kinds of uncertainty, three knobs
+### 17.4 Reproducibility in practice — two kinds of uncertainty, three knobs
 
 A model's answer varies for two reasons:
 
@@ -1555,7 +1627,7 @@ Three knobs: config (`temperature=0` + pinned model + `m`); gate design (crisp c
 high margin → exactly-gated); escalation/quorum (the human path or independent fusion for
 the epistemic remainder). All three are explicit, enforced, and checkable.
 
-### 16.5 The conformance harness contract
+### 17.5 The conformance harness contract
 
 A conformant implementation ships a test mode the black-box suite drives:
 
@@ -1566,12 +1638,12 @@ equality" is equality of the spine's terminal hash under the canonical event
 serialization.
 - **Manifest-fixture observation.** A test may set `[runtime] threshold/margin` (and a `by`
 override) in a fixture `agape.toml` and observe which boundary was applied (the gate
-records the applied `Rule` in its `Decided`/`Attestation` event), so precedence (§16.2)
+records the applied `Rule` in its `Decided`/`Attestation` event), so precedence (§17.2)
 is testable.
 
 ---
 
-## 17. Deployment
+## 18. Deployment
 
 An Agape runtime runs entirely in userspace. It executes programs, exposes the tool dependency as
 the gated capability surface, enforces the membrane (the capability and gating discipline of

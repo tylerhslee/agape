@@ -178,4 +178,4 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 
 | id | expect | error | spec |
 |---|---|---|---|
-| `cfg_by_override_wins` | accept | — | §16.2 (precedence: the per-call gate `by` clause always wins over the manifest default; the gate's 0.9 governs, not the manifest's 0.5) |
+| `cfg_by_override_wins` | accept | — | §17.2 (precedence: the per-call gate `by` clause always wins over the manifest default; the gate's 0.9 governs, not the manifest's 0.5) |

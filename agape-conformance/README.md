@@ -63,7 +63,7 @@ sync text find(text q) { return search(q); }
 | `contains` | optional | events the spine must contain (order-free) |
 | `absent` | optional | events the spine must **not** contain |
 | `order` | optional | events that must appear in this relative order (others may interleave) |
-| `provider` | optional | stub-provider behavior for the run (§16.5 fault / credence scripting) |
+| `provider` | optional | stub-provider behavior for the run (§17.5 fault / credence scripting) |
 | `attest` | optional | identity-dependency ruling for `attest` (`grant` / `deny`) |
 | `manifest` | optional | `[runtime]`/policy fixture values for the run (`; `-separated) |
 | `replay` | optional | replay assertion (`chain_head_equal`) |
@@ -104,10 +104,10 @@ singleton commit) or `Abstained(x)`; `Error` matches any `Error` subtype (e.g. `
 The message lifecycle and async pairs use ordinary event tokens: `Sent(x)` `Delivered(x)`
 `Resolved(x)` `Expired(x)` `DeliveryRefused(x)`, plus `AgentCrashed(x)` `FailedAttestation(x)`.
 
-## Run directives — the §16.5 harness contract
+## Run directives — the §17.5 harness contract
 
 The dynamic guarantees (faults, replay, configuration) can't be asserted on one deterministic
-run. A conformant implementation must expose a **test mode** (§16.5) the suite drives through
+run. A conformant implementation must expose a **test mode** (§17.5) the suite drives through
 these header directives. A test with no directives runs under the default recorded provider.
 
 - `provider:` — the cognition stub's behavior for the run:
@@ -121,7 +121,7 @@ these header directives. A test with no directives runs under the default record
   `deny` (→ `FailedAttestation`, §13).
 - `manifest:` — `[runtime]`/policy fixture values, `; `-separated, e.g.
   `manifest: runtime.threshold=0.9; runtime.consequential_margin=0.2` — to exercise precedence
-  (§16.2) and the runtime margin floor (§13).
+  (§17.2) and the runtime margin floor (§13).
 - `replay:` — `chain_head_equal`: record the run's journal, replay it, and assert the spine's
   terminal hash is identical (§15.4.2 / T4). Replay re-serves every oracle/tool result from the
   recording and re-invokes nothing.
