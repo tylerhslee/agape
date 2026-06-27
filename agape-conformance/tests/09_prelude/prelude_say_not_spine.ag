@@ -1,0 +1,10 @@
+//! id:        prelude_say_not_spine
+//! section:   09_prelude
+//! expect:    accept
+//! absent:    Event
+//! spec:      §9 (`say(x)` prints its argument; it is NOT a spine operation and appends no event)
+//! ---
+agent A {
+  on awake { say("hello"); }
+}
+spawn A a; awake a;

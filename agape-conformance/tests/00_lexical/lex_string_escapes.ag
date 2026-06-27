@@ -1,0 +1,6 @@
+//! id:        lex_string_escapes
+//! section:   00_lexical
+//! expect:    accept
+//! spec:      §2 (string escapes \n \t \" \\ are recognized inside a string literal)
+//! ---
+say("a\nb\tc\"d\\e");

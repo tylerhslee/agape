@@ -1,0 +1,13 @@
+//! id:        gov_perform_reach_subtractive_reject
+//! section:   13_governance
+//! expect:    reject
+//! error:     AuthorityViolation
+//! spec:      §5, §13 (grants are subtractive under extend for `perform`/`reach` too — a child may not exceed its parent's authority)
+//! note:      Base grants nothing; Child claims `perform Flag`, which Base does not hold
+//! ---
+action Flag(bool b);
+agent Base grants { } {}
+agent Child grants { perform Flag } {
+  extend Base();
+}
+spawn Child c; awake c;

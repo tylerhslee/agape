@@ -45,6 +45,22 @@ spec = "§2 (exactly one communication arrow `<-`; `->` is a LexError)"
 note = "the retired `->` does not lex."
 
 [[test]]
+id = "lex_reject_tilde"
+section = "00_lexical"
+path = "tests/00_lexical/lex_reject_tilde.ag"
+expect = "reject"
+error = "ParseError"
+spec = "§2 (there is no similarity operator; `~` lexes to an Op but the parser rejects it — a ParseError, not a LexError)"
+note = "similarity is reached only through `match` (§10), never a `~` operator"
+
+[[test]]
+id = "lex_string_escapes"
+section = "00_lexical"
+path = "tests/00_lexical/lex_string_escapes.ag"
+expect = "accept"
+spec = "§2 (string escapes \\n \\t \\\" \\\\ are recognized inside a string literal)"
+
+[[test]]
 id = "axes_collapse_is_decision"
 section = "01_axes"
 path = "tests/01_axes/axes_collapse_is_decision.ag"
@@ -74,6 +90,13 @@ path = "tests/01_axes/axes_send_reply_is_raw.ag"
 expect = "accept"
 spec = "§1 Axis B/C, §15.3.2 T-Send (`d <- p` is on the spine; its reply is `raw`)"
 note = "a send is a spine op yielding a raw (unstructured) reply."
+
+[[test]]
+id = "type_array_literal_and_type"
+section = "03_types"
+path = "tests/03_types/type_array_literal_and_type.ag"
+expect = "accept"
+spec = "§3, §15.2 (array<T> is the collection type; an array literal binds to an array<T> slot)"
 
 [[test]]
 id = "type_collapse_requires_rule_reject"
@@ -154,6 +177,14 @@ spec = "§3 (events are not self-declaring; emit of an undeclared type is a Type
 note = "emit of a plain event needs no power, but the type must be declared."
 
 [[test]]
+id = "type_undeclared_tool_call_reject"
+section = "03_types"
+path = "tests/03_types/type_undeclared_tool_call_reject.ag"
+expect = "reject"
+error = "TypeError"
+spec = "§6b (an undeclared tool call is a TypeError — tools, like events, are not self-declaring)"
+
+[[test]]
 id = "fn_sync_attest_by_principal_reject"
 section = "04_functions"
 path = "tests/04_functions/fn_sync_attest_by_principal_reject.ag"
@@ -206,6 +237,15 @@ path = "tests/04_functions/fn_sync_tool_call_reject.ag"
 expect = "reject"
 error = "ColorViolation"
 spec = "§4, §6b (a tool call reaches the tool dependency → async)"
+
+[[test]]
+id = "agent_crash_contained"
+section = "05_agents"
+path = "tests/05_agents/agent_crash_contained.ag"
+expect = "accept"
+contains = ["AgentCrashed(a)"]
+provider = "empty"
+spec = "§5 (an unrecoverable seam failure — the provider returns nothing — crashes the agent: AgentCrashed is recorded, the on-crash hook runs, and state survives; a crash is contained, not a death)"
 
 [[test]]
 id = "agent_extend_inherits_when"
@@ -356,6 +396,23 @@ error = "TypeError"
 spec = "§8 (there is no sampling combinator in the surface language; a use of `sample` is an unknown-identifier error)"
 
 [[test]]
+id = "sem_schema_violation_typemismatch"
+section = "08_semantic"
+path = "tests/08_semantic/sem_schema_violation_typemismatch.ag"
+expect = "accept"
+contains = ["TypeMismatch"]
+provider = "schema_violation"
+spec = "§8 (structured output uses constrained decoding; on schema failure the runtime raises a clean TypeMismatch — catchable and retryable)"
+
+[[test]]
+id = "prelude_say_not_spine"
+section = "09_prelude"
+path = "tests/09_prelude/prelude_say_not_spine.ag"
+expect = "accept"
+absent = ["Event"]
+spec = "§9 (`say(x)` prints its argument; it is NOT a spine operation and appends no event)"
+
+[[test]]
 id = "prelude_when_error_catches_contradiction"
 section = "09_prelude"
 path = "tests/09_prelude/prelude_when_error_catches_contradiction.ag"
@@ -435,6 +492,23 @@ section = "11_control"
 path = "tests/11_control/ctrl_retry_bounded.ag"
 expect = "accept"
 spec = "§11, §15.2 (the only loop is the bounded `{ block } retry(N)`)"
+
+[[test]]
+id = "ctrl_retry_exhausted"
+section = "11_control"
+path = "tests/11_control/ctrl_retry_exhausted.ag"
+expect = "accept"
+contains = ["RetryExhausted"]
+provider = "schema_violation"
+spec = "§11 (a `{ block } retry(N)` re-attempts on a fault; on exhaustion it emits RetryExhausted and the fault propagates)"
+note = "a persistently schema-violating provider exhausts the bound"
+
+[[test]]
+id = "agg_all_bool_conjunction"
+section = "12_aggregation"
+path = "tests/12_aggregation/agg_all_bool_conjunction.ag"
+expect = "accept"
+spec = "§12 (over plain bool, `all`/`any` are ordinary conjunction/disjunction — no fusion, no dependence declaration needed)"
 
 [[test]]
 id = "agg_all_independent_ok"
@@ -531,6 +605,15 @@ section = "13_governance"
 path = "tests/13_governance/gov_grants_star_ok.ag"
 expect = "accept"
 spec = "§13 (grants { * } is the explicit unconstrained opt-out — lattice top)"
+
+[[test]]
+id = "gov_perform_reach_subtractive_reject"
+section = "13_governance"
+path = "tests/13_governance/gov_perform_reach_subtractive_reject.ag"
+expect = "reject"
+error = "AuthorityViolation"
+spec = "§5, §13 (grants are subtractive under extend for `perform`/`reach` too — a child may not exceed its parent's authority)"
+note = "Base grants nothing; Child claims `perform Flag`, which Base does not hold"
 
 [[test]]
 id = "gov_perform_ungranted_reject"

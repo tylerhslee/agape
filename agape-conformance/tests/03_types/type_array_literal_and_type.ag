@@ -1,0 +1,9 @@
+//! id:        type_array_literal_and_type
+//! section:   03_types
+//! expect:    accept
+//! spec:      §3, §15.2 (array<T> is the collection type; an array literal binds to an array<T> slot)
+//! ---
+agent A {
+  on awake { array<int> xs = [1, 2, 3]; }
+}
+spawn A a; awake a;

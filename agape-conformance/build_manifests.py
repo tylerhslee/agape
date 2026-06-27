@@ -12,7 +12,9 @@ It does NOT write or modify any `.ag` file; it only reads them and writes the tw
 MANIFEST.* files. It also validates the headers (see check()).
 
 Header keys: id, section, expect (accept|reject|blocked), error (iff reject),
-spine|contains|absent (matchers; `; `-separated), question (iff blocked), spec, note.
+spine|contains|absent|order (matchers; `; `-separated), question (iff blocked), spec, note.
+Run directives (the §16.5 harness contract): provider (empty|schema_violation|credence(...)),
+attest (grant|deny), manifest (key=value; `; `-separated), replay (chain_head_equal).
 Error classes: LexError ParseError TypeError ColorViolation TaintViolation
 AuthorityViolation ExhaustivenessError.
 
@@ -26,10 +28,15 @@ import sys
 ROOT = os.path.dirname(os.path.abspath(__file__))
 TESTS_DIR = os.path.join(ROOT, "tests")
 
-MATCHER_KEYS = ("spine", "contains", "absent")
+MATCHER_KEYS = ("spine", "contains", "absent", "order")
+DIRECTIVE_LIST_KEYS = ("manifest",)   # `;`-separated like matchers, but configure the run
 EXPECTS = {"accept", "reject", "blocked"}
 ERROR_CLASSES = {"LexError", "ParseError", "TypeError", "ColorViolation",
                  "TaintViolation", "AuthorityViolation", "ExhaustivenessError"}
+# Harness directives — the §16.5 test-mode contract a conformant runtime must honor.
+PROVIDER_MODES = {"empty", "schema_violation"}   # plus a scripted `credence(...)` form
+ATTEST_MODES = {"grant", "deny"}
+REPLAY_MODES = {"chain_head_equal"}
 
 
 def parse_ag(path):
@@ -46,7 +53,7 @@ def parse_ag(path):
                 continue
             key, _, val = content.partition(":")
             key, val = key.strip(), val.strip()
-            if key in MATCHER_KEYS:
+            if key in MATCHER_KEYS or key in DIRECTIVE_LIST_KEYS:
                 fields[key] = [x.strip() for x in val.split(";") if x.strip()]
             else:
                 fields[key] = val
@@ -72,6 +79,16 @@ def load_tests():
             assert t.get("error") in ERROR_CLASSES, f"{path}: reject needs a known error class, got {t.get('error')!r}"
         if t["expect"] == "blocked":
             assert t.get("question"), f"{path}: blocked test needs a question"
+        # harness-directive validation (the §16.5 contract)
+        if t.get("provider"):
+            p = t["provider"]
+            assert p in PROVIDER_MODES or p.startswith("credence("), f"{path}: bad provider mode {p!r}"
+        if t.get("attest"):
+            assert t["attest"] in ATTEST_MODES, f"{path}: bad attest mode {t['attest']!r}"
+        if t.get("replay"):
+            assert t["replay"] in REPLAY_MODES, f"{path}: bad replay mode {t['replay']!r}"
+        for m in t.get("manifest", []):
+            assert "=" in m, f"{path}: manifest fixture needs key=value, got {m!r}"
         tests.append(t)
     ids = [t["id"] for t in tests]
     dupes = {i for i in ids if ids.count(i) > 1}
@@ -99,6 +116,13 @@ def render_toml(tests):
             if t.get(k):
                 arr = ", ".join(f'"{toml_escape(x)}"' for x in t[k])
                 L.append(f"{k} = [{arr}]")
+        for k in DIRECTIVE_LIST_KEYS:
+            if t.get(k):
+                arr = ", ".join(f'"{toml_escape(x)}"' for x in t[k])
+                L.append(f"{k} = [{arr}]")
+        for k in ("provider", "attest", "replay"):
+            if t.get(k):
+                L.append(f'{k} = "{toml_escape(t[k])}"')
         if t["expect"] == "blocked":
             L.append(f'question = "{toml_escape(" ".join(t["question"].split()))}"')
         L.append(f'spec = "{toml_escape(t["spec"])}"')

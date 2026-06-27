@@ -1,0 +1,9 @@
+//! id:        agg_all_bool_conjunction
+//! section:   12_aggregation
+//! expect:    accept
+//! spec:      §12 (over plain bool, `all`/`any` are ordinary conjunction/disjunction — no fusion, no dependence declaration needed)
+//! ---
+agent A {
+  on awake { bool ok = all(true, true, false); }
+}
+spawn A a; awake a;

@@ -1,0 +1,12 @@
+//! id:        agent_crash_contained
+//! section:   05_agents
+//! expect:    accept
+//! provider:  empty
+//! contains:  AgentCrashed(a)
+//! spec:      §5 (an unrecoverable seam failure — the provider returns nothing — crashes the agent: AgentCrashed is recorded, the on-crash hook runs, and state survives; a crash is contained, not a death)
+//! ---
+agent A {
+  on awake { Credence<bool> c = self <- "is the sky blue?"; }
+  on crash { emit Event("recovered"); }
+}
+spawn A a; awake a;

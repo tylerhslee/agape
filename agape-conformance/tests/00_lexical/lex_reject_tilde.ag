@@ -1,0 +1,8 @@
+//! id:        lex_reject_tilde
+//! section:   00_lexical
+//! expect:    reject
+//! error:     ParseError
+//! spec:      §2 (there is no similarity operator; `~` lexes to an Op but the parser rejects it — a ParseError, not a LexError)
+//! note:      similarity is reached only through `match` (§10), never a `~` operator
+//! ---
+sync bool f(text a, text b) { return a ~ b; }

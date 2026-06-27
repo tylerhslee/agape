@@ -1,0 +1,12 @@
+//! id:        sem_schema_violation_typemismatch
+//! section:   08_semantic
+//! expect:    accept
+//! provider:  schema_violation
+//! contains:  TypeMismatch
+//! spec:      §8 (structured output uses constrained decoding; on schema failure the runtime raises a clean TypeMismatch — catchable and retryable)
+//! ---
+struct Memo { amount: int, to: text }
+agent A {
+  on awake { event<Memo> m = self <- "extract the memo"; }
+}
+spawn A a; awake a;

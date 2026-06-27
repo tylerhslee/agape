@@ -1,0 +1,10 @@
+//! id:        type_undeclared_tool_call_reject
+//! section:   03_types
+//! expect:    reject
+//! error:     TypeError
+//! spec:      §6b (an undeclared tool call is a TypeError — tools, like events, are not self-declaring)
+//! ---
+agent R {
+  on awake { text hits = search("q"); }
+}
+spawn R r; awake r;

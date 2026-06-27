@@ -62,6 +62,11 @@ sync text find(text q) { return search(q); }
 | `spine` | optional | exact ordered spine the run must produce |
 | `contains` | optional | events the spine must contain (order-free) |
 | `absent` | optional | events the spine must **not** contain |
+| `order` | optional | events that must appear in this relative order (others may interleave) |
+| `provider` | optional | stub-provider behavior for the run (§16.5 fault / credence scripting) |
+| `attest` | optional | identity-dependency ruling for `attest` (`grant` / `deny`) |
+| `manifest` | optional | `[runtime]`/policy fixture values for the run (`; `-separated) |
+| `replay` | optional | replay assertion (`chain_head_equal`) |
 | `spec` | always | the SPEC-1.0 clause(s) the test pins |
 | `note` | optional | one-line rationale |
 
@@ -91,9 +96,35 @@ pair(op@subj)   ← a Started/Resolved pair for async op `op` on subject `subj`
 single(op@subj) ← a single (synchronous) event
 ```
 
-`spine:` is an exact ordered match. `contains:`/`absent:` are order-free. Subtype
-matching follows §9: a gate records `Decided(x)` (a singleton commit) or `Abstained(x)`;
-`Error` matches any `Error` subtype (e.g. `Contradiction`).
+`spine:` is an exact ordered match. `contains:`/`absent:` are order-free. `order:` is an
+**ordered subsequence** — every listed event must appear, in the given relative order, with
+anything allowed in between. Subtype matching follows §9: a gate records `Decided(x)` (a
+singleton commit) or `Abstained(x)`; `Error` matches any `Error` subtype (e.g. `Contradiction`).
+
+The message lifecycle and async pairs use ordinary event tokens: `Sent(x)` `Delivered(x)`
+`Resolved(x)` `Expired(x)` `DeliveryRefused(x)`, plus `AgentCrashed(x)` `FailedAttestation(x)`.
+
+## Run directives — the §16.5 harness contract
+
+The dynamic guarantees (faults, replay, configuration) can't be asserted on one deterministic
+run. A conformant implementation must expose a **test mode** (§16.5) the suite drives through
+these header directives. A test with no directives runs under the default recorded provider.
+
+- `provider:` — the cognition stub's behavior for the run:
+  - `empty` — returns nothing (an unrecoverable seam failure) → the agent **crashes**
+    (`AgentCrashed`, §5): contained and recorded, not a death.
+  - `schema_violation` — returns output violating the constrained-decoding schema → a
+    `TypeMismatch` (§8), catchable and retryable.
+  - `credence(V=p, …)` — scripts the next graded judgment's distribution so a test can pin a
+    margin, e.g. `credence(true=0.62, false=0.38)`.
+- `attest:` — the identity dependency's ruling for `attest … by p`: `grant` (default) or
+  `deny` (→ `FailedAttestation`, §13).
+- `manifest:` — `[runtime]`/policy fixture values, `; `-separated, e.g.
+  `manifest: runtime.threshold=0.9; runtime.consequential_margin=0.2` — to exercise precedence
+  (§16.2) and the runtime margin floor (§13).
+- `replay:` — `chain_head_equal`: record the run's journal, replay it, and assert the spine's
+  terminal hash is identical (§15.4.2 / T4). Replay re-serves every oracle/tool result from the
+  recording and re-invokes nothing.
 
 ## How an implementation consumes the suite
 
