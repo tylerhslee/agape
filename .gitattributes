@@ -1,0 +1,4 @@
+# Normalize line endings: every text file is stored LF in the repo and
+# checked out LF on every platform, regardless of a machine's core.autocrlf.
+# This repo is all text (Rust, Agape .ag, TS/JS, Python, Markdown) — no binaries.
+* text=auto eol=lf
