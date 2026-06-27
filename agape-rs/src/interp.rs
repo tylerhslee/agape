@@ -179,9 +179,18 @@ impl Interp {
 
     fn exec_stmt(&mut self, s: &Stmt, frame: &mut HashMap<String, Value>, agent: Option<&str>) -> Flow {
         match s {
-            Stmt::VarDecl { name, expr, .. } => {
+            Stmt::VarDecl { ty, name, expr } => {
                 let v = match expr {
-                    Some(init) => self.eval_bound(init, name, frame, agent),
+                    Some(init) => {
+                        let raw = self.eval_bound(init, name, frame, agent);
+                        // A send bound to a typed slot takes that slot's type: a
+                        // `Credence<E>` slot constrains the reply to E's variants (§8),
+                        // so the in-flight events stay but the value is the graded judgment.
+                        match ty {
+                            Type::Credence(_) if !matches!(raw, Value::Credence { .. }) => self.mock_of_type(Some(ty)),
+                            _ => raw,
+                        }
+                    }
                     None => Value::Null,
                 };
                 frame.insert(name.clone(), v);
@@ -746,7 +755,25 @@ impl Interp {
             Some(Type::Bool) => Value::Bool(true),
             Some(Type::Text) | None => Value::Text("ok".into()),
             Some(Type::Null) => Value::Null,
-            Some(Type::Credence(inner)) => Value::Credence { en: type_enum_name(inner), dist: vec![] },
+            Some(Type::Credence(inner)) => {
+                let en = type_enum_name(inner);
+                let variants: Vec<String> = match en.as_str() {
+                    "bool" => vec!["true".into(), "false".into()],
+                    other => self.enums.get(other).cloned().unwrap_or_default(),
+                };
+                // a confident mock judgment: top variant 0.9, the rest share 0.1.
+                let dist = if variants.is_empty() {
+                    vec![]
+                } else {
+                    let rest = ((variants.len() - 1).max(1)) as f64;
+                    variants
+                        .iter()
+                        .enumerate()
+                        .map(|(i, v)| (v.clone(), if i == 0 { 0.9 } else { 0.1 / rest }))
+                        .collect()
+                };
+                Value::Credence { en, dist }
+            }
             _ => Value::Text("ok".into()),
         }
     }
