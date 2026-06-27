@@ -1,6 +1,6 @@
 # Agape v1.0 — Conformance Test Index
 
-**101 tests** — accept: 72, reject: 29
+**102 tests** — accept: 73, reject: 29
 
 A conformant implementation must satisfy every `accept`/`reject` test (rejects with the declared error class; accepts matching any asserted spine).
 
@@ -179,4 +179,5 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 
 | id | expect | error | spec |
 |---|---|---|---|
+| `cfg_eager_internalize` | accept | — | §16.7, §17 (with `[memory] internalize_on_receive = true`, every received `<-` event is auto-decomposed into memory — the eager, opt-in trigger; default is off) |
 | `cfg_sampling_fallback` | accept | — | §16.8, §17 (a text-only provider — no logprobs — is served by the sampling fallback: the credence is the empirical frequency of N forced draws; a confident judgment still commits) |

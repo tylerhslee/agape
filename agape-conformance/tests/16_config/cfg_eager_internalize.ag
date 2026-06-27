@@ -1,0 +1,11 @@
+//! id:        cfg_eager_internalize
+//! section:   16_config
+//! expect:    accept
+//! manifest:  memory.internalize_on_receive=true
+//! contains:  Internalized
+//! spec:      §16.7, §17 (with `[memory] internalize_on_receive = true`, every received `<-` event is auto-decomposed into memory — the eager, opt-in trigger; default is off)
+//! ---
+agent A {
+  on awake { event<text> r = self <- "what happened today?"; }
+}
+spawn A a; awake a;

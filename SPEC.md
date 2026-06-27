@@ -691,6 +691,7 @@ type Principal                                             // an accountable ide
 //   Contradiction(subj)    emitted when a Credence<Entailment> commits to Contradicts
 //   Attestation(subj)      a principal gate (attest … by p)
 //   QueryResult(subj)      the event a query STATEMENT lands
+//   Internalized(subj)     a store/embed memory write (incidental trace, §15.5.1)
 //   ToolStarted/ToolResolved   the tool pair (§6b)
 //   Spawned / AgentAwake / SleepEvent / AgentCrashed   lifecycle (§5)
 //   Sent / Delivered / Resolved                message lifecycle (§6)
@@ -706,8 +707,10 @@ subtype, and code that wants only faults matches the specific types. `Expired` a
 send are not errors.
 
 `**say(x)`** prints its argument; it is not a spine operation. `**store(x)`** internalizes `x` into
-the agent's relational + graph memory and `**embed(x)`** writes `x`'s embedding to the vector store —
-both explicit memory writes (a journaled provider decomposition, §10, §16.7).
+the agent's relational + graph memory and `**embed(x)`** writes `x`'s embedding to the vector store
+(§10, §16.7). Both are **async** (they reach the provider to decompose / embed) and return `null`,
+appending a journaled `Internalized` event (incidental trace, §15.5.1); a `sync` function may not
+call them.
 
 ---
 
@@ -942,6 +945,15 @@ decisions and their labels on the spine, a distribution-free, finite-sample boun
 `α` of the time under exchangeability) that does **not** require the model's probabilities to be
 honest; `by p` is the **principal** basis. The recorded `Decision` pins which basis settled it and
 the applied rule, so a recalibration does not change how an earlier run replays.
+
+**Policy — a named rule bundle (source, not config).** A `policy NAME { … }` declaration (§15.2)
+names a reusable decision rule in source — never in the manifest (§17). Its directives are: a
+**basis** — `threshold θ` with optional `margin δ` (the threshold basis), or `conformal α` with
+optional `readiness N` (the conformal basis; `N` the minimum labelled cases before autonomous
+commit, the bootstrap below); the consequential **`floor m`** (the margin floor checked at a sink,
+below); and an optional **`fallback p`** (`p` a `principal`) — the cold-start / abstain defer. A gate
+applies a policy by name (`endorse (c by NAME)`, `c by NAME`); an inline rule (`confidence θ`,
+`conformal α`) is the anonymous form.
 
 **The `abstain` clause** is optional, like an `else`: on a singleton set the matching arm runs;
 otherwise the `abstain` block runs, and a `by p` clause defers to a principal whose ruling

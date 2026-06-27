@@ -786,6 +786,15 @@ expect = "accept"
 spec = "§15 (`c by R` is a pure projection of a Credence; off-spine and synchronous)"
 
 [[test]]
+id = "cfg_eager_internalize"
+section = "16_config"
+path = "tests/16_config/cfg_eager_internalize.ag"
+expect = "accept"
+contains = ["Internalized"]
+manifest = ["memory.internalize_on_receive=true"]
+spec = "§16.7, §17 (with `[memory] internalize_on_receive = true`, every received `<-` event is auto-decomposed into memory — the eager, opt-in trigger; default is off)"
+
+[[test]]
 id = "cfg_sampling_fallback"
 section = "16_config"
 path = "tests/16_config/cfg_sampling_fallback.ag"
