@@ -24,7 +24,7 @@
     },
 
     "fstring": {
-      "comments": "f-string: f\"...{expr}...\" — one token, {expr} highlighted recursively (§2).",
+      "comments": "v1.0 §2 f-string: f\"...{expr}...\" — lexed as one FSTR token; {expr} highlighted recursively.",
       "name": "string.interpolated.agape",
       "begin": "f\"",
       "end": "\"",
@@ -44,6 +44,7 @@
     },
 
     "string": {
+      "comments": "v1.0 §2: \"...\" with escapes \\n \\t \\\" \\\\.",
       "name": "string.quoted.double.agape",
       "begin": "\"",
       "end": "\"",
@@ -55,6 +56,7 @@
     },
 
     "numbers": {
+      "comments": "v1.0 §2: int (42) and float (3.5).",
       "patterns": [
         { "name": "constant.numeric.float.agape", "match": "\\b[0-9]+\\.[0-9]+\\b" },
         { "name": "constant.numeric.integer.agape", "match": "\\b[0-9]+\\b" }
@@ -62,12 +64,13 @@
     },
 
     "constants": {
+      "comments": "v1.0 §2: bool literals + the null value.",
       "name": "constant.language.agape",
       "match": "\\b(?:true|false|null)\\b"
     },
 
     "retired": {
-      "comments": "v1.0 §2: `~`, `calibrate`, `entail`, and `->` are removed; using them is a Lex/ParseError. The grammar flags them as invalid so the editor surfaces the mistake.",
+      "comments": "v1.0 §2: `~`, `->`, `calibrate`, and `entail` are removed; using them is a Lex/ParseError. The grammar flags them as invalid so the editor surfaces the mistake.",
       "patterns": [
         { "name": "invalid.illegal.retired-keyword.agape", "match": "\\b(?:calibrate|entail)\\b" },
         { "name": "invalid.illegal.retired-operator.agape", "match": "->|~" }
@@ -77,19 +80,14 @@
     "keywords": {
       "patterns": [
         {
-          "comments": "control / reactive (§7, §11, §15.2)",
+          "comments": "control / reactive (§2, §7)",
           "name": "keyword.control.agape",
-          "match": "\\b(?:when|catch|case|if|else|return|retry|default|while|break)\\b"
+          "match": "\\b(?:when|case|if|else|return|retry|default)\\b"
         },
         {
-          "comments": "module import (§15.2)",
-          "name": "keyword.control.import.agape",
-          "match": "\\bimport\\b"
-        },
-        {
-          "comments": "type / declaration introducers (§3, §5, §6b, §13)",
+          "comments": "declaration introducers (§3, §5, §6b, §13)",
           "name": "storage.type.agape",
-          "match": "\\b(?:agent|struct|enum|event|tool|principal)\\b"
+          "match": "\\b(?:agent|struct|enum|tool|principal|policy)\\b"
         },
         {
           "comments": "color / composition modifiers (§4, §5)",
@@ -102,14 +100,14 @@
           "match": "\\b(?:spawn|awake|sleep|on|prompt)\\b"
         },
         {
-          "comments": "capability typing (§13)",
+          "comments": "capability typing + tool effect classes (§6b, §13)",
           "name": "keyword.other.capability.agape",
-          "match": "\\b(?:grants|authority)\\b"
+          "match": "\\b(?:grants|read|write)\\b"
         },
         {
-          "comments": "gate + spine emit (§13)",
+          "comments": "gate / attest / action perform / event emit / abstain clause (§13)",
           "name": "keyword.other.gate.agape",
-          "match": "\\b(?:verify|decide|emit)\\b"
+          "match": "\\b(?:endorse|attest|perform|emit|abstain)\\b"
         },
         {
           "comments": "memory / graph queries (§10)",
@@ -130,22 +128,22 @@
     },
 
     "types": {
-      "comments": "built-in scalar + aggregate + spine wrapper types (§3)",
+      "comments": "built-in scalar + aggregate + spine wrapper types (§2, §3): event = record, action = performative, array = collection.",
       "name": "support.type.primitive.agape",
-      "match": "\\b(?:int|float|bool|text|array|event)\\b"
+      "match": "\\b(?:int|float|bool|text|array|event|action)\\b"
     },
 
     "prelude": {
       "patterns": [
         {
-          "comments": "prelude judgment/identity/spine types (§9)",
+          "comments": "prelude judgment/identity/spine/decision types (§9)",
           "name": "support.type.prelude.agape",
-          "match": "\\b(?:Verification|Entailment|Contradiction|Neutral|Credence|Principal|Rule|Event|Error|Attestation|SuccessfulVerification|FailedVerification|Delivered|Resolved|Expired|DeliveryRefused|QueryResult|ToolStarted|ToolResolved)\\b"
+          "match": "\\b(?:Credence|Decision|Entailment|Contradiction|Neutral|Principal|Rule|Event|Error|Attestation|Decided|Abstained|AgentCrashed|Delivered|Resolved|Expired|DeliveryRefused|QueryResult|ToolStarted|ToolResolved)\\b"
         },
         {
-          "comments": "prelude runtime service (§9)",
+          "comments": "prelude runtime services (§9)",
           "name": "support.function.prelude.agape",
-          "match": "\\bsay\\b"
+          "match": "\\b(?:say|store|embed)\\b"
         },
         {
           "comments": "user nominal types are conventionally capitalized (§2)",
@@ -172,6 +170,7 @@
         { "name": "keyword.operator.assignment.agape", "match": "=" },
         { "name": "keyword.operator.logical.agape", "match": "!" },
         { "name": "keyword.operator.arithmetic.agape", "match": "[+\\-*/]" },
+        { "name": "punctuation.separator.annotation.agape", "match": ":" },
         { "name": "punctuation.accessor.agape", "match": "\\." }
       ]
     }

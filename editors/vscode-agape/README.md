@@ -8,19 +8,21 @@ is the **single source of truth** for Agape highlighting: VS Code and Cursor loa
 it directly, and Agape Studio's Monaco editor mirrors the same token model
 (`studio/web/src/agapeLanguage.js`), so highlighting is consistent everywhere.
 
-## What it highlights (v1.0, SPEC §2)
+## What it highlights (v1.0.0, SPEC §2)
 
 - Comments (`//`), strings, and **f-strings** with `{expr}` interpolation highlighted.
-- All v1.0 keywords, grouped so themes can color them distinctly: declarations
-  (`agent struct enum event tool principal`), modifiers (`sync extend`), control
-  (`when catch case if else retry …`), gates (`verify decide emit`), capability
-  (`grants authority`), queries (`find where select from match`), aggregation
-  (`all any quorum independent dependent`), lifecycle (`spawn awake sleep on prompt`).
-- Built-in types and prelude types (`Credence Principal Verdict Verification …`);
-  user nominal types (capitalized identifiers) as type names.
+- All v1.0.0 keywords, grouped so themes can color them distinctly: declarations
+  (`agent struct enum tool principal policy`), modifiers (`sync extend`), control
+  (`when case if else return retry default`), gate/action (`endorse attest perform
+  emit abstain`), capability (`grants read write`), queries (`find where select from
+  match`), aggregation (`all any quorum independent dependent`), lifecycle
+  (`spawn awake sleep on prompt`).
+- Built-in types and spine wrappers (`int float bool text event<T> action array`),
+  prelude types (`Credence Decision Entailment Attestation …`); user nominal types
+  (capitalized identifiers) as type names.
 - The send arrow `<-` and pipe `|>` as operators.
-- **Retired v0.x syntax flagged as errors:** `~`, `calibrate`, `entail`, and `->`
-  are removed in v1.0, so the grammar marks them `invalid.illegal` — your editor
+- **Retired v0.x syntax flagged as errors:** `~`, `->`, `calibrate`, and `entail`
+  are removed in v1.0.0, so the grammar marks them `invalid.illegal` — your editor
   shows them as mistakes, not valid code.
 
 ## Install

@@ -1,13 +1,14 @@
-// agapeLanguage.js — register Agape (v1.0) as a first-class Monaco language.
+// agapeLanguage.js — register Agape (v1.0.0) as a first-class Monaco language.
 //
 // This mirrors the shared TextMate grammar (editors/vscode-agape/syntaxes/
 // agape.tmLanguage.json) so highlighting is consistent across VS Code, Cursor,
-// and Agape Studio. The editor knows Agape's actual v1.0 grammar: the agentic
-// keywords (agent/when/catch/emit/verify/decide/grants/spawn/awake), user
-// nominal types (struct/enum/event), quorum/aggregation (§12), the somatic
-// kernel (while/break/if/import), the send arrow `<-` and pipe `|>`, and the
-// event<T> wrapper. Retired v0.x syntax (`~`, `calibrate`, `entail`, `->`) is
-// flagged invalid. Token classes map onto the Dark+ palette of the shell.
+// and Agape Studio. The editor knows Agape's actual v1.0.0 grammar (SPEC §2):
+// the declarations (agent/struct/enum/tool/principal/policy), the lifecycle
+// (spawn/awake/sleep/on/prompt), the gate (endorse/attest/perform/emit/abstain),
+// queries (find/where/select/from/match), quorum/aggregation (§12), the scalar +
+// spine-wrapper types (event<T>/action), the send arrow `<-` and pipe `|>`.
+// Retired v0.x syntax (`~`, `->`, `calibrate`, `entail`) is flagged invalid.
+// Token classes map onto the Dark+ palette of the shell.
 
 export const AGAPE_LANG_ID = "agape";
 
@@ -18,23 +19,24 @@ export function registerAgape(monaco) {
 
   monaco.languages.setMonarchTokensProvider(AGAPE_LANG_ID, {
     defaultToken: "",
-    // v1.0 keyword set (SPEC §2). Contextual words (as/by/reach/use/origin/
-    // expires/of/margin) are deliberately NOT keywords — they lex as identifiers.
+    // v1.0.0 keyword set (SPEC §2). Contextual words (as/by/about/reach/use/
+    // origin/expires/of/confidence/margin/conformal/over) are deliberately NOT
+    // keywords — they lex as identifiers, meaningful only in position.
     keywords: [
-      "agent", "extend", "sync", "struct", "enum", "event", "tool", "principal",
-      "grants", "authority", "spawn", "awake", "sleep", "on", "prompt",
-      "when", "catch", "case", "if", "else", "return", "retry", "default",
-      "verify", "decide", "emit", "find", "where", "select", "from", "match",
+      "agent", "extend", "sync", "struct", "enum", "tool", "principal", "policy",
+      "grants", "read", "write", "spawn", "awake", "sleep", "on", "prompt",
+      "when", "case", "if", "else", "return", "retry", "default",
+      "endorse", "attest", "perform", "emit", "abstain",
+      "find", "where", "select", "from", "match",
       "all", "any", "quorum", "independent", "dependent",
-      "while", "break", "import",
     ],
     typeKeywords: [
-      "int", "float", "bool", "text", "null", "event", "array",
+      "int", "float", "bool", "text", "event", "action", "array",
       // prelude types (§9)
-      "Credence", "Principal", "Rule", "Verification", "Entailment",
-      "Contradiction", "Neutral", "Event", "Error", "Attestation",
-      "QueryResult", "ToolStarted", "ToolResolved", "Delivered", "Resolved",
-      "Expired", "DeliveryRefused", "SuccessfulVerification", "FailedVerification",
+      "Credence", "Decision", "Entailment", "Contradiction", "Neutral",
+      "Principal", "Rule", "Event", "Error", "Attestation", "Decided",
+      "Abstained", "AgentCrashed", "QueryResult", "ToolStarted", "ToolResolved",
+      "Delivered", "Resolved", "Expired", "DeliveryRefused",
     ],
     literals: ["true", "false", "null"],
     retired: ["calibrate", "entail"],
@@ -42,7 +44,7 @@ export function registerAgape(monaco) {
     symbols: /[=><!|+\-*/]+/,
     tokenizer: {
       root: [
-        // comments — v1.0 has line comments only.
+        // comments — v1.0.0 has line comments only (§2).
         [/\/\/.*$/, "comment"],
         // f-strings with {interpolation}, then plain strings.
         [/f"/, { token: "string.quote", next: "@fstring" }],
@@ -65,7 +67,7 @@ export function registerAgape(monaco) {
         }],
         [/@symbols/, { cases: { "@operators": "operator", "@default": "" } }],
         [/[{}()\[\]]/, "@brackets"],
-        [/[;,.]/, "delimiter"],
+        [/[;,.:]/, "delimiter"],
       ],
       string: [
         [/[^"]+/, "string"],

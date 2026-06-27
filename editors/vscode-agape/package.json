@@ -1,7 +1,7 @@
 {
   "name": "agape",
   "displayName": "Agape",
-  "description": "Syntax highlighting for the Agape language (v1.0). Works in VS Code and Cursor.",
+  "description": "Syntax highlighting for the Agape language (v1.0.0). Works in VS Code and Cursor.",
   "version": "0.1.0",
   "publisher": "agape-lang",
   "license": "SEE LICENSE IN ../../README.md",
