@@ -861,9 +861,11 @@ impl Interp {
     /// `Sent → Delivered → Resolved` chain (§6), subjected at `subject`. The provider
     /// mode (§17.5) may instead crash (empty) or fault (schema violation).
     fn eval_send(&mut self, dest: &Expr, payload: &Expr, subject: Option<String>, slot: Option<&Type>, expires: Option<f64>, frame: &mut HashMap<String, Value>, agent: Option<&str>) -> Value {
-        let _ = self.eval(payload, frame, agent); // render the prompt (incidental)
+        // The rendered prompt is the provider/LLM input — carried on `Sent` so the
+        // studio can show what each agent actually asked.
+        let prompt = self.eval(payload, frame, agent).show();
         let corr = self.spine.fresh_corr();
-        self.append("Sent", subject.clone(), "sent".into(), Some(corr), agent.map(|a| a.to_string()));
+        self.append("Sent", subject.clone(), prompt, Some(corr), agent.map(|a| a.to_string()));
         // Determine whether the destination has an open mailbox.
         let live = match dest {
             Expr::SelfRef => true,
@@ -891,8 +893,11 @@ impl Interp {
             self.faulted = true;
             return Value::Null;
         }
-        let reply = self.mock_reply();
-        self.append("Resolved", subject.clone(), reply.show(), Some(corr), None);
+        // The reply is the provider/LLM output: a graded judgment for a Credence
+        // slot (shown as `top@p`), else the raw text. The bound value is recomputed
+        // by the var-decl, so summarizing the spine payload here is free.
+        let reply = self.mock_of_type(slot);
+        self.append("Resolved", subject.clone(), reply_summary(&reply), Some(corr), None);
         // The eager memory trigger: a received `<-` auto-internalizes (§16.7, §17).
         if self.config.internalize_on_receive {
             self.emit_event("Internalized", subject.clone(), "internalized".into(), agent.map(|a| a.to_string()));
@@ -956,10 +961,6 @@ impl Interp {
     }
 
     // ── mock seam + helpers ──────────────────────────────────────────────────
-
-    fn mock_reply(&self) -> Value {
-        Value::Text("ok".into())
-    }
 
     fn mock_of_type(&self, ty: Option<&Type>) -> Value {
         match ty {
@@ -1139,6 +1140,18 @@ impl Interp {
 
     fn append(&mut self, etype: &str, subject: Option<String>, payload: String, corr: Option<u64>, agent: Option<String>) -> u64 {
         self.spine.append(etype, subject, payload, corr, agent)
+    }
+}
+
+/// Summarize a provider reply for the spine payload: a graded judgment shows its
+/// top variant and probability (`true 0.90`); anything else shows as itself.
+fn reply_summary(v: &Value) -> String {
+    match v {
+        Value::Credence { dist, .. } => match dist.iter().max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal)) {
+            Some((name, p)) => format!("{name} {p:.2}"),
+            None => "?".into(),
+        },
+        other => other.show(),
     }
 }
 

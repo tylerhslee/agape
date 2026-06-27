@@ -131,11 +131,12 @@ fn spine_json(spine: &agape_rs::spine::Spine) -> String {
         .iter()
         .map(|e| {
             format!(
-                "{{\"tick\":{},\"etype\":{},\"subject\":{},\"payload\":{}}}",
+                "{{\"tick\":{},\"etype\":{},\"subject\":{},\"payload\":{},\"corr\":{}}}",
                 e.tick,
                 json_str(&e.etype),
                 e.subject.as_deref().map(json_str).unwrap_or_else(|| "null".into()),
-                json_str(&e.payload)
+                json_str(&e.payload),
+                e.corr.map(|c| c.to_string()).unwrap_or_else(|| "null".into())
             )
         })
         .collect();

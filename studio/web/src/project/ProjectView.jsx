@@ -31,6 +31,25 @@ export default function ProjectView({ info, onReview }) {
 
   const file = useMemo(() => info.files.find((f) => f.rel === sel), [info, sel]);
 
+  // Pair each Sent→Resolved (by correlation id) into one provider/LLM call, and
+  // estimate usage. Token counts are ~chars/4; cost uses Haiku-class rates. These
+  // are ESTIMATES off the deterministic mock — a live connector makes them real.
+  const run = useMemo(() => {
+    if (!result || !result.ok) return null;
+    const sent = {}; const calls = [];
+    for (const e of result.events) {
+      if (e.etype === "Sent" && e.corr != null) sent[e.corr] = e.payload;
+      else if (e.etype === "Resolved" && e.corr != null && sent[e.corr] != null) {
+        calls.push({ input: sent[e.corr], output: e.payload });
+      }
+    }
+    const tok = (s) => Math.ceil((s || "").length / 4);
+    const tokIn = calls.reduce((a, c) => a + tok(c.input), 0);
+    const tokOut = calls.reduce((a, c) => a + tok(c.output), 0);
+    const cost = (tokIn / 1e6) * 0.8 + (tokOut / 1e6) * 4.0; // $0.80 / $4.00 per Mtok
+    return { calls, tokIn, tokOut, cost };
+  }, [result]);
+
   // Load the selected file's source.
   useEffect(() => {
     if (!sel) return;
@@ -106,9 +125,27 @@ export default function ProjectView({ info, onReview }) {
 
       <div className="pj-spine">
         {!result ? (
-          <div className="pj-dim" style={{ padding: 12 }}>▶ Run to see the spine — the append-only log of everything the agents do.</div>
+          <div className="pj-dim" style={{ padding: 12 }}>▶ Run to see the LLM calls, cost, and the spine — the append-only log of everything the agents do.</div>
         ) : result.ok ? (
           <>
+            <div className="pj-metrics">
+              <div className="pj-metric"><b>{run.calls.length}</b><span>LLM calls</span></div>
+              <div className="pj-metric"><b>{run.tokIn}</b><span>tok in</span></div>
+              <div className="pj-metric"><b>{run.tokOut}</b><span>tok out</span></div>
+              <div className="pj-metric"><b>~${run.cost < 0.001 ? run.cost.toFixed(5) : run.cost.toFixed(3)}</b><span>est. cost</span></div>
+            </div>
+            <div className="pj-metric-note">estimated · deterministic mock provider (no live connector)</div>
+
+            <div className="pj-section-h">llm calls</div>
+            {run.calls.length === 0 && <div className="pj-dim" style={{ padding: "0 12px 8px" }}>no provider calls this run</div>}
+            {run.calls.map((c, i) => (
+              <div key={i} className="pj-call">
+                <div className="pj-io"><span className="pj-io-tag in">in</span><span className="pj-io-txt">{c.input}</span></div>
+                <div className="pj-io"><span className="pj-io-tag out">out</span><span className="pj-io-txt">{c.output}</span></div>
+              </div>
+            ))}
+
+            <div className="pj-section-h">spine</div>
             {result.events.map((e, i) => <SpineRow key={i} e={e} />)}
             <div className="pj-dim" style={{ padding: "8px 12px" }}>{result.events.length} events · {result.head?.slice(0, 16)}</div>
           </>
@@ -198,6 +235,18 @@ const STYLE = `
 .pj-inp input{font:inherit;background:#1d2330;border:1px solid #2a3140;color:#e6e9ef;border-radius:7px;padding:6px 9px}
 .pj-msg{padding:4px 12px;font-size:12.5px}
 .pj-spine{flex:1;overflow:auto;border-top:1px solid #2a3140;margin-top:4px}
+.pj-metrics{display:flex;gap:8px;padding:10px 12px 4px}
+.pj-metric{flex:1;background:#1a1f2b;border:1px solid #2a3140;border-radius:8px;padding:7px 6px;text-align:center;display:flex;flex-direction:column;gap:1px}
+.pj-metric b{font:600 15px ui-monospace,monospace;color:#e6e9ef}
+.pj-metric span{font-size:10.5px;color:#6b7588;text-transform:uppercase;letter-spacing:.3px}
+.pj-metric-note{font-size:11px;color:#6b7588;padding:0 12px 2px}
+.pj-section-h{font:600 11px ui-monospace,monospace;text-transform:uppercase;letter-spacing:.5px;color:#6b7588;padding:10px 12px 4px}
+.pj-call{margin:0 12px 8px;border:1px solid #232b39;border-radius:8px;overflow:hidden}
+.pj-io{display:flex;gap:8px;padding:6px 9px;font:12px/1.45 ui-monospace,Menlo,Consolas,monospace}
+.pj-io+.pj-io{border-top:1px solid #232b39;background:#11151d}
+.pj-io-tag{flex:none;font:600 10px ui-monospace,monospace;padding:1px 6px;border-radius:5px;height:fit-content;text-transform:uppercase}
+.pj-io-tag.in{background:#1d2a3a;color:#79c0ff}.pj-io-tag.out{background:#15291c;color:#7ee787}
+.pj-io-txt{white-space:pre-wrap;word-break:break-word;color:#cdd3dc}
 .pj-err{padding:12px;color:#f85149;font:12.5px ui-monospace,monospace;white-space:pre-wrap}
 .ev{display:grid;grid-template-columns:30px 150px 1fr;grid-template-areas:"t k s" ". p p";gap:0 8px;padding:3px 12px;font:12px ui-monospace,monospace;border-bottom:1px solid #161b24}
 .ev-t{grid-area:t;color:#48515f;text-align:right}
