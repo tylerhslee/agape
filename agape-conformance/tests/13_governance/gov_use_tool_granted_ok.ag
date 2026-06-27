@@ -3,7 +3,7 @@
 //! expect:    accept
 //! spec:      §6b, §13 (a granted `use TOOL` permits the tool call)
 //! ---
-tool search(text q) -> text;
+tool text search(text q);
 agent R grants { use search } {
   text hits = search("q");
 }

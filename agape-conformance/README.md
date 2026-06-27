@@ -47,7 +47,7 @@ under test.
 //! spec:      §4, §6b (a tool call reaches the tool seam → async)
 //! note:      a sync function may not call a tool
 //! ---
-tool search(text q) -> text;
+tool text search(text q);
 sync text find(text q) { return search(q); }
 ```
 

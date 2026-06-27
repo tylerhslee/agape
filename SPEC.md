@@ -526,15 +526,16 @@ Tools form an enumerated capability surface (cf. eBPF helper functions: a fixed 
 approved calls, never arbitrary linkage).
 
 ```agape
-tool search(text query) -> text;             // declares a tool capability, signature typed
-tool transfer(int amount, text to) -> bool;  // resolved by config to an MCP server (§16)
+tool text search(text query);                // declares a tool capability, signature typed
+tool bool transfer(int amount, text to);     // resolved by config to an MCP server (§16)
 
 agent Researcher grants { use search } {
     text hits = search("agape language");    // a tool call: needs `use search`
 }
 ```
 
-- **Declaration.** `tool NAME(params) -> RET;` declares the capability and its type. The
+- **Declaration.** `tool RET NAME(params);` declares the capability and its type (the return
+type leads, like a function signature; use `null` for a tool with no meaningful return). The
 binding to a concrete MCP server/endpoint is configuration (`[tools]` in the manifest,
 §16); no endpoint or secret appears in source, exactly as `<-` names no model. An
 undeclared tool call is a `TypeError`.

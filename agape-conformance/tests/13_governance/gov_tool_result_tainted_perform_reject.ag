@@ -5,7 +5,7 @@
 //! spec:      §6b, §13 (a tool result carries the join of its inputs' trust; a cognition-derived input is un-settled → cannot drive a consequential perform without a gate)
 //! ---
 action Alarm(text msg);
-tool fetch(text url) -> text;
+tool text fetch(text url);
 agent Mon grants { use fetch, perform Alarm } {
   on awake {
     event<text> ep = self <- "which endpoint is down?";

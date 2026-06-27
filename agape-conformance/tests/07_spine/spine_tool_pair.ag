@@ -4,7 +4,7 @@
 //! contains:  pair(Tool@search)
 //! spec:      §6b, §7 (a tool call appends a ToolStarted/ToolResolved pair)
 //! ---
-tool search(text q) -> text;
+tool text search(text q);
 agent R grants { use search } {
   text hits = search("agape");
 }

@@ -3,7 +3,7 @@
 //! expect:    accept
 //! spec:      §6b, §13 (an effecting tool called with settled inputs is permitted)
 //! ---
-effecting tool transfer(int amount, text to) -> bool;
+effecting tool bool transfer(int amount, text to);
 agent Bank grants { use transfer } {
   on awake {
     bool ok = transfer(100, "bob");
