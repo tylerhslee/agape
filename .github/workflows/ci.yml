@@ -1,0 +1,99 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [main]
+
+# Cancel superseded runs on the same ref.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── the language: compiler + runtime + the conformance suite ──────────────
+  agape-rs:
+    name: agape-rs (build · test · conformance)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: agape-rs
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            agape-rs/target
+          key: cargo-${{ runner.os }}-${{ hashFiles('agape-rs/Cargo.lock', 'agape-rs/Cargo.toml') }}
+          restore-keys: cargo-${{ runner.os }}-
+
+      - name: Build
+        run: cargo build --all-targets
+
+      - name: Unit tests
+        run: cargo test
+
+      # The conformance binary exits with the number of failing tests, so a
+      # non-zero exit fails the job — this is the gate that the language stays
+      # at full v1.0 conformance.
+      - name: Conformance suite (must be 102/102)
+        run: cargo run --quiet --bin conformance
+
+      # Style is informative, never blocking — CI must not pressure the
+      # implementation into changes (see the CI/CD ground rule).
+      - name: rustfmt (informational)
+        run: cargo fmt --all -- --check
+        continue-on-error: true
+
+      - name: clippy (informational)
+        run: cargo clippy --all-targets -- -W clippy::all
+        continue-on-error: true
+
+  # ── the conformance manifests stay in lockstep with the .ag sources ───────
+  manifests:
+    name: conformance manifests in sync
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - name: Rebuild manifests and check for drift
+        working-directory: agape-conformance
+        run: |
+          python3 build_manifests.py
+          if ! git diff --quiet; then
+            echo "::error::MANIFEST.toml / MANIFEST.md are stale — run build_manifests.py and commit."
+            git --no-pager diff --stat
+            exit 1
+          fi
+
+  # ── the studio frontend builds (Vite) + the agent-server deps install ─────
+  studio:
+    name: studio (web build · server deps)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Build the web app
+        working-directory: studio/web
+        run: |
+          npm install --no-audit --no-fund
+          npm run build
+
+      - name: Install agent-server deps
+        working-directory: studio/agent-server
+        run: npm install --no-audit --no-fund
