@@ -331,7 +331,7 @@ agent Responder {
 // Agent 2 — fact-checks every draft; only verified answers are delivered.
 agent FactChecker grants { perform Reply } {
   when (Draft d) {
-    Credence<bool> sound = self <- "is this answer factually correct and well-supported?";
+    Credence<bool> sound = self <- f"is this answer factually correct and well-supported? answer: {d}";
     endorse (sound by confidence 0.8) {
       true:  perform Reply(d);                  // verified -> deliver to the user
       false: emit Event("rejected: not verified");
