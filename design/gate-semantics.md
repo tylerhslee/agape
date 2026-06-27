@@ -1,199 +1,177 @@
 # Design — the readable gate (`decide`): intent on the surface, rigor in the engine
 
 > Status: **proposal / design note.** Fixes the *model* before any grammar. The aim: a gate a
-> non-programmer can read aloud and be right about, with the full decision theory derived and
+> non-programmer can read aloud and be right about, with the decision theory derived and
 > **enforced** underneath — never authored.
 >
-> Scope/compat: this is a **surface** that *desugars* to the existing v1.0.0 gate engine
-> (`endorse`/`attest`/`c by R`, §13). The engine does not change; "every sugar desugars" (§14)
-> holds. So this is a v1.1.x **additive** surface, not a v2 breaking change — the explicit
-> `endorse (c by R)` form stays for power users. Coordinate with the §13 owner + agape-rs.
+> Scope/compat: a **surface** that *desugars* to the v1.0.0 gate engine (`endorse`/`attest`/
+> `c by R`, §13). The engine does not change ("every sugar desugars", §14); every v1.0.0 gate
+> property stays expressible; v1.0.0 programs stay valid. → **additive v1.1.0**, not a v2 break.
 
 ## 0. The one principle
 
 The gate is where **human intent meets enforced rigor.** The user states *what they want* and
-*what's at stake*; the language guarantees the decision is sound. Everything the user writes
-must be something only they can know (the domain); everything derivable (thresholds, error
-control, calibration, the abstain band) is the engine's job. Today's surface inverts this — it
-makes the user hand-write engine parameters (`confidence 0.9 margin 0.2`) and re-declare
-structure at every call. That is the bug we are fixing.
+*one fact about stakes*; the language guarantees the decision is sound. The user only ever
+writes what only they can know; thresholds, calibration, error control, and the abstain band are
+the engine's job. Today's `confidence 0.9 margin 0.2` inverts this (engine parameters leaked onto
+the surface). That is the bug.
 
-**Not a PPL (reaffirmed).** Agape is a *decision* language, not an *inference* language: the
-provider produces the distribution; the gate collapses it under cost and governance. Becoming a
-PPL would make the surface *less* legible, not more. The probabilistic boundary stays where §12
-draws it (forward fusion + one gate; no conditioning/inference).
+**Not a PPL** (reaffirmed): agape is a *decision* language; the provider does inference, the gate
+collapses under cost + governance. The probabilistic boundary stays at §12 (forward fusion + one
+gate; no conditioning).
 
-## 1. The model: commit / default / defer (+ notify)
+## 1. Two modes — chosen by one keyword
 
-Every gate chooses among three outcomes, separated by *confidence*:
+There is exactly **one** stakes distinction, on the **action**, and it picks the gate's whole
+behavior:
 
-- **commit** — act on a named outcome. Bar is **proportional to the stakes** of what that arm does.
-- **default** — not confident enough to commit a costly arm, but confident the **safe fallback**
-  applies. Runs **autonomously**, recorded. (The `default:` arm.)
-- **defer** — can't even safely default (genuinely contested) **or** not yet calibrated
-  (cold start). A **principal decides** (blocking). Their rulings become calibration labels (the
-  §13 supervised→autonomous bootstrap).
+| on the action | gate mode | behavior |
+|---|---|---|
+| `reversible action X` | **majority** | commit the most-likely outcome; **never defer**. (Cheap to be wrong — act at >50%.) |
+| `action X` (unmarked) | **conformal-bootstrap** | while uncalibrated → **defer to a principal**; as human labels accrue, auto-switch to **autonomous conformal** at α. |
 
-**Notify is orthogonal.** Telling a human is not the same as a human deciding. Notification is a
-plain `emit` on any path (non-blocking); the spine is always there for async review. This is the
-answer to "default AND tell alice" vs "default, alice uninvolved":
+That's the entire asymmetry: a binary keyword, plus one global rigor dial (α, §3). No
+hand-tuned per-level thresholds — the earlier 4-rung ladder is dropped as too arbitrary.
+
+- **`reversible` is an escape hatch:** "don't bother certifying — just pick the likely answer
+  and go." It needs no principal and no calibration. For `bool`, commit `true` iff `P(true) >
+  P(false)`; for an enum, commit the argmax. (Exact tie → the `default:`/first arm.)
+- **Unmarked = fail-closed = rigorous.** A consequential action you *forgot* to annotate gets
+  the cautious path, never the reckless one (§13 "absent a declaration, fail closed"). You write
+  `reversible` to *relax*, never to tighten.
+
+## 2. commit / default / defer (+ notify orthogonal)
+
+The outcomes of any gate, unchanged from the prior note:
+
+- **commit** — act on a named outcome. Admitted by *its own action's* mode (majority if that
+  action is `reversible`; conformal-certified if not).
+- **default** — the safe fallback arm (`default:`). Typically a `reversible`/no-op action, so it
+  is admitted by the easy majority bar — the autonomous "let it go" path.
+- **defer** — only the conformal path defers: while uncalibrated, or when even a calibrated
+  conformal set isn't a singleton (genuinely ambiguous), a **principal decides** (blocking), and
+  the ruling becomes a label. `reversible` gates never defer.
+
+**Notify is orthogonal** (the "tell alice vs alice decides" distinction): notification is a plain
+`emit` on any path (non-blocking). So:
 
 | you want | how |
 |---|---|
-| safe fallback, no human | a `default:` arm |
-| safe fallback **and** inform a human (non-blocking) | a `default:` arm that `emit`s a notification |
-| a human **must decide** the contested case (blocking) | name a principal (the defer target) |
+| safe fallback, no human | a `default:` arm (a reversible/no-op action) |
+| safe fallback **and** inform a human | a `default:` arm that `emit`s a notification |
+| a human **must decide** the contested case | leave the action unmarked → it defers to the named principal |
 
-The **`default:` arm's bar is the line** between *autonomous fallback* and *human defer*: if the
-credence clears the (low) default bar → default autonomously; if it doesn't → defer to the
-principal. With **no** principal named, the defer zone **fails closed** to the default arm (or,
-if none, the gate faults — never silently acts).
+No principal named on an unmarked (deferring) gate → the defer zone **fails closed** to the
+`default:` arm, or faults if there is none. It never silently acts.
 
-## 2. The stakes hierarchy (defined now, configured once)
+## 3. The only number: `conformal α`, set once (IaC-style)
 
-Stakes are declared **once, on the consequence** (the `action`), as an **ordinal level**, never
-as numbers at the gate. The level answers one human question: *how bad is it to do this and be
-wrong?* (≈ how reversible is it).
+The single knob is the conformal error level α, written **once at the top of an `.ag` file**,
+consistent with the infrastructure-as-code spirit:
 
-| level | meaning | cost ratio `c_FA : c_FR` | **commit bar θ** | margin | defer-zone width |
-|---|---|---|---|---|---|
-| `trivial` | cosmetic; wrong costs ~nothing | 1 : 1 | **0.50** | 0.00 | ~none |
-| `reversible` | easily undone | 2 : 1 | **0.67** | 0.05 | small |
-| `costly` | expensive/painful to undo | 6 : 1 | **0.86** | 0.10 | wide |
-| `irreversible` | cannot undo / catastrophic | 30 : 1 | **0.97** | 0.15 | very wide |
-
-- **θ is the Bayes/Elkan threshold** `θ = c_FA / (c_FA + c_FR)` (cost-sensitive learning, Elkan
-  2001), *not* an error rate. Low cost-of-wrong ⇒ low bar ⇒ act readily; high cost ⇒ high bar.
-- **The numbers are defaults**, set in the manifest, so an org tunes its own risk posture once:
-
-  ```toml
-  [stakes]                       # cost ratio c_FA:c_FR per level → θ derived
-  trivial      = 1
-  reversible   = 2
-  costly       = 6
-  irreversible = 30
-  # or set θ directly: reversible = { theta = 0.67, margin = 0.05 }
-  ```
-- **Fail-closed default:** an `action` with **no** level is treated as `irreversible` (the
-  cautious bar). You annotate `reversible`/`trivial` to *relax*; forgetting the annotation can
-  never make a gate reckless (§13 "absent a declaration, fail closed").
-- **Start binary, keep the ladder.** A program may use only `reversible`/`irreversible` at
-  first; the four-rung scale is there so finer postures don't require a redesign.
-
-## 3. Where the bar actually is (the concrete answer)
-
-For a costly/irreversible commit arm with a safe default, the three zones for "P(commit-outcome)":
-
-```
-irreversible Sanction:        reversible Warn:
-  P ≥ 0.97   → commit           P ≥ 0.67   → commit
-  P ≤ 0.50   → default          P ≤ 0.50   → default
-  0.50<P<0.97 → DEFER (human)    0.50<P<0.67 → DEFER (human)
+```agape
+conformal 0.05;          // file-level default error budget for all consequential gates
+                         // typical range 0.01 – 0.05; lower = stricter = more deferral
 ```
 
-So **reversible commits at ~0.67**, and the **defer zone widens with stakes** — an irreversible
-action escalates the whole ambiguous middle (0.50–0.97) to a human; a reversible one escalates
-almost nothing. That is exactly the desired behavior and it is *automatic* from the level.
+- It governs every unmarked (conformal) `decide` in the file. A gate may still override locally
+  with the explicit form (`endorse (c by conformal 0.01)`), and the manifest can set a
+  project-wide default — same precedence chain as v1.0.0 (§16/§17).
+- α is an **error guarantee**, not a hand-picked threshold: "be wrong at most α of the time,"
+  finite-sample, distribution-free, calibrated from the gate's own labeled decisions on the
+  spine (§13). The *operating threshold* is whatever achieves α given the data — the user never
+  sees or sets it.
+- **Cold start** (labels below readiness) → the gate cannot certify α → it **defers** to the
+  principal. Those human rulings are the first labels; once enough accrue, conformal commits
+  autonomously. The "switch to conformal" is this readiness crossing — automatic, recorded.
 
-**Calibration makes θ honest.** A raw model "0.67" is not 67% (LLM logits are overconfident,
-§3). So the engine **calibrates against the spine** (conformal, §13): it maps raw credence to an
-honest probability so the configured θ means what it says. Until enough labeled cases exist, the
-gate cannot certify θ → it **defers to the principal**, whose rulings become the labels. This is
-why naming the principal is part of the construct, not an afterthought.
+So the complete user-facing surface for stakes is: the word `reversible` (per action) and one
+line `conformal 0.05` (per file). Nothing else.
 
-## 4. The derive-and-enforce contract
+## 4. Derive-and-enforce, and the desugaring (v1.0.0 completeness)
 
-Given a `decide` block, the engine derives the rule with **no input from the user beyond the
-arms and the actions' levels**:
+Given a `decide` block, the engine derives everything:
 
-1. For each arm, find the **worst-stakes action** it performs (max over its body); a no-action
-   arm is `trivial`. That sets the arm's **commit bar** (θ, margin) from the §2 table.
-2. The **`default:` arm** gets the `trivial`/low bar — easy to reach.
-3. Calibrate against the spine (conformal) so the bars are honest; below readiness, **defer**.
-4. Enforce: an arm performing an `irreversible` action **cannot fire** unless its (high,
-   calibrated) bar is met — a guarantee, not programmer discipline. This is Neyman–Pearson
-   error-control made structural (the costly direction's error is *controlled*, not hoped).
+1. Each arm's admission bar = its worst action's **mode** (`reversible` → majority; unmarked →
+   conformal at the file α, calibrated from the spine).
+2. Commit iff exactly one outcome is admitted; else (conformal path) **defer** to the principal;
+   `reversible`-only gates always commit the argmax.
+3. **Enforced**, not advised: an unmarked action's arm cannot fire until conformal certifies α —
+   a guarantee, not programmer discipline. Neyman–Pearson-style error control is structural.
 
-**Desugaring (engine unchanged).** `alice decide c { warranted: perform Sanction(...) default:
-clear(...) }` lowers to the §13 engine:
+**Desugaring** (the engine stays v1.0.0; this is pure sugar):
 
 ```
-endorse (c by  <policy derived from Sanction's level, calibrated from the spine>) {
-  warranted: perform Sanction(...);
-  // 'default' arm = the low-bar fallback
-} abstain { /* default arm here if its bar is met */ }
-  by alice { /* the deferred human ruling re-enters the arms */ };
+// reversible arm:
+reversible action Warn(...)     →   that outcome admitted by   c by confidence 0.5
+
+// unmarked (consequential) arm, with file-level `conformal 0.05;` and `principal alice;`:
+action Sanction(...)            →   that outcome admitted by   c by conformal 0.05
+alice decide c { … }            →   endorse (c by <conformal 0.05, readiness from policy>) { arms }
+                                       abstain { default arm }
+                                       by alice { deferred ruling re-enters the arms };
 ```
 
-The user writes intent; the compiler writes the rule. The explicit `endorse (c by R)` remains
-available for the rare case where someone genuinely wants to hand-set R.
+**Every v1.0.0 gate property is accounted for** (so power users lose nothing and it's
+backwards-compatible → v1.1.0):
+
+| v1.0.0 property (§13) | how the `decide` surface reaches it |
+|---|---|
+| `c by confidence θ [margin δ]` | `reversible` → `confidence 0.5`; arbitrary θ/δ → explicit `endorse` (retained) |
+| `c by conformal α` | the unmarked-action default; α from the file/manifest line |
+| `policy { … readiness/floor/fallback }` | the conformal-bootstrap (readiness → defer); explicit `policy` retained |
+| `endorse … { arms } abstain { } by p { }` | `decide`'s arms / `default:` / principal subject |
+| `attest e by p` | the cold-start defer path; explicit `attest` retained for always-human gates |
+| margin floor `m` (consequential_margin) | unchanged; still enforced at the sink (§13) |
+
+Nothing in v1.0.0 is removed or reinterpreted; `decide`/`reversible`/top-level `conformal` are
+additive sugar over the frozen engine. **This is v1.1.0.**
 
 ## 5. Surface candidates (judge by read-aloud)
 
-The test: *could a non-programmer read it and be right about what happens?*
-
 **A — principal-as-subject (recommended):**
 ```agape
+conformal 0.05;
 reversible action Warn(...)
-action Sanction(...)              // unmarked → irreversible → cautious bar
+action Sanction(...)              // unmarked → conformal + bootstrap
 principal alice;
 
 alice decide c {
-  Sanction: perform Sanction(...)   // fires only at ~0.97, calibrated
-  Warn:     perform Warn(...)        // fires at ~0.67
-  default:  clear(...)               // safe fallback, ~0.50; recorded as a no-action decision
+  Sanction: perform Sanction(...)   // conformal-certified; defers to alice until calibrated
+  Warn:     perform Warn(...)        // reversible → majority; just acts
+  default:  clear(...)               // safe fallback
 }
 ```
-*Read:* "Alice decides c: sanction only when we're very sure, warn when it's likely, otherwise
-clear — and while we're still learning, Alice rules the unclear ones." ✅
+*Read:* "Alice decides c: sanction only when we can certify it, warn when it's the likely call,
+otherwise clear — and until we've learned, Alice rules the unclear ones." ✅
 
-**B — trailing defer clause:**
-```agape
-decide c {
-  Sanction: perform Sanction(...)
-  Warn:     perform Warn(...)
-  default:  clear(...)
-} defer to alice
-```
-Reads well; separates the decision from the escalation. Slightly more ceremony.
+**B — trailing defer clause** (when no principal is the subject): `decide c { … } defer to alice`.
 
-**C — arrow/policy style:**
-```agape
-decide c {
-  warranted  -> sanction(...)
-  likely     -> warn(...)
-  otherwise  -> clear(...)
-  unsure     -> alice
-}
-```
-Most "english," but `unsure -> alice` blurs the commit/defer distinction and hides that the
-bands are stakes-derived. Riskiest for correctness-by-reading.
+**C — arrow style** (rejected): `unsure -> alice` blurs that the bands are mode-derived; riskiest
+to read.
 
-**Recommendation:** **A**, with **B**'s `defer to` as the form when no principal is the subject.
-Both desugar identically.
+**Recommendation: A**, `B`'s `defer to` as the alternate form. Both desugar identically.
 
 ## 6. Open questions
 
-- **Level granularity & names.** Is 4 rungs right? Are `trivial/reversible/costly/irreversible`
-  the clearest words? (Alternative: `routine/reversible/serious/critical`.)
-- **Per-arm vs per-action stakes.** Stakes live on the action; an arm performing several actions
-  takes the max. Is "max" always right, or do some arms need an explicit override?
-- **`default:` semantics when absent.** Fail-closed to the safest arm, or fault? Proposed: fault
-  if no principal and no default and nothing commits (never silently act).
-- **Notify form.** Is a plain `emit` enough, or do we want a first-class `notify p` that records
-  a typed "FYI" distinct from a decision?
-- **Calibration scope.** Is calibration per-action-type, per-gate-site, or global? (Affects how
-  fast a gate earns autonomy.)
-- **Cost-ratio vs coverage.** §2 uses the Bayes threshold (cost ratio → θ). Conformal gives a
-  coverage guarantee instead. They can compose (level sets θ; conformal makes it honest), but a
-  per-level *coverage* mode (`irreversible → ≤1% error`) may be wanted too — decide whether a
-  level maps to a cost ratio, a coverage target, or both.
+- **Word for "consequential".** `reversible` marks the cheap case; the cautious default is
+  unmarked. Is an explicit `irreversible`/`consequential` keyword ever wanted (for readability),
+  or is "unmarked = cautious" enough?
+- **`default:` semantics when absent + no principal.** Proposed: fault (never silently act).
+- **Calibration scope.** Per-action-type, per-gate-site, or global? Affects how fast each gate
+  earns autonomy and how the file-level α partitions its labels.
+- **First-class `notify p`** vs a plain `emit` for the non-blocking "FYI".
+- **Exact-tie / no-majority handling for `reversible` enums** (no variant > others): argmax with
+  a deterministic tiebreak, or fall to `default:`?
+- **Mixed-mode blocks.** A block with both reversible and unmarked arms is handled per-outcome
+  (each arm by its own mode). Confirm that's always the intended reading.
 
 ## 7. What to lock before grammar
 
-1. the **commit/default/defer + orthogonal notify** model (§1),
-2. the **stakes ladder + manifest configuration + fail-closed default** (§2),
-3. the **bar = Bayes θ from stakes, calibrated by the spine, defer on cold-start** rule (§3–§4),
-4. the **derive-and-enforce contract + desugaring to §13** (§4).
+1. **Two modes by one keyword** — `reversible` (majority, never defer) vs unmarked
+   (conformal-bootstrap, defer→autonomous) (§1).
+2. **commit/default/defer + orthogonal notify** (§2).
+3. **One knob `conformal α`, file-level (IaC), cold-start defers to principal** (§3).
+4. **Derive-and-enforce + complete desugaring to the v1.0.0 engine → v1.1.0** (§4).
 
 Surface (§5) is chosen last, against the read-aloud test.
