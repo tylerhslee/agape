@@ -211,11 +211,15 @@ async function runProjectFile(rel: string, prompts: Record<string, string>, clau
     if (samples && samples > 0) args.push("--samples", String(samples));
     if (temperature && temperature > 0) args.push("--temperature", String(temperature));
   }
-  const bin = fs.existsSync(AGAPE_BIN) ? AGAPE_BIN : "cargo";
-  const argv = bin === "cargo" ? ["run", "--quiet", "--bin", "agape", "--", ...args] : args;
+  const useCargo = !fs.existsSync(AGAPE_BIN);
+  const bin = useCargo ? "cargo" : AGAPE_BIN;
+  const argv = useCargo ? ["run", "--quiet", "--bin", "agape", "--", ...args] : args;
+  // The binary reads absolute paths, so cwd only needs to exist — AGAPE_RS for the
+  // cargo fallback (dev), else the project dir (a bundle has no agape-rs tree).
+  const cwd = useCargo ? AGAPE_RS : (PROJECT || process.cwd());
   try {
     // Live model runs make several API calls (the sampling fallback), so allow longer.
-    const r = await pExecFile(bin, argv, { cwd: AGAPE_RS, timeout: claude ? 180_000 : 60_000, maxBuffer: 20_000_000 });
+    const r = await pExecFile(bin, argv, { cwd, timeout: claude ? 180_000 : 60_000, maxBuffer: 20_000_000 });
     return JSON.parse(r.stdout);
   } catch (e: any) {
     // A static-rejection exits non-zero but still prints the JSON error envelope.
