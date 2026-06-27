@@ -13,8 +13,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::diag::ErrorClass;
-use crate::interp::is_subtype;
-use crate::process;
+use crate::interp::{is_subtype, HarnessConfig, ProviderMode};
+use crate::process_with_config;
 use crate::spine::Spine;
 
 /// A semantic version as (major, minor), e.g. "1.0" -> (1, 0), "0.3" -> (0, 3).
@@ -52,6 +52,12 @@ pub struct TestSpec {
     pub spine: Option<String>,
     pub contains: Option<String>,
     pub absent: Option<String>,
+    pub order: Option<String>,
+    /// Seam directives (§17.5 test-mode): a scripted/empty/violating provider, a
+    /// denying identity seam, a connector manifest.
+    pub provider: Option<String>,
+    pub attest: Option<String>,
+    pub manifest: Option<String>,
 }
 
 /// Parse one test file's header and body. Returns `None` if it has no usable
@@ -113,6 +119,10 @@ pub fn parse_test(path: &Path) -> Option<TestSpec> {
         spine: get("spine"),
         contains: get("contains"),
         absent: get("absent"),
+        order: get("order"),
+        provider: get("provider"),
+        attest: get("attest"),
+        manifest: get("manifest"),
     })
 }
 
@@ -169,8 +179,47 @@ pub struct Outcome {
     pub status: Status,
 }
 
-/// Score one test against the pipeline. Spine assertions are not matched yet
-/// (M4), so accepted tests pass on non-rejection alone for now.
+/// Translate a test's seam directives (§17.5) into a runtime [`HarnessConfig`].
+fn harness_config(test: &TestSpec) -> HarnessConfig {
+    let mut c = HarnessConfig::default();
+    if let Some(p) = &test.provider {
+        let p = p.trim();
+        if p == "empty" {
+            c.provider = ProviderMode::Empty;
+        } else if p == "schema_violation" {
+            c.provider = ProviderMode::SchemaViolation;
+        } else if let Some(inner) = p.strip_prefix("credence(").and_then(|x| x.strip_suffix(')')) {
+            // `credence(true=0.55, false=0.45)` — a scripted distribution.
+            let dist = inner
+                .split(',')
+                .filter_map(|kv| {
+                    let (k, val) = kv.split_once('=')?;
+                    Some((k.trim().to_string(), val.trim().parse::<f64>().ok()?))
+                })
+                .collect::<Vec<_>>();
+            if !dist.is_empty() {
+                c.credence = Some(dist);
+            }
+        }
+    }
+    if test.attest.as_deref().map(str::trim) == Some("deny") {
+        c.attest_deny = true;
+    }
+    if let Some(m) = &test.manifest {
+        // A `key=value; key=value` connector manifest; only the keys the runtime
+        // honors are read (the rest are connector config, inert in test-mode).
+        for entry in m.split(';') {
+            if let Some((k, val)) = entry.split_once('=') {
+                if k.trim() == "memory.internalize_on_receive" && val.trim() == "true" {
+                    c.internalize_on_receive = true;
+                }
+            }
+        }
+    }
+    c
+}
+
+/// Score one test against the pipeline, under its declared seam configuration.
 pub fn score(test: &TestSpec, v: Version) -> Status {
     if v < test.since {
         return Status::SkippedNewer;
@@ -180,16 +229,17 @@ pub fn score(test: &TestSpec, v: Version) -> Status {
             return Status::SkippedSuperseded;
         }
     }
+    let config = harness_config(test);
     match test.expect {
         Expect::Blocked | Expect::Provisional => Status::Blocked,
-        Expect::Accept => match process(&test.body) {
+        Expect::Accept => match process_with_config(&test.body, &config) {
             Ok(spine) => match check_assertions(test, &spine) {
                 Ok(()) => Status::Pass,
                 Err(msg) => Status::Fail(msg),
             },
             Err(e) => Status::Fail(format!("expected accept, got reject ({})", e.class)),
         },
-        Expect::Reject => match process(&test.body) {
+        Expect::Reject => match process_with_config(&test.body, &config) {
             Ok(_) => Status::Fail("expected reject, but accepted".into()),
             Err(e) => match test.error {
                 Some(want) if want == e.class => Status::Pass,
@@ -320,6 +370,13 @@ fn check_assertions(test: &TestSpec, spine: &Spine) -> Result<(), String> {
         let toks = parse_tokens(s);
         if !matches_ordered(spine, &toks) {
             return Err(format!("spine assertion failed: expected ordered [{s}], got [{}]", spine.dump().replace('\n', ", ")));
+        }
+    }
+    // `order:` — the listed events must appear in this relative order (a subsequence).
+    if let Some(s) = &test.order {
+        let toks = parse_tokens(s);
+        if !matches_ordered(spine, &toks) {
+            return Err(format!("order assertion failed: expected [{s}], got [{}]", spine.dump().replace('\n', ", ")));
         }
     }
     if let Some(s) = &test.contains {

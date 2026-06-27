@@ -25,6 +25,8 @@ pub enum Type {
     Array(Box<Type>),
     /// `Credence<E>` — a graded distribution over enum `E`'s variants (§3).
     Credence(Box<Type>),
+    /// `Decision<E>` — a gate's committed outcome over enum `E` (§3, settled).
+    Decision(Box<Type>),
 }
 
 /// Binary operators. There is no similarity operator in v1.0 (§2).
@@ -67,9 +69,13 @@ impl BinOp {
 /// `rule ::= cmpop Number ("margin" Number)? | expr`.
 #[derive(Debug, Clone, PartialEq)]
 pub enum GateBasis {
-    /// `> 0.8` / `> 0.8 margin 0.1` — a threshold/margin `Rule` written as sugar.
+    /// `> 0.8` / `> 0.8 margin 0.1` / `confidence 0.8 margin 0.1` — a
+    /// threshold/margin `Rule` written as sugar.
     Threshold { op: BinOp, value: f64, margin: f64 },
-    /// A `Rule` value, or (for `verify … by p`) a `Principal`.
+    /// `conformal α` — the conformal basis; calibrates from the spine, abstains
+    /// below its readiness floor (§13).
+    Conformal { alpha: f64 },
+    /// A named `policy`, a `Rule` value, or (for `verify`/`attest … by p`) a `Principal`.
     Value(Box<Expr>),
 }
 
@@ -107,6 +113,12 @@ pub enum Expr {
     Pipe { source: Box<Expr>, func: Box<Expr> },
     /// `decide(e, rule)` — the somatic gate-collapse `P → U` (§13). Rule mandatory.
     Decide { expr: Box<Expr>, rule: GateBasis },
+    /// `e by rule` — collapse a `Credence<E>` to a `Decision<E>` (§13): settled,
+    /// off-spine, in hand, *unendorsed* (not recorded). Rule mandatory.
+    Collapse { expr: Box<Expr>, rule: GateBasis },
+    /// `endorse(e by rule)` — the recorded gate in expression position (§13):
+    /// collapse + record, yielding an *endorsed* `Decision<E>`.
+    EndorseExpr { arg: Box<Expr>, rule: GateBasis },
     /// `verify gatearg [by basis]` — the recorded gate (§13): `decide` + emit.
     /// `by` absent ⇒ default `Rule`; `by` a `Principal` ⇒ identity-seam attest.
     Verify { arg: Box<Expr>, by: Option<GateBasis> },
@@ -224,8 +236,8 @@ pub enum Stmt {
     Principal(String),
     /// `extend PARENT(args);` — composition/inheritance (first stmt of an agent).
     Extend { parent: String, args: Vec<Expr> },
-    /// `spawn TYPE name;` — allocate only (args bound at awake).
-    Spawn { agent_type: String, name: String },
+    /// `spawn TYPE name (args)?;` — allocate + construct (args bound here, §5).
+    Spawn { agent_type: String, name: String, args: Vec<Expr> },
     /// `awake NAME [(args)];`
     Awake { name: String, args: Vec<Expr> },
     /// `sleep NAME;`
@@ -241,6 +253,24 @@ pub enum Stmt {
     Endorse { arg: Expr, rule: GateBasis, arms: Vec<(String, Vec<Stmt>)>, abstain: Option<Vec<Stmt>> },
     /// `perform ActionType(payload);` — a consequential act (§13).
     Perform { action_type: String, payload: Expr },
+    /// `attest e by PRINCIPAL (arms | ;)` — the recorded identity-seam gate (§13):
+    /// reach the principal, record an `Attestation`/`FailedAttestation`. `by` is an
+    /// expression so `by "alice"` parses (the checker rejects text→Principal, §3).
+    Attest { arg: Expr, by: Expr, arms: Vec<(String, Vec<Stmt>)> },
+    /// `policy NAME { threshold θ  margin δ  floor m  conformal α  readiness N  fallback p }`
+    /// — a named decision-policy bundle (§13), source-level, not config.
+    PolicyDecl {
+        name: String,
+        threshold: Option<f64>,
+        margin: Option<f64>,
+        floor: Option<f64>,
+        conformal: Option<f64>,
+        readiness: Option<i64>,
+        fallback: Option<String>,
+    },
+    /// `{ ... }` — a bare lexical block (the body of a `{ block } retry(N)`, or a
+    /// nested scope). Carries no looping by itself; `retry` wraps it.
+    Block(Vec<Stmt>),
     /// `say(EXPR);`
     Say(Expr),
     /// `return [EXPR];`
@@ -249,10 +279,11 @@ pub enum Stmt {
     If { cond: Expr, then_body: Vec<Stmt>, else_body: Vec<Stmt> },
     /// `TARGET = EXPR;`
     Assign { target: Expr, expr: Expr },
-    /// `on awake { ... }` / `on sleep { ... }`
+    /// `on awake { ... }` / `on sleep { ... }` / `on crash { ... }`
     On { event: String, body: Vec<Stmt> },
-    /// `when [EventType](SUBJECT) { ... }`
-    When { event_type: Option<String>, subject: Expr, body: Vec<Stmt> },
+    /// `when (Type binder? [about subj]) [if (guard)] { ... }` — a prospective,
+    /// typed subscription (§7). `binder` evaluates to the matched event's payload.
+    When { ty: Type, binder: Option<String>, about: Option<Expr>, guard: Option<Expr>, body: Vec<Stmt> },
     /// `catch [EventType][(SUBJECT)] as BINDING { ... }`
     Catch { event_type: Option<String>, subject: Option<Expr>, binding: String, body: Vec<Stmt> },
     /// `case (EXPR) as BINDING { Variant: {..} ... [default: {..}] }`.

@@ -27,8 +27,10 @@ use std::collections::{HashMap, HashSet};
 use crate::ast::*;
 use crate::diag::{AgapeError, ErrorClass};
 
-/// The three-level taint lattice (§15.3.1): `U ⊑ P ⊑ T`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// The three-level taint lattice (§15.3.1): `U ⊑ P ⊑ T`. Declaration order is the
+/// lattice order, so `max` is the join `⊔` (a value is as un-settled as its least
+/// trusted input).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Taint {
     U,
     P,
@@ -51,6 +53,7 @@ struct AgentInfo {
     has_grants: bool,
     unconstrained: bool,
     parent: Option<String>,
+    params: Vec<Param>,
     body: Vec<Stmt>,
 }
 
@@ -67,6 +70,9 @@ struct FnInfo {
 struct Scope {
     env: HashMap<String, VarInfo>,
     deps: Vec<(Dep, Vec<String>)>,
+    /// Set inside a `case` whose scrutinee is a bare `c by R` collapse: an
+    /// unendorsed, cognition-derived branch may not license a `perform` (§13).
+    consequential_blocked: bool,
 }
 
 impl Scope {
@@ -83,6 +89,7 @@ pub struct Checker {
     enums: HashMap<String, Vec<String>>,
     events: HashSet<String>,
     tools: HashMap<String, Option<Type>>, // name -> return type
+    tool_effects: HashMap<String, ToolEffect>, // name -> read/write (§6b)
     agents: HashMap<String, AgentInfo>,
     fns: HashMap<String, FnInfo>,
     principals: HashSet<String>, // top-level principals
@@ -108,8 +115,12 @@ pub fn check(stmts: &[Stmt]) -> Result<(), AgapeError> {
     for name in agent_names {
         let info = c.agents[&name].clone();
         let mut ascope = Scope::default();
-        // Principal-typed and agent fields would be bound here; the body walk adds
-        // them as it goes. Inherited members are checked when the parent is walked.
+        // Seed the agent's constructor parameters (a `reach`/`use`/`perform` over a
+        // param — e.g. an injected agent handle — is checked against this binding).
+        for p in &info.params {
+            let taint = c.param_taint(&p.ty);
+            ascope.env.insert(p.name.clone(), VarInfo { ty: p.ty.clone(), taint, authorized: false });
+        }
         c.walk_block(&info.body, &mut ascope, Some(&name))?;
     }
     Ok(())
@@ -122,6 +133,7 @@ impl Checker {
             enums: HashMap::new(),
             events: HashSet::new(),
             tools: HashMap::new(),
+            tool_effects: HashMap::new(),
             agents: HashMap::new(),
             fns: HashMap::new(),
             principals: HashSet::new(),
@@ -144,8 +156,9 @@ impl Checker {
                 Stmt::EventDecl { name, .. } => {
                     self.events.insert(name.clone());
                 }
-                Stmt::ToolDecl { name, ret, .. } => {
+                Stmt::ToolDecl { name, ret, effect, .. } => {
                     self.tools.insert(name.clone(), ret.clone());
+                    self.tool_effects.insert(name.clone(), *effect);
                 }
                 Stmt::Authority(name) => {
                     self.authority.insert(name.clone());
@@ -159,7 +172,7 @@ impl Checker {
                         FnInfo { is_sync: *is_sync, params: params.clone(), body: body.clone() },
                     );
                 }
-                Stmt::AgentDecl { name, grants, has_grants, unconstrained, body, .. } => {
+                Stmt::AgentDecl { name, params, grants, has_grants, unconstrained, body, .. } => {
                     let parent = body.iter().find_map(|b| match b {
                         Stmt::Extend { parent, .. } => Some(parent.clone()),
                         _ => None,
@@ -171,6 +184,7 @@ impl Checker {
                             has_grants: *has_grants,
                             unconstrained: *unconstrained,
                             parent,
+                            params: params.clone(),
                             body: body.clone(),
                         },
                     );
@@ -241,11 +255,20 @@ impl Checker {
             Stmt::VarDecl { expr: Some(x), .. } => e(x),
             Stmt::Assign { target, expr } => e(target) || e(expr),
             Stmt::Verify { arg, by } => e(arg) || self.gate_is_identity_seam(by, pr),
+            // `attest e by p` always reaches the identity dependency → async (§13).
+            Stmt::Attest { .. } => true,
             Stmt::Emit { payload, .. } => e(payload),
+            Stmt::Perform { payload, .. } => e(payload),
+            Stmt::Endorse { arg, arms, abstain, .. } => {
+                e(arg) || arms.iter().any(|(_, body)| b(body)) || abstain.as_deref().is_some_and(b)
+            }
             Stmt::Say(x) | Stmt::Return(Some(x)) | Stmt::ExprStmt(x) => e(x),
             Stmt::If { cond, then_body, else_body } => e(cond) || b(then_body) || b(else_body),
             Stmt::While { cond, body } => e(cond) || b(body),
-            Stmt::On { body, .. } | Stmt::When { body, .. } | Stmt::Catch { body, .. } => b(body),
+            Stmt::On { body, .. } | Stmt::Catch { body, .. } | Stmt::Block(body) => b(body),
+            Stmt::When { about, guard, body, .. } => {
+                about.as_ref().is_some_and(e) || guard.as_ref().is_some_and(e) || b(body)
+            }
             Stmt::Case { expr, arms, default, .. } => {
                 e(expr) || arms.iter().any(|(_, body)| b(body)) || default.as_deref().is_some_and(b)
             }
@@ -267,6 +290,10 @@ impl Checker {
             }
             Expr::Verify { arg, by } => r(arg) || self.gate_is_identity_seam(by, pr),
             Expr::Decide { expr, rule } => r(expr) || self.rule_reaches_seam(rule, pr),
+            // `c by R` / `endorse(c by R)` are in-hand projections: sync unless the
+            // operand itself reaches a seam (§13, §4).
+            Expr::Collapse { expr, rule } => r(expr) || self.rule_reaches_seam(rule, pr),
+            Expr::EndorseExpr { arg, rule } => r(arg) || self.rule_reaches_seam(rule, pr),
             Expr::Quorum { judges, .. } => judges.iter().any(r),
             Expr::Pipe { source, func } => r(source) || r(func),
             Expr::Binary { left, right, .. } => r(left) || r(right),
@@ -341,6 +368,16 @@ impl Checker {
             Stmt::VarDecl { ty, name, expr } => {
                 if let Some(init) = expr {
                     self.walk_expr(init, scope, agent)?;
+                    // A `Credence<E>` is produced ONLY by a provider judgment (a send,
+                    // a fusion/quorum) — never constructed from a settled scalar (§3, §8).
+                    if matches!(ty, Type::Credence(_))
+                        && matches!(self.expr_type(init, scope), Type::Bool | Type::Int | Type::Float | Type::Text | Type::Null)
+                    {
+                        return Err(AgapeError::new(
+                            ErrorClass::Type,
+                            "a `Credence<E>` is produced only by a provider judgment (a `<-` send, `quorum`/`all`/`any`); it cannot be constructed from a settled value",
+                        ));
+                    }
                     let (taint, authorized) = self.value_taint(Some(ty), init, scope);
                     scope.env.insert(name.clone(), VarInfo { ty: ty.clone(), taint, authorized });
                 } else {
@@ -359,22 +396,38 @@ impl Checker {
                 self.walk_expr(arg, scope, agent)?;
                 self.check_gate_by(by)?;
             }
-            // v1.0 gate/action (slice): walk subexpressions and arm bodies. Full
-            // authority + settled-input checks are a follow-up.
-            Stmt::ActionDecl { .. } => {}
-            Stmt::Perform { payload, .. } => {
+            Stmt::ActionDecl { .. } | Stmt::PolicyDecl { .. } => {}
+            Stmt::Perform { action_type, payload } => {
                 self.walk_expr(payload, scope, agent)?;
+                self.check_perform(action_type, payload, scope, agent)?;
             }
+            // `endorse` records the gate — its arms are the licensed (endorsed)
+            // context where a `perform` may run; clear any inherited block.
             Stmt::Endorse { arg, arms, abstain, .. } => {
                 self.walk_expr(arg, scope, agent)?;
                 for (_, body) in arms {
                     let mut s = scope.child();
+                    s.consequential_blocked = false;
                     self.walk_block(body, &mut s, agent)?;
                 }
                 if let Some(b) = abstain {
                     let mut s = scope.child();
+                    s.consequential_blocked = false;
                     self.walk_block(b, &mut s, agent)?;
                 }
+            }
+            Stmt::Attest { arg, by, arms } => {
+                self.walk_expr(arg, scope, agent)?;
+                self.check_attest_by(by)?;
+                for (_, body) in arms {
+                    let mut s = scope.child();
+                    s.consequential_blocked = false;
+                    self.walk_block(body, &mut s, agent)?;
+                }
+            }
+            Stmt::Block(body) => {
+                let mut s = scope.child();
+                self.walk_block(body, &mut s, agent)?;
             }
             Stmt::Say(x) | Stmt::Return(Some(x)) | Stmt::ExprStmt(x) => self.walk_expr(x, scope, agent)?,
             Stmt::If { cond, then_body, else_body } => {
@@ -394,9 +447,19 @@ impl Checker {
                 let mut s1 = scope.child();
                 self.walk_block(body, &mut s1, agent)?;
             }
-            Stmt::When { subject, body, .. } => {
-                self.walk_expr(subject, scope, agent)?;
+            Stmt::When { ty, binder, about, guard, body } => {
+                if let Some(a) = about {
+                    self.walk_expr(a, scope, agent)?;
+                }
                 let mut s1 = scope.child();
+                // The bound event evaluates to its payload; a spine event (incl. an
+                // external `Prompt`, settled by origin §5b) is a settled fact.
+                if let Some(b) = binder {
+                    s1.env.insert(b.clone(), VarInfo { ty: ty.clone(), taint: Taint::U, authorized: false });
+                }
+                if let Some(g) = guard {
+                    self.walk_expr(g, &mut s1, agent)?;
+                }
                 self.walk_block(body, &mut s1, agent)?;
             }
             Stmt::Catch { binding, body, .. } => {
@@ -406,14 +469,27 @@ impl Checker {
             }
             Stmt::Case { expr, binding, arms, default } => {
                 self.walk_expr(expr, scope, agent)?;
+                // A `case` consumes a Decision, never a bare `Credence` — gate it first.
+                if matches!(self.expr_type(expr, scope), Type::Credence(_)) {
+                    return Err(AgapeError::new(
+                        ErrorClass::Type,
+                        "a `case` scrutinee must be a gated `Decision`, not a bare `Credence` — collapse it first (`case (c by R)`)",
+                    ));
+                }
                 self.check_exhaustive(expr, arms, default, scope)?;
+                // A case over a *bare* collapse (`c by R`, unendorsed) may dispatch but
+                // not license a `perform` in its arms (§13): mark the branch blocked.
+                let blocked = matches!(expr, Expr::Collapse { .. });
+                let variant_ty = self.case_variant_type(expr, scope);
                 for (_, body) in arms {
                     let mut s1 = scope.child();
-                    s1.env.insert(binding.clone(), VarInfo { ty: Type::Named("?".into()), taint: Taint::P, authorized: false });
+                    s1.consequential_blocked = blocked;
+                    s1.env.insert(binding.clone(), VarInfo { ty: variant_ty.clone(), taint: Taint::U, authorized: false });
                     self.walk_block(body, &mut s1, agent)?;
                 }
                 if let Some(d) = default {
                     let mut s1 = scope.child();
+                    s1.consequential_blocked = blocked;
                     self.walk_block(d, &mut s1, agent)?;
                 }
             }
@@ -432,7 +508,10 @@ impl Checker {
             Stmt::DepDecl { kind, names } => {
                 scope.deps.push((*kind, names.clone()));
             }
-            Stmt::Spawn { name, agent_type } => {
+            Stmt::Spawn { name, agent_type, args } => {
+                for a in args {
+                    self.walk_expr(a, scope, agent)?;
+                }
                 scope.env.insert(name.clone(), VarInfo { ty: Type::Named(agent_type.clone()), taint: Taint::U, authorized: false });
             }
             Stmt::Prompt { ty, name } => {
@@ -460,6 +539,7 @@ impl Checker {
                 self.check_gate_by(by)?;
             }
             Expr::Decide { expr, .. } => self.walk_expr(expr, scope, agent)?,
+            Expr::Collapse { expr, .. } | Expr::EndorseExpr { arg: expr, .. } => self.walk_expr(expr, scope, agent)?,
             Expr::Quorum { judges, .. } => {
                 for j in judges {
                     self.walk_expr(j, scope, agent)?;
@@ -476,6 +556,23 @@ impl Checker {
                     if self.tools.contains_key(n) {
                         self.check_use(n, agent)?;
                     }
+                    // A `write` tool is a consequential sink: every input must be settled
+                    // (§6b, §13, W-Consequential-static). A cognition-derived arg rejects.
+                    if matches!(self.tool_effects.get(n), Some(ToolEffect::Write)) {
+                        for a in args {
+                            let (taint, _) = self.value_taint(None, a, scope);
+                            if taint != Taint::U {
+                                return Err(AgapeError::new(
+                                    ErrorClass::Taint,
+                                    format!("write tool `{n}` is a consequential sink; its input is un-settled (taint {taint:?}) — gate cognition-derived values before a write"),
+                                ));
+                            }
+                        }
+                    }
+                    // A bare-name call must resolve to a declared callable — a tool, a
+                    // user function, or a builtin. Tools/events are not self-declaring,
+                    // so an unknown callable (e.g. `search`, `sample`) is a TypeError (§6b, §8).
+                    self.check_callable(n, scope)?;
                 }
                 self.walk_expr(func, scope, agent)?;
                 for a in args {
@@ -531,22 +628,15 @@ impl Checker {
     /// `emit E(payload)`: the event must be declared (Type); in an agent, a
     /// non-built-in event needs an `emit` grant (Authority); a consequential
     /// (`authority`) event consumes only a `U`-and-authorized value (Taint).
-    fn check_emit(&self, event: &str, payload: &Expr, scope: &Scope, agent: Option<&str>) -> Result<(), AgapeError> {
+    fn check_emit(&self, event: &str, payload: &Expr, scope: &Scope, _agent: Option<&str>) -> Result<(), AgapeError> {
         if !self.events.contains(event) {
             return Err(AgapeError::new(
                 ErrorClass::Type,
                 format!("`emit {event}` names an undeclared event type (events are not self-declaring; declare `event {event}(...)`)"),
             ));
         }
-        let builtin = event == "Event" || event == "Error";
-        if let Some(a) = agent {
-            if !builtin && !self.agent_allows(a, CapKind::Emit, event) {
-                return Err(AgapeError::new(
-                    ErrorClass::Authority,
-                    format!("agent `{a}` may not `emit {event}` — it holds no such grant (default-deny; add `grants {{ emit {event} }}`)"),
-                ));
-            }
-        }
+        // A plain `emit` needs no power (§13, W-Auth): only `perform`/`reach`/`use`
+        // are gated. A consequential act is a `perform` of an `action`, not an emit.
         if self.authority.contains(event) {
             let (taint, authorized) = self.value_taint(None, payload, scope);
             if !(taint == Taint::U && authorized) {
@@ -590,6 +680,80 @@ impl Checker {
             ));
         }
         Ok(())
+    }
+
+    /// `perform A(e)` (§13): default-deny `perform` grant (Authority); a settled
+    /// payload (Taint, W-Consequential-static); and a *recorded* licensing gate —
+    /// a `perform` inside a bare-collapse `case` branch is unendorsed (Taint).
+    fn check_perform(&self, action: &str, payload: &Expr, scope: &Scope, agent: Option<&str>) -> Result<(), AgapeError> {
+        if let Some(a) = agent {
+            if !self.agent_allows(a, CapKind::Perform, action) {
+                return Err(AgapeError::new(
+                    ErrorClass::Authority,
+                    format!("agent `{a}` may not `perform {action}` — default-deny; add `grants {{ perform {action} }}`"),
+                ));
+            }
+        }
+        let (taint, _) = self.value_taint(None, payload, scope);
+        if taint != Taint::U {
+            return Err(AgapeError::new(
+                ErrorClass::Taint,
+                format!("consequential `perform {action}` consumes an un-settled (cognition-derived) value (taint {taint:?}) — gate it first; a raw `<-`/tool/queried value may not drive a perform"),
+            ));
+        }
+        if scope.consequential_blocked {
+            return Err(AgapeError::new(
+                ErrorClass::Taint,
+                format!("`perform {action}` is licensed by a bare `c by R` collapse (settled but unendorsed/off-spine) — only a recorded gate (`endorse`/`attest`) may license a consequential action (§13)"),
+            ));
+        }
+        Ok(())
+    }
+
+    /// `attest e by p` (§13): `p` must be a declared `Principal`, never text — there
+    /// is no `text → Principal` coercion (a name is a forgeable claim).
+    fn check_attest_by(&self, by: &Expr) -> Result<(), AgapeError> {
+        if matches!(by, Expr::Str(_) | Expr::FStr(_)) {
+            return Err(AgapeError::new(
+                ErrorClass::Type,
+                "an `attest … by` principal must be a declared `Principal`, not text — there is no `text → Principal` coercion",
+            ));
+        }
+        Ok(())
+    }
+
+    /// A bare-name call must resolve to a declared callable: a tool, a user `fn`, a
+    /// builtin, or a bound local. An unknown callable is a `TypeError` (§6b, §8).
+    fn check_callable(&self, name: &str, scope: &Scope) -> Result<(), AgapeError> {
+        const BUILTINS: &[&str] = &["say", "len", "all", "any", "store", "embed"];
+        if self.fns.contains_key(name)
+            || self.tools.contains_key(name)
+            || BUILTINS.contains(&name)
+            || scope.lookup(name).is_some()
+        {
+            return Ok(());
+        }
+        Err(AgapeError::new(
+            ErrorClass::Type,
+            format!("call to undeclared `{name}` — tools and functions are not self-declaring (declare a `tool`/`fn`, or use a builtin)"),
+        ))
+    }
+
+    /// The taint a constructor/function parameter carries: a `Credence` is graded;
+    /// everything else is a settled input.
+    fn param_taint(&self, ty: &Type) -> Taint {
+        match ty {
+            Type::Credence(_) => Taint::P,
+            _ => Taint::U,
+        }
+    }
+
+    /// The variant type a `case` binding takes (the enum behind a Decision/Credence).
+    fn case_variant_type(&self, scrutinee: &Expr, scope: &Scope) -> Type {
+        match self.enum_of(&self.expr_type(scrutinee, scope)) {
+            Some(en) => Type::Named(en),
+            None => Type::Named("?".into()),
+        }
     }
 
     fn agent_allows(&self, agent: &str, kind: CapKind, target: &str) -> bool {
@@ -716,6 +880,8 @@ impl Checker {
     fn value_taint(&self, decl_ty: Option<&Type>, e: &Expr, scope: &Scope) -> (Taint, bool) {
         match e {
             Expr::Decide { .. } => (Taint::U, false), // untaints, but NOT recorded → unauthorized
+            Expr::Collapse { .. } => (Taint::U, false), // settled but off-spine/unendorsed
+            Expr::EndorseExpr { .. } => (Taint::U, true), // a recorded gate authorizes
             Expr::Verify { .. } => (Taint::U, true),  // a recorded gate authorizes
             Expr::Send { .. } => {
                 if matches!(decl_ty, Some(Type::Credence(_))) {
@@ -729,18 +895,57 @@ impl Checker {
                 Query::Match { .. } => (Taint::U, false), // a gate, but off-spine → unauthorized
                 _ => (Taint::P, false),                   // a queried fact defaults to P (§10)
             },
-            Expr::Call { func, .. } => {
+            Expr::Call { func, args } => {
                 if matches!(&**func, Expr::Name(n) if self.tools.contains_key(n)) {
-                    (Taint::T, false) // a tool result is raw/untrusted
+                    // A tool result carries the JOIN of its inputs' trust (§6b, T-Tool-Read):
+                    // settled inputs → a settled result (external data settled by origin).
+                    let join = args.iter().fold(Taint::U, |acc, a| acc.max(self.value_taint(None, a, scope).0));
+                    (join, false)
                 } else {
                     (Taint::U, false) // pure/somatic call (interprocedural taint: §15.7 open)
                 }
             }
+            Expr::FStr(raw) => (self.fstring_taint(raw, scope), false),
             Expr::Name(n) => scope.lookup(n).map(|v| (v.taint, v.authorized)).unwrap_or((Taint::U, false)),
             Expr::Member { obj, .. } => self.value_taint(None, obj, scope),
             Expr::Index { obj, .. } => self.value_taint(None, obj, scope),
             _ => (Taint::U, false),
         }
+    }
+
+    /// The taint an f-string carries: the join of its interpolated `{expr}` holes —
+    /// a template embedding a cognition-derived value is as un-settled as that value.
+    fn fstring_taint(&self, raw: &str, scope: &Scope) -> Taint {
+        let mut taint = Taint::U;
+        let chars: Vec<char> = raw.chars().collect();
+        let mut i = 0;
+        while i < chars.len() {
+            if chars[i] == '{' {
+                let mut depth = 1;
+                let mut inner = String::new();
+                i += 1;
+                while i < chars.len() && depth > 0 {
+                    match chars[i] {
+                        '{' => depth += 1,
+                        '}' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                break;
+                            }
+                        }
+                        c => inner.push(c),
+                    }
+                    i += 1;
+                }
+                if let Ok(toks) = crate::lexer::lex(&inner) {
+                    if let Ok(e) = crate::parser::parse_expr(toks) {
+                        taint = taint.max(self.value_taint(None, &e, scope).0);
+                    }
+                }
+            }
+            i += 1;
+        }
+        taint
     }
 
     fn expr_type(&self, e: &Expr, scope: &Scope) -> Type {
@@ -754,6 +959,11 @@ impl Checker {
             Expr::Decide { expr, .. } => match self.expr_type(expr, scope) {
                 Type::Credence(inner) => *inner,
                 _ => Type::Named("?".into()),
+            },
+            // `c by R` / `endorse(c by R)` collapse a `Credence<E>` to a Decision over E.
+            Expr::Collapse { expr, .. } | Expr::EndorseExpr { arg: expr, .. } => match self.expr_type(expr, scope) {
+                Type::Credence(inner) => *inner,
+                other => other,
             },
             Expr::Quorum { .. } => Type::Credence(Box::new(Type::Bool)),
             Expr::Binary { op, .. } => {
@@ -802,7 +1012,19 @@ fn calls_in_stmt(s: &Stmt, out: &mut Vec<String>) {
             e(expr, out);
         }
         Stmt::Verify { arg, .. } => e(arg, out),
-        Stmt::Emit { payload, .. } => e(payload, out),
+        Stmt::Emit { payload, .. } | Stmt::Perform { payload, .. } => e(payload, out),
+        Stmt::Attest { arg, arms, .. } => {
+            e(arg, out);
+            arms.iter().for_each(|(_, b)| b.iter().for_each(|s| calls_in_stmt(s, out)));
+        }
+        Stmt::Endorse { arg, arms, abstain, .. } => {
+            e(arg, out);
+            arms.iter().for_each(|(_, b)| b.iter().for_each(|s| calls_in_stmt(s, out)));
+            if let Some(d) = abstain {
+                d.iter().for_each(|s| calls_in_stmt(s, out));
+            }
+        }
+        Stmt::Block(body) => body.iter().for_each(|s| calls_in_stmt(s, out)),
         Stmt::Say(x) | Stmt::Return(Some(x)) | Stmt::ExprStmt(x) => e(x, out),
         Stmt::If { cond, then_body, else_body } => {
             e(cond, out);
@@ -849,6 +1071,7 @@ fn calls_in_expr(x: &Expr, out: &mut Vec<String>) {
         }
         Expr::Verify { arg, .. } => calls_in_expr(arg, out),
         Expr::Decide { expr, .. } => calls_in_expr(expr, out),
+        Expr::Collapse { expr, .. } | Expr::EndorseExpr { arg: expr, .. } => calls_in_expr(expr, out),
         Expr::Quorum { judges, .. } => judges.iter().for_each(|j| calls_in_expr(j, out)),
         Expr::Pipe { source, func } => {
             calls_in_expr(source, out);
@@ -911,14 +1134,14 @@ mod tests {
 
     #[test]
     fn exhaustiveness() {
-        ok("enum T { A, B } agent C { on awake { Credence<T> k = self <- \"q\"; case (k) as v { A: { say(\"a\"); } B: { say(\"b\"); } } } } spawn C c; awake c;");
-        rej("enum T { A, B } agent C { on awake { Credence<T> k = self <- \"q\"; case (k) as v { A: { say(\"a\"); } } } } spawn C c; awake c;", ErrorClass::Exhaustiveness);
+        ok("enum T { A, B } agent C { on awake { Credence<T> k = self <- \"q\"; case (k by confidence 0.8) as v { A: { say(\"a\"); } B: { say(\"b\"); } } } } spawn C c; awake c;");
+        rej("enum T { A, B } agent C { on awake { Credence<T> k = self <- \"q\"; case (k by confidence 0.8) as v { A: { say(\"a\"); } } } } spawn C c; awake c;", ErrorClass::Exhaustiveness);
     }
 
     #[test]
     fn fusion() {
-        ok("agent T { on awake { Credence<bool> a = self <- \"1\"; Credence<bool> b = self <- \"2\"; independent a, b; Credence<bool> g = quorum(2 of a, b); } } spawn T t; awake t;");
-        rej("agent T { on awake { Credence<bool> a = self <- \"1\"; Credence<bool> b = self <- \"2\"; Credence<bool> g = quorum(2 of a, b); } } spawn T t; awake t;", ErrorClass::Type);
+        ok("agent T { on awake { Credence<bool> a = self <- \"1\"; Credence<bool> b = self <- \"2\"; independent a, b; Credence<bool> g = quorum(2, [a, b]); } } spawn T t; awake t;");
+        rej("agent T { on awake { Credence<bool> a = self <- \"1\"; Credence<bool> b = self <- \"2\"; Credence<bool> g = quorum(2, [a, b]); } } spawn T t; awake t;", ErrorClass::Type);
     }
 
     #[test]

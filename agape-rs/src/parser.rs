@@ -194,8 +194,11 @@ impl Parser {
             self.advance();
             let agent_type = self.eat_ident()?;
             let name = self.eat_ident()?;
+            // Constructor args may be bound here (`spawn TYPE name(args)`) or deferred
+            // to `awake name(args)`; both forms are accepted (§5, §15.2).
+            let args = if self.check_op("(") { self.parse_args()? } else { Vec::new() };
             self.eat_op(";")?;
-            return Ok(Stmt::Spawn { agent_type, name });
+            return Ok(Stmt::Spawn { agent_type, name, args });
         }
         if t.is_kw("awake") {
             self.advance();
@@ -243,6 +246,12 @@ impl Parser {
         }
         if t.is_kw("endorse") {
             return self.endorse_stmt();
+        }
+        if t.is_kw("attest") {
+            return self.attest_stmt();
+        }
+        if t.is_kw("policy") {
+            return self.policy_decl();
         }
         if t.is_kw("return") {
             self.advance();
@@ -304,6 +313,20 @@ impl Parser {
             return Ok(Stmt::DepDecl { kind, names });
         }
 
+        // A bare lexical block `{ ... }`, optionally a bounded loop `{ ... } retry(N)`
+        // — the only loop in v1.0 (§11, §15.2).
+        if self.check_op("{") {
+            let body = self.block()?;
+            if self.check_kw("retry") {
+                self.advance();
+                self.eat_op("(")?;
+                let count = self.parse_int()?;
+                self.eat_op(")")?;
+                return Ok(Stmt::Retry(RetryTail::Bounded { count, body }));
+            }
+            return Ok(Stmt::Block(body));
+        }
+
         // A type-led declaration (var or fn).
         if self.starts_type_decl() {
             return self.decl();
@@ -333,8 +356,8 @@ impl Parser {
         if t.kind == TokenKind::Keyword && TYPE_KEYWORDS.contains(&t.value.as_str()) {
             return true;
         }
-        // `Credence<…>` (a prelude type spelled as an identifier).
-        if t.is_ident("Credence") && self.peek(1).is_op("<") {
+        // `Credence<…>` / `Decision<…>` (prelude types spelled as identifiers).
+        if (t.is_ident("Credence") || t.is_ident("Decision")) && self.peek(1).is_op("<") {
             return true;
         }
         // `NamedType name …` — a user/prelude nominal type followed by a binder.
@@ -422,14 +445,78 @@ impl Parser {
     fn endorse_stmt(&mut self) -> PResult<Stmt> {
         self.eat_kw("endorse")?;
         self.eat_op("(")?;
-        let arg = self.expr()?;
-        self.eat_ctx("by")?;
-        let rule = self.endorse_rule()?;
+        let (arg, rule) = self.collapse_inner()?;
         self.eat_op(")")?;
+        let arms = self.gate_arms()?;
+        let abstain = if self.check_kw("abstain") {
+            self.advance();
+            Some(self.block()?)
+        } else {
+            None
+        };
+        Ok(Stmt::Endorse { arg, rule, arms, abstain })
+    }
+
+    /// `attest e by p (arms | ;)` — the recorded identity-seam gate (§13). The
+    /// `by` target is parsed as an expression so `by "alice"` is a checker
+    /// `TypeError` (no text→Principal), not a `ParseError`.
+    fn attest_stmt(&mut self) -> PResult<Stmt> {
+        self.eat_kw("attest")?;
+        let arg = self.send()?;
+        self.eat_ctx("by")?;
+        let by = self.compare()?;
+        let arms = if self.check_op("{") { self.gate_arms()? } else {
+            self.eat_op(";")?;
+            Vec::new()
+        };
+        Ok(Stmt::Attest { arg, by, arms })
+    }
+
+    /// `policy NAME { directive* }` — a named decision-policy bundle (§13). Each
+    /// directive is `keyword operand` (colon-free); unknown keys are tolerated.
+    fn policy_decl(&mut self) -> PResult<Stmt> {
+        self.eat_kw("policy")?;
+        let name = self.eat_ident()?;
+        self.eat_op("{")?;
+        let mut p = Stmt::PolicyDecl {
+            name,
+            threshold: None,
+            margin: None,
+            floor: None,
+            conformal: None,
+            readiness: None,
+            fallback: None,
+        };
+        let Stmt::PolicyDecl { threshold, margin, floor, conformal, readiness, fallback, .. } = &mut p else {
+            unreachable!()
+        };
+        while !self.check_op("}") && !self.at_eof() {
+            let key = self.advance().value; // a contextual directive keyword
+            match key.as_str() {
+                "threshold" => *threshold = Some(self.parse_number()?),
+                "margin" => *margin = Some(self.parse_number()?),
+                "floor" => *floor = Some(self.parse_number()?),
+                "conformal" => *conformal = Some(self.parse_number()?),
+                "readiness" => *readiness = Some(self.parse_int()?),
+                "fallback" => *fallback = Some(self.eat_ident()?),
+                _ => {
+                    // unknown directive: consume a single literal/ident operand if present.
+                    if matches!(self.cur().kind, TokenKind::Int | TokenKind::Float | TokenKind::Str | TokenKind::Ident) {
+                        self.advance();
+                    }
+                }
+            }
+        }
+        self.eat_op("}")?;
+        Ok(p)
+    }
+
+    /// Gate dispatch arms: `{ (true|false|Variant): stmts ... }` (no braces per
+    /// arm; `;` is an empty body). Shared by `endorse` and `attest`.
+    fn gate_arms(&mut self) -> PResult<Vec<(String, Vec<Stmt>)>> {
         self.eat_op("{")?;
         let mut arms = Vec::new();
         while !self.check_op("}") && !self.at_eof() {
-            // an arm label is `true`/`false` or an enum variant ident, then `:`.
             let label = if self.check_kw("true") {
                 self.advance();
                 "true".to_string()
@@ -440,7 +527,6 @@ impl Parser {
                 self.eat_ident()?
             };
             self.eat_op(":")?;
-            // arm body: statements up to the next label or `}` (no braces; `;` = empty).
             let mut body = Vec::new();
             while !self.check_op("}") && !self.label_ahead() && !self.at_eof() {
                 if self.check_op(";") {
@@ -452,13 +538,16 @@ impl Parser {
             arms.push((label, body));
         }
         self.eat_op("}")?;
-        let abstain = if self.check_kw("abstain") {
-            self.advance();
-            Some(self.block()?)
-        } else {
-            None
-        };
-        Ok(Stmt::Endorse { arg, rule, arms, abstain })
+        Ok(arms)
+    }
+
+    /// Parse `expr by rule` and return `(expr, rule)` — the collapse used inside
+    /// `endorse(...)`/`attest`-free gate parens.
+    fn collapse_inner(&mut self) -> PResult<(Expr, GateBasis)> {
+        let arg = self.send()?;
+        self.eat_ctx("by")?;
+        let rule = self.parse_rule()?;
+        Ok((arg, rule))
     }
 
     /// Lookahead: is the cursor at an arm label (`true`/`false`/ident followed by `:`)?
@@ -469,8 +558,8 @@ impl Parser {
     }
 
     /// A gate rule after `by`: `confidence θ [margin δ]`, `conformal α`, or a policy
-    /// name / `Rule` value (§3, §13).
-    fn endorse_rule(&mut self) -> PResult<GateBasis> {
+    /// name / `Rule` value (§3, §13). `rule` in §15.2.
+    fn parse_rule(&mut self) -> PResult<GateBasis> {
         if self.cur().is_ident("confidence") {
             self.advance();
             let value = self.parse_number()?;
@@ -483,13 +572,12 @@ impl Parser {
             Ok(GateBasis::Threshold { op: BinOp::from_str(">").unwrap(), value, margin })
         } else if self.cur().is_ident("conformal") {
             self.advance();
-            let _alpha = self.parse_number()?;
-            // conformal calibrates from the spine (§13); modeled as a threshold
-            // placeholder for now — the conformal procedure is library code (slice TODO).
-            Ok(GateBasis::Threshold { op: BinOp::from_str(">").unwrap(), value: 0.5, margin: 0.0 })
+            let alpha = self.parse_number()?;
+            Ok(GateBasis::Conformal { alpha })
         } else {
-            // a named `policy` or a `Rule` value
-            Ok(GateBasis::Value(Box::new(self.expr()?)))
+            // a named `policy` or a `Rule` value (parsed below `by`/send so a trailing
+            // `)` is not consumed).
+            Ok(GateBasis::Value(Box::new(self.compare()?)))
         }
     }
 
@@ -591,14 +679,35 @@ impl Parser {
         Ok(Stmt::On { event, body })
     }
 
+    /// `when (Type binder? (about subj)?) (if (guard))? block` (§7, §15.2).
     fn when_stmt(&mut self) -> PResult<Stmt> {
         self.eat_kw("when")?;
-        let event_type = if self.check_op("(") { None } else { Some(self.eat_ident()?) };
         self.eat_op("(")?;
-        let subject = self.expr()?;
+        let ty = self.parse_type()?;
+        // An optional binder name (the matched event, evaluating to its payload).
+        let binder = if self.cur().kind == TokenKind::Ident && !self.cur().is_ident("about") {
+            Some(self.eat_ident()?)
+        } else {
+            None
+        };
+        let about = if self.cur().is_ident("about") {
+            self.advance();
+            Some(self.expr()?)
+        } else {
+            None
+        };
         self.eat_op(")")?;
+        let guard = if self.check_kw("if") {
+            self.advance();
+            self.eat_op("(")?;
+            let g = self.expr()?;
+            self.eat_op(")")?;
+            Some(g)
+        } else {
+            None
+        };
         let body = self.block()?;
-        Ok(Stmt::When { event_type, subject, body })
+        Ok(Stmt::When { ty, binder, about, guard, body })
     }
 
     fn catch_stmt(&mut self) -> PResult<Stmt> {
@@ -639,7 +748,17 @@ impl Parser {
                 self.eat_op(":")?;
                 default = Some(self.block()?);
             } else {
-                let variant = self.eat_ident()?;
+                // A variant label is an enum variant ident or a `bool` decision's
+                // `true`/`false` (which lex as keywords).
+                let variant = if self.check_kw("true") {
+                    self.advance();
+                    "true".to_string()
+                } else if self.check_kw("false") {
+                    self.advance();
+                    "false".to_string()
+                } else {
+                    self.eat_ident()?
+                };
                 self.eat_op(":")?;
                 arms.push((variant, self.block()?));
             }
@@ -702,6 +821,13 @@ impl Parser {
             let inner = self.parse_type()?;
             self.eat_op(">")?;
             return Ok(Type::Credence(Box::new(inner)));
+        }
+        if t.is_ident("Decision") {
+            self.advance();
+            self.eat_op("<")?;
+            let inner = self.parse_type()?;
+            self.eat_op(">")?;
+            return Ok(Type::Decision(Box::new(inner)));
         }
         if t.kind == TokenKind::Keyword {
             let ty = match t.value.as_str() {
@@ -797,6 +923,15 @@ impl Parser {
         }
     }
 
+    /// A triple operand (§15.2 `operand`): a variable/name or a literal
+    /// (`String`/`Int`/`Float`). Returns its surface spelling.
+    fn eat_operand(&mut self) -> PResult<String> {
+        match self.cur().kind {
+            TokenKind::Ident | TokenKind::Str | TokenKind::Int | TokenKind::Float => Ok(self.advance().value),
+            _ => Err(self.err("expected a triple operand (a name or a literal)")),
+        }
+    }
+
     /// A query source: an agent name or the reserved `self` / `spine`.
     fn eat_source(&mut self) -> PResult<String> {
         if self.check_kw("self") {
@@ -815,7 +950,31 @@ impl Parser {
             let (arg, by) = self.verify_core()?;
             return Ok(Expr::Verify { arg: Box::new(arg), by });
         }
-        self.send()
+        if self.check_kw("endorse") {
+            return self.endorse_expr();
+        }
+        self.collapse()
+    }
+
+    /// `endorse(e by rule)` in expression position → an endorsed `Decision` (§13).
+    fn endorse_expr(&mut self) -> PResult<Expr> {
+        self.eat_kw("endorse")?;
+        self.eat_op("(")?;
+        let (arg, rule) = self.collapse_inner()?;
+        self.eat_op(")")?;
+        Ok(Expr::EndorseExpr { arg: Box::new(arg), rule })
+    }
+
+    /// `send by rule` — collapse a `Credence` to a `Decision` (§13). The lowest
+    /// expression level: `by` binds looser than `<-`/`|>`.
+    fn collapse(&mut self) -> PResult<Expr> {
+        let left = self.send()?;
+        if self.cur().is_ident("by") {
+            self.advance();
+            let rule = self.parse_rule()?;
+            return Ok(Expr::Collapse { expr: Box::new(left), rule });
+        }
+        Ok(left)
     }
 
     /// The shared core of statement- and expression-form `verify`:
@@ -1066,17 +1225,20 @@ impl Parser {
         Ok(Expr::Decide { expr: Box::new(e), rule })
     }
 
+    /// `quorum(k, [c1, …, cn])` — fuse an `array<Credence<bool>>` (§12, §15.2).
     fn quorum_expr(&mut self) -> PResult<Expr> {
         self.eat_kw("quorum")?;
         self.eat_op("(")?;
         let k = self.parse_int()?;
-        self.eat_ctx("of")?;
-        let mut judges = vec![self.expr()?];
-        while self.check_op(",") {
-            self.advance();
-            judges.push(self.expr()?);
-        }
+        self.eat_op(",")?;
+        let arg = self.expr()?;
         self.eat_op(")")?;
+        // An array literal exposes its judges to the dependence check; any other
+        // expression is the single source (a bound `array<Credence>`).
+        let judges = match arg {
+            Expr::Array(es) => es,
+            other => vec![other],
+        };
         Ok(Expr::Quorum { k, judges })
     }
 
@@ -1096,9 +1258,9 @@ impl Parser {
             self.eat_op("{")?;
             let mut pattern = Vec::new();
             while !self.check_op("}") && !self.at_eof() {
-                let s = self.eat_ident()?;
-                let p = self.eat_ident()?;
-                let o = self.eat_ident()?;
+                let s = self.eat_operand()?;
+                let p = self.eat_operand()?;
+                let o = self.eat_operand()?;
                 pattern.push((s, p, o));
                 if self.check_op(";") {
                     self.advance();
@@ -1230,7 +1392,7 @@ mod tests {
 
     #[test]
     fn quorum_and_dep_decl() {
-        let s = p("independent j1, j2, j3; Credence<bool> a = quorum(2 of j1, j2, j3);");
+        let s = p("independent j1, j2, j3; Credence<bool> a = quorum(2, [j1, j2, j3]);");
         assert!(matches!(&s[0], Stmt::DepDecl { kind: Dep::Independent, .. }));
         assert!(matches!(&s[1], Stmt::VarDecl { expr: Some(Expr::Quorum { k: 2, .. }), .. }));
     }

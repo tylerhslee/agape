@@ -19,6 +19,41 @@ use crate::lexer::lex;
 use crate::parser::parse_expr;
 use crate::spine::Spine;
 
+/// How the provider seam behaves in a test run (§17.5 test-mode). The default is a
+/// confident, well-formed judgment; the conformance harness overrides per test.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub enum ProviderMode {
+    /// A confident, well-formed judgment (or scripted distribution, see `credence`).
+    #[default]
+    Normal,
+    /// The provider returns nothing — an unrecoverable seam failure → AgentCrashed (§5).
+    Empty,
+    /// Structured output fails constrained decoding → a clean `TypeMismatch` (§8).
+    SchemaViolation,
+}
+
+/// Injectable seam configuration for a run (§16.6, §17.5). All-default ⇒ the
+/// deterministic mock seams used by the static suite.
+#[derive(Debug, Clone, Default)]
+pub struct HarnessConfig {
+    /// A scripted credence distribution `[(variant, prob), …]` for provider judgments.
+    pub credence: Option<Vec<(String, f64)>>,
+    pub provider: ProviderMode,
+    /// The identity seam declines the attest → `FailedAttestation` (§13).
+    pub attest_deny: bool,
+    /// `[memory] internalize_on_receive` — each received `<-` auto-internalizes (§16.7).
+    pub internalize_on_receive: bool,
+}
+
+/// A resolved decision policy (§13): the runtime side of a `policy` block or an
+/// inline rule. `conformal` marks the distribution-free basis (cold-start abstain).
+#[derive(Debug, Clone, Default)]
+struct PolicyRule {
+    threshold: f64,
+    margin: f64,
+    conformal: bool,
+}
+
 #[derive(Debug, Clone)]
 pub enum Value {
     Int(i64),
@@ -75,6 +110,8 @@ struct AgentState {
     awake: bool,
     constructed: bool,
     fields: HashMap<String, Value>,
+    /// Constructor args bound at `spawn TYPE n(args)` (if any), used at first awake.
+    ctor_args: Vec<Value>,
 }
 
 #[derive(Clone)]
@@ -86,6 +123,8 @@ struct Sub {
     body: Vec<Stmt>,
     frame: HashMap<String, Value>,
     binding: Option<String>,
+    /// An optional `when … if (guard)` predicate over the bound event's fields (§7).
+    guard: Option<Expr>,
     reg_tick: u64,
     agent: Option<String>,
 }
@@ -98,16 +137,26 @@ pub struct Interp {
     enums: HashMap<String, Vec<String>>,
     tools: HashMap<String, Option<Type>>,
     authority: std::collections::HashSet<String>,
+    policies: HashMap<String, PolicyRule>,
     agents: HashMap<String, AgentState>,
     subs: Vec<Sub>,
     fired: std::collections::HashSet<(usize, u64)>,
     fire_budget: u32,
     eph: u64,
+    config: HarnessConfig,
+    /// Set when a seam fault (schema violation) occurred in the current scope; the
+    /// enclosing `{ block } retry(N)` consults it to re-attempt / exhaust (§11, §16.6).
+    faulted: bool,
 }
 
-/// Run a checked AST to quiescence; return the produced spine.
+/// Run a checked AST to quiescence with the default (mock) seams; return the spine.
 pub fn run(stmts: &[Stmt]) -> Spine {
-    let mut it = Interp::new();
+    run_with(stmts, &HarnessConfig::default())
+}
+
+/// Run a checked AST under an injected seam configuration (§17.5 test-mode).
+pub fn run_with(stmts: &[Stmt], config: &HarnessConfig) -> Spine {
+    let mut it = Interp::new(config.clone());
     it.collect(stmts);
     let mut frame = HashMap::new();
     it.exec_block(stmts, &mut frame, None);
@@ -115,7 +164,7 @@ pub fn run(stmts: &[Stmt]) -> Spine {
 }
 
 impl Interp {
-    fn new() -> Self {
+    fn new(config: HarnessConfig) -> Self {
         Interp {
             spine: Spine::new(),
             templates: HashMap::new(),
@@ -124,11 +173,14 @@ impl Interp {
             enums: HashMap::new(),
             tools: HashMap::new(),
             authority: std::collections::HashSet::new(),
+            policies: HashMap::new(),
             agents: HashMap::new(),
             subs: Vec::new(),
             fired: std::collections::HashSet::new(),
             fire_budget: 10_000,
             eph: 0,
+            config,
+            faulted: false,
         }
     }
 
@@ -152,6 +204,18 @@ impl Interp {
                 }
                 Stmt::Authority(name) => {
                     self.authority.insert(name.clone());
+                }
+                Stmt::PolicyDecl { name, threshold, margin, floor, conformal, .. } => {
+                    self.policies.insert(
+                        name.clone(),
+                        PolicyRule {
+                            threshold: threshold.unwrap_or(0.5),
+                            // the abstain trigger is the margin floor (§13); a bare
+                            // `margin` directive serves the same role if no `floor`.
+                            margin: floor.or(*margin).unwrap_or(0.0),
+                            conformal: conformal.is_some(),
+                        },
+                    );
                 }
                 _ => {}
             }
@@ -182,7 +246,7 @@ impl Interp {
             Stmt::VarDecl { ty, name, expr } => {
                 let v = match expr {
                     Some(init) => {
-                        let raw = self.eval_bound(init, name, frame, agent);
+                        let raw = self.eval_bound(init, name, Some(ty), frame, agent);
                         // A send bound to a typed slot takes that slot's type: a
                         // `Credence<E>` slot constrains the reply to E's variants (§8),
                         // so the in-flight events stay but the value is the graded judgment.
@@ -209,10 +273,11 @@ impl Interp {
                     }
                 }
             }
-            Stmt::Spawn { agent_type, name } => {
+            Stmt::Spawn { agent_type, name, args } => {
+                let ctor_args: Vec<Value> = args.iter().map(|a| self.eval(a, frame, agent)).collect();
                 self.agents.insert(
                     name.clone(),
-                    AgentState { template: agent_type.clone(), awake: false, constructed: false, fields: HashMap::new() },
+                    AgentState { template: agent_type.clone(), awake: false, constructed: false, fields: HashMap::new(), ctor_args },
                 );
                 frame.insert(name.clone(), Value::Agent(name.clone()));
                 self.append("Spawned", Some(name.clone()), name.clone(), None, None);
@@ -242,33 +307,57 @@ impl Interp {
                 let subj = agent.map(|a| a.to_string());
                 self.emit_event(action_type, subj, v.show(), agent.map(|a| a.to_string()));
             }
-            Stmt::Endorse { arg, arms, abstain, .. } => {
-                // collapse the Credence, record the Decision, dispatch the arm (§13).
+            Stmt::Endorse { arg, rule, arms, abstain } => {
+                // Collapse the Credence under the gate's rule, record the verdict, and
+                // dispatch (§13). The gate commits a singleton or abstains (threshold +
+                // margin floor; a conformal gate abstains at cold start).
                 let v = self.eval(arg, frame, agent);
-                let variant = self.decide_variant(&v, frame);
                 let subj = self.subject_of(arg, frame);
-                let mut chosen: Option<&Vec<Stmt>> = None;
-                for (label, body) in arms {
-                    if *label == variant {
-                        chosen = Some(body);
-                        break;
+                match self.decide_gate(&v, rule) {
+                    Some(variant) => {
+                        self.emit_event("Decided", subj, variant.clone(), agent.map(|a| a.to_string()));
+                        if let Some((_, body)) = arms.iter().find(|(l, _)| *l == variant) {
+                            if let Flow::Return(v) = self.exec_block(body, frame, agent) {
+                                return Flow::Return(v);
+                            }
+                        }
                     }
-                }
-                if let Some(body) = chosen {
-                    self.emit_event("Decided", subj, variant, agent.map(|a| a.to_string()));
-                    if let Flow::Return(v) = self.exec_block(body, frame, agent) {
-                        return Flow::Return(v);
-                    }
-                } else {
-                    // no matching arm ⇒ the gate could not commit a singleton ⇒ abstain.
-                    self.emit_event("Abstained", subj, String::new(), agent.map(|a| a.to_string()));
-                    if let Some(b) = abstain {
-                        if let Flow::Return(v) = self.exec_block(b, frame, agent) {
-                            return Flow::Return(v);
+                    None => {
+                        self.emit_event("Abstained", subj, String::new(), agent.map(|a| a.to_string()));
+                        if let Some(b) = abstain {
+                            if let Flow::Return(v) = self.exec_block(b, frame, agent) {
+                                return Flow::Return(v);
+                            }
                         }
                     }
                 }
             }
+            Stmt::Attest { arg, by, arms } => {
+                let subj = self.subject_of(arg, frame);
+                let principal = match by {
+                    Expr::Name(n) => n.clone(),
+                    other => self.eval(other, frame, agent).show(),
+                };
+                let corr = self.spine.fresh_corr();
+                self.append("AttestStarted", subj.clone(), principal, Some(corr), agent.map(|a| a.to_string()));
+                // The identity seam either attests or declines (§13, §17.5 `attest:`).
+                let label = if self.config.attest_deny {
+                    self.emit_event("FailedAttestation", subj.clone(), "denied".into(), agent.map(|a| a.to_string()));
+                    "false"
+                } else {
+                    self.emit_event("Attestation", subj.clone(), "attested".into(), agent.map(|a| a.to_string()));
+                    "true"
+                };
+                if let Some((_, body)) = arms.iter().find(|(l, _)| l == label) {
+                    if let Flow::Return(v) = self.exec_block(body, frame, agent) {
+                        return Flow::Return(v);
+                    }
+                }
+            }
+            Stmt::Block(body) => {
+                return self.exec_block(body, frame, agent);
+            }
+            Stmt::PolicyDecl { .. } => {}
             Stmt::Say(x) => {
                 let v = self.eval(x, frame, agent);
                 println!("{}", v.show());
@@ -323,9 +412,19 @@ impl Interp {
                     }
                 }
             }
-            Stmt::When { event_type, subject, body } => {
-                let subj = self.subject_of(subject, frame);
-                self.register_sub(event_type.clone(), subj, body.clone(), None, frame, agent);
+            Stmt::When { ty, binder, about, guard, body } => {
+                let etype = type_event_name(ty);
+                let subj = about.as_ref().and_then(|e| self.about_subject(e, agent));
+                self.subs.push(Sub {
+                    etype,
+                    subject: subj,
+                    body: body.clone(),
+                    frame: frame.clone(),
+                    binding: binder.clone(),
+                    guard: guard.clone(),
+                    reg_tick: self.spine.len() as u64,
+                    agent: agent.map(|a| a.to_string()),
+                });
             }
             Stmt::Catch { event_type, subject, binding, body } => {
                 let subj = subject.as_ref().and_then(|s| self.subject_of(s, frame));
@@ -333,8 +432,24 @@ impl Interp {
             }
             Stmt::On { .. } | Stmt::Extend { .. } => { /* handled during awake */ }
             Stmt::Retry(tail) => {
-                if let RetryTail::Bounded { body, .. } = tail {
-                    return self.exec_block(body, frame, agent);
+                if let RetryTail::Bounded { count, body } = tail {
+                    // Re-attempt the block on a seam fault up to N times; on exhaustion
+                    // emit RetryExhausted and let the fault propagate (§11, §16.6).
+                    let mut attempts = 0;
+                    loop {
+                        self.faulted = false;
+                        if let Flow::Return(v) = self.exec_block(body, frame, agent) {
+                            return Flow::Return(v);
+                        }
+                        attempts += 1;
+                        if !self.faulted || attempts >= *count {
+                            break;
+                        }
+                    }
+                    if self.faulted {
+                        let subj = agent.map(|a| a.to_string());
+                        self.emit_event("RetryExhausted", subj, String::new(), agent.map(|a| a.to_string()));
+                    }
                 }
                 // Predicate (unbounded) retry: not exercised by the v1.0 suite.
             }
@@ -376,6 +491,8 @@ impl Interp {
         let Some(state) = self.agents.get(name) else { return };
         let tname = state.template.clone();
         let first = !state.constructed;
+        // Args bound at `spawn` are used if `awake` supplies none (§5, §15.2).
+        let args = if args.is_empty() { state.ctor_args.clone() } else { args };
         let Some(template) = self.templates.get(&tname).cloned() else { return };
         self.append("AgentAwake", Some(name.to_string()), name.to_string(), None, None);
         if first {
@@ -489,9 +606,19 @@ impl Interp {
             body,
             frame: frame.clone(),
             binding,
+            guard: None,
             reg_tick: self.spine.len() as u64,
             agent: agent.map(|a| a.to_string()),
         });
+    }
+
+    /// Resolve a `when … about subj` filter to a subject string: `self` is the
+    /// holding agent's id; a bare name/expr keeps its subject form.
+    fn about_subject(&self, e: &Expr, agent: Option<&str>) -> Option<String> {
+        match e {
+            Expr::SelfRef => agent.map(|a| a.to_string()),
+            other => self.subject_of(other, &HashMap::new()),
+        }
     }
 
     /// Append an event and fire any matching prospective subscription.
@@ -520,6 +647,8 @@ impl Interp {
             })
             .map(|(i, _)| i)
             .collect();
+        // Snapshot the firing event's payload so the bound variable evaluates to it (§7).
+        let payload = self.spine.log.get(tick as usize).map(|e| e.payload.clone()).unwrap_or_default();
         for i in candidates {
             self.fired.insert((i, tick));
             if self.fire_budget == 0 {
@@ -529,7 +658,13 @@ impl Interp {
             let sub = self.subs[i].clone();
             let mut frame = sub.frame.clone();
             if let Some(b) = &sub.binding {
-                frame.insert(b.clone(), Value::Text(etype.to_string()));
+                frame.insert(b.clone(), Value::Text(payload.clone()));
+            }
+            // A `when … if (guard)` fires only when the predicate holds.
+            if let Some(g) = &sub.guard {
+                if !self.eval(g, &mut frame, sub.agent.as_deref()).truthy() {
+                    continue;
+                }
             }
             let _ = self.exec_block(&sub.body, &mut frame, sub.agent.as_deref());
         }
@@ -539,9 +674,9 @@ impl Interp {
 
     /// Evaluate an initializer whose spine events should be subjected at the
     /// binding name (a send chain, an in-hand verify).
-    fn eval_bound(&mut self, e: &Expr, name: &str, frame: &mut HashMap<String, Value>, agent: Option<&str>) -> Value {
+    fn eval_bound(&mut self, e: &Expr, name: &str, slot: Option<&Type>, frame: &mut HashMap<String, Value>, agent: Option<&str>) -> Value {
         match e {
-            Expr::Send { dest, payload, .. } => self.eval_send(dest, payload, Some(name.to_string()), frame, agent),
+            Expr::Send { dest, payload, expires, .. } => self.eval_send(dest, payload, Some(name.to_string()), slot, *expires, frame, agent),
             Expr::Verify { arg, by } => self.eval_verify(arg, by, Some(name.to_string()), frame, agent),
             other => self.eval(other, frame, agent),
         }
@@ -590,11 +725,23 @@ impl Interp {
                 let fs = fields.iter().map(|(k, v)| (k.clone(), self.eval(v, frame, agent))).collect();
                 Value::Struct { name: name.clone(), fields: fs }
             }
-            Expr::Send { dest, payload, .. } => {
+            Expr::Send { dest, payload, expires, .. } => {
                 let subj = self.ephemeral();
-                self.eval_send(dest, payload, Some(subj), frame, agent)
+                self.eval_send(dest, payload, Some(subj), None, *expires, frame, agent)
             }
             Expr::Decide { expr, .. } => {
+                let v = self.eval(expr, frame, agent);
+                let variant = self.decide_variant(&v, frame);
+                if let Value::Credence { en, .. } = &v {
+                    if en == "bool" {
+                        return Value::Bool(variant == "true");
+                    }
+                }
+                Value::Variant(variant)
+            }
+            // `c by R` / `endorse(c by R)` collapse to the committed variant (§13). The
+            // recorded `Decided` for the statement forms is emitted by `exec_stmt`.
+            Expr::Collapse { expr, .. } | Expr::EndorseExpr { arg: expr, .. } => {
                 let v = self.eval(expr, frame, agent);
                 let variant = self.decide_variant(&v, frame);
                 if let Value::Credence { en, .. } = &v {
@@ -689,8 +836,9 @@ impl Interp {
     }
 
     /// A send: the provider seam (self-send = cognition) or IPC. Appends the
-    /// `Sent → Delivered → Resolved` chain (§6), subjected at `subject`.
-    fn eval_send(&mut self, dest: &Expr, payload: &Expr, subject: Option<String>, frame: &mut HashMap<String, Value>, agent: Option<&str>) -> Value {
+    /// `Sent → Delivered → Resolved` chain (§6), subjected at `subject`. The provider
+    /// mode (§17.5) may instead crash (empty) or fault (schema violation).
+    fn eval_send(&mut self, dest: &Expr, payload: &Expr, subject: Option<String>, slot: Option<&Type>, expires: Option<f64>, frame: &mut HashMap<String, Value>, agent: Option<&str>) -> Value {
         let _ = self.eval(payload, frame, agent); // render the prompt (incidental)
         let corr = self.spine.fresh_corr();
         self.append("Sent", subject.clone(), "sent".into(), Some(corr), agent.map(|a| a.to_string()));
@@ -701,12 +849,55 @@ impl Interp {
             _ => true,
         };
         if !live {
-            return Value::Null; // lost: the chain stalls at Sent (§6)
+            // A lifetime that elapses before Delivered appends an Expired tombstone —
+            // NOT an Error subtype (§6, §9); a bare lost send just stalls at Sent.
+            if expires.is_some() {
+                self.append("Expired", subject.clone(), "expired".into(), Some(corr), agent.map(|a| a.to_string()));
+            }
+            return Value::Null;
+        }
+        // An empty provider response is an unrecoverable seam failure → crash (§5).
+        if self.config.provider == ProviderMode::Empty {
+            self.crash_agent(agent);
+            return Value::Null;
         }
         self.append("Delivered", subject.clone(), "delivered".into(), Some(corr), None);
+        // Structured output that fails constrained decoding raises a clean,
+        // catchable/retryable TypeMismatch instead of resolving (§8, §16.6).
+        if self.config.provider == ProviderMode::SchemaViolation && self.slot_is_structured(slot) {
+            self.emit_event("TypeMismatch", subject.clone(), "schema_violation".into(), agent.map(|a| a.to_string()));
+            self.faulted = true;
+            return Value::Null;
+        }
         let reply = self.mock_reply();
         self.append("Resolved", subject.clone(), reply.show(), Some(corr), None);
+        // The eager memory trigger: a received `<-` auto-internalizes (§16.7, §17).
+        if self.config.internalize_on_receive {
+            self.emit_event("Internalized", subject.clone(), "internalized".into(), agent.map(|a| a.to_string()));
+        }
         reply
+    }
+
+    /// True if a reply slot requires structured decoding (an `event<Struct>` or a
+    /// bare struct) — the slots a schema violation can fault on.
+    fn slot_is_structured(&self, slot: Option<&Type>) -> bool {
+        match slot {
+            Some(Type::Event(inner)) => matches!(&**inner, Type::Named(n) if self.structs.contains_key(n)),
+            Some(Type::Named(n)) => self.structs.contains_key(n),
+            _ => false,
+        }
+    }
+
+    /// An unrecoverable seam failure crashes the agent: `AgentCrashed` is recorded,
+    /// the `on crash` hook runs, and state survives — a crash is contained (§5).
+    fn crash_agent(&mut self, agent: Option<&str>) {
+        let Some(a) = agent else { return };
+        self.append("AgentCrashed", Some(a.to_string()), a.to_string(), None, Some(a.to_string()));
+        if let Some(tname) = self.agents.get(a).map(|s| s.template.clone()) {
+            if let Some(t) = self.templates.get(&tname).cloned() {
+                self.run_hooks(&t, "crash", a);
+            }
+        }
     }
 
     fn eval_tool(&mut self, tool: &str, _frame: &mut HashMap<String, Value>, agent: Option<&str>) -> Value {
@@ -761,17 +952,23 @@ impl Interp {
                     "bool" => vec!["true".into(), "false".into()],
                     other => self.enums.get(other).cloned().unwrap_or_default(),
                 };
-                // a confident mock judgment: top variant 0.9, the rest share 0.1.
-                let dist = if variants.is_empty() {
-                    vec![]
-                } else {
-                    let rest = ((variants.len() - 1).max(1)) as f64;
-                    variants
-                        .iter()
-                        .enumerate()
-                        .map(|(i, v)| (v.clone(), if i == 0 { 0.9 } else { 0.1 / rest }))
-                        .collect()
-                };
+                // A scripted provider distribution (§17.5 `provider: credence(…)`)
+                // overrides the mock — the reproducible way to exercise a gate boundary.
+                if let Some(script) = &self.config.credence {
+                    return Value::Credence { en, dist: script.clone() };
+                }
+                if variants.is_empty() {
+                    return Value::Credence { en, dist: vec![] };
+                }
+                // A confident mock judgment: the peak variant 0.9, the rest share 0.1.
+                // `Entailment` peaks on `Contradicts` — the deterministic conformance
+                // choice that exercises the Contradiction channel (§8).
+                let peak = if en == "Entailment" { "Contradicts" } else { variants[0].as_str() };
+                let rest = ((variants.len() - 1).max(1)) as f64;
+                let dist = variants
+                    .iter()
+                    .map(|v| (v.clone(), if v == peak { 0.9 } else { 0.1 / rest }))
+                    .collect();
                 Value::Credence { en, dist }
             }
             _ => Value::Text("ok".into()),
@@ -796,11 +993,55 @@ impl Interp {
         }
     }
 
-    fn subject_of(&self, e: &Expr, _frame: &HashMap<String, Value>) -> Option<String> {
+    fn subject_of(&self, e: &Expr, frame: &HashMap<String, Value>) -> Option<String> {
         match e {
             Expr::Name(n) => Some(n.clone()),
             Expr::SelfRef => Some("self".into()),
+            // A gate's subject is the credence it collapses (`endorse(c by R)` → `c`).
+            Expr::Collapse { expr, .. } | Expr::Decide { expr, .. } | Expr::EndorseExpr { arg: expr, .. } => {
+                self.subject_of(expr, frame)
+            }
             _ => None,
+        }
+    }
+
+    /// The gate verdict: `Some(variant)` to commit, `None` to abstain. Applies the
+    /// rule's threshold and margin floor; a conformal rule abstains at cold start (§13).
+    fn decide_gate(&self, v: &Value, rule: &GateBasis) -> Option<String> {
+        let pr = self.resolve_rule(rule);
+        if pr.conformal {
+            return None; // no recorded labels yet → below the readiness floor → abstain
+        }
+        match v {
+            Value::Credence { dist, .. } => {
+                let mut sorted = dist.clone();
+                sorted.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+                let (name, p0) = sorted.first()?;
+                let p1 = sorted.get(1).map(|x| x.1).unwrap_or(0.0);
+                if *p0 >= pr.threshold && (p0 - p1) >= pr.margin {
+                    Some(name.clone())
+                } else {
+                    None // threshold unmet or margin below floor → abstain
+                }
+            }
+            other => Some(self.decide_variant(other, &HashMap::new())),
+        }
+    }
+
+    /// Resolve a gate rule to its runtime policy: an inline threshold/margin, a
+    /// conformal basis, or a named `policy` block (§13).
+    fn resolve_rule(&self, rule: &GateBasis) -> PolicyRule {
+        match rule {
+            GateBasis::Threshold { value, margin, .. } => PolicyRule { threshold: *value, margin: *margin, conformal: false },
+            GateBasis::Conformal { .. } => PolicyRule { conformal: true, ..Default::default() },
+            GateBasis::Value(e) => {
+                if let Expr::Name(n) = &**e {
+                    if let Some(p) = self.policies.get(n) {
+                        return p.clone();
+                    }
+                }
+                PolicyRule { threshold: 0.5, margin: 0.0, conformal: false }
+            }
         }
     }
 
@@ -884,6 +1125,16 @@ fn type_enum_name(t: &Type) -> String {
         Type::Bool => "bool".into(),
         Type::Named(n) => n.clone(),
         _ => "bool".into(),
+    }
+}
+
+/// The spine event-type a `when (Type …)` subscribes to: a nominal type name, or
+/// the inner type of an `event<T>` wrapper.
+fn type_event_name(t: &Type) -> Option<String> {
+    match t {
+        Type::Named(n) => Some(n.clone()),
+        Type::Event(inner) => type_event_name(inner),
+        _ => None,
     }
 }
 

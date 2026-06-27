@@ -22,7 +22,10 @@ pub mod parser; // M2
 pub mod spine;
 
 use diag::AgapeError;
+use interp::HarnessConfig;
 use spine::Spine;
+
+pub use interp::{HarnessConfig as Config, ProviderMode};
 
 /// Run a program through the entire pipeline:
 /// `lex` → `parse` → `check` → `interp`. A program that passes the static checks
@@ -30,8 +33,15 @@ use spine::Spine;
 /// the produced spine is returned — which the conformance harness matches against
 /// each test's `spine:`/`contains:`/`absent:` assertions.
 pub fn process(source: &str) -> Result<Spine, AgapeError> {
+    process_with_config(source, &HarnessConfig::default())
+}
+
+/// As [`process`], but with an injected seam configuration (§17.5 test-mode): a
+/// scripted provider distribution, an empty/schema-violating provider, a denying
+/// identity seam, or the eager-internalize memory trigger.
+pub fn process_with_config(source: &str, config: &HarnessConfig) -> Result<Spine, AgapeError> {
     let tokens = lexer::lex(source)?;
     let ast = parser::parse(tokens)?;
     check::check(&ast)?;
-    Ok(interp::run(&ast))
+    Ok(interp::run_with(&ast, config))
 }
