@@ -1,0 +1,17 @@
+module cognition.consolidator;
+
+import { Sensed, Concluded } from cognition.signals;
+
+// The prefrontal cortex / long-term declarative memory. Shared state owned by ONE actor
+// (the option-b consolidator pattern): other agents emit into the cognitive cascade, this
+// agent subscribes and internalizes into its OWN memory (§10), which thereby becomes the
+// collective long-term store. Concurrent writes serialize through its mailbox, so the
+// no-shared-mutable-state invariant (§0.2) holds and replay stays deterministic.
+pub agent Consolidator {
+  // Curated memory: lay down the judged, converged conclusions.
+  when (Concluded c) { store(c.insight.summary); }
+
+  // Depth knob: also remember raw observations for a high-recall memory. Drop these two
+  // calls for a curated-only store (a mind that records only what it judged worth keeping).
+  when (Sensed s) { store(s.percept.raw); embed(s.percept.raw); }
+}

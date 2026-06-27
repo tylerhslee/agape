@@ -1,0 +1,13 @@
+module cognition;
+
+import { Asked, Ruled } from cognition.signals;
+
+// The role contract. Send a cognition an `Asked` (carrying a Query); it perceives, judges,
+// and produces a `Ruled` (carrying a SETTLED Verdict). The interior is `graded`; the gate is
+// the export wall (SPEC §13, §19.5) — by the consequential-action rule a consumer can only
+// ever receive gated outputs, so the Jungian internals never leak.
+//
+// `handles A -> B` here means "consumes A events, produces B events" — a cognition runs a
+// multi-step internal cascade, so it replies via an emitted `Ruled`, not a bound `<-` result
+// (a single send is one provider think; see DESIGN.md §8).
+pub interface Cognition { handles Asked -> Ruled; }

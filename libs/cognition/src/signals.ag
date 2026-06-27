@@ -1,0 +1,32 @@
+module cognition.signals;
+
+// The shared vocabulary of a cognition: typed "neurotransmitters" (point-to-point events
+// between functions) and "hormones" (ambient broadcast signals), plus the public
+// request/reply surface. Events carry a single field (a struct when rich), matching the
+// `emit X(expr)` / `perform X(expr)` single-payload form. See DESIGN.md for the Jungian map.
+
+// ── Public request / reply data ───────────────────────────────────────────
+pub struct Query   { ask: text, context: text }          // what you send a cognition
+pub struct Verdict { committed: bool, rationale: text }   // its SETTLED reply (the gate is the wall)
+
+// Rich payloads carried by the cascade events below.
+pub struct Percept { kind: text, raw: text }                       // a typed observation (Se)
+pub struct Edge    { subject: text, relation: text, object: text } // a relational edge (Ne)
+pub struct Insight { summary: text }                              // a converged read (Ni)
+
+// A default binary judging enum; a role may judge over its own enum instead.
+pub enum Stance { Affirm, Deny }
+
+// ── Neurotransmitters — point-to-point typed signals between functions ─────
+pub event Asked(query: Query);          // → a cognition: please judge this
+pub event Ruled(verdict: Verdict);      // ← a cognition: a settled verdict
+pub event Sensed(percept: Percept);     // Se → : a typed observation of the world
+pub event Mapped(edge: Edge);           // Ne → : a relational edge
+pub event Concluded(insight: Insight);  // Ni → : a converged read
+
+// ── Hormones — ambient, broadcast modulation read by many ─────────────────
+pub event Confidence(level: text);      // global "how settled are we"
+pub event Escalate(reason: text);       // F: route the epistemic remainder to a principal/human
+
+// ── A typed cognitive fault (v1.1.0 error subtyping, SPEC §19.5) ───────────
+pub event CognitiveFault(reason: text) : Error;   // caught by `when (Error e)`

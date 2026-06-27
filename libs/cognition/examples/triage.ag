@@ -1,0 +1,19 @@
+// examples/triage.ag — a tiny orchestration over the cognition library.
+//
+// Demonstrates the cascade: a Query enters → a Reviewer cognition judges it (gate = the
+// wall) → it emits a SETTLED Ruled the Desk receives, and a Concluded the PFC consolidates.
+// All subscribers are awake before the Query is emitted (subscriptions are prospective, §7).
+
+import { Asked, Ruled, Query } from cognition.signals;
+import { Reviewer } from cognition.roles;
+import { Consolidator } from cognition.consolidator;
+
+agent Desk {
+  when (Ruled r) { say(r.verdict.rationale); }   // receive the cognition's settled verdict
+}
+
+spawn Consolidator pfc;  awake pfc;     // the shared long-term memory (PFC)
+spawn Reviewer rev;      awake rev;     // a Ti/Si critic cognition
+spawn Desk desk;         awake desk;
+
+emit Asked(Query { ask: "is this refund policy-compliant?", context: "order 4821" });

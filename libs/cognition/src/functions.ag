@@ -1,0 +1,36 @@
+module cognition.functions;
+
+import { Asked, Ruled, Concluded, Mapped, Insight, Escalate } from cognition.signals;
+
+// The cognitive functions that are AGENT CODE. Se/Si/Ne are NOT here: perceiving is the
+// runtime's automatic internalization of every received event into facts/graph/vectors
+// (§10). What remains to author is Ni (active re-query + convergence), the judging leaf (T),
+// and the escalation path (F).
+
+// ── Ti / Te — the judging leaf, generic over a role's decision enum E ──────
+// The kind bound `E: enum` is exactly what makes `Credence<E>` well-formed in generic code
+// (SPEC §19.5). This is a LEAF helper instantiated per decision-type, not a whole cognition.
+pub interface Judge { handles Asked -> Ruled; }
+
+policy DefaultRule { threshold 0.8  margin 0.1 }
+
+pub agent ThresholdJudge<E: enum> : Judge {
+  when (Asked a) {
+    Credence<E> c = self <- a.query.ask;   // graded judgment over E (the interior stays graded)
+    endorse (c by DefaultRule) {
+      // a generic leaf only records the Decision; concrete roles supply per-variant arms
+    } abstain {
+      emit Escalate("judge: ambiguous");   // F: hand the epistemic remainder out (§16.4)
+    };
+  }
+}
+
+// ── Ni — convergent intuition: read the internal map, fuse, commit one read ─
+pub agent Synthesizer {
+  when (Mapped m) {
+    // active re-query over what internalization already wrote to the graph (§10)
+    array<Record> related = select subject, object from self where { relation == m.edge.relation };
+    // (fuse the related edges into one judgment and gate; elided in this reference)
+    emit Concluded(Insight { summary: m.edge.subject });
+  }
+}
