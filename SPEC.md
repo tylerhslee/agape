@@ -1485,8 +1485,8 @@ interprocedural authority for top-level (non-agent) functions.
 §0–§15 define what an Agape program *means*; this section defines what an implementation *does* to
 execute it — the concrete contract a conformant runtime is built against, making the abstract
 operational semantics of §15.4 buildable. Where §16 and §15 appear to differ, §15 governs the
-meaning and §16 the mechanism; a conformant runtime satisfies both. Items marked **(open)** are
-points not fixed by §0–§15 and settled here by an explicit, conformance-visible choice.
+meaning and §16 the mechanism; a conformant runtime satisfies both. Design points not fixed by §0–§15 are settled here by explicit, conformance-visible choices;
+one remains flagged **(open)** — §16.7's internalization trigger — pending a product decision.
 
 ### 16.1 Execution model and the scheduler
 
@@ -1506,7 +1506,7 @@ assigned, monotonic, gap-free (§7).
 - **The scheduler loop.** While `Q` is non-empty or the top level is unfinished: take the next ready
   resolution, apply its effect (append the closing event(s) — `Resolved`, `ToolResolved`, a bound
   `Credence` — and resume its continuation), then drain any subscriptions the appends fired.
-  **(open) Resolution order:** ready resolutions are dispatched in **issue order** — FIFO by the tick
+  **Resolution order:** ready resolutions are dispatched in **issue order** — FIFO by the tick
   of their opening event. This fixes one total order on observable effects independent of wall-clock
   timing, so replay (§16.5) is well-defined.
 - **Quiescence and termination.** The program **terminates** when the top level is exhausted, `Q` is
@@ -1527,11 +1527,11 @@ a replay (§16.5) and an audit depend on:
   append index; `etype` the prelude or user event-type name (§9); `subject` the source / correlation
   key (§7); `payload` the typed value carried (or empty); `corr` the id linking an opening event to its
   close (or the event's own id); `agent` the acting agent's address.
-- **(open) Canonical serialization.** An event serializes to bytes as **canonical JSON**: object keys
+- **Canonical serialization.** An event serializes to bytes as **canonical JSON**: object keys
   in the fixed order above, no insignificant whitespace, UTF-8 strings, numbers in shortest
   round-tripping form, the payload encoded by its structured-output schema (§8). Canonical means
   byte-identical for equal events — which is what makes the chain-head a function of content alone.
-- **(open) Hash chain.** Genesis `h₀ = SHA-256("agape/v1")`; thereafter `hᵢ = SHA-256(hᵢ₋₁ ‖
+- **Hash chain.** Genesis `h₀ = SHA-256("agape/v1")`; thereafter `hᵢ = SHA-256(hᵢ₋₁ ‖
   serialize(eventᵢ))`. The **chain-head** is `h_{|S|−1}`: SHA-256 over the canonical serialization of
   every field, so nothing observable sits outside the commitment.
 - **Chain-head equality (T4).** Two runs are replay-equivalent iff their chain-heads are equal (§15.4.2,
@@ -1547,7 +1547,7 @@ order**).
 
 - **Matching.** `matches(sub, ev) ⟺ subtype(ev.etype, sub.etype) ∧ (sub.subj = ⊥ ∨ sub.subj = ev.subj)`
   (§9, §15.4.2), further filtered by a `when … if (guard)` predicate (§7).
-- **(open) Synchronous within-tick cascade.** When an event is appended, the runtime fires every matching
+- **Synchronous within-tick cascade.** When an event is appended, the runtime fires every matching
   live subscription **immediately**, in registration order, before the appending statement's successor
   runs (§0.2). A handler body that itself appends events triggers *their* matching subscriptions the same
   way — **depth-first**, recursively, until no new matches remain. This realises §0.2's "appending an event
@@ -1567,7 +1567,7 @@ appends its opening event, invokes the seam, journals the result (§16.5), and a
 
 - **Provider (`think`).** A judgment `Credence<E> c = d <- p` or a typed reply `event<T> x = d <- p`
   renders the prompt `p` and compiles the destination schema: for a `Credence<E>` slot, the forced
-  categorical choice over `E`'s variants; for `event<T>`, `T`'s JSON Schema (§8). **(open)** The connector
+  categorical choice over `E`'s variants; for `event<T>`, `T`'s JSON Schema (§8). The connector
   receives `{ prompt, schema }` and must return schema-conforming output by constrained decoding
   (mandatory; no fuzzy fallback). A logprob-exposing connector returns the committed value plus the
   per-variant token probabilities; a text-only connector returns only the value and is served by the
@@ -1575,13 +1575,13 @@ appends its opening event, invokes the seam, journals the result (§16.5), and a
   per-variant scores, §15.5.1, for replay and calibration). A schema-violating return is a `TypeMismatch`
   (§16.6).
 - **Identity (`attest`).** `attest e by p` presents `(p, e)` to the identity dependency, which returns the
-  principal's signed `Decision`. **(open)** The backend (e.g. `local-keyring`, §17) signs a canonical
+  principal's signed `Decision`. The backend (e.g. `local-keyring`, §17) signs a canonical
   serialization of `(who = p, what = spine-id(e), decision)`; the runtime records
   `Attestation { who, what, decision, signature }` (§9). A declined ruling records a `FailedAttestation`
   (§13). No key material appears in source (§3).
 - **Tool (`invoke`, MCP).** A call `K(a…)` resolves `K` to its MCP binding (`[tools]`, §17) and issues an
   MCP `tools/call` with the marshalled args, appending the `ToolStarted`/`ToolResolved` pair (§6b, §7).
-  **(open)** Args and result marshal between Agape values and MCP JSON by `K`'s declared signature. A
+  Args and result marshal between Agape values and MCP JSON by `K`'s declared signature. A
   `read` tool's result carries the join of its inputs' trust; a `write` tool is a consequential sink whose
   inputs must be settled (§6b, §13).
 
@@ -1592,7 +1592,7 @@ closing event, carrying the result payload — and, for the provider, the per-va
 Nondeterministic *inputs* are journaled too: external `prompt` arrivals, and a wall-clock `expires`
 lifetime's firing (§6); a logical-tick lifetime is already deterministic.
 
-- **(open) Replay.** Given a recording, the runtime re-executes the program but **serves each oracle call
+- **Replay.** Given a recording, the runtime re-executes the program but **serves each oracle call
   from the journal instead of invoking the seam**: the *i*-th call of a given kind, in issue order
   (§16.1), is answered by the *i*-th recorded result of that kind. Replay invokes nothing external — a
   `write` tool is replayed as its recorded result, never re-run against the world.
@@ -1605,7 +1605,7 @@ lifetime's firing (§6); a logical-tick lifetime is already deterministic.
 
 ### 16.6 Fault and recovery
 
-- **(open) The reaction boundary.** A *handler invocation* — the unit a fault is contained to — is one
+- **The reaction boundary.** A *handler invocation* — the unit a fault is contained to — is one
   top-level statement, or one `when`/`on`-hook body firing (each cascaded firing, §16.3, is its own
   invocation). A fault abandons that invocation only.
 - **Crash.** An unrecoverable seam failure (the provider returns nothing, a connector error) or an
@@ -1616,7 +1616,7 @@ lifetime's firing (§6); a logical-tick lifetime is already deterministic.
   subscription (§5), not a built-in.
 - **TypeMismatch.** A schema-violating provider return is a typed `TypeMismatch` (§8) — catchable and
   retryable, not in itself a crash.
-- **(open) Retry.** `{ block } retry(N)` re-executes `block` from its start on an `Error`, up to `N`
+- **Retry.** `{ block } retry(N)` re-executes `block` from its start on an `Error`, up to `N`
   times. Variable assignments the block made carry across attempts; spine events appended by a failed
   attempt remain on the log (the spine is immutable) — a re-attempt appends fresh events. On exhaustion the
   runtime appends `RetryExhausted` and propagates the fault. The bound is mandatory, so every reaction
@@ -1641,7 +1641,7 @@ cross-agent mutable state (§0.2).
   `x`; `match v > θ` is the cosine similarity of `v` against the vector store thresholded at `θ` — a gate
   yielding a `settled`, off-spine result (§10). `select … from spine` runs the same relational query over
   the log itself.
-- **(open) The `Record` row type (§10).** A projected `select COLS …` yields `array<Record>`, where
+- **The `Record` row type (§10).** A projected `select COLS …` yields `array<Record>`, where
   `Record` is the structural row type of the projected, typed columns; `select * from F …` yields
   `array<F>` for fact type `F`. (This resolves §10's reference to an otherwise-undefined `Record`.)
 
@@ -1652,7 +1652,7 @@ A `Credence<E>` is read from the provider's token-level probability on the force
 
 - **From logprobs.** A logprob-exposing connector (`exposes_logprobs`, §17) yields the per-variant mass
   directly; the runtime normalizes it over `E`'s variants to the distribution.
-- **(open) Calibration fit.** Raw logits are overconfident, so a fitted calibrator (temperature / Platt /
+- **Calibration fit.** Raw logits are overconfident, so a fitted calibrator (temperature / Platt /
   isotonic) is applied between the raw scores and the `Credence`. It is fit from the spine's recorded
   `(judgment, outcome)` pairs (§3, §13) — the same labelled data the conformal gate reads — and refit as
   labels accrue; below a minimum it is identity (and a consequential conformal gate abstains, §13).
