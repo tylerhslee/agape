@@ -11,7 +11,9 @@ import { AnthropicCognition, HashingEmbedder } from "./provider.ts";
 import { Memory } from "./memory.ts";
 import { makeRunner } from "./runner.ts";
 import { Learner } from "./learner.ts";
-import { spawnSync } from "node:child_process";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+const pExecFile = promisify(execFile);
 
 const PORT = Number(process.env.AGENT_PORT) || 8799;
 
@@ -116,13 +118,26 @@ function parseAg(file: string): { header: Record<string, string>; body: string }
   return { header, body: body.join("\n") };
 }
 
-function runConformance(): { status: Record<string, string>; buildOk: boolean; summary: string } {
-  const status: Record<string, string> = {};
-  let buildOk = true, summary = "";
-  try {
-    const r = spawnSync("cargo", ["run", "--quiet", "--bin", "conformance", "--", "--fails"],
-      { cwd: AGAPE_RS, encoding: "utf8", timeout: 600_000, maxBuffer: 50_000_000 });
-    const text = (r.stdout || "") + "\n" + (r.stderr || "");
+// Async + single-flight so the cargo run never blocks the event loop (a sync spawn
+// wedges the whole server) and concurrent refreshes share one run.
+let conformanceInflight: Promise<{ status: Record<string, string>; buildOk: boolean; summary: string }> | null = null;
+
+function runConformance() {
+  if (conformanceInflight) return conformanceInflight;
+  conformanceInflight = (async () => {
+    let stdout = "", stderr = "";
+    try {
+      const r = await pExecFile("cargo", ["run", "--quiet", "--bin", "conformance", "--", "--fails"],
+        { cwd: AGAPE_RS, timeout: 120_000, maxBuffer: 50_000_000 });
+      stdout = r.stdout; stderr = r.stderr;
+    } catch (e: any) {
+      // execFile rejects on a non-zero exit (the runner exits non-zero when tests
+      // fail) — the output we want is still on e.stdout/e.stderr.
+      stdout = e?.stdout || ""; stderr = e?.stderr || String(e?.message || e);
+    }
+    const text = stdout + "\n" + stderr;
+    const status: Record<string, string> = {};
+    let buildOk = true, summary = "";
     if (text.includes("error[") || text.includes("could not compile")) buildOk = false;
     for (const line of text.split("\n")) {
       const m = line.match(/^\s*✗\s+(\S+)\s+(\S+)\s+(.*)/);
@@ -130,16 +145,18 @@ function runConformance(): { status: Record<string, string>; buildOk: boolean; s
       const m2 = line.match(/(\d+)\s+pass\b[^\d]*?(\d+)\s+fail/);
       if (m2) summary = line.trim();
     }
-  } catch (e: any) { buildOk = false; summary = String(e?.message || e); }
-  return { status, buildOk, summary };
+    return { status, buildOk, summary };
+  })();
+  conformanceInflight.finally(() => { conformanceInflight = null; });
+  return conformanceInflight;
 }
 
-function reviewData() {
+async function reviewData() {
   const spec = fs.existsSync(SPEC_PATH) ? fs.readFileSync(SPEC_PATH, "utf8") : "";
   const files: string[] = [];
   if (fs.existsSync(TESTS_DIR)) walkAg(TESTS_DIR, files);
   files.sort();
-  const { status, buildOk, summary } = runConformance();
+  const { status, buildOk, summary } = await runConformance();
   const tests = files.map((f) => {
     const { header, body } = parseAg(f);
     const id = header.id || path.basename(f, ".ag");
@@ -204,7 +221,7 @@ const server = http.createServer(async (req, res) => {
 
     // ── the Review studio ──
     if (req.method === "GET" && url === "/review/data") {
-      return send(res, 200, reviewData());
+      return send(res, 200, await reviewData());
     }
     if (req.method === "POST" && url === "/review/spec-edit") {
       const { anchor, instruction, selection } = (await readJson(req)) || {};
