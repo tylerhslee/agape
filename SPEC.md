@@ -104,21 +104,18 @@ and records — no dependency reach. Only reaching a declared dependency forces 
 
 Trust records a value's cognition-provenance. Agape uses three levels (§13, §15.3.1):
 
-- `**raw`** — raw, unstructured model output: a `<-` reply before it is bound to a `Credence`.
-- `**graded`** — the credence tier: a quantified judgment, a `Credence<E>` (a
-constrained distribution over a closed enum's variants, §3). More structured than `raw`
+- **raw** — raw, unstructured model output: a `<-` reply before it is bound to a `Credence`.
+- **graded** — the credence tier: a quantified judgment, a `Credence<E>` (a
+constrained distribution over a closed enum's variants, §3). More structured than **raw**
 — the model has been forced to commit to a fixed set of outcomes — but not yet
-committed by a gate. Queried memory facts also default to `graded` (§10).
-- `**settled`** — a committed value carrying no un-endorsed cognition: a gated `Decision`,
-a constant, or external data settled by origin (a `prompt`, a read-tool result over settled inputs).
+committed by a gate. Queried memory facts also default to **graded** (§10).
+- **settled** — a committed value carrying no un-endorsed cognition: a gated `Decision`, a constant, or external data settled by origin (a `prompt`, a read-tool result over settled inputs).
 
-Trust is contagious upward; only a gate moves a value down toward `settled`. A consequential
-action may consume only a `settled` value whose settling is recorded on the spine — endorsed
-(§13). External data is settled by origin; only un-endorsed cognition is withheld.
+Trust is contagious upward; only a gate moves a value down toward **settled**. A consequential action may consume only a **settled** value whose settling is recorded on the spine — endorsed (§13). External data is settled by origin; only un-endorsed cognition is withheld.
 
 ### Axis C — spine presence: `event<T>` vs bare `T`
 
-- `**event<T>`** means the value is (or will be) present on the spine as a message. It
+- `event<T>` means the value is (or will be) present on the spine as a message. It
 marks spine presence, not async-ness or trust.
 - A bare `T` is an ordinary in-memory value. A function can be async yet return a bare
 value (handed to the caller, not emitted).
@@ -126,19 +123,18 @@ value (handed to the caller, not emitted).
 ### The axes are independent
 
 
-| construct                              | async? | trust of result  | on spine? | type                   |
-| -------------------------------------- | ------ | ---------------- | --------- | ---------------------- |
-| `Credence<bool> c = self <- "is …?"`   | yes    | `graded`         | pair      | `Credence<bool>`       |
-| `c by confidence 0.9`                  | no     | `settled`        | no        | `Decision<bool>`       |
-| `endorse (c by …) { … }`               | no¹    | `settled` (endorsed) | single | `Decision<bool>`     |
-| `Credence<Entailment> v = self <- "…"` | yes    | `graded`         | pair      | `Credence<Entailment>` |
-| `attest memo by alice`                 | yes    | `settled` (endorsed) | pair   | `Decision`           |
-| `dest <- "msg"` (delegation)           | yes    | `raw`            | lifecycle | `T_reply`              |
-| `search(q)` (read tool, §6b)           | yes    | `⊔ inputs`       | pair      | `text`                 |
-| `double(3)` (pure)                     | no     | `settled`        | no        | `int`                  |
+| construct                            | async? | trust of result      | # events | type             |
+| ------------------------------------ | ------ | -------------------- | --------- | ---------------- |
+| `Credence<bool> c = self <- "is …?"` | yes    | `graded`             | lifecycle | `Credence<bool>` |
+| `c by confidence 0.9`                | no     | `settled`            | no        | `Decision<bool>` |
+| `endorse (c by …) { … }`             | no¹    | `settled` (endorsed) | single    | `Decision<bool>` |
+| `attest memo by alice`               | yes    | `settled` (endorsed) | pair      | `Decision`       |
+| `Credence<E> c = peer <- "…?"`       | yes    | `graded`             | lifecycle | `Credence<E>`    |
+| `search(q)` (read tool, §6b)         | yes    | `⊔ inputs`           | pair      | `text`           |
+| `double(3)` (pure)                   | no     | `settled`            | no        | `int`            |
 
 
-¹ `endorse` over an in-hand `Credence` is synchronous (collapse + record, no dependency reach); `endorse (self <- "…" by …)` with an inline provider send is async. See §13.
+¹ `endorse` over an in-hand `Credence` is synchronous (collapse + record, no dependency reach); `endorse (self <- "…" by …)` with an inline send is async. See §13.
 
 - A semantic judgment yields a `Credence<E>` — a graded distribution over the variants of
 enum `E`, not a `bool`. To obtain a committed value, gate it (`c by R`); the threshold is
@@ -147,8 +143,8 @@ never hidden.
 happened in producing the `Credence`, and applying a `Rule` to it is pure comparison.
 - `endorse` records the collapse on the spine, which is what makes the value endorsed and
 admissible for consequential use (§13).
-- A `Credence` is produced by binding a provider send to a `Credence<E>`-typed slot (§3, §8);
-there is no separate `~` or `entail` operator.
+- A `Credence` is produced by binding a send to a `Credence<E>`-typed slot (§3, §8), whatever
+the destination; there is no separate `~` or `entail` operator.
 
 ---
 
@@ -165,7 +161,7 @@ values and instances are lowercase.
 - **Operators (multi-char first):** `<-  |>  >=  <=  ==  !=  { } ( ) [ ] ; , . : =  +
   - - /  <  >  !`
 - **Send operator:** exactly one communication arrow, `<-`. A `->` is a `LexError`.
-- **Semantic judgment**: `Credence<E>` produced by binding a provider send to a `Credence` slot (§3, §8); vector-store similarity is reached through `match` (§10).
+- **Semantic judgment**: `Credence<E>` produced by binding a send to a `Credence` slot (§3, §8); vector-store similarity is reached through `match` (§10).
 
 ### Keywords
 
@@ -249,7 +245,7 @@ Credence<Entailment>    // graded over { Entails, Contradicts, Neutral }
 Credence<Ticket>        // graded over a user enum — a constrained classifier
 ```
 
-A `Credence<E>` is produced only by binding a provider send to a `Credence`-typed slot (§8);
+A `Credence<E>` is produced only by binding a send to a `Credence`-typed slot (§8);
 the slot's enum is the output schema, so the model is forced to answer inside `E`. It is
 consumed only by the gate (`c by R`, `endorse`/`attest`, §13) and by the graded combinators (`all`
 / `any` / `quorum`, §12). It is not a probabilistic-programming distribution object:
@@ -304,11 +300,11 @@ constructed** (no literal form — `text → Principal`, `float → Calibration`
 on the spine. Four flavours differ only in what they supply:
 
 
-| declaration           | supplies                       | used at                              |
-| --------------------- | ------------------------------ | ------------------------------------ |
-| `prompt T name;`      | an external input source (§5b) | `when (Prompt p about name)`         |
-| `tool R name(..);`    | a world capability (§6b)       | a tool call                          |
-| `principal name;`     | an accountable identity        | `attest e by name`                   |
+| declaration        | supplies                       | used at                      |
+| ------------------ | ------------------------------ | ---------------------------- |
+| `prompt T name;`   | an external input source (§5b) | `when (Prompt p about name)` |
+| `tool R name(..);` | a world capability (§6b)       | a tool call                  |
+| `principal name;`  | an accountable identity        | `attest e by name`           |
 
 
 ```agape
@@ -457,14 +453,18 @@ to the spine as they arrive, so replay folds the recorded input stream determini
 
 `dest <- message`
 
-- `self <- p` is cognition: a self-send routes through the provider — it is how an
-agent thinks. It is the only cognition primitive; the provider is not an agent.
-- `other <- p` is inter-agent messaging (IPC): it delivers into another agent's mailbox.
-- A typed reply (`event<T> x = dest <- "…";`) is produced through the provider via structured
-output for `T` (§8); binding to a `Credence<E>` slot constrains that output to `E`'s
-variants (§3, §8). For an IPC send, the reply is the recipient agent's bound response;
-for a self-send it is the model's structured output.
-- A send's reply is `raw`; only its lifecycle (`Sent → Delivered → Resolved`) is on the spine, not its content (§15.4).
+- A send `dest <- p` goes to the agent at `dest`, which answers by thinking — invoking the
+model through the provider. `self` is just your own address: every agent reasons through the
+same provider, so the destination changes only which agent thinks, never the kind of operation.
+- A typed reply (`event<T> x = dest <- "…";`) is the responder's structured output for `T`
+(§8); binding it to a `Credence<E>` slot constrains that output to `E`'s variants and yields
+a graded `Credence` (§3, §8) — for any destination.
+- A bare reply is `raw`; the `Credence` binding is what grades it. Either way a reply is an
+ordinary value: it reaches the spine only by being emitted, performed, or gated, never by
+being produced — so a send logs its lifecycle, not its content (§15.4).
+- Every send is asynchronous and actor-routed: it carries the `Sent → Delivered → Resolved`
+lifecycle (below) and may be lost or expire — `self` included. A send is a send; the
+destination is only an address.
 
 ### The message lifecycle — `Sent → Delivered → Resolved`
 
@@ -631,7 +631,7 @@ swapping it changes no source.
 
 ### Graded judgments → `Credence<E>`
 
-A semantic judgment is a provider send bound to a `Credence<E>` slot. The slot's enum `E` is
+A semantic judgment is a send bound to a `Credence<E>` slot. The slot's enum `E` is
 the output schema; the provider is forced to answer inside `E`, and the result is a
 distribution over `E`'s variants (the credence).
 
@@ -740,8 +740,7 @@ gate, above). A value's provenance, not its having-been-stored, determines wheth
 ### Query surface
 
 - **Facts (SQL):** `select COLS from AGENT where { COND }` → `array<Record>` — rows of the
-projected columns. `COND` is a boolean filter over fields: `field op value` (`op ∈ {==, !=, <, >,
-<=, >=}`) combined by `&&` / `||`. No joins or aggregates — heavy analysis is host work (§6b).
+projected columns. `COND` is a boolean filter over fields: `field op value` (`op ∈ {==, !=, <, >, <=, >=}`) combined by `&&` / `||`. No joins or aggregates — heavy analysis is host work (§6b).
 - **Relationships (graph):** `find x [, origin(x)] where { TRIPLE+ }` → `array<T>` of the bound
 node's type — the entities matching the pattern. Each `TRIPLE` is a `subject predicate object`
 atom (any position a variable or a literal); the body is their conjunction.
@@ -888,9 +887,9 @@ variable of agent type), not only parameters.
 
 A value's trust records its cognition-provenance: `settled ⊑ graded ⊑ raw` (§15.3.1).
 
-- raw model output (`self <- p` before it is a `Credence`) → `raw`.
-- a provider send bound to a `Credence<E>` slot → `graded` (a graded judgment); a queried
-fact defaults to `graded` (§10).
+- a bare send reply, before it is bound to a `Credence`, → `raw`.
+- a send bound to a `Credence<E>` slot → `graded` (a graded judgment), for any destination; a
+queried fact defaults to `graded` (§10).
 - a gate → `settled` (committed and recorded).
 - a constant, a `prompt`, and a read-`tool` called with `settled` inputs → `settled` by
 origin: external data carries no un-endorsed cognition.
@@ -918,17 +917,16 @@ endorse (kind by conformal 0.1) { ... }          // conformal calibrates from th
   abstain { ... } by triage_lead { ... };        // ambiguity / cold-start → defer to a principal
 ```
 
-- **`c by R`** collapses a `Credence<E>` to a `Decision` (a committed variant, or `abstain`) by a
+- `**c by R**` collapses a `Credence<E>` to a `Decision` (a committed variant, or `abstain`) by a
 `Rule` `R` (§3). It settles trust (`graded → settled`) and is color-`S`. A bare `Decision` is
 settled but *off-spine* (unendorsed): it may drive control flow, not a consequential action. The
 rule is mandatory.
-- **`endorse (c by R) { … }`** records the `Decision` and **endorses** it — settled *and* on the
+- `**endorse (c by R) { … }*`* records the `Decision` and **endorses** it — settled *and* on the
 spine — then dispatches on the `Decision`'s variants (the arms, written with `:`). Over an in-hand
 `Credence` it is synchronous (`sync`-permitted); the inline `endorse (self <- "…" by R)` form is
 async. An endorsed `Decision` may drive a `perform`.
-- **`attest e by p`** / the **`by p`** clause (`p` a `principal`) is the external basis: it reaches
-the identity dependency, obtains `p`'s signed `Decision`, and records an `Attestation { who, what,
-decision, signature }`. The decision is `p`'s, deferred to the model for the clear cases.
+- `**attest e by p`** / the `**by p**` clause (`p` a `principal`) is the external basis: it reaches
+the identity dependency, obtains `p`'s signed `Decision`, and records an `Attestation { who, what, decision, signature }`. The decision is `p`'s, deferred to the model for the clear cases.
 
 **The rule selects the basis (§3); the gate stays uniform.** `by confidence θ` is the
 **threshold** basis; `by conformal α` is the **conformal** basis — the prediction set is
@@ -955,7 +953,7 @@ labels. A recorded outcome that labels a judgment references that judgment's spi
 judgment↔label join stays auditable on the spine rather than in untyped host state.
 
 **The consequential-action rule.** A consequential sink — a `perform` argument or an effecting-tool
-input — may consume a value only if it is **`settled`**: it carries no un-endorsed cognition. A
+input — may consume a value only if it is `**settled`**: it carries no un-endorsed cognition. A
 `Credence` reaches `settled` only through a recorded gate (`endorse`/`attest`, not a bare
 `c by R`); external data is `settled` by origin and passes freely — only un-endorsed cognition is
 rejected (the check is static). Additionally, if the value is a gated decision, the margin floor is
@@ -997,7 +995,7 @@ desugars).
 
 **Type & effect** — `sync` is the marked color and cannot reach a declared dependency (including a tool
 call), though it may `emit` and `endorse` an in-hand `Credence`; `event<T>` marks spine
-presence; a provider send bound to a `Credence<E>` slot yields a graded judgment, never a
+presence; a send bound to a `Credence<E>` slot yields a graded judgment, never a
 committed value; the collapse `c by R` settles (`graded → settled`) off-spine, `endorse` records
 it, and only a `settled` value may drive a consequential sink (a `perform` arg or an effecting-tool
 input); fusion of two or more `Credence`s (including `quorum`) requires a total
@@ -1140,12 +1138,12 @@ both contagious upward (a value is as `raw` as its least-settled input) unless a
 ### 15.3.2 Expression rules (selected)
 
 ```
-Γ ⊢ d : Agent   Γ ⊢ p : Text                    // self-send = cognition; other-send = async delegation
+Γ ⊢ d : Agent   Γ ⊢ p : Text                    // any send invokes cognition at d; raw until bound to a Credence
 ──────────────────────────────  (T-Send)        Γ ⊢ (d <- p) : T_reply ! A · raw
 
 Γ ⊢ d : Agent   Γ ⊢ p : Text    E an enum
 ─────────────────────────────────────────────  (T-Credence)
-Γ ⊢ (Credence<E> _ = d <- p) : Credence<E> ! A · graded
+Γ ⊢ (Credence<E> _ = d <- p) : Credence<E> ! A · graded    // any destination d
 
 Γ ⊢ aᵢ : Tᵢ · tᵢ    tool R K(T₁..Tₙ) declared, read-only      ("use",K) ∈ G ∨ G = {*}
 ─────────────────────────────────────────────────────────────────────────  (T-Tool-Read)
@@ -1296,11 +1294,11 @@ fault in a handler invocation
 ─────────────────────────────────────────────────────────────  (E-Crash)
 ⟨…|Â|S| …fault…; k⟩ → ⟨…|Â| append(S, AgentCrashed(name)); on-crash-hook; resume⟩   // not a death
 
-// SEND — three-phase lifecycle; reply raw; content not stored (only the lifecycle):
-awake(dest)   (Π, render(p), schema(T)) ⇝ (v, Π')       // self-send routes through Π (cognition)
+// SEND — three-phase lifecycle; reply raw until Credence-bound; content not stored (only the lifecycle):
+awake(dest)   (Π, render(p), schema(T)) ⇝ (v, Π')       // responder thinks through Π (the provider) — any dest
 S' = append³(S, Sent(x,@d), Delivered(x,@d), Resolved(x,@d))   // subjects only; v is not logged
 ─────────────────────────────────────────────────────────────  (E-Send)
-⟨Π|…|μ|S| x = (d <- p); k⟩ → ⟨Π'|…|μ[x↦v (trust raw)]|S'| k⟩
+⟨Π|…|μ|S| x = (d <- p); k⟩ → ⟨Π'|…|μ[x↦v (trust raw; graded if x : Credence<E>, T-Credence)]|S'| k⟩
 
 // SEND (lost) — dest not awake at delivery: chain stalls at Sent:
 ¬awake(dest)
