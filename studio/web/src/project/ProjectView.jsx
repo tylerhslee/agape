@@ -54,6 +54,19 @@ export default function ProjectView({ info, onReview }) {
     return { calls, tokIn, tokOut, cost };
   }, [result]);
 
+  // The conversation: what was asked, and the verified answer the system delivered.
+  // The "answer" is the payload of the last `perform`ed action (e.g. Reply) — an
+  // action only fires when its gate commits, so its presence means "verified".
+  const convo = useMemo(() => {
+    if (!result || !result.ok) return null;
+    const actions = [...(src || "").matchAll(/^\s*action\s+([A-Za-z_]\w*)/gm)].map((m) => m[1]);
+    const acts = result.events.filter((e) => actions.includes(e.etype));
+    const answer = acts.length ? acts[acts.length - 1] : null;
+    const abstained = result.events.some((e) => e.etype === "Abstained");
+    const rejected = !answer && result.events.some((e) => /reject/i.test(e.payload || ""));
+    return { asked: result.asked || {}, answer, abstained, rejected };
+  }, [result, src]);
+
   // Load the selected file's source.
   useEffect(() => {
     if (!sel) return;
@@ -75,7 +88,7 @@ export default function ProjectView({ info, onReview }) {
     try {
       if (dirtyRef.current) await project.saveFile(sel, src); // run what you see
       const r = await project.run(sel, prompts, { claude, samples, temperature: temp });
-      setResult({ ...r, claude }); // remember which provider produced this run
+      setResult({ ...r, claude, asked: { ...prompts } }); // remember provider + what was asked
       setDirty(false); dirtyRef.current = false;
     } catch (e) { setResult({ ok: false, error: e.message }); }
     setRunning(false);
@@ -146,6 +159,24 @@ export default function ProjectView({ info, onReview }) {
           <div className="pj-dim" style={{ padding: 12 }}>▶ Run to see the LLM calls, cost, and the spine — the append-only log of everything the agents do.</div>
         ) : result.ok ? (
           <>
+            <div className="pj-qa">
+              {Object.entries(convo.asked).filter(([, v]) => v).map(([k, v]) => (
+                <div key={k} className="pj-msg-row"><span className="pj-who you">you</span><span className="pj-bubble">{v}</span></div>
+              ))}
+              {convo.answer ? (
+                <div className="pj-msg-row">
+                  <span className="pj-who agape">agape</span>
+                  <span className="pj-bubble"><span className="pj-verified">✓ verified</span>{convo.answer.payload}</span>
+                </div>
+              ) : (
+                <div className="pj-msg-row">
+                  <span className="pj-who warn">agape</span>
+                  <span className="pj-bubble pj-dim">{convo.abstained ? "abstained — the gate couldn't commit, no answer delivered" : convo.rejected ? "rejected — the answer failed fact-check, not delivered" : "no answer delivered"}</span>
+                </div>
+              )}
+            </div>
+
+            <div className="pj-section-h">under the hood</div>
             <div className="pj-metrics">
               <div className="pj-metric"><b>{run.calls.length}</b><span>LLM calls</span></div>
               <div className="pj-metric"><b>{run.tokIn}</b><span>tok in</span></div>
@@ -264,6 +295,12 @@ const STYLE = `
 .pj-inp input{font:inherit;background:#1d2330;border:1px solid #2a3140;color:#e6e9ef;border-radius:7px;padding:6px 9px}
 .pj-msg{padding:4px 12px;font-size:12.5px}
 .pj-spine{flex:1;overflow:auto;border-top:1px solid #2a3140;margin-top:4px}
+.pj-qa{display:flex;flex-direction:column;gap:8px;padding:12px}
+.pj-msg-row{display:flex;gap:8px;align-items:flex-start}
+.pj-who{flex:none;width:46px;font:600 10px ui-monospace,monospace;text-transform:uppercase;letter-spacing:.3px;padding-top:6px}
+.pj-who.you{color:#79c0ff}.pj-who.agape{color:#3fb950}.pj-who.warn{color:#d29922}
+.pj-bubble{flex:1;background:#1a1f2b;border:1px solid #2a3140;border-radius:10px;padding:8px 11px;font-size:13px;line-height:1.5;white-space:pre-wrap;word-break:break-word}
+.pj-verified{display:inline-block;font:600 10px ui-monospace,monospace;color:#3fb950;background:#15291c;border-radius:5px;padding:1px 6px;margin-right:7px;vertical-align:1px}
 .pj-metrics{display:flex;gap:8px;padding:10px 12px 4px}
 .pj-metric{flex:1;background:#1a1f2b;border:1px solid #2a3140;border-radius:8px;padding:7px 6px;text-align:center;display:flex;flex-direction:column;gap:1px}
 .pj-metric b{font:600 15px ui-monospace,monospace;color:#e6e9ef}
