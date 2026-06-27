@@ -166,17 +166,27 @@ and higher `m` is stricter.) The two corner combos are reachable via the **expli
 | mode (A) | floor (B) | meaning | written as |
 |---|---|---|---|
 | face value | `m=0` | `reversible` — take the answer, just act | `reversible action X` |
-| conformal | `m>0` | default — certify + decisive | unmarked `action X` |
+| conformal | `m>0` | default — α-correct **and** stable (reproducible) | unmarked `action X` |
 | face value | `m>0` | trust the model's pick only when decisive | explicit `c by confidence θ margin δ` |
-| conformal | `m=0` | trust α, skip the extra floor | explicit `conformal α` + per-action `m=0` |
+| conformal | `m=0` | α-correct, but accept low-gap flips between runs | explicit `conformal α` + per-action `m=0` |
+
+Why the two conformal rows are both meaningful: **axis A (mode) governs *correctness*** (α's
+calibrated error rate, or argmax) and **the floor `m` governs *stability*** (run-to-run
+flip-resistance, §15.5.5) — they are orthogonal. A conformal singleton still has an underlying
+credence gap; `m` floors *that gap* for reproducibility, on top of α's correctness guarantee.
 
 We deliberately do **not** add surface keywords for the corner combos (that is what the explicit
 escape hatch is for); both are niche, and the common cases are the two bundles.
 
 ## 6. The rigor dial is α — which *replaces* hand-set margin
 
-Calibration is first-class (§3); hand-set margin (`δ`) is the arbitrary knob α replaces with a
-data-grounded guarantee. So margin is not *hidden*, it is *upgraded*:
+Two distinct "margins", kept apart: **`δ`** = the gate's *decision* margin (the threshold basis's
+"top must lead by ≥ δ"), and **`m`** = the *consequential sink floor* (a stability check on the
+underlying credence gap, applied to any gated decision before it acts, §5). This section is about
+`δ` — the *decision* knob; `m` (stability) is orthogonal and discussed in §5.
+
+Calibration is first-class (§3); hand-set `δ` is the arbitrary knob α replaces with a
+data-grounded guarantee. So `δ` is not *hidden*, it is *upgraded*:
 
 - **reversible** → no margin (commits even on a near-tie; bounded by `temperature`, §5).
 - **conformal** → margin *is* the calibrated prediction set: close-but-plausible variants make the
