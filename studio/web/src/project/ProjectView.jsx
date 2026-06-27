@@ -25,6 +25,7 @@ export default function ProjectView({ info, onReview }) {
   const [result, setResult] = useState(null);
   const [running, setRunning] = useState(false);
   const [msg, setMsg] = useState(null);
+  const [claude, setClaude] = useState(false);
   const dirtyRef = useRef(false);
   const narrow = useNarrow();
   const [pane, setPane] = useState("code"); // mobile: files | code | run
@@ -70,7 +71,8 @@ export default function ProjectView({ info, onReview }) {
     setPane("run"); // on phone, surface the output
     try {
       if (dirtyRef.current) await project.saveFile(sel, src); // run what you see
-      setResult(await project.run(sel, prompts));
+      const r = await project.run(sel, prompts, { claude });
+      setResult({ ...r, claude }); // remember which provider produced this run
       setDirty(false); dirtyRef.current = false;
     } catch (e) { setResult({ ok: false, error: e.message }); }
     setRunning(false);
@@ -106,7 +108,14 @@ export default function ProjectView({ info, onReview }) {
 
   const runPanel = (
     <section className="pj-run-panel">
-      <div className="pj-side-h">run</div>
+      <div className="pj-run-h">
+        <span className="pj-side-h" style={{ padding: 0 }}>run</span>
+        <span style={{ flex: 1 }} />
+        <label className="pj-toggle" title="Route the ← cognition seam to a real Claude (sampling fallback for graded judgments) instead of the deterministic mock">
+          <input type="checkbox" checked={claude} onChange={(e) => setClaude(e.target.checked)} />
+          <span>🧠 Claude</span>
+        </label>
+      </div>
       {file && file.prompts.length > 0 ? (
         <div className="pj-inputs">
           <div className="pj-dim" style={{ marginBottom: 6 }}>user input → the <code>prompt</code> sensors:</div>
@@ -134,7 +143,7 @@ export default function ProjectView({ info, onReview }) {
               <div className="pj-metric"><b>{run.tokOut}</b><span>tok out</span></div>
               <div className="pj-metric"><b>~${run.cost < 0.001 ? run.cost.toFixed(5) : run.cost.toFixed(3)}</b><span>est. cost</span></div>
             </div>
-            <div className="pj-metric-note">estimated · deterministic mock provider (no live connector)</div>
+            <div className="pj-metric-note">{result.claude ? "live Claude (haiku) · sampling fallback · tokens estimated from text" : "estimated · deterministic mock provider (no live connector)"}</div>
 
             <div className="pj-section-h">llm calls</div>
             {run.calls.length === 0 && <div className="pj-dim" style={{ padding: "0 12px 8px" }}>no provider calls this run</div>}
@@ -229,6 +238,9 @@ const STYLE = `
 .pj-sensor{font:12px ui-monospace,monospace;color:#79c0ff;padding-left:8px}
 .pj-editor{flex:1;display:flex;min-width:0}
 .pj-run-panel{width:360px;border-left:1px solid #2a3140;background:#13161d;display:flex;flex-direction:column;min-height:0}
+.pj-run-h{display:flex;align-items:center;padding:10px 12px 4px}
+.pj-toggle{display:flex;align-items:center;gap:5px;font-size:12px;color:#9aa4b2;cursor:pointer;user-select:none}
+.pj-toggle input{cursor:pointer;accent-color:#d29922}
 .pj-inputs{padding:6px 12px}
 .pj-inp{display:flex;flex-direction:column;gap:3px;margin-bottom:8px}
 .pj-inp span{font:12px ui-monospace,monospace;color:#79c0ff}

@@ -73,6 +73,23 @@ fn cmd_run(args: &[String]) {
     while i < args.len() {
         match args[i].as_str() {
             "--json" => json = true,
+            // Route the `<-` seam to a live provider (the studio agent-server) instead
+            // of the deterministic mock. `--claude` is shorthand for the local studio.
+            "--claude" => config.provider_url = Some("127.0.0.1:8799".to_string()),
+            "--provider" => {
+                i += 1;
+                config.provider_url = Some(args.get(i).cloned().unwrap_or_else(|| {
+                    eprintln!("agape: --provider needs host:port");
+                    exit(2);
+                }));
+            }
+            "--samples" => {
+                i += 1;
+                config.samples = args.get(i).and_then(|s| s.parse().ok()).unwrap_or_else(|| {
+                    eprintln!("agape: --samples needs a number");
+                    exit(2);
+                });
+            }
             "--prompt" | "-p" => {
                 i += 1;
                 let kv = args.get(i).unwrap_or_else(|| {
