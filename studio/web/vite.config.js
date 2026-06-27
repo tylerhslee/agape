@@ -14,6 +14,7 @@ export default defineConfig({
       "/agent": "http://127.0.0.1:8799",
       "/learn": "http://127.0.0.1:8799",
       "/review": "http://127.0.0.1:8799",
+      "/project": "http://127.0.0.1:8799",
     },
   },
   build: {

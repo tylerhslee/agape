@@ -22,10 +22,9 @@ pub mod parser; // M2
 pub mod spine;
 
 use diag::AgapeError;
-use interp::HarnessConfig;
 use spine::Spine;
 
-pub use interp::{HarnessConfig as Config, ProviderMode};
+pub use interp::{HarnessConfig, ProviderMode};
 
 /// Run a program through the entire pipeline:
 /// `lex` → `parse` → `check` → `interp`. A program that passes the static checks

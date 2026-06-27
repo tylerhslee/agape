@@ -43,6 +43,10 @@ pub struct HarnessConfig {
     pub attest_deny: bool,
     /// `[memory] internalize_on_receive` — each received `<-` auto-internalizes (§16.7).
     pub internalize_on_receive: bool,
+    /// External input fed to `prompt` sensors (`name`, `value`): after the program
+    /// quiesces, each is delivered as a `Prompt` event on its sensor, firing the
+    /// `when (Prompt p about name)` subscriptions (§5b). The user-input seam.
+    pub prompt_inputs: Vec<(String, String)>,
 }
 
 /// A resolved decision policy (§13): the runtime side of a `policy` block or an
@@ -147,6 +151,9 @@ pub struct Interp {
     /// Set when a seam fault (schema violation) occurred in the current scope; the
     /// enclosing `{ block } retry(N)` consults it to re-attempt / exhaust (§11, §16.6).
     faulted: bool,
+    /// The `prompt` sensors opened this run, in declaration order — the set of
+    /// names external input may be delivered to once the program quiesces (§5b).
+    prompts: Vec<String>,
 }
 
 /// Run a checked AST to quiescence with the default (mock) seams; return the spine.
@@ -160,6 +167,7 @@ pub fn run_with(stmts: &[Stmt], config: &HarnessConfig) -> Spine {
     it.collect(stmts);
     let mut frame = HashMap::new();
     it.exec_block(stmts, &mut frame, None);
+    it.deliver_prompt_inputs();
     it.spine
 }
 
@@ -181,6 +189,7 @@ impl Interp {
             eph: 0,
             config,
             faulted: false,
+            prompts: Vec::new(),
         }
     }
 
@@ -227,6 +236,18 @@ impl Interp {
     fn ephemeral(&mut self) -> String {
         self.eph += 1;
         format!("@v{}", self.eph)
+    }
+
+    /// Deliver configured external input to its `prompt` sensors once the program
+    /// has quiesced: each arrival lands a `Prompt` event (subject = the sensor name),
+    /// firing the now-registered `when (Prompt p about name)` subscriptions (§5b).
+    fn deliver_prompt_inputs(&mut self) {
+        let inputs = self.config.prompt_inputs.clone();
+        for (name, value) in inputs {
+            if self.prompts.iter().any(|p| p == &name) {
+                self.emit_event("Prompt", Some(name), value, None);
+            }
+        }
     }
 
     // ── statement execution ──────────────────────────────────────────────────
@@ -289,8 +310,9 @@ impl Interp {
             Stmt::Sleep(name) => self.sleep_agent(name),
             Stmt::Prompt { name, .. } => {
                 self.append("PromptOpened", Some(name.clone()), name.clone(), None, None);
-                // No external input is fed in conformance mode → the sensor opens
-                // and the program quiesces (EOF).
+                // The sensor is open; any configured external input is delivered once
+                // the program quiesces (see `deliver_prompt_inputs`).
+                self.prompts.push(name.clone());
             }
             Stmt::Emit { event_type, payload } => {
                 let v = self.eval(payload, frame, agent);

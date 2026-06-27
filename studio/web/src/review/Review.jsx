@@ -5,7 +5,7 @@ import * as review from "./reviewApi.js";
 
 // The Review studio: inspect the conformance suite, read/proofread SPEC.md, and
 // edit the spec with an LLM in place. Built on Studio's Monaco + agent-server.
-export default function Review({ onStudio }) {
+export default function Review({ onStudio, onProject }) {
   const [data, setData] = useState(null);
   const [err, setErr] = useState(null);
   const [tab, setTab] = useState("tests");
@@ -58,6 +58,7 @@ export default function Review({ onStudio }) {
           {running ? "running tests…" : "▶ Run tests"}
         </button>
         <button onClick={load} disabled={loading || running} title="Reload everything (suite + spec)">{loading ? "loading…" : "↻ reload"}</button>
+        {onProject && <button onClick={onProject}>Project →</button>}
         {onStudio && <button onClick={onStudio}>Studio →</button>}
       </header>
 

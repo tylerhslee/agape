@@ -93,6 +93,62 @@ function readJson(req: http.IncomingMessage): Promise<any> {
 const REPO = path.resolve(HERE, "..", "..");
 const TESTS_DIR = path.resolve(REPO, "agape-conformance", "tests");
 
+// ── project: the user's own Agape project, opened via `agape studio` ──────────
+// `AGAPE_PROJECT` is set by the CLI launcher; null ⇒ no project (Review only).
+const PROJECT = process.env.AGAPE_PROJECT ? path.resolve(process.env.AGAPE_PROJECT) : null;
+const AGAPE_BIN = path.resolve(AGAPE_RS, "target", "debug", "agape");
+
+// List the project's .ag files with a shallow parse of the agents/sensors they
+// declare — enough for the studio to show the agent inventory at a glance.
+function projectFiles(): Array<{ rel: string; agents: string[]; prompts: string[] }> {
+  if (!PROJECT || !fs.existsSync(PROJECT)) return [];
+  const out: string[] = [];
+  walkAg(PROJECT, out);
+  out.sort();
+  return out.map((f) => {
+    const src = fs.readFileSync(f, "utf8");
+    const agents = [...src.matchAll(/^\s*agent\s+([A-Za-z_]\w*)/gm)].map((m) => m[1]);
+    const prompts = [...src.matchAll(/^\s*prompt\s+\S+\s+([A-Za-z_]\w*)\s*;/gm)].map((m) => m[1]);
+    return { rel: path.relative(PROJECT, f).replace(/\\/g, "/"), agents, prompts };
+  });
+}
+
+function projectName(): string {
+  if (!PROJECT) return "";
+  const toml = path.join(PROJECT, "agape.toml");
+  if (fs.existsSync(toml)) {
+    const m = fs.readFileSync(toml, "utf8").match(/name\s*=\s*"([^"]+)"/);
+    if (m) return m[1];
+  }
+  return path.basename(PROJECT);
+}
+
+// Resolve a project-relative path, refusing anything that escapes the root.
+function safeProjectPath(rel: string): string | null {
+  if (!PROJECT) return null;
+  const full = path.resolve(PROJECT, rel);
+  if (!full.startsWith(PROJECT) || !full.endsWith(".ag")) return null;
+  return full;
+}
+
+// Run one project file through the `agape` CLI (--json), feeding prompt inputs.
+async function runProjectFile(rel: string, prompts: Record<string, string>) {
+  const full = safeProjectPath(rel);
+  if (!full || !fs.existsSync(full)) return { ok: false, error: `no such file: ${rel}` };
+  const args = ["run", full, "--json"];
+  for (const [k, v] of Object.entries(prompts || {})) args.push("--prompt", `${k}=${v}`);
+  const bin = fs.existsSync(AGAPE_BIN) ? AGAPE_BIN : "cargo";
+  const argv = bin === "cargo" ? ["run", "--quiet", "--bin", "agape", "--", ...args] : args;
+  try {
+    const r = await pExecFile(bin, argv, { cwd: AGAPE_RS, timeout: 60_000, maxBuffer: 20_000_000 });
+    return JSON.parse(r.stdout);
+  } catch (e: any) {
+    // A static-rejection exits non-zero but still prints the JSON error envelope.
+    if (e?.stdout) { try { return JSON.parse(e.stdout); } catch {} }
+    return { ok: false, error: e?.stderr || e?.message || "run failed" };
+  }
+}
+
 function walkAg(dir: string, out: string[]): void {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
     const p = path.join(dir, e.name);
@@ -252,6 +308,29 @@ const server = http.createServer(async (req, res) => {
       fs.writeFileSync(SPEC_PATH, text, "utf8");
       return send(res, 200, { ok: true, bytes: text.length });
     }
+    // ── the project studio (opened via `agape studio`) ──
+    if (req.method === "GET" && url === "/project/info") {
+      return send(res, 200, { hasProject: !!PROJECT, root: PROJECT || "", name: projectName(), files: projectFiles() });
+    }
+    if (req.method === "GET" && url === "/project/file") {
+      const rel = new URL(req.url || "", "http://x").searchParams.get("rel") || "";
+      const full = safeProjectPath(rel);
+      if (!full || !fs.existsSync(full)) return send(res, 404, { error: "not a project .ag file" });
+      return send(res, 200, { rel, body: fs.readFileSync(full, "utf8") });
+    }
+    if (req.method === "POST" && url === "/project/file") {
+      const { rel, body } = (await readJson(req)) || {};
+      const full = safeProjectPath(String(rel || ""));
+      if (!full) return send(res, 400, { error: "path must be a .ag under the project root" });
+      fs.writeFileSync(full, String(body ?? ""), "utf8");
+      return send(res, 200, { ok: true });
+    }
+    if (req.method === "POST" && url === "/project/run") {
+      const { rel, prompts } = (await readJson(req)) || {};
+      if (!rel) return send(res, 400, { error: "rel (a project .ag file) is required" });
+      return send(res, 200, await runProjectFile(String(rel), prompts || {}));
+    }
+
     if (req.method === "POST" && url === "/review/test-save") {
       const { rel, body } = (await readJson(req)) || {};
       const full = path.resolve(REPO, String(rel || ""));
