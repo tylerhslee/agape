@@ -162,6 +162,9 @@ impl Parser {
             }
             return self.event_decl();
         }
+        if t.is_kw("action") {
+            return self.action_decl();
+        }
         if t.is_kw("read") || t.is_kw("write") {
             return self.tool_decl();
         }
@@ -228,6 +231,18 @@ impl Parser {
             self.eat_op(")")?;
             self.eat_op(";")?;
             return Ok(Stmt::Emit { event_type, payload });
+        }
+        if t.is_kw("perform") {
+            self.advance();
+            let action_type = self.eat_ident()?;
+            self.eat_op("(")?;
+            let payload = self.expr()?;
+            self.eat_op(")")?;
+            self.eat_op(";")?;
+            return Ok(Stmt::Perform { action_type, payload });
+        }
+        if t.is_kw("endorse") {
+            return self.endorse_stmt();
         }
         if t.is_kw("return") {
             self.advance();
@@ -392,6 +407,92 @@ impl Parser {
         Ok(Stmt::EventDecl { name, fields })
     }
 
+    /// `action NAME(field, ...);` — a performative event type (§3, §13).
+    fn action_decl(&mut self) -> PResult<Stmt> {
+        self.eat_kw("action")?;
+        let name = self.eat_ident()?;
+        self.eat_op("(")?;
+        let fields = self.parse_fields(")")?;
+        self.eat_op(")")?;
+        self.eat_op(";")?;
+        Ok(Stmt::ActionDecl { name, fields })
+    }
+
+    /// `endorse (arg by rule) { variant: stmts ... } [abstain { ... }]` (§13).
+    fn endorse_stmt(&mut self) -> PResult<Stmt> {
+        self.eat_kw("endorse")?;
+        self.eat_op("(")?;
+        let arg = self.expr()?;
+        self.eat_ctx("by")?;
+        let rule = self.endorse_rule()?;
+        self.eat_op(")")?;
+        self.eat_op("{")?;
+        let mut arms = Vec::new();
+        while !self.check_op("}") && !self.at_eof() {
+            // an arm label is `true`/`false` or an enum variant ident, then `:`.
+            let label = if self.check_kw("true") {
+                self.advance();
+                "true".to_string()
+            } else if self.check_kw("false") {
+                self.advance();
+                "false".to_string()
+            } else {
+                self.eat_ident()?
+            };
+            self.eat_op(":")?;
+            // arm body: statements up to the next label or `}` (no braces; `;` = empty).
+            let mut body = Vec::new();
+            while !self.check_op("}") && !self.label_ahead() && !self.at_eof() {
+                if self.check_op(";") {
+                    self.advance(); // an empty arm body, e.g. `false: ;`
+                    continue;
+                }
+                body.push(self.stmt()?);
+            }
+            arms.push((label, body));
+        }
+        self.eat_op("}")?;
+        let abstain = if self.check_kw("abstain") {
+            self.advance();
+            Some(self.block()?)
+        } else {
+            None
+        };
+        Ok(Stmt::Endorse { arg, rule, arms, abstain })
+    }
+
+    /// Lookahead: is the cursor at an arm label (`true`/`false`/ident followed by `:`)?
+    fn label_ahead(&self) -> bool {
+        let t = self.cur();
+        let is_label = t.is_kw("true") || t.is_kw("false") || t.kind == TokenKind::Ident;
+        is_label && self.peek(1).is_op(":")
+    }
+
+    /// A gate rule after `by`: `confidence θ [margin δ]`, `conformal α`, or a policy
+    /// name / `Rule` value (§3, §13).
+    fn endorse_rule(&mut self) -> PResult<GateBasis> {
+        if self.cur().is_ident("confidence") {
+            self.advance();
+            let value = self.parse_number()?;
+            let margin = if self.cur().is_ident("margin") {
+                self.advance();
+                self.parse_number()?
+            } else {
+                0.0
+            };
+            Ok(GateBasis::Threshold { op: BinOp::from_str(">").unwrap(), value, margin })
+        } else if self.cur().is_ident("conformal") {
+            self.advance();
+            let _alpha = self.parse_number()?;
+            // conformal calibrates from the spine (§13); modeled as a threshold
+            // placeholder for now — the conformal procedure is library code (slice TODO).
+            Ok(GateBasis::Threshold { op: BinOp::from_str(">").unwrap(), value: 0.5, margin: 0.0 })
+        } else {
+            // a named `policy` or a `Rule` value
+            Ok(GateBasis::Value(Box::new(self.expr()?)))
+        }
+    }
+
     fn tool_decl(&mut self) -> PResult<Stmt> {
         // Mandatory effect class (§6b): `read` observes the world, `write` is a
         // consequential sink. The decl dispatcher only enters here on `read`/`write`.
@@ -439,6 +540,9 @@ impl Parser {
             let kind = if self.check_kw("emit") {
                 self.advance();
                 CapKind::Emit
+            } else if self.check_kw("perform") {
+                self.advance();
+                CapKind::Perform
             } else if self.cur().is_ident("reach") {
                 self.advance();
                 CapKind::Reach
@@ -446,7 +550,7 @@ impl Parser {
                 self.advance();
                 CapKind::Use
             } else {
-                return Err(self.err("expected 'emit', 'reach', 'use', or '*' in grants"));
+                return Err(self.err("expected 'perform', 'emit', 'reach', 'use', or '*' in grants"));
             };
             let target = self.eat_ident()?;
             caps.push(Capability { kind, target });

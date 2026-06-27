@@ -227,6 +227,39 @@ impl Interp {
                 let subj = self.subject_of(arg, frame);
                 self.eval_verify(arg, by, subj, frame, agent);
             }
+            Stmt::ActionDecl { .. } => {}
+            Stmt::Perform { action_type, payload } => {
+                let v = self.eval(payload, frame, agent);
+                let subj = agent.map(|a| a.to_string());
+                self.emit_event(action_type, subj, v.show(), agent.map(|a| a.to_string()));
+            }
+            Stmt::Endorse { arg, arms, abstain, .. } => {
+                // collapse the Credence, record the Decision, dispatch the arm (§13).
+                let v = self.eval(arg, frame, agent);
+                let variant = self.decide_variant(&v, frame);
+                let subj = self.subject_of(arg, frame);
+                let mut chosen: Option<&Vec<Stmt>> = None;
+                for (label, body) in arms {
+                    if *label == variant {
+                        chosen = Some(body);
+                        break;
+                    }
+                }
+                if let Some(body) = chosen {
+                    self.emit_event("Decided", subj, variant, agent.map(|a| a.to_string()));
+                    if let Flow::Return(v) = self.exec_block(body, frame, agent) {
+                        return Flow::Return(v);
+                    }
+                } else {
+                    // no matching arm ⇒ the gate could not commit a singleton ⇒ abstain.
+                    self.emit_event("Abstained", subj, String::new(), agent.map(|a| a.to_string()));
+                    if let Some(b) = abstain {
+                        if let Flow::Return(v) = self.exec_block(b, frame, agent) {
+                            return Flow::Return(v);
+                        }
+                    }
+                }
+            }
             Stmt::Say(x) => {
                 let v = self.eval(x, frame, agent);
                 println!("{}", v.show());

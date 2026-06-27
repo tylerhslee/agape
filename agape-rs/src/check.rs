@@ -359,6 +359,23 @@ impl Checker {
                 self.walk_expr(arg, scope, agent)?;
                 self.check_gate_by(by)?;
             }
+            // v1.0 gate/action (slice): walk subexpressions and arm bodies. Full
+            // authority + settled-input checks are a follow-up.
+            Stmt::ActionDecl { .. } => {}
+            Stmt::Perform { payload, .. } => {
+                self.walk_expr(payload, scope, agent)?;
+            }
+            Stmt::Endorse { arg, arms, abstain, .. } => {
+                self.walk_expr(arg, scope, agent)?;
+                for (_, body) in arms {
+                    let mut s = scope.child();
+                    self.walk_block(body, &mut s, agent)?;
+                }
+                if let Some(b) = abstain {
+                    let mut s = scope.child();
+                    self.walk_block(b, &mut s, agent)?;
+                }
+            }
             Stmt::Say(x) | Stmt::Return(Some(x)) | Stmt::ExprStmt(x) => self.walk_expr(x, scope, agent)?,
             Stmt::If { cond, then_body, else_body } => {
                 self.walk_expr(cond, scope, agent)?;

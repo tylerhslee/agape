@@ -139,6 +139,7 @@ pub struct Cond {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CapKind {
     Emit,
+    Perform,
     Reach,
     Use,
 }
@@ -211,6 +212,9 @@ pub enum Stmt {
     EnumDecl { name: String, variants: Vec<String> },
     /// `event NAME(field, ...);` — a custom spine-event type with typed payload.
     EventDecl { name: String, fields: Vec<Field> },
+    /// `action NAME(field, ...);` — a performative event type (§3, §13); `perform`ing
+    /// it is a consequential act needing the `perform NAME` power and a settled value.
+    ActionDecl { name: String, fields: Vec<Field> },
     /// `read|write tool RET NAME(params);` — a tool-seam capability (§6b). The effect
     /// class is mandatory: `read` observes the world, `write` is a consequential sink.
     ToolDecl { name: String, params: Vec<Param>, ret: Option<Type>, effect: ToolEffect },
@@ -232,6 +236,11 @@ pub enum Stmt {
     Verify { arg: Expr, by: Option<GateBasis> },
     /// `emit EventType(payload);`
     Emit { event_type: String, payload: Expr },
+    /// `endorse (arg by rule) { arms } [abstain { ... }]` — the recorded gate (§13):
+    /// collapse the `Credence`, append `Decided`/`Abstained`, dispatch the arms.
+    Endorse { arg: Expr, rule: GateBasis, arms: Vec<(String, Vec<Stmt>)>, abstain: Option<Vec<Stmt>> },
+    /// `perform ActionType(payload);` — a consequential act (§13).
+    Perform { action_type: String, payload: Expr },
     /// `say(EXPR);`
     Say(Expr),
     /// `return [EXPR];`

@@ -80,8 +80,8 @@ pub const KEYWORDS: &[&str] = &[
     "principal",
     // control / reactive
     "when", "catch", "case", "if", "else", "return", "retry", "default",
-    // gate / spine emit
-    "verify", "decide", "emit",
+    // gate / spine emit / action perform (v1.0); verify/decide are legacy
+    "verify", "decide", "emit", "endorse", "attest", "perform", "abstain", "action", "policy",
     // queries (§10)
     "find", "where", "select", "from", "match",
     // aggregation + dependence declaration + quorum (§12)
