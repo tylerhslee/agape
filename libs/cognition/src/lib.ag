@@ -1,13 +1,18 @@
 module cognition;
 
-import { Asked, Ruled } from cognition.signals;
-
-// The role contract. Send a cognition an `Asked` (carrying a Query); it perceives, judges,
-// and produces a `Ruled` (carrying a SETTLED Verdict). The interior is `graded`; the gate is
-// the export wall (SPEC §13, §19.5) — by the consequential-action rule a consumer can only
-// ever receive gated outputs, so the Jungian internals never leak.
+// The public vocabulary of the cognitive-fusion pattern. The pattern: a panel of diverse
+// Faculties (cognition.faculty) each judge the same proposition INDEPENDENTLY; a Consolidator
+// (cognition.consolidator) fuses their judgments and gates ONCE. The fused ruling is provably
+// more stable than any single faculty (SPEC §12, §15.5.5) — the whole beats the sum — and the
+// gate is the only door to a settled decision (§13).
 //
-// `handles A -> B` here means "consumes A events, produces B events" — a cognition runs a
-// multi-step internal cascade, so it replies via an emitted `Ruled`, not a bound `<-` result
-// (a single send is one provider think; see DESIGN.md §8).
-pub interface Cognition { handles Asked -> Ruled; }
+// (§19 has no re-export yet, so a user also imports cognition.faculty / cognition.consolidator.)
+
+pub struct Case   { proposition: text, context: text }   // a yes/no matter to appraise
+pub struct Ruling { passed: bool, rationale: text }       // the panel's SETTLED verdict
+
+pub event Appraise(c: Case);        // → a Consolidator: convene the panel on this
+pub event Ruled(ruling: Ruling);    // ← a Consolidator: the fused, gated ruling
+pub event Escalate(reason: text);   // the panel split (no quorum) → defer to a human/principal
+
+pub event CognitiveFault(reason: text) : Error;   // a typed fault (v1.1.0 error subtyping, §19.5)

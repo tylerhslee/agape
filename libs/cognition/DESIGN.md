@@ -1,117 +1,127 @@
 # The Cognition library — design
 
-> A reference library implementing a **Jungian cognitive-functions** architecture on top of
-> Agape **v1.1.0** (the library layer, SPEC §19). It is the substrate the demos build on
-> (a productive team — Studio; a cautionary institution — the prison experiment).
+> A library that **enforces a cognitive-fusion pattern**: a panel of diverse, independent
+> **faculties** (cognitive functions) each judge the same proposition; a **consolidator**
+> (the prefrontal cortex) fuses their judgments and gates **once**. The consolidated ruling is
+> provably more stable than any single faculty — *the whole beats the sum of the parts* — and
+> the fused gate is the **only** door to a settled decision.
 >
-> **Status.** This targets the v1.1.0 spec; it uses modules, visibility, generics,
-> interfaces, and error subtyping (§19), none of which `agape-rs` implements yet, so it is a
-> *reference* package — authoritative as design, not yet executable. Agent bodies show the
-> intended shape; fusion/calibration detail is elided with comments.
+> Targets Agape **v1.1.0** (SPEC §19). Reference-only until `agape-rs` implements §19.
 
-## 1. The idea in one paragraph
+## 1. What this library adds (and what the earlier draft did not)
 
-LLM output is bounded chaos. A **gate** collapses it by asking a bounded question (SPEC §13).
-A **cognition** is a mind built from eight such collapse-functions (Jung's cognitive
-functions), wired so that perception flows inward, judgment closes it, and only **settled**
-decisions leave the mind. In Agape terms a cognition is an ordinary `agent` that satisfies the
-`Cognition` interface; its interior is `graded`, its exports are `settled`, and the gate is the
-wall between minds — enforced by the trust lattice, not by convention.
+The earlier draft just wrapped a request/reply in a `Cognition` interface — it showed "agape
+*can express* Jung," which is trivially true and adds nothing. This version adds the one thing
+agape formally says makes a combination beat its parts:
 
-## 2. The function → construct mapping
+> **§12 (fusion / `quorum`) + §15.5.5 (Stability theorem, Condorcet's jury theorem):**
+> independent, diverse, better-than-chance judges fused under a declared dependence structure
+> have error that collapses as judges are added, and the **fused margin exceeds any single
+> judge's** (`β(δ_fused) ≤ minᵢ β(δᵢ)`).
 
-| | **S** (concrete) | **N** (relational) | **T** (impersonal) | **F** (value) |
-|---|---|---|---|---|
-| **ext** | **Se** `prompt`/`read tool`/`<-` | **Ne** internalized graph + `\|>` | **Te** threshold gate → `write`/`perform` | **Fe** `attest … by p` |
-| **int** | **Si** FACTS (`select`) | **Ni** `find`/`match` + fuse → collapse | **Ti** `Credence<Entailment>` / enum / `case` | **Fi** loss-direction + `grants` + `policy` |
+The Jungian functions are the **diversity recipe** that makes fusion pay off. §12 is explicit:
+fusion only amplifies when errors are *decorrelated* — "n calls to the same model with the same
+prompt gain little." So the library's value rests entirely on the faculties being genuinely
+different lenses, and the architecture is built to produce that.
 
-**What is runtime vs authored.** Se/Si/Ne are *not* agents you write — they are the runtime's
-automatic **internalization** of every received event into facts, relationships, and embeddings
-(SPEC §10). What this library authors is:
+## 2. Why each function is its own agent with its own memory
 
-- **Ni** — active re-query + convergence (`Synthesizer`, `functions.ag`).
-- **T** — the judging leaf (`ThresholdJudge<E>`, `functions.ag`) and the role gates.
-- **F** — the escalation path (`Escalate` signal; a `by principal` defer in a real role).
-- **the PFC** — a shared long-term memory (`Consolidator`, `consolidator.ag`).
+This is the crux, and it is the original instinct: **separate memories are the source of the
+decorrelation that makes fusion work.** A faculty is a persistent agent seeded with one lens
+directive; the provider conditions every reply on that agent's own memory (§6/§10), so:
 
-## 3. Module layout
+- **Framing diversity** — each faculty judges the same proposition through a different question
+  (Se: literal facts; Ti: internal consistency; Fe: stakeholder values; …).
+- **Memory diversity** — each faculty accumulates its own history, so its judgments drift
+  independently over time.
+
+Both push the faculties' errors apart, which is exactly the precondition §12 needs. (All
+agents share the one provider, §0 — so independence comes from *state + framing*, not from
+different models. Per-faculty models would be stronger but need a spec change; out of scope.)
+
+## 3. The architecture
+
+```
+proposition ─┬─▶ Se faculty (own memory, lens)  ─▶ Credence<bool>  ┐
+             ├─▶ Ti faculty (own memory, lens)  ─▶ Credence<bool>  ├─ independent, graded
+             └─▶ Fe faculty (own memory, lens)  ─▶ Credence<bool>  ┘
+                                                       │
+                                ┌───────────  CONSOLIDATOR (PFC)  ───────────┐
+                                │  independent j1, j2, j3;                    │
+                                │  fused = quorum(2, [j1, j2, j3]);  (fuse)   │
+                                │  endorse (fused by PanelQuorum) { … }  (gate once) │
+                                └────────────────────────────────────────────┘
+                                                       │
+                                                       ▼  the ONLY settled Ruling
+```
+
+- **Faculty** (`faculty.ag`) — one lens; an agent + private memory; replies a **graded**
+  `Credence<bool>`. Cannot act alone.
+- **Consolidator** (`consolidator.ag`) — fans the proposition to its panel, declares the
+  panel **independent**, fuses with `quorum`, and gates **once**.
+
+## 4. What the library enforces — vs what it cannot
+
+**Enforced structurally (by the type system + the spec):**
+- **The whole is the only door.** A faculty returns `graded`; by the consequential-action rule
+  (§13) it cannot reach an action. The *only* producer of a settled `Ruling` is the
+  consolidator's fused gate. You cannot get a decision out of one faculty.
+- **You must declare the correlation assumption.** `quorum`/`all` are a compile error without a
+  total `independent`/`dependent` declaration (§12). The assumption is explicit and recorded on
+  the spine, so an overconfident ruling traces back to the `independent` claim that licensed it.
+
+**NOT enforceable — the honest boundary:**
+- **The library cannot prove the faculties are actually independent or better-than-chance.**
+  §12 says it outright: declaring `independent` over same-source judges is a programmer error
+  the spine records but the type system cannot detect. So *better-than-the-sum is contingent on
+  real diversity*, which is a design choice (distinct lenses + divergent memory) and an
+  **empirical** claim.
+
+## 5. The ablation harness — how the claim is earned, not asserted
+
+Because the benefit is empirical, the library's centerpiece is a **validation harness**, not
+just code:
+
+- Take a set of labeled cases (proposition + ground-truth pass/fail).
+- Measure the **fused panel** vs **the best single faculty** vs **every leave-one-out subset**.
+- The pattern earns its keep iff `accuracy(fused) > maxᵢ accuracy(facultyᵢ)` and each faculty's
+  removal measurably hurts. Faculties that never move the result are paraphrases, not lenses —
+  drop them.
+
+This is the same falsifiable bet from the design discussion ("does the 8-function basis beat a
+simpler set?"), now made measurable. The harness needs labeled data + accuracy computation
+(host/tool work, §0.1), so it is driven by an eval tool over recorded runs, not pure agape.
+
+## 6. Module layout
 
 ```
 libs/cognition/
   agape.toml            # [package] name="cognition" lib="src/lib.ag"
   src/
-    lib.ag              # module cognition            — the public Cognition interface + Query/Verdict
-    signals.ag          # module cognition.signals    — the typed neurotransmitter/hormone vocabulary
-    functions.ag        # module cognition.functions  — Ni + the generic judging leaf (T)
-    consolidator.ag     # module cognition.consolidator — the PFC / long-term memory (option-b)
-    roles.ag            # module cognition.roles      — role archetypes (function-priority + grants)
+    lib.ag              # module cognition             — vocabulary: Case, Ruling, Appraise, Ruled, Escalate
+    faculty.ag          # module cognition.faculty     — the Faculty agent + the 8 canonical lenses
+    consolidator.ag     # module cognition.consolidator — the PFC: fan-out → independent → quorum → gate once
   examples/
-    triage.ag           # a tiny orchestration demo (the "test" layer)
+    panel.ag            # convene a 3-lens panel end-to-end
 ```
 
-Every file declares an explicit `module …;` header (so module paths are unambiguous regardless
-of path-derivation). Cross-module names use **selective imports** (`import { X } from m;`) to
-keep references bare — which also matters because `grants { reach X }` and `agent A : I` name
-types that must be in scope (§19.4–§19.5).
+## 7. How the demos use it
 
-## 4. Signals — neurotransmitters and hormones
+A demo is a **panel configuration** — which lenses, what quorum, what the consequential arms
+do. Same substrate, different governance:
 
-`signals.ag` is the shared vocabulary, split exactly as the body's chemistry is:
+- **Cognition demo** — `examples/panel.ag`: watch a fused ruling beat its parts.
+- **Studio** — a panel whose `Pass` arm performs real work (a `write` tool / `perform`); the
+  quorum is the team's review gate before acting.
+- **Prison experiment** — a panel where the consolidator holds `perform Sanction` authority and
+  the `abstain` (no-quorum) arm routes to `attest … by superintendent`. The grant asymmetry is
+  the power structure; the spine is the audit trail; the quorum is the check on any one lens
+  (e.g. a punitive Fe) running away.
 
-- **Neurotransmitters** — point-to-point typed events between functions: `Sensed` (Se→),
-  `Mapped` (Ne→), `Concluded` (Ni→), `Asked`/`Ruled` (the request/reply pair).
-- **Hormones** — ambient, broadcast events many agents read: `Confidence` (a global "how
-  settled are we"), `Escalate` (route the epistemic remainder to a principal/human).
-- **A typed fault** — `CognitiveFault(reason) : Error` (v1.1.0 error subtyping), caught by any
-  `when (Error e)`.
+## 8. Known gaps surfaced (v1.1.x candidates)
 
-Events carry a **single field** (a struct when rich), matching the `emit X(expr)` /
-`perform X(expr)` single-payload form in the grammar.
-
-## 5. The Cognition interface — the settled-export wall
-
-```agape
-// lib.ag
-pub interface Cognition { handles Asked -> Ruled; }
-```
-
-`handles Asked -> Ruled` means: send a cognition an `Asked` (carrying a `Query`); it reacts,
-runs its internal perceive→judge cascade, and produces a `Ruled` (carrying a **settled**
-`Verdict`). The reply is settled because it is emitted from inside a gate arm — the interior
-`Credence` chatter is `graded` and, by the consequential-action rule (§13), cannot cross to a
-consumer except through the gate. So the abstraction is leak-proof *by type*: a consumer can
-only ever receive gated outputs.
-
-## 6. The Consolidator — the prefrontal cortex
-
-Shared long-term memory is modeled as **one actor that owns it** (the option-b pattern): the
-`Consolidator` subscribes to the cognitive cascade (`Concluded`, optionally `Sensed`) and
-`store`/`embed`s into *its own* memory (§10), which thereby becomes the collective store.
-Concurrent writes serialize through its mailbox, so the no-shared-mutable-state invariant
-(§0.2) holds and replay stays deterministic. The **depth knob** lives here: consolidate only
-judged `Concluded` (a curated memory) vs also eager `Sensed` (a high-recall memory).
-
-## 7. Roles — function-priority + grants
-
-A role archetype is a concrete agent that satisfies `Cognition`; its "type" (in the MBTI
-sense) is *which functions dominate* plus its authority. `roles.ag` ships `Reviewer` (a Ti/Si
-critic). Studio and the prison demo are just different role sets wired by `reach` grants over
-the same substrate.
-
-## 8. Known gaps surfaced (candidates for v1.1.x)
-
-- **No re-export.** §19 `import` binds names into a module's scope but does not re-export them,
-  so `lib.ag` cannot republish `Query`/`Verdict` from `signals.ag`; users import both modules.
-  A `pub import` / re-export form is the obvious follow-up.
-- **`cap` names must be in scope.** `grants { reach Consolidator }` requires `Consolidator`
-  imported (the grammar's `cap ::= reach Ident` takes a bare name, not a `modpath`). Selective
-  import covers it; a qualified-cap form would be more ergonomic.
-- **Request/reply is event-driven.** Because a `<-` reply is a single provider think, a
-  multi-step cognition replies via an emitted `Ruled` event rather than a bound `<-` result;
-  `handles A -> B` is therefore "consumes A, produces B," not a synchronous call.
-
-## 9. Next
-
-Demos as the test layer: wire role sets over this substrate — Studio (Engineer/PM/QA) and the
-prison experiment (Jailor/Prisoner/Superintendent), each a different governance regime over the
-same spine.
+- **No re-export** (§19): `lib.ag` can't republish names, so users import each module.
+- **One provider for all agents** (§0): faculties can't use different models; diversity is
+  state+framing only. Per-faculty providers would need a provider-routing capability.
+- **Quorum is over `Credence<bool>`** (§12): multi-variant fusion isn't expressed; the panel
+  judges a yes/no proposition. Richer fusion is future work.
