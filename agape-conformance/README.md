@@ -119,9 +119,9 @@ these header directives. A test with no directives runs under the default record
     margin, e.g. `credence(true=0.62, false=0.38)`.
 - `attest:` — the identity dependency's ruling for `attest … by p`: `grant` (default) or
   `deny` (→ `FailedAttestation`, §13).
-- `manifest:` — `[runtime]`/policy fixture values, `; `-separated, e.g.
-  `manifest: runtime.threshold=0.9; runtime.consequential_margin=0.2` — to exercise precedence
-  (§17.2) and the runtime margin floor (§13).
+- `manifest:` — connector/dependency fixture config, `; `-separated, e.g.
+  `manifest: provider.exposes_logprobs=false` — to exercise the sampling fallback (§16.8).
+  Decision policy is in the test's own source (a `policy` declaration, §13), never the manifest.
 - `replay:` — `chain_head_equal`: record the run's journal, replay it, and assert the spine's
   terminal hash is identical (§15.4.2 / T4). Replay re-serves every oracle/tool result from the
   recording and re-invokes nothing.

@@ -959,7 +959,7 @@ input — may consume a value only if it is `**settled`**: it carries no un-endo
 `Credence` reaches `settled` only through a recorded gate (`endorse`/`attest`, not a bare
 `c by R`); external data is `settled` by origin and passes freely — only un-endorsed cognition is
 rejected (the check is static). Additionally, if the value is a gated decision, the margin floor is
-checked at runtime — `margin ≥ m`, with `m` from the manifest (`[runtime] consequential_margin`, §17). A judgment below `m` abstains and is the typed trigger for
+checked at runtime — `margin ≥ m`, with `m` the `floor` of the gate's `policy` (§13, declared in source, not the manifest). A judgment below `m` abstains and is the typed trigger for
 escalation.
 
 **Loss direction.** Whether a false accept or a false reject is costlier is a property of the
@@ -1698,8 +1698,9 @@ resolves to a manifest entry; an undeclared-in-config dependency is a configurat
 search   = { mcp = "stdio:mcp-server-brave" }
 transfer = { mcp = "https://payments.internal/mcp" }
 
-# default decision parameters (NOT a dependency)
-[runtime]   threshold = 0.8   margin = 0.0   consequential_margin = 0.1
+# decision policy is NOT in the manifest — thresholds, margins, the consequential
+# floor, conformal α, and readiness all live in source `policy` declarations (§13),
+# e.g. `policy RuleFloor { threshold 0.9  margin 0.2  floor 0.1 }`, applied at a gate.
 ```
 
 - `**exposes_logprobs**` declares whether the provider connector returns the per-variant
@@ -1709,17 +1710,20 @@ the **sampling fallback**: the judgment is drawn `fallback_samples` times (minim
 distribution is the empirical frequency. Sampling needs variation, so `fallback_temperature` is
 **required when `temperature = 0`**. A custom connector for a local model may set
 `exposes_logprobs = true`.
-- `[runtime]` holds the default decision parameters — the default threshold/margin and the
-consequential-margin floor `m` (§13). These are values, not dependencies.
+- **Decision policy lives in source, not the manifest.** A gate's rule and floor are a source-level
+`policy NAME { threshold θ, margin δ, floor m, … }` declaration (§13), applied per gate (`c by NAME`)
+or written inline (`confidence θ`); the manifest binds only the dependencies (provider, identity,
+tools) and the connector's transport config. A threshold is never a hidden global (§17.2).
 - Swapping a dependency's backend changes no source.
 
 ### 17.2 Scopes and precedence (lowest → highest)
 
-1. spec defaults; 2. global user config (`~/.agape/config.toml`); 3. project manifest
-
-(`agape.toml`); 4. per-call override (the gate `by` clause), which always wins. A threshold
-is never a hidden global. Secrets (API keys, signing keys, MCP credentials) come from the
-environment or OS keychain, never the manifest.
+For **connector and dependency config** (provider backend/model, `exposes_logprobs`, the identity
+and tool bindings): 1. spec defaults; 2. global user config (`~/.agape/config.toml`); 3. project
+manifest (`agape.toml`) — higher wins. **Decision rules are not on this ladder at all**: a gate's
+threshold, margin, and floor are a source `policy` or an inline `by` (§13), so a threshold is never
+a hidden global — there is nothing in the manifest for a gate to override. Secrets (API keys, signing
+keys, MCP credentials) come from the environment or OS keychain, never the manifest.
 
 ### 17.3 Configuration and reproducibility
 
@@ -1749,10 +1753,11 @@ demand, so a `TypeMismatch` is triggerable deterministically.
 - **Recorded replay.** The runner can capture a run's journal and replay it; "chain-head
 equality" is equality of the spine's terminal hash under the canonical event
 serialization.
-- **Manifest-fixture observation.** A test may set `[runtime] threshold/margin` (and a `by`
-override) in a fixture `agape.toml` and observe which boundary was applied (the gate
-records the applied `Rule` in its `Decided`/`Attestation` event), so precedence (§17.2)
-is testable.
+- **Rule/precedence observation.** Decision policy is in the test's own source — a `policy`
+declaration and the gate's `by` (§13), no manifest fixture — and the gate records the applied
+`Rule` in its `Decided`/`Attestation` event, so which boundary governed (policy vs inline `by`
+override, §17.2) is observable. A fixture `agape.toml` sets only **connector/dependency** config
+for the run (e.g. `exposes_logprobs` to exercise the sampling fallback, §16.8).
 
 ---
 

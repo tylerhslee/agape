@@ -680,10 +680,9 @@ path = "tests/13_governance/gov_margin_floor_abstains.ag"
 expect = "accept"
 contains = ["Abstained(c)"]
 absent = ["Decided(c)"]
-manifest = ["runtime.consequential_margin=0.2"]
 provider = "credence(true=0.55, false=0.45)"
-spec = "§13 (a gated decision whose margin is below the runtime floor `m` abstains — the typed trigger for escalation — even when the threshold is met)"
-note = "0.55 clears the 0.5 threshold but its 0.10 margin is below the 0.20 floor"
+spec = "§13 (a gated decision whose margin is below its policy `floor` m abstains — the typed trigger for escalation — even when the threshold is met)"
+note = "0.55 clears the policy's 0.5 threshold but its 0.10 margin is below the 0.20 floor; the policy is in source, not the manifest"
 
 [[test]]
 id = "gov_perform_reach_subtractive_reject"
@@ -780,12 +779,12 @@ expect = "accept"
 spec = "§15 (`c by R` is a pure projection of a Credence; off-spine and synchronous)"
 
 [[test]]
-id = "cfg_by_override_wins"
+id = "cfg_sampling_fallback"
 section = "16_config"
-path = "tests/16_config/cfg_by_override_wins.ag"
+path = "tests/16_config/cfg_sampling_fallback.ag"
 expect = "accept"
-contains = ["Abstained(c)"]
-manifest = ["runtime.threshold=0.5"]
-provider = "credence(true=0.7, false=0.3)"
-spec = "§17.2 (precedence: the per-call gate `by` clause always wins over the manifest default; the gate's 0.9 governs, not the manifest's 0.5)"
-note = "under the manifest's 0.5 the 0.7 judgment would commit; the explicit `by confidence 0.9` overrides and abstains"
+contains = ["Decided(c)"]
+manifest = ["provider.exposes_logprobs=false", "provider.fallback_samples=10", "provider.fallback_temperature=0.7"]
+provider = "credence(true=0.9, false=0.1)"
+spec = "§16.8, §17 (a text-only provider — no logprobs — is served by the sampling fallback: the credence is the empirical frequency of N forced draws; a confident judgment still commits)"
+note = "the manifest sets only connector config; the decision policy is in source"
