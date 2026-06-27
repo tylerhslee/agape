@@ -1538,17 +1538,130 @@ a replay (§16.5) and an audit depend on:
   §16.5) — the operational form of observational equivalence `≈` (§15.5.2) for a recorded run: identical
   journals ⇒ identical spine ⇒ identical head.
 
-### 16.3 Subscription dispatch and the tick cascade   *(to be specified — registration/hoist data structure; within-tick cascade: a handler's own appends fire matching subs before the tick closes; ordering across cascading appends)*
+### 16.3 Subscription dispatch and the tick cascade
 
-### 16.4 The seam protocol — provider, identity, tool   *(to be specified — schema→JSON-Schema compilation, constrained-decode + logprobs contract for the provider; MCP wire binding for tools; the principal signing contract for attest; how each result is journaled)*
+Subscriptions (`when`, §7) are **hoisted**: on entering a scope (the program top level, an agent body, a
+handler block) the runtime registers every `when` in that scope, in lexical order, *before* the scope's
+statements run, and deregisters them on scope exit. The live set is ordered by registration (the **hoist
+order**).
 
-### 16.5 Record and replay   *(to be specified — the per-oracle record format; the replay algorithm that re-serves journaled results in issue order and re-invokes nothing; journaling of wall-clock/nondeterministic inputs)*
+- **Matching.** `matches(sub, ev) ⟺ subtype(ev.etype, sub.etype) ∧ (sub.subj = ⊥ ∨ sub.subj = ev.subj)`
+  (§9, §15.4.2), further filtered by a `when … if (guard)` predicate (§7).
+- **(open) Synchronous within-tick cascade.** When an event is appended, the runtime fires every matching
+  live subscription **immediately**, in registration order, before the appending statement's successor
+  runs (§0.2). A handler body that itself appends events triggers *their* matching subscriptions the same
+  way — **depth-first**, recursively, until no new matches remain. This realises §0.2's "appending an event
+  synchronously fires any matching subscription before evaluation continues."
+- **Ticks within a cascade.** Each append takes the next tick (`|S|`, §16.2). The several subscriptions
+  matching one appended event are triggered *by* that event (logically one instant), but each body's own
+  appends take subsequent ticks, in the depth-first registration order above — so the spine's total order
+  is exactly the append order, and is deterministic.
+- **Prospective.** A subscription never fires for an event whose tick precedes its registration (§7);
+  history is reached only by query (§10).
 
-### 16.6 Fault and recovery   *(to be specified — the handler-invocation boundary; what counts as an unrecoverable seam failure → crash; state preservation across a crash; retry re-attempt mechanics and assignment persistence)*
+### 16.4 The seam protocol — provider, identity, tool
 
-### 16.7 The memory runtime   *(to be specified — per-agent fact table / relationship graph / vector store; the internalization decomposition (event → facts/SPO-triples/embeddings) and its schema; query execution for select/find/match; the match similarity computation)*
+The three declared dependencies are reached as oracles (§15.4.2): cognition through the **provider**,
+accountability through the **identity** dependency, the world through the **tool** dependency. Each call
+appends its opening event, invokes the seam, journals the result (§16.5), and appends its close.
 
-### 16.8 The calibration pipeline   *(to be specified — logprobs → Credence distribution; where/how the calibrator (temperature/Platt/isotonic) is fit; the sampling-fallback algorithm; the conformal nonconformity + quantile + readiness procedure)*
+- **Provider (`think`).** A judgment `Credence<E> c = d <- p` or a typed reply `event<T> x = d <- p`
+  renders the prompt `p` and compiles the destination schema: for a `Credence<E>` slot, the forced
+  categorical choice over `E`'s variants; for `event<T>`, `T`'s JSON Schema (§8). **(open)** The connector
+  receives `{ prompt, schema }` and must return schema-conforming output by constrained decoding
+  (mandatory; no fuzzy fallback). A logprob-exposing connector returns the committed value plus the
+  per-variant token probabilities; a text-only connector returns only the value and is served by the
+  sampling fallback (§16.8). The result is journaled as the send's `Resolved` (with the raw response and
+  per-variant scores, §15.5.1, for replay and calibration). A schema-violating return is a `TypeMismatch`
+  (§16.6).
+- **Identity (`attest`).** `attest e by p` presents `(p, e)` to the identity dependency, which returns the
+  principal's signed `Decision`. **(open)** The backend (e.g. `local-keyring`, §17) signs a canonical
+  serialization of `(who = p, what = spine-id(e), decision)`; the runtime records
+  `Attestation { who, what, decision, signature }` (§9). A declined ruling records a `FailedAttestation`
+  (§13). No key material appears in source (§3).
+- **Tool (`invoke`, MCP).** A call `K(a…)` resolves `K` to its MCP binding (`[tools]`, §17) and issues an
+  MCP `tools/call` with the marshalled args, appending the `ToolStarted`/`ToolResolved` pair (§6b, §7).
+  **(open)** Args and result marshal between Agape values and MCP JSON by `K`'s declared signature. A
+  `read` tool's result carries the join of its inputs' trust; a `write` tool is a consequential sink whose
+  inputs must be settled (§6b, §13).
+
+### 16.5 Record and replay
+
+A run is a **recording**: every oracle result (§16.4) is journaled to the spine as the operation's
+closing event, carrying the result payload — and, for the provider, the per-variant scores (§15.5.1).
+Nondeterministic *inputs* are journaled too: external `prompt` arrivals, and a wall-clock `expires`
+lifetime's firing (§6); a logical-tick lifetime is already deterministic.
+
+- **(open) Replay.** Given a recording, the runtime re-executes the program but **serves each oracle call
+  from the journal instead of invoking the seam**: the *i*-th call of a given kind, in issue order
+  (§16.1), is answered by the *i*-th recorded result of that kind. Replay invokes nothing external — a
+  `write` tool is replayed as its recorded result, never re-run against the world.
+- **Chain-head equality (T4).** A faithful replay regenerates an identical spine and therefore an
+  identical chain-head (§16.2); chain-head equality *is* the proof of replay-equivalence (§15.4.2), the
+  operational form of `≈` (§15.5.2). The conformance test-mode asserts it (§17.5).
+- **Counterfactual replay.** Any prefix may be replayed under altered recorded facts to test a
+  counterfactual; fork/merge of divergent continuations is the optional Multi-verse layer (§15.4.2a),
+  outside the core.
+
+### 16.6 Fault and recovery
+
+- **(open) The reaction boundary.** A *handler invocation* — the unit a fault is contained to — is one
+  top-level statement, or one `when`/`on`-hook body firing (each cascaded firing, §16.3, is its own
+  invocation). A fault abandons that invocation only.
+- **Crash.** An unrecoverable seam failure (the provider returns nothing, a connector error) or an
+  uncaught error within an invocation **crashes** the agent: the invocation is abandoned, `AgentCrashed`
+  is appended, the `on crash` hook runs in the agent's own context, and the agent continues with its
+  fields and memory intact — they are a function of the spine, not fragile in-flight state (§5). Unlike
+  `sleep`, the mailbox stays open. A crash loop is a policy concern for an ordinary `when (AgentCrashed …)`
+  subscription (§5), not a built-in.
+- **TypeMismatch.** A schema-violating provider return is a typed `TypeMismatch` (§8) — catchable and
+  retryable, not in itself a crash.
+- **(open) Retry.** `{ block } retry(N)` re-executes `block` from its start on an `Error`, up to `N`
+  times. Variable assignments the block made carry across attempts; spine events appended by a failed
+  attempt remain on the log (the spine is immutable) — a re-attempt appends fresh events. On exhaustion the
+  runtime appends `RetryExhausted` and propagates the fault. The bound is mandatory, so every reaction
+  terminates (§11).
+
+### 16.7 The memory runtime
+
+Each agent owns three stores (§10): a **fact table** (relational), a **relationship graph** (SPO triples
+over a typed predicate set), and a **vector store** (embeddings). No store is shared — there is no
+cross-agent mutable state (§0.2).
+
+- **(open) Internalization.** Every event an agent receives (via `<-`) is decomposed — through a provider
+  call — into typed facts, SPO triples, and embeddings written to that agent's memory. The decomposition
+  is non-deterministic (it is cognition) but its *shape* is fixed (§10), and its result is journaled, so
+  replay (§16.5) reproduces it without re-invoking the provider.
+- **Provenance.** Every memory cell carries an immutable backpointer to the spine event that produced it;
+  `origin(n)` projects it (§10). A queried value carries the trust of its provenance event — `graded` by
+  default (most facts trace to internalized cognition), `settled` when the origin is an already-endorsed
+  event (§10, §13).
+- **Query execution.** `select COLS from G where { COND }` is a relational scan with a boolean field
+  filter; `find x [, origin(x)] where { TRIPLE+ }` is a conjunctive pattern match over the graph binding
+  `x`; `match v > θ` is the cosine similarity of `v` against the vector store thresholded at `θ` — a gate
+  yielding a `settled`, off-spine result (§10). `select … from spine` runs the same relational query over
+  the log itself.
+- **(open) The `Record` row type (§10).** A projected `select COLS …` yields `array<Record>`, where
+  `Record` is the structural row type of the projected, typed columns; `select * from F …` yields
+  `array<F>` for fact type `F`. (This resolves §10's reference to an otherwise-undefined `Record`.)
+
+### 16.8 The calibration pipeline
+
+A `Credence<E>` is read from the provider's token-level probability on the forced categorical choice over
+`E`'s variants — not a verbalized self-rating (§3).
+
+- **From logprobs.** A logprob-exposing connector (`exposes_logprobs`, §17) yields the per-variant mass
+  directly; the runtime normalizes it over `E`'s variants to the distribution.
+- **(open) Calibration fit.** Raw logits are overconfident, so a fitted calibrator (temperature / Platt /
+  isotonic) is applied between the raw scores and the `Credence`. It is fit from the spine's recorded
+  `(judgment, outcome)` pairs (§3, §13) — the same labelled data the conformal gate reads — and refit as
+  labels accrue; below a minimum it is identity (and a consequential conformal gate abstains, §13).
+- **Sampling fallback.** A text-only connector is served by drawing the forced choice `fallback_samples`
+  times (min 10, at `fallback_temperature`) and taking the empirical frequency as the distribution (§17).
+- **Conformal.** The conformal gate (§13) scores each variant's nonconformity and forms the prediction set
+  `{ v : nonconformity(v) ≤ q̂ }`, with `q̂` the level-`α` quantile of the gate's own recorded
+  decisions-and-labels on the spine; below the readiness floor (a minimum of labelled cases) it abstains —
+  the supervised cold start (§13).
 
 ---
 
