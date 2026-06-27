@@ -123,6 +123,30 @@ const TESTS_DIR = path.resolve(REPO, "agape-conformance", "tests");
 const PROJECT = process.env.AGAPE_PROJECT ? path.resolve(process.env.AGAPE_PROJECT) : null;
 const AGAPE_BIN = path.resolve(AGAPE_RS, "target", "debug", "agape");
 
+// In a packaged bundle the agent-server also serves the built web app (one
+// process, no Vite). `AGAPE_WEB_DIST` points at the static `dist/`.
+const WEB_DIST = process.env.AGAPE_WEB_DIST ? path.resolve(process.env.AGAPE_WEB_DIST) : null;
+const MIME: Record<string, string> = {
+  ".html": "text/html", ".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css",
+  ".json": "application/json", ".svg": "image/svg+xml", ".ico": "image/x-icon", ".png": "image/png",
+  ".jpg": "image/jpeg", ".woff": "font/woff", ".woff2": "font/woff2", ".map": "application/json", ".wasm": "application/wasm",
+};
+
+// Serve a file from the built web app, falling back to index.html for SPA routes.
+function serveStatic(res: http.ServerResponse, url: string): boolean {
+  if (!WEB_DIST) return false;
+  let rel = decodeURIComponent(url).replace(/^\/+/, "");
+  if (rel === "") rel = "index.html";
+  let full = path.resolve(WEB_DIST, rel);
+  if (!full.startsWith(WEB_DIST)) return false; // path-traversal guard
+  if (!fs.existsSync(full) || fs.statSync(full).isDirectory()) full = path.join(WEB_DIST, "index.html");
+  if (!fs.existsSync(full)) return false;
+  const buf = fs.readFileSync(full);
+  res.writeHead(200, { "content-type": MIME[path.extname(full)] || "application/octet-stream", "content-length": buf.length });
+  res.end(buf);
+  return true;
+}
+
 // List the project's .ag files with a shallow parse of the agents/sensors they
 // declare — enough for the studio to show the agent inventory at a glance.
 function projectFiles(): Array<{ rel: string; agents: string[]; prompts: string[] }> {
@@ -403,6 +427,9 @@ const server = http.createServer(async (req, res) => {
       fs.writeFileSync(full, String(body ?? ""), "utf8");
       return send(res, 200, { ok: true });
     }
+
+    // The built web app (bundle mode) — any unmatched GET falls through to here.
+    if (req.method === "GET" && serveStatic(res, url)) return;
 
     return send(res, 404, { error: "not found" });
   } catch (e: any) {

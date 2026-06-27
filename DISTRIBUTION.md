@@ -148,11 +148,20 @@ It is verified by extracting the archive to a clean directory and running the
 *shipped* binary (`./bin/agape run examples/hello.ag`) with no repo, source tree,
 or dependencies present — i.e. exactly what a user gets.
 
-Today the binary runs the agentic language end to end; the bundled `std/` ships
-ready for when the Rust front-end gains module support (the POC already has it).
-Later: a CI release-on-tag workflow, cross-compiled targets, embedding `std/` into
-the binary (`include_str!`), and a LICENSE (currently held off) before any public
-release.
+**Status (implemented).** `scripts/package.sh` exists and stages the bundle:
+`bin/agape` (release binary) + `examples/hello.ag` + a default `agape.toml` +
+README, and — when Node is present — the **studio** (`studio/web-dist` built by
+Vite + `studio/agent-server`, deps installed). In a bundle the agent-server
+*also serves the built web app* (`AGAPE_WEB_DIST`), so `agape studio` is a single
+process with no Vite at runtime. CI (`.github/workflows/ci.yml`) gates every push
+on build + test + 102/102 conformance + manifest-sync + studio build;
+`release.yml` runs `package.sh` on `ubuntu`/`macos`/`windows` on a `v*` tag and
+attaches the archives to a GitHub Release.
+
+Later: cross-compiled targets beyond the three native runners, embedding `std/`
+into the binary (`include_str!`) once the Rust front-end gains module support, an
+npm wrapper for `npm i -g agape`, and a LICENSE (currently held off) before any
+public release.
 
 ## 8. Open questions
 

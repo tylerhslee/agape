@@ -259,8 +259,31 @@ fn cmd_studio(_args: &[String]) {
     println!("Agape Studio — project {}", project.display());
     println!("  studio home: {}", home.display());
 
-    // Launch the agent-server and the web dev server, scoped to this project via
-    // AGAPE_PROJECT. (A packaged build would embed these; here we drive the source.)
+    let web_dist = home.join("web-dist");
+    if web_dist.is_dir() {
+        // Bundle mode: the agent-server serves the prebuilt web app — one process.
+        let agent = Command::new("npx")
+            .args(["tsx", "server.ts"])
+            .current_dir(home.join("agent-server"))
+            .env("AGAPE_PROJECT", &project)
+            .env("AGAPE_WEB_DIST", &web_dist)
+            .spawn();
+        match agent {
+            Ok(_) => {
+                println!("  serving at http://localhost:8799  (Ctrl-C to stop)");
+                open_browser("http://localhost:8799");
+                let _ = std::io::Read::read(&mut std::io::stdin(), &mut [0u8; 1]);
+            }
+            Err(_) => eprintln!(
+                "agape: could not start the studio — is Node installed?\n  \
+                 (cd {h}/agent-server && AGAPE_PROJECT={p} AGAPE_WEB_DIST={d} npx tsx server.ts)",
+                h = home.display(), p = project.display(), d = web_dist.display()
+            ),
+        }
+        return;
+    }
+
+    // Dev mode (running from a source checkout): agent-server + the Vite dev server.
     let agent = Command::new("npx")
         .args(["tsx", "server.ts"])
         .current_dir(home.join("agent-server"))
@@ -276,12 +299,10 @@ fn cmd_studio(_args: &[String]) {
         (Ok(_), Ok(_)) => {
             println!("  serving at http://localhost:5173  (Ctrl-C to stop)");
             open_browser("http://localhost:5173");
-            // Keep the launcher alive so the child servers stay up.
             let _ = std::io::Read::read(&mut std::io::stdin(), &mut [0u8; 1]);
         }
         _ => eprintln!(
-            "agape: could not start the studio servers — is Node installed and `studio/` built?\n\
-             Start them manually:\n  \
+            "agape: could not start the studio servers — is Node installed and `studio/` built?\n  \
              (cd {h}/agent-server && AGAPE_PROJECT={p} npx tsx server.ts)\n  \
              (cd {h}/web && AGAPE_PROJECT={p} npm run dev)",
             h = home.display(),
@@ -295,19 +316,25 @@ fn cmd_studio(_args: &[String]) {
 fn studio_home() -> Option<PathBuf> {
     if let Ok(p) = std::env::var("AGAPE_STUDIO_HOME") {
         let p = PathBuf::from(p);
-        if p.join("web").is_dir() {
+        if is_studio(&p) {
             return Some(p);
         }
     }
     let mut dir = std::env::current_dir().ok()?;
-    for _ in 0..12 {
+    for _ in 0..16 {
         let s = dir.join("studio");
-        if s.join("web").is_dir() && s.join("agent-server").is_dir() {
+        if is_studio(&s) {
             return Some(s);
         }
         dir = dir.parent()?.to_path_buf();
     }
     None
+}
+
+/// A studio home has the agent-server and either source (`web/`, dev) or a
+/// prebuilt app (`web-dist/`, bundle).
+fn is_studio(p: &Path) -> bool {
+    p.join("agent-server").is_dir() && (p.join("web").is_dir() || p.join("web-dist").is_dir())
 }
 
 fn open_browser(url: &str) {
