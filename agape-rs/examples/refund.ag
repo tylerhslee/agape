@@ -1,0 +1,29 @@
+// A small but complete Agape program: a refund desk that judges an incoming
+// request, gates the judgment under a named policy, and only performs the
+// consequential refund when the gate commits. Run it with:
+//
+//     cargo run --bin agape -- run examples/refund.ag
+
+action Refund(int amount);
+
+// A decision policy: commit only above 0.8 confidence, and never on a
+// low-margin (ambiguous) judgment — escalate those to a person instead.
+policy Desk { threshold 0.8  floor 0.15 }
+
+agent RefundDesk grants { perform Refund } {
+  on awake {
+    // A graded judgment from the cognition seam, constrained to true/false.
+    Credence<bool> legit = self <- "is this refund request legitimate?";
+
+    // The recorded gate: collapse + endorse under the policy, then dispatch.
+    endorse (legit by Desk) {
+      true:  perform Refund(4200);
+      false: emit Event("declined");
+    } abstain {
+      emit Event("escalated-to-human");
+    }
+  }
+}
+
+spawn RefundDesk desk;
+awake desk;

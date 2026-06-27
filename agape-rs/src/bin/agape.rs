@@ -25,18 +25,35 @@ fn main() {
         }
     };
 
-    match agape_rs::process(&source) {
-        Ok(spine) => {
-            println!("accepted ({} spine events)", spine.len());
-            if cmd == "run" {
-                for ev in &spine.log {
-                    println!("  [{}] {}", ev.tick, ev.etype);
-                }
+    match cmd {
+        "check" => match agape_rs::process(&source) {
+            Ok(spine) => println!("ok — checks pass ({} spine events on a dry run)", spine.len()),
+            Err(e) => {
+                eprintln!("{e}");
+                exit(1);
             }
-        }
-        Err(e) => {
-            eprintln!("{}", e);
-            exit(1);
+        },
+        "run" => match agape_rs::process(&source) {
+            Ok(spine) => {
+                for ev in &spine.log {
+                    let subj = ev.subject.as_deref().map(|s| format!(" {s}")).unwrap_or_default();
+                    let payload = if ev.payload.is_empty() || ev.payload == "sent" || ev.payload == "delivered" {
+                        String::new()
+                    } else {
+                        format!("  {}", ev.payload)
+                    };
+                    println!("  [{:>3}] {:<20}{subj}{payload}", ev.tick, ev.etype);
+                }
+                println!("\n{} events · chain-head {}", spine.len(), &spine.chain_head_hex()[..16]);
+            }
+            Err(e) => {
+                eprintln!("{e}");
+                exit(1);
+            }
+        },
+        other => {
+            eprintln!("agape: unknown command {other:?} (expected `check` or `run`)");
+            exit(2);
         }
     }
 }
