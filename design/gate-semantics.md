@@ -170,23 +170,35 @@ and higher `m` is stricter.) The two corner combos are reachable via the **expli
 | face value | `m>0` | trust the model's pick only when decisive | explicit `c by confidence θ margin δ` |
 | conformal | `m=0` | α-correct, but accept low-gap flips between runs | explicit `conformal α` + per-action `m=0` |
 
-Why the two conformal rows are both meaningful: **axis A (mode) governs *correctness*** (α's
-calibrated error rate, or argmax) and **the floor `m` governs *stability*** (run-to-run
-flip-resistance, §15.5.5) — they are orthogonal. A conformal singleton still has an underlying
-credence gap; `m` floors *that gap* for reproducibility, on top of α's correctness guarantee.
+Why the two conformal rows are both meaningful: there are exactly **two distinct concepts**, and
+they are orthogonal properties:
+
+- **`α` — coverage / correctness.** A calibrated, finite-sample, distribution-free guarantee
+  `Pr(error) ≤ α` (conformal: the prediction set `C_α(x) = { y : p̂(y) ≥ 1−q̂ }`, with `q̂` the
+  `⌈(n+1)(1−α)⌉` quantile of nonconformity scores on the spine's labeled decisions). Bounds *how
+  often you are wrong*. Conformal-only; it is **not** a margin.
+- **the margin `g` — decisiveness / stability.** A floor on the credence gap
+  `g = p̂_top − p̂_2nd` (§15.5.5). Bounds *how often two runs disagree* (`β(g) → 0` as `g` grows).
+
+The "two margins" `δ` and `m` are the **same quantity `g`**, differing only in *where* checked:
+`δ` is the threshold rule's gap requirement (decision time); `m` is the consequential sink floor
+(action time), applied to any committed decision. So for a threshold gate `δ ≥ m` makes `m`
+redundant; conformal has no `δ`, so `m` is the *only* place to add a stability floor on top of
+coverage. A conformal singleton can have an honest error rate yet a knife-edge gap (flips at
+temp > 0); `m` is the optional cure.
 
 We deliberately do **not** add surface keywords for the corner combos (that is what the explicit
 escape hatch is for); both are niche, and the common cases are the two bundles.
 
 ## 6. The rigor dial is α — which *replaces* hand-set margin
 
-Two distinct "margins", kept apart: **`δ`** = the gate's *decision* margin (the threshold basis's
-"top must lead by ≥ δ"), and **`m`** = the *consequential sink floor* (a stability check on the
-underlying credence gap, applied to any gated decision before it acts, §5). This section is about
-`δ` — the *decision* knob; `m` (stability) is orthogonal and discussed in §5.
+**`δ` and `m` are the same quantity** — the credence gap `g = p̂_top − p̂_2nd` — checked at two
+sites: `δ` inside the threshold rule (decision time), `m` at the consequential sink (action time).
+Not two margins; one, applied twice. The genuinely *separate* concept is **`α`** (coverage /
+correctness, §5), which is not a margin at all.
 
-Calibration is first-class (§3); hand-set `δ` is the arbitrary knob α replaces with a
-data-grounded guarantee. So `δ` is not *hidden*, it is *upgraded*:
+Calibration is first-class (§3); hand-set `g` (as `δ`) is the arbitrary knob α replaces with a
+data-grounded guarantee. So the margin is not *hidden*, it is *upgraded*:
 
 - **reversible** → no margin (commits even on a near-tie; bounded by `temperature`, §5).
 - **conformal** → margin *is* the calibrated prediction set: close-but-plausible variants make the
