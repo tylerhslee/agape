@@ -1,13 +1,13 @@
 //! id:        ctrl_case_all_variants_ok
 //! section:   11_control
 //! expect:    accept
-//! spec:      §11 (case covering every enum variant is exhaustive)
+//! spec:      §11 (a gated case covering every enum variant is exhaustive)
 //! ---
 enum Color { Red, Green, Blue }
 agent A {
   on awake {
     Credence<Color> c = self <- "what color is grass?";
-    case (c) as v {
+    case (c by confidence 0.8) as v {
       Red: { say("r"); }
       Green: { say("g"); }
       Blue: { say("b"); }

@@ -1,0 +1,16 @@
+//! id:        gov_endorsed_perform_ok
+//! section:   13_governance
+//! expect:    accept
+//! spec:      §13 (an endorsed Decision may license a consequential perform)
+//! ---
+action Flag(bool b);
+agent C grants { perform Flag } {
+  on awake {
+    Credence<bool> c = self <- "is this fraud?";
+    endorse (c by confidence 0.9 margin 0.2) {
+      true: perform Flag(true);
+      false: ;
+    }
+  }
+}
+spawn C c; awake c;

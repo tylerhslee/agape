@@ -7,7 +7,7 @@ enum Color { Red, Green, Blue }
 agent A {
   on awake {
     Credence<Color> c = self <- "what color is grass?";
-    case (c) as v {
+    case (c by confidence 0.8) as v {
       Green: { say("g"); }
       default: { say("other"); }
     }

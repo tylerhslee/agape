@@ -1,0 +1,13 @@
+//! id:        sem_sample_unknown_reject
+//! section:   08_semantic
+//! expect:    reject
+//! error:     TypeError
+//! spec:      §8 (there is no sampling combinator in the surface language; a use of `sample` is an unknown-identifier error)
+//! ---
+agent A {
+  on awake {
+    Credence<bool> c = self <- "are you ready?";
+    sample(c, 10);
+  }
+}
+spawn A a; awake a;

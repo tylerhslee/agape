@@ -1,16 +1,17 @@
-//! id:        ctrl_case_nonexhaustive_reject
+//! id:        ctrl_case_ungated_credence_reject
 //! section:   11_control
 //! expect:    reject
-//! error:     ExhaustivenessError
-//! spec:      §11 (a case with no default must cover all variants)
+//! error:     TypeError
+//! spec:      §3, §11 (a Credence<E> is consumed only by a gate/combinator; an un-gated case is a TypeError — gate it first)
 //! ---
 enum Color { Red, Green, Blue }
 agent A {
   on awake {
     Credence<Color> c = self <- "what color is grass?";
-    case (c by confidence 0.8) as v {
+    case (c) as v {
       Red: { say("r"); }
       Green: { say("g"); }
+      Blue: { say("b"); }
     }
   }
 }

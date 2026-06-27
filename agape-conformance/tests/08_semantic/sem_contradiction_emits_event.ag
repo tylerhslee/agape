@@ -2,12 +2,12 @@
 //! section:   08_semantic
 //! expect:    accept
 //! contains:  Contradiction(j)
-//! spec:      §8 (deciding a Credence<Entailment> to Contradicts also emits a first-class Contradiction)
+//! spec:      §8, §11 (committing a Credence<Entailment> to Contradicts also emits a first-class Contradiction)
 //! ---
 agent A {
   on awake {
     Credence<Entailment> j = self <- "does \"the sky is green\" entail \"the sky is blue\"?";
-    case (j) as d {
+    case (j by confidence 0.8) as d {
       Entails: { say("e"); }
       Contradicts: { say("c"); }
       Neutral: { say("n"); }

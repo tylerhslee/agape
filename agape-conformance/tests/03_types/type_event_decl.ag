@@ -4,4 +4,4 @@
 //! spec:      §3 (custom spine-event declaration with a typed payload)
 //! ---
 struct Memo { amount: int, to: text }
-event Transfer(memo: Memo);
+event Transferred(memo: Memo);

@@ -3,8 +3,8 @@
 //! expect:    accept
 //! absent:  Event
 //! spec:      §7 (subscriptions are prospective; never fire for prior events)
-//! note:      a catch registered after an emit does NOT fire for that earlier event.
+//! note:      a when registered after an emit does NOT fire for that earlier event.
 //! ---
 event Note(text msg);
 emit Note("early");
-catch Note(x) as e { say("should not fire for early"); }
+when (Note x) { say("should not fire for early"); }

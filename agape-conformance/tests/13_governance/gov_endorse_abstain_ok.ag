@@ -1,0 +1,16 @@
+//! id:        gov_endorse_abstain_ok
+//! section:   13_governance
+//! expect:    accept
+//! spec:      §13 (the optional abstain clause runs when the gate cannot commit a singleton prediction set)
+//! ---
+action Flag(bool b);
+agent C grants { perform Flag } {
+  on awake {
+    Credence<bool> c = self <- "is this fraud?";
+    endorse (c by confidence 0.95 margin 0.2) {
+      true: perform Flag(true);
+      false: ;
+    } abstain { say("escalate"); }
+  }
+}
+spawn C c; awake c;

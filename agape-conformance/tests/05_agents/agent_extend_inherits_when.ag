@@ -1,10 +1,12 @@
 //! id:        agent_extend_inherits_when
 //! section:   05_agents
 //! expect:    accept
-//! spec:      §5 (extend inherits fields + constructor + when blocks + hooks)
+//! spec:      §5, §7 (extend inherits fields + constructor + when blocks + hooks)
+//! note:      the child inherits Base's typed when subscription.
 //! ---
+event Ping(text msg);
 agent Base {
-  when (self) { say("base reacted"); }
+  when (Ping p) { say("base reacted"); }
 }
 agent Child {
   extend Base();

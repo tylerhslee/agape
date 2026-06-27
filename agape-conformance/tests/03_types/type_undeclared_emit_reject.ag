@@ -3,8 +3,9 @@
 //! expect:    reject
 //! error:     TypeError
 //! spec:      §3 (events are not self-declaring; emit of an undeclared type is a TypeError)
+//! note:      emit of a plain event needs no power, but the type must be declared.
 //! ---
-agent A grants { emit Transfer } {
-  on awake { emit Transfer("100 to bob"); }
+agent A {
+  on awake { emit Transferred("100 to bob"); }
 }
 spawn A a; awake a;

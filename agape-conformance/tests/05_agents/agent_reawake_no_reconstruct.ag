@@ -1,7 +1,7 @@
 //! id:        agent_reawake_no_reconstruct
 //! section:   05_agents
 //! expect:    accept
-//! spec:      §5 (re-awake runs the subsequent path: no re-bind, no re-construct)
+//! spec:      §5 (re-awake resumes the agent: no re-bind, no re-construct)
 //! ---
 agent W {}
 spawn W w; awake w; sleep w; awake w;

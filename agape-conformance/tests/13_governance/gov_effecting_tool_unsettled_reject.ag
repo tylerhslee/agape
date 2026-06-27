@@ -1,0 +1,14 @@
+//! id:        gov_effecting_tool_unsettled_reject
+//! section:   13_governance
+//! expect:    reject
+//! error:     TaintViolation
+//! spec:      §6b, §13 (an effecting tool is a consequential sink; a cognition-derived input is un-settled → reject)
+//! ---
+effecting tool transfer(int amount, text to) -> bool;
+agent Bank grants { use transfer } {
+  on awake {
+    event<text> who = self <- "who should we pay?";
+    bool ok = transfer(100, f"{who}");
+  }
+}
+spawn Bank b; awake b;

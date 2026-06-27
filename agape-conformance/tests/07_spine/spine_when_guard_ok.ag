@@ -1,0 +1,8 @@
+//! id:        spine_when_guard_ok
+//! section:   07_spine
+//! expect:    accept
+//! spec:      §7 (a `when … if (guard)` filters by an ordinary predicate over the bound event's fields)
+//! ---
+event Refund(amount: int);
+when (Refund r) if (r.amount > 1000) { say("big refund"); }
+emit Refund(5000);

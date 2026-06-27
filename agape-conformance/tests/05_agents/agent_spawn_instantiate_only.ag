@@ -3,7 +3,7 @@
 //! expect:    accept
 //! contains:  Spawned(a)
 //! absent:  AgentAwake(a)
-//! spec:      §5 (spawn instantiates only: no constructor body, no mailbox)
+//! spec:      §5 (spawn instantiates + constructs only: no mailbox, no awake hook)
 //! ---
-agent A { on awake { say("constructed"); } }
+agent A { on awake { say("awoke"); } }
 spawn A a;

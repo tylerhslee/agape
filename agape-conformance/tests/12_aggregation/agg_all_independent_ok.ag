@@ -1,0 +1,16 @@
+//! id:        agg_all_independent_ok
+//! section:   12_aggregation
+//! expect:    accept
+//! spec:      §12 (all over independent Credence<bool> judges fuses to one Credence<bool>)
+//! ---
+agent A {
+  on awake {
+    Credence<bool> c1 = self <- "is this spam?";
+    Credence<bool> c2 = self <- "does this look like spam?";
+    Credence<bool> c3 = self <- "would a user flag it?";
+    independent c1, c2, c3;
+    Credence<bool> fused = all(c1, c2, c3);
+    endorse (fused by confidence 0.9) { true: ; false: ; }
+  }
+}
+spawn A a; awake a;

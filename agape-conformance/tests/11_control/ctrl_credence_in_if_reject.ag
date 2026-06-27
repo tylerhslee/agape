@@ -1,0 +1,13 @@
+//! id:        ctrl_credence_in_if_reject
+//! section:   11_control
+//! expect:    reject
+//! error:     TypeError
+//! spec:      §3, §11 (a Credence<bool> is not a bool; a bare Credence in an if is a TypeError — gate it first)
+//! ---
+agent A {
+  on awake {
+    Credence<bool> c = self <- "is this an approval?";
+    if (c) { say("yes"); }
+  }
+}
+spawn A a; awake a;

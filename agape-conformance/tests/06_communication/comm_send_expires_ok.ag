@@ -1,0 +1,11 @@
+//! id:        comm_send_expires_ok
+//! section:   06_communication
+//! expect:    accept
+//! spec:      §6 (a send may carry a lifetime: `dest <- msg expires N`; reach into Worker is granted)
+//! ---
+agent Worker {}
+agent Boss(Worker hand) grants { reach Worker } {
+  on awake { event<text> s = hand <- "status?" expires 5; }
+}
+spawn Worker w;
+spawn Boss b(w); awake b;

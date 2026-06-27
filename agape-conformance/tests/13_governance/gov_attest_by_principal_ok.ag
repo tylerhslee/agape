@@ -1,0 +1,13 @@
+//! id:        gov_attest_by_principal_ok
+//! section:   13_governance
+//! expect:    accept
+//! spec:      §13 (attest e by p reaches the identity dependency and records an Attestation — the principal basis)
+//! ---
+principal alice;
+agent Drafter {
+  on awake {
+    event<text> memo = self <- "draft the refund memo";
+    attest memo by alice;
+  }
+}
+spawn Drafter d; awake d;

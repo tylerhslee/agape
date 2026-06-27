@@ -1,6 +1,0 @@
-//! id:        axes_decide_is_bool
-//! section:   01_axes
-//! expect:    accept
-//! spec:      §8, §13 (decide(Credence<bool>, rule) commits to a bool — untainted, in hand)
-//! ---
-sync bool over(Credence<bool> c) { return decide(c, > 0.9); }
