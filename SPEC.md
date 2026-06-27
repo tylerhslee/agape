@@ -192,7 +192,7 @@ true false                                // bool literals
 **Prelude identifiers** (defined in §9, not the grammar): `Entailment`, `Contradiction`,
 `Neutral`, `Credence`, `Decision`, `Principal`, `Rule`, `Event`, `Error`,
 `Attestation`, `Decided`, `Abstained`, `AgentCrashed`, `Delivered`, `Resolved`, `Expired`,
-`DeliveryRefused`, `QueryResult`, `ToolStarted`, `ToolResolved`, `say`.
+`DeliveryRefused`, `QueryResult`, `ToolStarted`, `ToolResolved`, `say`, `store`, `embed`.
 
 ---
 
@@ -705,7 +705,9 @@ subtype, so `when (Error e)` catches a `Contradiction`; a contradiction is an `E
 subtype, and code that wants only faults matches the specific types. `Expired` and a lost
 send are not errors.
 
-`**say(x)`** prints its argument; it is not a spine operation.
+`**say(x)`** prints its argument; it is not a spine operation. `**store(x)`** internalizes `x` into
+the agent's relational + graph memory and `**embed(x)`** writes `x`'s embedding to the vector store —
+both explicit memory writes (a journaled provider decomposition, §10, §16.7).
 
 ---
 
@@ -720,10 +722,13 @@ off-spine — like `c by R`, it must be `endorse`-recorded to admit a consequent
 
 ### Internalization
 
-Every event an agent receives (via `<-`) is decomposed through the provider into facts,
-relationships, and embeddings written to that agent's memory. Decomposition is
-non-deterministic (it is cognition) but its shape is fixed (typed facts; SPO triples over
-a typed predicate set).
+Internalization decomposes a value — through the provider — into facts, relationships, and
+embeddings written to the agent's memory; it is non-deterministic (cognition) but its shape is
+fixed (typed facts; SPO triples over a typed predicate set). It is **invoked, not ambient**: an
+agent internalizes deliberately — `store(x)` / `embed(x)` (§9), or by acting on a prompt to
+itself — and, as an opt-in config (§17, off by default), the runtime may internalize every
+received `<-` event automatically. The trigger is configurable (§16.7); the decomposition is the
+same.
 
 ### Provenance
 
@@ -1485,8 +1490,7 @@ interprocedural authority for top-level (non-agent) functions.
 §0–§15 define what an Agape program *means*; this section defines what an implementation *does* to
 execute it — the concrete contract a conformant runtime is built against, making the abstract
 operational semantics of §15.4 buildable. Where §16 and §15 appear to differ, §15 governs the
-meaning and §16 the mechanism; a conformant runtime satisfies both. Design points not fixed by §0–§15 are settled here by explicit, conformance-visible choices;
-one remains flagged **(open)** — §16.7's internalization trigger — pending a product decision.
+meaning and §16 the mechanism; a conformant runtime satisfies both. Design points not fixed by §0–§15 are settled here by explicit, conformance-visible choices.
 
 ### 16.1 Execution model and the scheduler
 
@@ -1628,10 +1632,13 @@ Each agent owns three stores (§10): a **fact table** (relational), a **relation
 over a typed predicate set), and a **vector store** (embeddings). No store is shared — there is no
 cross-agent mutable state (§0.2).
 
-- **(open) Internalization.** Every event an agent receives (via `<-`) is decomposed — through a provider
-  call — into typed facts, SPO triples, and embeddings written to that agent's memory. The decomposition
-  is non-deterministic (it is cognition) but its *shape* is fixed (§10), and its result is journaled, so
-  replay (§16.5) reproduces it without re-invoking the provider.
+- **Internalization (configurable trigger).** Internalization decomposes a value into typed facts, SPO
+  triples, and embeddings written to the agent's memory, via a provider call — non-deterministic but
+  shape-fixed (§10), and journaled, so replay (§16.5) reproduces it without re-invoking the provider. The
+  **trigger** is configurable: by default explicit — `store(x)` / `embed(x)` (§9) or a prompt-driven
+  decision — and, when `[memory] internalize_on_receive = true` (§17, default `false`), the runtime
+  decomposes every received `<-` event automatically. Default-off keeps cognition cost pay-as-you-go: a
+  digest call happens only when asked for, not on every message.
 - **Provenance.** Every memory cell carries an immutable backpointer to the spine event that produced it;
   `origin(n)` projects it (§10). A queried value carries the trust of its provenance event — `graded` by
   default (most facts trace to internalized cognition), `settled` when the origin is an already-endorsed
@@ -1689,6 +1696,9 @@ resolves to a manifest entry; an undeclared-in-config dependency is a configurat
 
 # the identity dependency (`principal NAME;`)
 [identity]  backend = "local-keyring"
+
+# memory — the internalization trigger (§10, §16.7); default off keeps cognition pay-as-you-go
+[memory]    internalize_on_receive = false
 
 # conformal needs no manifest entry: it calibrates from the spine, and a gate's readiness
 # floor and default α live in its `policy` declaration in source (§13)

@@ -1,6 +1,6 @@
 # Agape v1.0 — Conformance Test Index
 
-**100 tests** — accept: 71, reject: 29
+**101 tests** — accept: 72, reject: 29
 
 A conformant implementation must satisfy every `accept`/`reject` test (rejects with the declared error class; accepts matching any asserted spine).
 
@@ -115,6 +115,7 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 | `mem_find_graph_origin_ok` | accept | — | §10 (the relationship graph is queried with `find … where { triple+ }`, optionally projecting origin()) |
 | `mem_match_is_gate` | accept | — | §10 (match > θ is a gate; yields a settled result off-spine) |
 | `mem_queried_fact_taint_reject` | reject | TaintViolation | §10, §13 (queried facts default to `graded`; must be re-gated before a consequential perform) |
+| `mem_store_internalizes_ok` | accept | — | §9, §10 (store(x) explicitly internalizes a value into the agent's memory — the invoked, default form of internalization; eager-on-receive is opt-in config, §16.7/§17) |
 
 ## 11_control
 

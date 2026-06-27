@@ -485,6 +485,13 @@ error = "TaintViolation"
 spec = "§10, §13 (queried facts default to `graded`; must be re-gated before a consequential perform)"
 
 [[test]]
+id = "mem_store_internalizes_ok"
+section = "10_memory"
+path = "tests/10_memory/mem_store_internalizes_ok.ag"
+expect = "accept"
+spec = "§9, §10 (store(x) explicitly internalizes a value into the agent's memory — the invoked, default form of internalization; eager-on-receive is opt-in config, §16.7/§17)"
+
+[[test]]
 id = "ctrl_case_all_variants_ok"
 section = "11_control"
 path = "tests/11_control/ctrl_case_all_variants_ok.ag"

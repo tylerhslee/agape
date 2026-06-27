@@ -1,0 +1,12 @@
+//! id:        mem_store_internalizes_ok
+//! section:   10_memory
+//! expect:    accept
+//! spec:      §9, §10 (store(x) explicitly internalizes a value into the agent's memory — the invoked, default form of internalization; eager-on-receive is opt-in config, §16.7/§17)
+//! ---
+agent A {
+  on awake {
+    event<text> r = self <- "summarize the day";
+    store(r);
+  }
+}
+spawn A a; awake a;
