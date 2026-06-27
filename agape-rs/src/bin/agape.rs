@@ -259,6 +259,10 @@ fn cmd_studio(_args: &[String]) {
     println!("Agape Studio — project {}", project.display());
     println!("  studio home: {}", home.display());
 
+    // The agent-server runs the project through THIS binary (so a bundle uses its
+    // own bin/agape, not a dev path).
+    let self_bin = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("agape"));
+
     let web_dist = home.join("web-dist");
     if web_dist.is_dir() {
         // Bundle mode: the agent-server serves the prebuilt web app — one process.
@@ -267,6 +271,7 @@ fn cmd_studio(_args: &[String]) {
             .current_dir(home.join("agent-server"))
             .env("AGAPE_PROJECT", &project)
             .env("AGAPE_WEB_DIST", &web_dist)
+            .env("AGAPE_BIN", &self_bin)
             .spawn();
         match agent {
             Ok(_) => {
@@ -288,6 +293,7 @@ fn cmd_studio(_args: &[String]) {
         .args(["tsx", "server.ts"])
         .current_dir(home.join("agent-server"))
         .env("AGAPE_PROJECT", &project)
+        .env("AGAPE_BIN", &self_bin)
         .spawn();
     let web = Command::new("npm")
         .args(["run", "dev"])

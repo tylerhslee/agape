@@ -37,12 +37,22 @@ function loadApiKey(): void {
 }
 
 loadApiKey();
-if (!process.env.ANTHROPIC_API_KEY) {
-  console.error("agent-server: ANTHROPIC_API_KEY not found (env or repo-root .env).");
-  process.exit(1);
+const HAS_KEY = !!process.env.ANTHROPIC_API_KEY;
+if (!HAS_KEY) {
+  console.warn("agent-server: no ANTHROPIC_API_KEY — the deterministic mock + project studio work offline; live-model features (🧠 Claude) will error until a key is set.");
 }
 
-const cognition = new AnthropicCognition();
+// Cognition is constructed lazily, so the studio starts and serves the mock
+// provider + project with no API key; the live-model endpoints throw a friendly
+// error if called without one.
+let _cognition: AnthropicCognition | null = null;
+function cognition(): AnthropicCognition {
+  if (!_cognition) {
+    if (!process.env.ANTHROPIC_API_KEY) throw new Error("ANTHROPIC_API_KEY not set — this feature needs a live model (or use the deterministic mock).");
+    _cognition = new AnthropicCognition();
+  }
+  return _cognition;
+}
 
 // The learning subsystem, lazily started (so /agent/* works even if better-sqlite3
 // hasn't been built). Memory persists to data/agape.db; the runner uses agape-rs.
@@ -55,7 +65,7 @@ function getLearner(): Learner {
     fs.mkdirSync(path.join(HERE, "data"), { recursive: true });
     const mem = new Memory(new HashingEmbedder(), path.join(HERE, "data", "agape.db"));
     const runner = makeRunner(AGAPE_RS);
-    learner = new Learner(mem, cognition, runner);
+    learner = new Learner(mem, cognition(), runner);
     console.log(`agent-server: learner ready · runner = ${runner.name}`);
   }
   return learner;
@@ -121,7 +131,16 @@ const TESTS_DIR = path.resolve(REPO, "agape-conformance", "tests");
 // ── project: the user's own Agape project, opened via `agape studio` ──────────
 // `AGAPE_PROJECT` is set by the CLI launcher; null ⇒ no project (Review only).
 const PROJECT = process.env.AGAPE_PROJECT ? path.resolve(process.env.AGAPE_PROJECT) : null;
-const AGAPE_BIN = path.resolve(AGAPE_RS, "target", "debug", "agape");
+// Resolve the `agape` binary across layouts: an explicit override, the packaged
+// bundle (studio/agent-server → ../../bin/agape), or a local release/dev build.
+const AGAPE_BIN =
+  process.env.AGAPE_BIN ||
+  [
+    path.resolve(HERE, "..", "..", "bin", "agape"),
+    path.resolve(AGAPE_RS, "target", "release", "agape"),
+    path.resolve(AGAPE_RS, "target", "debug", "agape"),
+  ].find((p) => fs.existsSync(p)) ||
+  "agape";
 
 // In a packaged bundle the agent-server also serves the built web app (one
 // process, no Vite). `AGAPE_WEB_DIST` points at the static `dist/`.
@@ -296,7 +315,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "OPTIONS") return send(res, 204, {});
 
     if (req.method === "GET" && url === "/agent/health") {
-      return send(res, 200, { ok: true, model: cognition.model });
+      return send(res, 200, { ok: true, model: process.env.AGENT_MODEL || "claude-haiku-4-5", live: HAS_KEY });
     }
 
     // ── pair / delegate ──
@@ -304,7 +323,7 @@ const server = http.createServer(async (req, res) => {
       const { item, thread, intent } = (await readJson(req)) || {};
       if (!item || !item.title) return send(res, 400, { error: "item.title is required" });
       const { system, messages } = buildMessages(item, Array.isArray(thread) ? thread : [], intent === "kickoff" ? "kickoff" : "respond");
-      const text = await cognition.complete(system, messages, 1024);
+      const text = await cognition().complete(system, messages, 1024);
       return send(res, 200, { text: text || "(the agent had nothing to add)" });
     }
 
@@ -355,7 +374,7 @@ const server = http.createServer(async (req, res) => {
         "fences wrapping it, no commentary. Preserve section numbering, cross-references (§x.y), and the " +
         "terse precise voice. Make the minimal change that satisfies the instruction.";
       const user = `SELECTION (${anchor || "spec span"}):\n\n${selection}\n\n---\nINSTRUCTION:\n${instruction}`;
-      const edited = await cognition.complete(system, [{ role: "user", content: user }], 2048);
+      const edited = await cognition().complete(system, [{ role: "user", content: user }], 2048);
       return send(res, 200, { edited });
     }
     if (req.method === "POST" && url === "/review/spec-save") {
@@ -369,7 +388,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "POST" && url === "/provider/text") {
       const prompt = await readBody(req);
       const system = "You are an autonomous agent in a multi-agent system. Answer the request directly and concisely — at most one short paragraph. No preamble, no caveats.";
-      const text = await cognition.complete(system, [{ role: "user", content: prompt }], 300);
+      const text = await cognition().complete(system, [{ role: "user", content: prompt }], 300);
       return sendText(res, 200, text || "(no answer)");
     }
     // The sampling fallback (§16.8): a text-only model has no logprobs, so we force
@@ -386,7 +405,7 @@ const server = http.createServer(async (req, res) => {
       const system = `You are a careful judge. Respond with EXACTLY ONE word — one of: ${variants.join(", ")}. No explanation, no punctuation.`;
       const draws = await Promise.all(
         Array.from({ length: samples }, () =>
-          cognition.complete(system, [{ role: "user", content: prompt }], 8, temperature).then((t) => pickVariant(t, variants)).catch(() => null))
+          cognition().complete(system, [{ role: "user", content: prompt }], 8, temperature).then((t) => pickVariant(t, variants)).catch(() => null))
       );
       const counts: Record<string, number> = {};
       for (const v of variants) counts[v] = 0;
@@ -439,5 +458,5 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, "127.0.0.1", () => {
-  console.log(`agent-server on http://127.0.0.1:${PORT} · model ${cognition.model}`);
+  console.log(`agent-server on http://127.0.0.1:${PORT} · ${HAS_KEY ? `model ${process.env.AGENT_MODEL || "claude-haiku-4-5"}` : "mock (no API key)"}${WEB_DIST ? " · serving web app" : ""}`);
 });
