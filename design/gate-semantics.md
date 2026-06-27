@@ -77,10 +77,25 @@ conformal 0.05;          // file-level error budget for all consequential gates;
 α is an **error guarantee**, not a threshold: "wrong at most α of the time," finite-sample,
 distribution-free, calibrated from the gate's own labeled decisions on the spine (§13). The
 operating cutoff is whatever achieves α — never seen or set by the user. Local override via the
-explicit form; project default via the manifest (same precedence as v1.0.0, §17). **Only this
-path needs the distribution** (logprobs / sampling fallback). **Cold start** → can't certify α →
-defer; rulings become the first labels; readiness crossing flips it to autonomous — automatic,
-recorded.
+explicit form; project default via the manifest (same precedence as v1.0.0, §17). A **missing**
+`conformal` line is fine — α defaults (0.05 at the spec level, manifest-overridable). **Only this
+path needs a distribution** (logprobs, or the §16 sampling fallback). **Cold start** → can't
+certify α → defer; rulings become the first labels; readiness crossing flips it to autonomous —
+automatic, recorded.
+
+**Config-aware static check (the distribution-source rule).** Because the manifest binds the
+provider and is part of the project (§16), the toolchain can cross-check `exposes_logprobs`
+against gate usage at compile time. If non-reversible actions exist:
+
+- provider exposes logprobs → ok;
+- no logprobs but a sampling fallback is configured → ok, **warn** on cost (N× calls per
+  consequential decision);
+- neither → **warning**: the conformal path can never produce a distribution, so it can never
+  certify and **degrades to pure deferral** (every consequential decision routes to the principal
+  forever; no autonomy). Safe, but flagged.
+
+This pairs with the deference requirement (§2): a non-reversible action needs both a **principal**
+(deference path — *error* if missing) and a **distribution source** (*warning* if missing).
 
 ## 4. What the gate provides — and what actually needs logprobs
 
@@ -128,6 +143,22 @@ The default is reproducible; `reversible` is a *visible, spine-recorded* opt-out
 > that action (→ 0). Otherwise an argmax decision with margin ≈ 0 driving a reversible `perform`
 > would be rejected at the sink. So `reversible` lowers *both* the gate mode (→ face value) and the
 > sink floor (`m` → 0).
+
+**The two relaxations are separable; `reversible` bundles them.** They are independent engine
+knobs — **(A) certification mode** (face value vs conformal) and **(B) sink margin floor** (`m=0`
+vs `m>0`) — and `reversible` sets both to relaxed because reversibility justifies both for the
+same reason. The two corner combos are reachable via the **explicit form** (retained), so the
+surface stays two bundles, not four knobs:
+
+| mode (A) | floor (B) | meaning | written as |
+|---|---|---|---|
+| face value | `m=0` | `reversible` — take the answer, just act | `reversible action X` |
+| conformal | `m>0` | default — certify + decisive | unmarked `action X` |
+| face value | `m>0` | trust the model's pick only when decisive | explicit `c by confidence θ margin δ` |
+| conformal | `m=0` | trust α, skip the extra floor | explicit `conformal α` + per-action `m=0` |
+
+We deliberately do **not** add surface keywords for the corner combos (that is what the explicit
+escape hatch is for); both are niche, and the common cases are the two bundles.
 
 ## 6. Margin is off the surface
 
