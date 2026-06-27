@@ -10,6 +10,8 @@ export default function Review({ onStudio }) {
   const [err, setErr] = useState(null);
   const [tab, setTab] = useState("tests");
   const [loading, setLoading] = useState(true);
+  const [running, setRunning] = useState(false);
+  const [ranAt, setRanAt] = useState(null);
 
   const load = async () => {
     setLoading(true);
@@ -20,6 +22,20 @@ export default function Review({ onStudio }) {
       setErr(e.message);
     }
     setLoading(false);
+  };
+  // Re-run the conformance suite and update results in place, without the full-page
+  // loading state — the table stays visible while the suite runs. (The Monaco spec
+  // editor uses a non-reactive defaultValue, so refreshing data won't reset an edit.)
+  const runTests = async () => {
+    setRunning(true);
+    setErr(null);
+    try {
+      setData(await review.data());
+      setRanAt(new Date().toLocaleTimeString());
+    } catch (e) {
+      setErr(e.message);
+    }
+    setRunning(false);
   };
   useEffect(() => {
     load();
@@ -37,7 +53,11 @@ export default function Review({ onStudio }) {
           ))}
         </nav>
         <span style={{ flex: 1 }} />
-        <button onClick={load} disabled={loading}>{loading ? "running…" : "↻ refresh"}</button>
+        {ranAt && !running && <span className="dim" style={{ fontSize: 12 }}>ran {ranAt}</span>}
+        <button className="primary" onClick={runTests} disabled={running || loading} title="Re-run the conformance suite">
+          {running ? "running tests…" : "▶ Run tests"}
+        </button>
+        <button onClick={load} disabled={loading || running} title="Reload everything (suite + spec)">{loading ? "loading…" : "↻ reload"}</button>
         {onStudio && <button onClick={onStudio}>Studio →</button>}
       </header>
 

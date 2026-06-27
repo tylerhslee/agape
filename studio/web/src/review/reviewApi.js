@@ -15,6 +15,7 @@ async function post(path, body) {
 }
 
 export const data = () => get("/review/data");
+export const run = () => get("/review/run");
 export const specEdit = (anchor, selection, instruction) => post("/review/spec-edit", { anchor, selection, instruction });
 export const specSave = (text) => post("/review/spec-save", { text });
 export const testSave = (rel, body) => post("/review/test-save", { rel, body });

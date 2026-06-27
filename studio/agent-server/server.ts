@@ -151,8 +151,9 @@ function runConformance() {
   return conformanceInflight;
 }
 
-async function reviewData() {
-  const spec = fs.existsSync(SPEC_PATH) ? fs.readFileSync(SPEC_PATH, "utf8") : "";
+// Run the suite and project each .ag file to a {test, status} row. No spec read,
+// so the "Run tests" button can refresh results without disturbing the editor.
+async function reviewTests() {
   const files: string[] = [];
   if (fs.existsSync(TESTS_DIR)) walkAg(TESTS_DIR, files);
   files.sort();
@@ -169,7 +170,12 @@ async function reviewData() {
       body, status: status[id] ? "fail" : "pass", reason: status[id] || "", directives,
     };
   });
-  return { spec, tests, buildOk, summary, passed: tests.filter((t) => t.status === "pass").length, total: tests.length };
+  return { tests, buildOk, summary, passed: tests.filter((t) => t.status === "pass").length, total: tests.length };
+}
+
+async function reviewData() {
+  const spec = fs.existsSync(SPEC_PATH) ? fs.readFileSync(SPEC_PATH, "utf8") : "";
+  return { spec, ...(await reviewTests()) };
 }
 
 const server = http.createServer(async (req, res) => {
@@ -222,6 +228,10 @@ const server = http.createServer(async (req, res) => {
     // ── the Review studio ──
     if (req.method === "GET" && url === "/review/data") {
       return send(res, 200, await reviewData());
+    }
+    // Re-run the conformance suite only (no spec read) — backs the "Run tests" button.
+    if (req.method === "GET" && url === "/review/run") {
+      return send(res, 200, await reviewTests());
     }
     if (req.method === "POST" && url === "/review/spec-edit") {
       const { anchor, instruction, selection } = (await readJson(req)) || {};
