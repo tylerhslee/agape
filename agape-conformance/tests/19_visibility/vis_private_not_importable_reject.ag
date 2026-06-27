@@ -1,0 +1,9 @@
+//! id:        vis_private_not_importable_reject
+//! section:   19_visibility
+//! expect:    reject
+//! error:     VisibilityError
+//! modules:   m.ag
+//! spec:      v1.1.0 design 4 (a non-pub declaration is not importable; naming it is a VisibilityError)
+//! ---
+import { secret } from m;
+int x = secret();

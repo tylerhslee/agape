@@ -1,0 +1,11 @@
+//! id:        prelude_user_error_subtype_caught
+//! section:   09_prelude
+//! expect:    accept
+//! contains:  Error
+//! spec:      v1.1.0 design 5b, 9 (event Foo : Error extends the built-in Error root; when(Error e) catches it)
+//! ---
+event Glitch(reason: text) : Error;
+agent Watcher { when (Error e) { say("caught"); } }
+agent Emitter { on awake { emit Glitch("bad"); } }
+spawn Watcher w; awake w;
+spawn Emitter e; awake e;

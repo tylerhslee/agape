@@ -14,9 +14,10 @@ MANIFEST.* files. It also validates the headers (see check()).
 Header keys: id, section, expect (accept|reject|blocked), error (iff reject),
 spine|contains|absent|order (matchers; `; `-separated), question (iff blocked), spec, note.
 Run directives (the §16.5 harness contract): provider (empty|schema_violation|credence(...)),
-attest (grant|deny), manifest (key=value; `; `-separated), replay (chain_head_equal).
+attest (grant|deny), manifest (key=value; `; `-separated), replay (chain_head_equal),
+modules (companion module filenames; `; `-separated; live in a sibling <id>.d/ dir — v1.1.0).
 Error classes: LexError ParseError TypeError ColorViolation TaintViolation
-AuthorityViolation ExhaustivenessError.
+AuthorityViolation ExhaustivenessError ModuleError VisibilityError InterfaceError.
 
 Run:  python3 build_manifests.py            # rebuild MANIFEST.toml + MANIFEST.md
       python3 build_manifests.py --check    # validate + verify manifests are up to date (CI)
@@ -29,10 +30,12 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 TESTS_DIR = os.path.join(ROOT, "tests")
 
 MATCHER_KEYS = ("spine", "contains", "absent", "order")
-DIRECTIVE_LIST_KEYS = ("manifest",)   # `;`-separated like matchers, but configure the run
+DIRECTIVE_LIST_KEYS = ("manifest", "modules")   # `;`-separated; configure the run / list companion modules (v1.1.0)
 EXPECTS = {"accept", "reject", "blocked"}
 ERROR_CLASSES = {"LexError", "ParseError", "TypeError", "ColorViolation",
-                 "TaintViolation", "AuthorityViolation", "ExhaustivenessError"}
+                 "TaintViolation", "AuthorityViolation", "ExhaustivenessError",
+                 # v1.1.0 library layer:
+                 "ModuleError", "VisibilityError", "InterfaceError"}
 # Harness directives — the §16.5 test-mode contract a conformant runtime must honor.
 PROVIDER_MODES = {"empty", "schema_violation"}   # plus a scripted `credence(...)` form
 ATTEST_MODES = {"grant", "deny"}

@@ -1,0 +1,3 @@
+module m;
+event Glitch(reason: text) : Error;
+pub agent Worker { on awake { emit Glitch("oops"); } }

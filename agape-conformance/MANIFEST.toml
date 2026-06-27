@@ -439,6 +439,22 @@ provider = "schema_violation"
 spec = "§8 (structured output uses constrained decoding; on schema failure the runtime raises a clean TypeMismatch — catchable and retryable)"
 
 [[test]]
+id = "prelude_action_cannot_be_error_reject"
+section = "09_prelude"
+path = "tests/09_prelude/prelude_action_cannot_be_error_reject.ag"
+expect = "reject"
+error = "ParseError"
+spec = "v1.1.0 design 5b (only `event` may extend Error; an action supertype is a ParseError)"
+
+[[test]]
+id = "prelude_error_supertype_must_be_error_reject"
+section = "09_prelude"
+path = "tests/09_prelude/prelude_error_supertype_must_be_error_reject.ag"
+expect = "reject"
+error = "TypeError"
+spec = "v1.1.0 design 5b (the only permitted user supertype is the built-in Error)"
+
+[[test]]
 id = "prelude_expired_not_error"
 section = "09_prelude"
 path = "tests/09_prelude/prelude_expired_not_error.ag"
@@ -454,6 +470,14 @@ path = "tests/09_prelude/prelude_say_not_spine.ag"
 expect = "accept"
 absent = ["Event"]
 spec = "§9 (`say(x)` prints its argument; it is NOT a spine operation and appends no event)"
+
+[[test]]
+id = "prelude_user_error_subtype_caught"
+section = "09_prelude"
+path = "tests/09_prelude/prelude_user_error_subtype_caught.ag"
+expect = "accept"
+contains = ["Error"]
+spec = "v1.1.0 design 5b, 9 (event Foo : Error extends the built-in Error root; when(Error e) catches it)"
 
 [[test]]
 id = "prelude_when_error_catches_contradiction"
@@ -804,3 +828,230 @@ manifest = ["provider.exposes_logprobs=false", "provider.fallback_samples=10", "
 provider = "credence(true=0.9, false=0.1)"
 spec = "§16.8, §17 (a text-only provider — no logprobs — is served by the sampling fallback: the credence is the empirical frequency of N forced draws; a confident judgment still commits)"
 note = "the manifest sets only connector config; the decision policy is in source"
+
+[[test]]
+id = "mod_ambiguous_name_reject"
+section = "18_modules"
+path = "tests/18_modules/mod_ambiguous_name_reject.ag"
+expect = "reject"
+error = "ModuleError"
+modules = ["p.ag", "q.ag"]
+spec = "v1.1.0 design 3.1 (an ambiguous bare reference across imports is a ModuleError)"
+
+[[test]]
+id = "mod_etype_qualified_distinct"
+section = "18_modules"
+path = "tests/18_modules/mod_etype_qualified_distinct.ag"
+expect = "accept"
+modules = ["a.ag", "b.ag"]
+spec = "v1.1.0 design 3.2 (same event name in two modules are DISTINCT qualified etypes)"
+note = "a.Tick and b.Tick coexist; when(a.Tick) binds the qualified type, no collision"
+
+[[test]]
+id = "mod_import_alias"
+section = "18_modules"
+path = "tests/18_modules/mod_import_alias.ag"
+expect = "accept"
+modules = ["util.ag"]
+spec = "v1.1.0 design 2.3 (import ... as alias rebinds the prefix)"
+
+[[test]]
+id = "mod_import_cycle_reject"
+section = "18_modules"
+path = "tests/18_modules/mod_import_cycle_reject.ag"
+expect = "reject"
+error = "ModuleError"
+modules = ["a.ag", "b.ag"]
+spec = "v1.1.0 design 2.3 (imports are acyclic; a cycle is a ModuleError)"
+
+[[test]]
+id = "mod_import_qualified"
+section = "18_modules"
+path = "tests/18_modules/mod_import_qualified.ag"
+expect = "accept"
+modules = ["util.ag"]
+spec = "v1.1.0 design 2 (module=file; whole-module import; qualified name use)"
+note = "import a module and use a pub member by its qualified name"
+
+[[test]]
+id = "mod_import_selective"
+section = "18_modules"
+path = "tests/18_modules/mod_import_selective.ag"
+expect = "accept"
+modules = ["util.ag"]
+spec = "v1.1.0 design 2.3 (selective import binds the bare name)"
+
+[[test]]
+id = "mod_no_header_is_root"
+section = "18_modules"
+path = "tests/18_modules/mod_no_header_is_root.ag"
+expect = "accept"
+spec = "v1.1.0 design 0,2 (no module/import = implicit root module; v1.0.0 backward compat)"
+note = "an unmodified v1.0.0 program still compiles"
+
+[[test]]
+id = "mod_selective_import_unknown_reject"
+section = "18_modules"
+path = "tests/18_modules/mod_selective_import_unknown_reject.ag"
+expect = "reject"
+error = "ModuleError"
+modules = ["util.ag"]
+spec = "v1.1.0 design 2.3 (selective import of a non-exported name is a ModuleError)"
+
+[[test]]
+id = "mod_unresolved_import_reject"
+section = "18_modules"
+path = "tests/18_modules/mod_unresolved_import_reject.ag"
+expect = "reject"
+error = "ModuleError"
+spec = "v1.1.0 design 2.3 (an import resolving to no module is a ModuleError)"
+
+[[test]]
+id = "vis_private_agent_not_spawnable_reject"
+section = "19_visibility"
+path = "tests/19_visibility/vis_private_agent_not_spawnable_reject.ag"
+expect = "reject"
+error = "VisibilityError"
+modules = ["m.ag"]
+spec = "v1.1.0 design 4.2 (a private agent type cannot be named/spawned from another module)"
+
+[[test]]
+id = "vis_private_default_same_module_ok"
+section = "19_visibility"
+path = "tests/19_visibility/vis_private_default_same_module_ok.ag"
+expect = "accept"
+spec = "v1.1.0 design 4.1 (default-private is module-internal, not decl-internal; siblings see each other)"
+note = "a private helper is visible to another decl in the same module"
+
+[[test]]
+id = "vis_private_event_still_on_spine"
+section = "19_visibility"
+path = "tests/19_visibility/vis_private_event_still_on_spine.ag"
+expect = "accept"
+contains = ["Error"]
+modules = ["m.ag"]
+spec = "v1.1.0 design 4.2, 5b (a private event still lands on the spine; caught cross-module by its Error supertype, not its private name)"
+note = "visibility gates the NAME, not spine presence"
+
+[[test]]
+id = "vis_private_not_importable_reject"
+section = "19_visibility"
+path = "tests/19_visibility/vis_private_not_importable_reject.ag"
+expect = "reject"
+error = "VisibilityError"
+modules = ["m.ag"]
+spec = "v1.1.0 design 4 (a non-pub declaration is not importable; naming it is a VisibilityError)"
+
+[[test]]
+id = "vis_pub_importable"
+section = "19_visibility"
+path = "tests/19_visibility/vis_pub_importable.ag"
+expect = "accept"
+modules = ["m.ag"]
+spec = "v1.1.0 design 4 (a pub declaration is importable)"
+
+[[test]]
+id = "vis_shallow_export_reject"
+section = "19_visibility"
+path = "tests/19_visibility/vis_shallow_export_reject.ag"
+expect = "reject"
+error = "VisibilityError"
+spec = "v1.1.0 design 4.3 (pub is shallow: a pub type may not expose a private field type)"
+
+[[test]]
+id = "gen_agent_judge_enum_bound"
+section = "20_generics"
+path = "tests/20_generics/gen_agent_judge_enum_bound.ag"
+expect = "accept"
+spec = "v1.1.0 design 5.1 (a kind bound E: enum makes Credence<E> well-formed in generic code)"
+note = "the leaf judging helper -- generics range a Credence over a role's enum"
+
+[[test]]
+id = "gen_bound_violation_reject"
+section = "20_generics"
+path = "tests/20_generics/gen_bound_violation_reject.ag"
+expect = "reject"
+error = "TypeError"
+spec = "v1.1.0 design 5.1 (instantiating an E: enum parameter with a non-enum is a TypeError)"
+
+[[test]]
+id = "gen_credence_unbounded_param_reject"
+section = "20_generics"
+path = "tests/20_generics/gen_credence_unbounded_param_reject.ag"
+expect = "reject"
+error = "TypeError"
+spec = "v1.1.0 design 5.1, 3 (Credence<E> requires E be an enum; an unbounded param cannot satisfy it)"
+note = "why the enum bound exists"
+
+[[test]]
+id = "gen_fn_identity"
+section = "20_generics"
+path = "tests/20_generics/gen_fn_identity.ag"
+expect = "accept"
+spec = "v1.1.0 design 5.1 (user-generic function; monomorphized at the call site)"
+
+[[test]]
+id = "gen_monomorphize_two_instances"
+section = "20_generics"
+path = "tests/20_generics/gen_monomorphize_two_instances.ag"
+expect = "accept"
+spec = "v1.1.0 design 5.1 (distinct instantiations monomorphize to distinct concrete types)"
+
+[[test]]
+id = "gen_multi_param"
+section = "20_generics"
+path = "tests/20_generics/gen_multi_param.ag"
+expect = "accept"
+spec = "v1.1.0 design 5.1 (generics take multiple type parameters)"
+
+[[test]]
+id = "gen_struct_box"
+section = "20_generics"
+path = "tests/20_generics/gen_struct_box.ag"
+expect = "accept"
+spec = "v1.1.0 design 5.1 (user-generic struct with a type parameter)"
+
+[[test]]
+id = "iface_decl_and_conformance"
+section = "21_interfaces"
+path = "tests/21_interfaces/iface_decl_and_conformance.ag"
+expect = "accept"
+spec = "v1.1.0 design 5.2 (interface decl; an agent nominally conforms via : Iface)"
+
+[[test]]
+id = "iface_missing_handler_reject"
+section = "21_interfaces"
+path = "tests/21_interfaces/iface_missing_handler_reject.ag"
+expect = "reject"
+error = "InterfaceError"
+spec = "v1.1.0 design 5.2 (a declared interface with no matching handler is an InterfaceError)"
+
+[[test]]
+id = "iface_missing_required_grant_reject"
+section = "21_interfaces"
+path = "tests/21_interfaces/iface_missing_required_grant_reject.ag"
+expect = "reject"
+error = "InterfaceError"
+spec = "v1.1.0 design 5.2 (an interface `requires` a capability the implementor lacks)"
+
+[[test]]
+id = "iface_multi_implement"
+section = "21_interfaces"
+path = "tests/21_interfaces/iface_multi_implement.ag"
+expect = "accept"
+spec = "v1.1.0 design 5.2 (an agent may implement multiple interfaces)"
+
+[[test]]
+id = "iface_not_instantiable_reject"
+section = "21_interfaces"
+path = "tests/21_interfaces/iface_not_instantiable_reject.ag"
+expect = "reject"
+error = "TypeError"
+spec = "v1.1.0 design 5.2 (an interface is a type but not instantiable; spawn of one is a TypeError)"
+
+[[test]]
+id = "iface_subtype_binding"
+section = "21_interfaces"
+path = "tests/21_interfaces/iface_subtype_binding.ag"
+expect = "accept"
+spec = "v1.1.0 design 5.2 (agent <: interface; bind a concrete agent to an interface slot; reach over the interface)"

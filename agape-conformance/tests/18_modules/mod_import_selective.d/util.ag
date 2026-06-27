@@ -1,0 +1,2 @@
+module util;
+pub sync int dbl(int x) { return x * 2; }

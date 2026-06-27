@@ -1,0 +1,9 @@
+//! id:        mod_import_alias
+//! section:   18_modules
+//! expect:    accept
+//! modules:   util.ag
+//! spec:      v1.1.0 design 2.3 (import ... as alias rebinds the prefix)
+//! ---
+import util as u;
+int y = u.dbl(21);
+say(y);

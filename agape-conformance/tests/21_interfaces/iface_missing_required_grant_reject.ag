@@ -1,0 +1,14 @@
+//! id:        iface_missing_required_grant_reject
+//! section:   21_interfaces
+//! expect:    reject
+//! error:     InterfaceError
+//! spec:      v1.1.0 design 5.2 (an interface `requires` a capability the implementor lacks)
+//! ---
+event Query(ask: text);
+struct Plan { steps: int }
+agent Engineer { on awake { say("eng"); } }
+interface Cognition { handles Query -> Plan; requires reach Engineer; }
+agent PM : Cognition grants { } {
+  when (Query q) { say("plan"); }
+}
+spawn PM p; awake p;

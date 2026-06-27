@@ -1,0 +1,2 @@
+module a;
+pub event Tick(n: int);

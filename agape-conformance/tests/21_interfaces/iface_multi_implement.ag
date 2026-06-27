@@ -1,0 +1,16 @@
+//! id:        iface_multi_implement
+//! section:   21_interfaces
+//! expect:    accept
+//! spec:      v1.1.0 design 5.2 (an agent may implement multiple interfaces)
+//! ---
+event Query(ask: text);
+event Audit(what: text);
+struct Plan { steps: int }
+struct Report { ok: bool }
+interface Planner { handles Query -> Plan; }
+interface Auditor { handles Audit -> Report; }
+agent Lead : Planner, Auditor {
+  when (Query q) { say("plan"); }
+  when (Audit a) { say("audit"); }
+}
+spawn Lead l; awake l;

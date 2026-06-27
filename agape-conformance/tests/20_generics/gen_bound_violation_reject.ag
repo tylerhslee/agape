@@ -1,0 +1,11 @@
+//! id:        gen_bound_violation_reject
+//! section:   20_generics
+//! expect:    reject
+//! error:     TypeError
+//! spec:      v1.1.0 design 5.1 (instantiating an E: enum parameter with a non-enum is a TypeError)
+//! ---
+struct S { n: int }
+agent Judge<E: enum> {
+  on awake { Credence<E> c = self <- "x"; }
+}
+spawn Judge<S> j;

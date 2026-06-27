@@ -1,0 +1,11 @@
+//! id:        gen_agent_judge_enum_bound
+//! section:   20_generics
+//! expect:    accept
+//! spec:      v1.1.0 design 5.1 (a kind bound E: enum makes Credence<E> well-formed in generic code)
+//! note:      the leaf judging helper -- generics range a Credence over a role's enum
+//! ---
+enum Ticket { Billing, Bug, Feature }
+agent Judge<E: enum> {
+  on awake { Credence<E> c = self <- "classify this"; }
+}
+spawn Judge<Ticket> j; awake j;

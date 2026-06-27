@@ -1,0 +1,10 @@
+//! id:        vis_private_agent_not_spawnable_reject
+//! section:   19_visibility
+//! expect:    reject
+//! error:     VisibilityError
+//! modules:   m.ag
+//! spec:      v1.1.0 design 4.2 (a private agent type cannot be named/spawned from another module)
+//! ---
+import m;
+spawn m.Hidden h;
+awake h;

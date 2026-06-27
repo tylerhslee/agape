@@ -1,0 +1,10 @@
+//! id:        mod_ambiguous_name_reject
+//! section:   18_modules
+//! expect:    reject
+//! error:     ModuleError
+//! modules:   p.ag; q.ag
+//! spec:      v1.1.0 design 3.1 (an ambiguous bare reference across imports is a ModuleError)
+//! ---
+import { v } from p;
+import { v } from q;
+int x = v();

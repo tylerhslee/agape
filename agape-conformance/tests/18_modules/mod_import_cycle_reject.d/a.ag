@@ -1,0 +1,3 @@
+module a;
+import b;
+pub sync int f() { return b.g(); }
