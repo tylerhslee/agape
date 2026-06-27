@@ -13,6 +13,7 @@ export default defineConfig({
       // The somatic agent server (Claude-backed operators today; Agape + MCP later).
       "/agent": "http://127.0.0.1:8799",
       "/learn": "http://127.0.0.1:8799",
+      "/review": "http://127.0.0.1:8799",
     },
   },
   build: {

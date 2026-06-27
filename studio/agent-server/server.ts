@@ -11,6 +11,7 @@ import { AnthropicCognition, HashingEmbedder } from "./provider.ts";
 import { Memory } from "./memory.ts";
 import { makeRunner } from "./runner.ts";
 import { Learner } from "./learner.ts";
+import { spawnSync } from "node:child_process";
 
 const PORT = Number(process.env.AGENT_PORT) || 8799;
 
@@ -86,6 +87,74 @@ function readJson(req: http.IncomingMessage): Promise<any> {
   });
 }
 
+// ── review: spec + conformance suite + live results (the Review studio) ──────
+const REPO = path.resolve(HERE, "..", "..");
+const TESTS_DIR = path.resolve(REPO, "agape-conformance", "tests");
+
+function walkAg(dir: string, out: string[]): void {
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    const p = path.join(dir, e.name);
+    if (e.isDirectory()) walkAg(p, out);
+    else if (e.name.endsWith(".ag")) out.push(p);
+  }
+}
+
+function parseAg(file: string): { header: Record<string, string>; body: string } {
+  const header: Record<string, string> = {};
+  const body: string[] = [];
+  let inBody = false;
+  for (const line of fs.readFileSync(file, "utf8").split("\n")) {
+    if (inBody) { body.push(line); continue; }
+    const s = line.trim();
+    if (s.startsWith("//!")) {
+      const c = s.slice(3).trim();
+      if (c === "---") { inBody = true; continue; }
+      const i = c.indexOf(":");
+      if (i >= 0) header[c.slice(0, i).trim()] = c.slice(i + 1).trim();
+    } else { inBody = true; body.push(line); }
+  }
+  return { header, body: body.join("\n") };
+}
+
+function runConformance(): { status: Record<string, string>; buildOk: boolean; summary: string } {
+  const status: Record<string, string> = {};
+  let buildOk = true, summary = "";
+  try {
+    const r = spawnSync("cargo", ["run", "--quiet", "--bin", "conformance", "--", "--fails"],
+      { cwd: AGAPE_RS, encoding: "utf8", timeout: 600_000, maxBuffer: 50_000_000 });
+    const text = (r.stdout || "") + "\n" + (r.stderr || "");
+    if (text.includes("error[") || text.includes("could not compile")) buildOk = false;
+    for (const line of text.split("\n")) {
+      const m = line.match(/^\s*✗\s+(\S+)\s+(\S+)\s+(.*)/);
+      if (m) status[m[2]] = m[3].trim();
+      const m2 = line.match(/(\d+)\s+pass\b[^\d]*?(\d+)\s+fail/);
+      if (m2) summary = line.trim();
+    }
+  } catch (e: any) { buildOk = false; summary = String(e?.message || e); }
+  return { status, buildOk, summary };
+}
+
+function reviewData() {
+  const spec = fs.existsSync(SPEC_PATH) ? fs.readFileSync(SPEC_PATH, "utf8") : "";
+  const files: string[] = [];
+  if (fs.existsSync(TESTS_DIR)) walkAg(TESTS_DIR, files);
+  files.sort();
+  const { status, buildOk, summary } = runConformance();
+  const tests = files.map((f) => {
+    const { header, body } = parseAg(f);
+    const id = header.id || path.basename(f, ".ag");
+    const directives: Record<string, string> = {};
+    for (const k of ["provider", "attest", "manifest", "replay", "order", "spine", "contains", "absent"]) if (header[k]) directives[k] = header[k];
+    return {
+      id, section: path.basename(path.dirname(f)),
+      rel: path.relative(REPO, f).replace(/\\/g, "/"),
+      expect: header.expect || "", error: header.error || "", spec: header.spec || "", note: header.note || "",
+      body, status: status[id] ? "fail" : "pass", reason: status[id] || "", directives,
+    };
+  });
+  return { spec, tests, buildOk, summary, passed: tests.filter((t) => t.status === "pass").length, total: tests.length };
+}
+
 const server = http.createServer(async (req, res) => {
   const url = (req.url || "").split("?")[0];
   try {
@@ -131,6 +200,37 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "GET" && url === "/learn/recall") {
       const q = new URL(req.url || "", "http://x").searchParams.get("q") || "";
       return send(res, 200, { query: q, hits: getLearner().recall(q) });
+    }
+
+    // ── the Review studio ──
+    if (req.method === "GET" && url === "/review/data") {
+      return send(res, 200, reviewData());
+    }
+    if (req.method === "POST" && url === "/review/spec-edit") {
+      const { anchor, instruction, selection } = (await readJson(req)) || {};
+      if (!selection || !instruction) return send(res, 400, { error: "selection and instruction are required" });
+      const system =
+        "You are editing the Agape language specification (SPEC.md), a precise formal document. " +
+        "You receive a SELECTION (a contiguous span of the spec) and an INSTRUCTION. Return ONLY the " +
+        "revised replacement text for that exact span — same Markdown style and indentation, no code " +
+        "fences wrapping it, no commentary. Preserve section numbering, cross-references (§x.y), and the " +
+        "terse precise voice. Make the minimal change that satisfies the instruction.";
+      const user = `SELECTION (${anchor || "spec span"}):\n\n${selection}\n\n---\nINSTRUCTION:\n${instruction}`;
+      const edited = await cognition.complete(system, [{ role: "user", content: user }], 2048);
+      return send(res, 200, { edited });
+    }
+    if (req.method === "POST" && url === "/review/spec-save") {
+      const { text } = (await readJson(req)) || {};
+      if (typeof text !== "string" || text.length < 500) return send(res, 400, { error: "refusing to write a suspiciously short SPEC.md" });
+      fs.writeFileSync(SPEC_PATH, text, "utf8");
+      return send(res, 200, { ok: true, bytes: text.length });
+    }
+    if (req.method === "POST" && url === "/review/test-save") {
+      const { rel, body } = (await readJson(req)) || {};
+      const full = path.resolve(REPO, String(rel || ""));
+      if (!full.startsWith(TESTS_DIR) || !full.endsWith(".ag")) return send(res, 400, { error: "path must be a .ag under agape-conformance/tests/" });
+      fs.writeFileSync(full, String(body ?? ""), "utf8");
+      return send(res, 200, { ok: true });
     }
 
     return send(res, 404, { error: "not found" });
