@@ -11,9 +11,9 @@
 ## 0. The one principle
 
 The gate is where **human intent meets enforced rigor.** The user states *what they want* and
-*one fact about stakes*; the language guarantees the decision is sound. The user only ever
-writes what only they can know; thresholds, calibration, error control, and the abstain band are
-the engine's job. Today's `confidence 0.9 margin 0.2` inverts this. That is the bug.
+*one fact about stakes*; the language guarantees the decision is sound. The user only ever writes
+what only they can know; thresholds, calibration, error control, and the abstain band are the
+engine's job. Today's `confidence 0.9 margin 0.2` inverts this. That is the bug.
 
 **Not a PPL** (reaffirmed): agape is a *decision* language; the provider does inference, the gate
 collapses under cost + governance. The probabilistic boundary stays at §12 (forward fusion + one
@@ -21,170 +21,182 @@ gate; no conditioning).
 
 ## 1. Two modes — chosen by one keyword
 
-There is exactly **one** stakes distinction, on the **action**, and it picks the gate's behavior:
+One stakes distinction, on the **action**, picks the gate's behavior:
 
-| on the action | gate mode | behavior |
-|---|---|---|
-| `reversible action X` | **argmax** | commit the most-likely outcome; **never defers, never abstains**. No threshold, no number. |
-| `action X` (unmarked) | **conformal-bootstrap** | while uncalibrated → **defer to a principal**; as human labels accrue, auto-switch to **autonomous conformal** at α. |
+| on the action | gate mode | the decision is… | needs logprobs? |
+|---|---|---|---|
+| `reversible action X` | **face value** | the model's structured answer, taken as-is (= argmax at temp 0). Never defers/abstains. | **no** |
+| `action X` (unmarked) | **conformal-bootstrap** | the model's answer **certified to ≤ α**; defers to a principal while uncalibrated, autonomizes as labels accrue. | **yes** (or sampling fallback) |
 
-That's the entire asymmetry: a binary keyword, plus one global rigor dial (α, §3). The earlier
-multi-rung stakes ladder is dropped as too arbitrary.
+The entire asymmetry: a binary keyword + one global rigor dial (α, §3). The earlier multi-rung
+stakes ladder is dropped as too arbitrary.
 
-- **`reversible` = argmax, no number.** "Don't certify — pick the likely answer and go." Needs
-  no principal, no calibration, not even logprobs (a text-only model's single answer *is* the
-  argmax). For an enum, commit the top variant even if it's a plurality below 50%; exact tie →
-  the `default:`/first arm. There is deliberately **nothing to configure** here — a tunable bar
-  would re-introduce the arbitrariness we are removing.
-- **Unmarked = fail-closed = rigorous.** A consequential action you *forgot* to annotate gets
-  the cautious path, never the reckless one (§13 "absent a declaration, fail closed"). You write
-  `reversible` to *relax*, never to tighten.
+- **`reversible` = take the answer, no number.** "Don't certify — act." Needs no principal, no
+  calibration, not even logprobs (a text-only model's single reply *is* the face-value answer).
+  Enum: commit the top variant even if a sub-50% plurality; exact tie → `default:`/first arm.
+  There is deliberately **nothing to configure** — a tunable bar would re-introduce arbitrariness.
+- **Unmarked = fail-closed = rigorous.** A consequential action you *forgot* to annotate gets the
+  cautious path (§13 "absent a declaration, fail closed"). You write `reversible` to *relax*.
 
 ## 2. commit / default / defer (+ notify orthogonal)
 
-- **commit** — act on a named outcome. Admitted by *its own action's* mode (argmax if that
-  action is `reversible`; conformal-certified if not).
+- **commit** — act on a named outcome (admitted by its action's mode: face-value if `reversible`,
+  conformal-certified if not).
 - **default** — the safe fallback arm (`default:`), a `reversible`/no-op action — the autonomous
   "let it go" path.
-- **defer** — only the conformal path defers: while uncalibrated, or when a calibrated conformal
-  set isn't a singleton (genuinely ambiguous), a **principal decides** (blocking); the ruling
-  becomes a label. `reversible` gates never defer.
+- **defer** — only the conformal path defers: while uncalibrated, or when a calibrated set isn't a
+  singleton, a **principal decides** (blocking); the ruling becomes a label. `reversible` never defers.
 
-**Notify is orthogonal** (the "tell alice vs alice decides" distinction): a plain `emit` on any
-path, non-blocking.
+**Notify is orthogonal** — a plain `emit` on any path, non-blocking:
 
 | you want | how |
 |---|---|
-| safe fallback, no human | a `default:` arm (a reversible/no-op action) |
+| safe fallback, no human | a `default:` arm |
 | safe fallback **and** inform a human | a `default:` arm that `emit`s a notification |
-| a human **must decide** the contested case | leave the action unmarked → it defers to the principal |
+| a human **must decide** | leave the action unmarked → it defers to the principal |
 
 ### The deference requirement (a static, compile-time rule)
 
 > **If any arm of a `decide` performs (or transitively reaches) a non-`reversible` action, a
-> principal must be reachable — via the `alice decide` subject or a `defer to` clause. Otherwise
-> it is a compile error.**
+> principal must be reachable (the `decide` subject or a `defer to` clause). Otherwise it is a
+> compile error.**
 
-Why it's an error, not a warning: the meaning of *unmarked/non-reversible* is "earn autonomy via
-human supervision," and the labels that earn it come only from deferral. With no principal, the
-action can never legitimately autonomize, and the cold-start uncertain case has nowhere safe to
-go. A `default:` arm does **not** satisfy this — the default is the autonomous fallback, not the
-supervision channel (you can, and usually will, have both). This is the v1.1.0 extension of the
-consequential-action rule: v1.0.0 = *a non-reversible sink needs settled + endorsed values*;
-v1.1.0 adds *+ a deference path*. It is scoped to the `decide` surface / `reversible` annotation,
-so explicit v1.0.0 `endorse`/`attest` programs are unaffected (back-compat). One-line teach:
-*"consequential actions need a human in the loop until they've earned trust; mark it `reversible`
-if they truly don't."*
+Autonomy is *earned* via human-label deferral; with no principal an unmarked action can never
+legitimately autonomize, and the cold-start uncertain case has nowhere safe to go. A `default:`
+arm does **not** satisfy this (it is the autonomous fallback, not the supervision channel; you can
+have both). This extends the consequential-action rule: v1.0.0 = *non-reversible sink needs
+settled + endorsed*; v1.1.0 adds *+ a deference path*. Scoped to the `decide` surface, so explicit
+v1.0.0 programs are unaffected.
 
 ## 3. The only number: `conformal α`, set once (IaC-style)
 
-The single knob is the conformal error level α, written **once at the top of an `.ag` file**:
-
 ```agape
-conformal 0.05;          // file-level default error budget for all consequential gates
-                         // typical 0.01 – 0.05; lower = stricter = more deferral
+conformal 0.05;          // file-level error budget for all consequential gates; typical 0.01–0.05
 ```
 
-- Governs every unmarked (conformal) `decide` in the file. A gate may override locally with the
-  explicit form; the manifest can set a project default — same precedence chain as v1.0.0 (§17).
-- α is an **error guarantee**, not a threshold: "be wrong at most α of the time," finite-sample,
-  distribution-free, calibrated from the gate's own labeled decisions on the spine (§13). The
-  operating cutoff is whatever achieves α given the data — the user never sees or sets it.
-- Needs a distribution (logprobs, or the §16 sampling fallback). **`reversible` needs none of
-  this** — it's argmax. So α is the *only* number, and it's only for the cautious path.
-- **Cold start** (labels below readiness) → cannot certify α → **defer** to the principal. Those
-  rulings are the first labels; once enough accrue, conformal commits autonomously. The
-  "switch to conformal" is this readiness crossing — automatic, recorded.
+α is an **error guarantee**, not a threshold: "wrong at most α of the time," finite-sample,
+distribution-free, calibrated from the gate's own labeled decisions on the spine (§13). The
+operating cutoff is whatever achieves α — never seen or set by the user. Local override via the
+explicit form; project default via the manifest (same precedence as v1.0.0, §17). **Only this
+path needs the distribution** (logprobs / sampling fallback). **Cold start** → can't certify α →
+defer; rulings become the first labels; readiness crossing flips it to autonomous — automatic,
+recorded.
 
-## 4. Where margin went
+## 4. What the gate provides — and what actually needs logprobs
 
-`margin` (the v1.0.0 `δ`, "lead over runner-up") leaves the surface entirely:
+The gate is the **membrane**, and most of its value is *governance*, not arithmetic. *Every* gate,
+reversible or not:
 
-- **reversible** → no margin; argmax commits even on a near-tie (cheap to be wrong, so flips are
-  fine — the §15.5.5 stability worry doesn't apply to a reversible action).
-- **conformal** → margin is *subsumed*: two close-but-plausible variants make the calibrated set
-  non-singleton → it **defers**. "Is the gap big enough" becomes "is the calibrated set a
-  singleton," computed from data, not a hand-set δ.
+1. **settles** the model's answer (`raw`/`graded` → `settled` + endorsed) — *required* for it to
+   drive a `perform`/`write` at all; a bare `event<E>` reply is `raw` and cannot act (§13);
+2. **records** it on the spine (`Decided`) — auditable, replayable;
+3. **dispatches** to the typed arms;
+4. **governs** it (capabilities + the consequential-action rule).
+
+The **only** thing that needs logprobs is the **conformal certification** — forming a calibrated
+prediction set to guarantee error ≤ α. That is the gate's probabilistic value-add, and it lives
+*only* on the unmarked path. So "why a gate at all for `reversible`?" — not for the decision (that
+is the model's), but to make that decision **actionable and auditable** under the membrane.
+
+| | `reversible` | unmarked (conformal) |
+|---|---|---|
+| the decision | model's answer, face value | model's answer, **certified to ≤ α** |
+| settle + record + govern + dispatch | ✅ | ✅ |
+| finite-sample error guarantee | — | ✅ |
+| needs logprobs | — | ✅ |
+
+## 5. Reproducibility & the Stability theorem (not at risk)
+
+Two guarantees, very different exposure to `reversible`:
+
+- **Recorded replay (T4): unconditional, untouched.** Every gate decision is recorded and
+  re-served on replay; chain-head equality holds *always*, independent of margin. The audit /
+  debug / forensic guarantee is fully intact for reversible gates.
+- **Live re-run (Stability (ii)): `P(flip) ≤ Σⱼ β(δⱼ)` — governed by `temperature`, not bare
+  margin.** At `temperature = 0` (the reproducibility default, §16.4) constrained decoding
+  concentrates (assumption O ⇒ `β(δ_max) = 0`), so a reversible 51/49 argmax is **still
+  deterministic** — greedy picks the same variant every run. Flips appear only at `temperature >
+  0`, which is itself a deliberate opt-out of determinism.
+
+The theorem is a *conditional bound*, not a claim of always-reproducible; `reversible` does not
+falsify it, and at temp 0 the bound is ~0 even for reversible gates. The alignment is the point:
+**reversible = low-stakes = reproducibility-non-critical (one axis).** The strong guarantees
+concentrate on consequential gates (conformal + the margin floor `m`, so `β(δ) ≤ β(m)`, small).
+The default is reproducible; `reversible` is a *visible, spine-recorded* opt-out, never hidden.
+
+> **Rule this surfaces:** `reversible` must also **relax the consequential margin floor `m`** for
+> that action (→ 0). Otherwise an argmax decision with margin ≈ 0 driving a reversible `perform`
+> would be rejected at the sink. So `reversible` lowers *both* the gate mode (→ face value) and the
+> sink floor (`m` → 0).
+
+## 6. Margin is off the surface
+
+- **reversible** → no margin (commits even on a near-tie; bounded by `temperature`, §5).
+- **conformal** → margin *subsumed*: two close-but-plausible variants make the set non-singleton →
+  defer. "Is the gap big enough" becomes "is the calibrated set a singleton."
 - **explicit form only** → `confidence θ margin δ` keeps δ for power users.
 
-So the `decide` surface has **zero margin knobs**.
+## 7. Derive-and-enforce, and the desugaring (v1.0.0 completeness)
 
-## 5. Derive-and-enforce, and the desugaring (v1.0.0 completeness)
-
-Given a `decide`, the engine derives everything:
-
-1. Each arm's bar = its worst action's **mode** (`reversible` → argmax; unmarked → conformal at
-   the file α, calibrated from the spine).
-2. Commit iff exactly one outcome is admitted; else (conformal path) **defer**; `reversible`-only
-   gates always commit the argmax.
-3. **Enforced**, not advised: an unmarked arm cannot fire until conformal certifies α; and a
-   non-reversible arm with no reachable principal does not compile (§2). Neyman–Pearson-style
-   error control + the deference requirement are structural, not programmer discipline.
-
-**Desugaring** (pure sugar over the frozen v1.0.0 engine):
+1. Each arm's bar = its worst action's **mode** (`reversible` → face value; unmarked → conformal α,
+   calibrated from the spine).
+2. Commit iff one outcome is admitted; else (conformal) **defer**; reversible always commits.
+3. **Enforced**: an unmarked arm cannot fire until conformal certifies α; a non-reversible arm
+   with no reachable principal does not compile (§2); `reversible` relaxes the margin floor `m` (§5).
 
 ```
-reversible action Warn(...)     →  that outcome admitted by  c by confidence 0   // argmax, never abstains
-action Sanction(...)            →  that outcome admitted by  c by conformal 0.05  // + readiness bootstrap
-alice decide c { … }            →  endorse (c by <conformal α, readiness from policy>) { arms }
-                                      abstain { default arm }
-                                      by alice { deferred ruling re-enters the arms };
+reversible action Warn(...)   →  outcome admitted by  c by confidence 0   // face value, never abstains; m→0
+action Sanction(...)          →  outcome admitted by  c by conformal 0.05  // + readiness bootstrap
+alice decide c { … }          →  endorse (c by <conformal α, readiness>) { arms }
+                                    abstain { default arm } by alice { ruling re-enters arms };
 ```
-
-**Every v1.0.0 gate property is reachable** (so power users lose nothing; back-compat → v1.1.0):
 
 | v1.0.0 property (§13) | how `decide` reaches it |
 |---|---|
-| `c by confidence θ [margin δ]` | `reversible` → `confidence 0` (argmax); arbitrary θ/δ → explicit `endorse` (retained) |
-| `c by conformal α` | the unmarked-action default; α from the file/manifest line |
-| `policy { readiness/floor/fallback }` | the conformal-bootstrap; explicit `policy` retained |
-| `endorse … { arms } abstain { } by p { }` | `decide`'s arms / `default:` / principal subject |
-| `attest e by p` | the cold-start defer path; explicit `attest` retained for always-human gates |
-| margin floor `m` (consequential_margin) | unchanged; enforced at the sink (§13) |
+| `c by confidence θ [margin δ]` | `reversible` → `confidence 0`; arbitrary θ/δ → explicit `endorse` |
+| `c by conformal α` | the unmarked default; α from file/manifest |
+| `policy { readiness/floor/fallback }` | the conformal bootstrap; explicit `policy` retained |
+| `endorse … abstain … by p` | arms / `default:` / principal subject |
+| `attest e by p` | the defer path; explicit `attest` retained |
+| margin floor `m` | enforced at the sink; `reversible` sets it to 0 |
 
 Nothing in v1.0.0 is removed or reinterpreted. **This is v1.1.0.**
 
-## 6. Surface candidates (judge by read-aloud)
+## 8. Surface candidates (judge by read-aloud)
 
 **A — principal-as-subject (recommended):**
 ```agape
 conformal 0.05;
 reversible action Warn(...)
-action Sanction(...)              // unmarked → conformal + bootstrap; REQUIRES a principal (§2)
+action Sanction(...)              // unmarked → conformal; REQUIRES a principal (§2)
 principal alice;
 
 alice decide c {
   Sanction: perform Sanction(...)   // conformal-certified; defers to alice until calibrated
-  Warn:     perform Warn(...)        // reversible → argmax; just acts
-  default:  clear(...)               // safe fallback
+  Warn:     perform Warn(...)        // reversible → face value; just acts
+  default:  clear(...)
 }
 ```
-*Read:* "Alice decides c: sanction only when we can certify it, warn when it's the likely call,
-otherwise clear — and until we've learned, Alice rules the unclear ones." ✅
+*"Alice decides c: sanction only when we can certify it, warn when it's the likely call, otherwise
+clear — and until we've learned, Alice rules the unclear ones."* ✅
 
-**B — trailing defer clause** (no principal as subject): `decide c { … } defer to alice`.
+**B — trailing defer clause:** `decide c { … } defer to alice`. **C — arrow style:** rejected.
 
-**C — arrow style** (rejected): `unsure -> alice` blurs that the bands are mode-derived.
+## 9. Open questions
 
-**Recommendation: A**, with `B`'s `defer to` as the alternate form.
+- **Word for "consequential"** — unmarked = cautious; is an explicit keyword ever wanted?
+- **Calibration scope** — per-action-type / per-gate-site / global? (Affects autonomy speed + how
+  the file-level α partitions labels.) ← the last load-bearing decision.
+- **First-class `notify p`** vs plain `emit`.
+- **`reversible` enum tie / no-plurality** — deterministic tiebreak → `default:`.
+- **Mixed-mode blocks** — per-outcome admission; confirm always intended.
 
-## 7. Open questions
+## 10. What to lock before grammar
 
-- **Word for "consequential".** Unmarked = cautious. Is an explicit `consequential`/
-  `irreversible` keyword ever wanted for readability, or is unmarked enough?
-- **Calibration scope.** Per-action-type, per-gate-site, or global? Affects how fast each gate
-  earns autonomy and how the file-level α partitions its labels.
-- **First-class `notify p`** vs a plain `emit` for the non-blocking "FYI".
-- **`reversible` enum tie / no-plurality** — argmax with a deterministic tiebreak vs fall to
-  `default:`. (Proposed: deterministic tiebreak → `default:`/first arm.)
-- **Mixed-mode blocks** — handled per-outcome (each arm by its own mode). Confirm always intended.
-
-## 8. What to lock before grammar
-
-1. **Two modes by one keyword** — `reversible` (argmax, never defer) vs unmarked
-   (conformal-bootstrap, defer→autonomous).
-2. **commit/default/defer + orthogonal notify**, and the **deference-requirement compile rule**.
-3. **One knob `conformal α`, file-level (IaC); margin off the surface.**
-4. **Derive-and-enforce + complete desugaring to the v1.0.0 engine → v1.1.0.**
-
-Surface (§6) is chosen last, against the read-aloud test.
+1. **Two modes by one keyword** — `reversible` (face value, never defer, relaxes `m`) vs unmarked
+   (conformal-bootstrap, defer → autonomous).
+2. **commit/default/defer + orthogonal notify + the deference compile rule.**
+3. **One knob `conformal α`, file-level; margin off the surface.**
+4. **Only conformal needs logprobs; the gate's universal value is settle+record+govern+dispatch.**
+5. **Reproducibility: recorded-replay unconditional; live bounded by `temperature`.**
+6. **Complete desugaring to the v1.0.0 engine → v1.1.0.**
