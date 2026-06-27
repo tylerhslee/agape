@@ -25,9 +25,10 @@ export default function ProjectView({ info, onReview }) {
   const [result, setResult] = useState(null);
   const [running, setRunning] = useState(false);
   const [msg, setMsg] = useState(null);
-  const [claude, setClaude] = useState(false);
+  const [claude, setClaude] = useState(() => { try { return localStorage.getItem("agape.claude") === "1"; } catch { return false; } });
   const [samples, setSamples] = useState(5);
   const [temp, setTemp] = useState(0); // 0 = provider default
+  useEffect(() => { try { localStorage.setItem("agape.claude", claude ? "1" : "0"); } catch {} }, [claude]);
   const dirtyRef = useRef(false);
   const narrow = useNarrow();
   const [pane, setPane] = useState("code"); // mobile: files | code | run
@@ -110,14 +111,7 @@ export default function ProjectView({ info, onReview }) {
 
   const runPanel = (
     <section className="pj-run-panel">
-      <div className="pj-run-h">
-        <span className="pj-side-h" style={{ padding: 0 }}>run</span>
-        <span style={{ flex: 1 }} />
-        <label className="pj-toggle" title="Route the ← cognition seam to a real Claude (sampling fallback for graded judgments) instead of the deterministic mock">
-          <input type="checkbox" checked={claude} onChange={(e) => setClaude(e.target.checked)} />
-          <span>🧠 Claude</span>
-        </label>
-      </div>
+      <div className="pj-side-h">run · {claude ? "🧠 live Claude" : "deterministic mock"}</div>
       {claude && (
         <div className="pj-cfg">
           <label title="Forced-choice draws per graded judgment (the sampling fallback, §16.8). More draws → finer probability, more cost.">
@@ -187,6 +181,10 @@ export default function ProjectView({ info, onReview }) {
         <span className="pj-badge">{info.name}</span>
         {!narrow && <span className="pj-dim pj-path" title={info.root}>{info.root}</span>}
         <span style={{ flex: 1 }} />
+        <label className={"pj-toggle pj-toggle-hdr" + (claude ? " on" : "")} title="Route the ← cognition seam to a real Claude (sampling fallback for graded judgments) instead of the deterministic mock. Tune samples/temp in the Run panel.">
+          <input type="checkbox" checked={claude} onChange={(e) => setClaude(e.target.checked)} />
+          <span>🧠 Claude</span>
+        </label>
         <button onClick={save} disabled={!sel}>{dirty ? "Save*" : "Save"}</button>
         <button className="pj-run" onClick={runIt} disabled={!sel || running}>{running ? "running…" : "▶ Run"}</button>
         {onReview && <button onClick={onReview}>{narrow ? "✓" : "Conformance →"}</button>}
@@ -253,9 +251,10 @@ const STYLE = `
 .pj-sensor{font:12px ui-monospace,monospace;color:#79c0ff;padding-left:8px}
 .pj-editor{flex:1;display:flex;min-width:0}
 .pj-run-panel{width:360px;border-left:1px solid #2a3140;background:#13161d;display:flex;flex-direction:column;min-height:0}
-.pj-run-h{display:flex;align-items:center;padding:10px 12px 4px}
 .pj-toggle{display:flex;align-items:center;gap:5px;font-size:12px;color:#9aa4b2;cursor:pointer;user-select:none}
 .pj-toggle input{cursor:pointer;accent-color:#d29922}
+.pj-toggle-hdr{border:1px solid #2a3140;border-radius:7px;padding:5px 10px;background:#1d2330}
+.pj-toggle-hdr.on{border-color:#d29922;color:#e6e9ef;background:#2a2517}
 .pj-cfg{display:flex;align-items:center;gap:12px;padding:2px 12px 6px;flex-wrap:wrap}
 .pj-cfg label{display:flex;align-items:center;gap:5px;font-size:12px;color:#9aa4b2}
 .pj-cfg input{width:52px;font:inherit;background:#1d2330;border:1px solid #2a3140;color:#e6e9ef;border-radius:6px;padding:3px 6px}
