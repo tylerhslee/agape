@@ -132,3 +132,29 @@
 .mc-input-row { display: flex; gap: 8px; margin-top: 12px; }
 .mc-input { flex: 1; }
 .mc-thread-note { margin-top: 10px; }
+
+/* ── agent-memory inspector ── */
+.mc-cost { font-size: 10px; color: #e3b341; border: 1px solid rgba(227,179,65,.4); border-radius: 4px; padding: 0 4px; }
+.mc-learn-controls { display: flex; gap: 14px; flex-wrap: wrap; margin: 16px 0 4px; }
+.mc-learn-ctl { display: flex; flex-direction: column; gap: 6px; }
+.mc-learn-ctl.mc-grow { flex: 1; min-width: 240px; }
+.mc-learn-ctl label { font-size: 11px; color: var(--vsc-dim); }
+.mc-code { font-family: var(--mono); font-size: 11.5px; background: var(--vsc-bg); border: 1px solid var(--vsc-border); border-radius: 6px; padding: 9px 11px; margin: 9px 0; white-space: pre-wrap; overflow-x: auto; color: #d4d4d4; }
+
+.mc-subtabs { display: flex; gap: 16px; margin: 18px 0 10px; border-bottom: 1px solid var(--vsc-border); }
+.mc-subtab { font-size: 12px; color: #969696; cursor: pointer; padding-bottom: 6px; text-transform: capitalize; }
+.mc-subtab.active { color: var(--vsc-bright); border-bottom: 1px solid var(--vsc-accent); }
+.mc-subcap { font-size: 11px; color: var(--vsc-dim); margin: 16px 0 6px; }
+
+.mc-rows { display: flex; flex-direction: column; font-size: 12px; }
+.mc-evrow, .mc-factrow, .mc-triplerow, .mc-hitrow { display: flex; align-items: baseline; gap: 10px; padding: 5px 4px; border-bottom: 1px solid var(--vsc-border); }
+.mc-tick, .mc-prov, .mc-score { color: #6a6a6a; font-family: var(--mono); font-size: 11px; flex: none; }
+.mc-etype { color: var(--vsc-type); min-width: 96px; flex: none; }
+.mc-subj { color: #9cdcfe; min-width: 80px; flex: none; }
+.mc-pay, .mc-val { color: var(--vsc-ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.mc-key { color: var(--vsc-accent); min-width: 120px; flex: none; font-family: var(--mono); font-size: 11px; }
+.mc-prov { margin-left: auto; }
+.mc-s { color: #9cdcfe; }
+.mc-p { color: var(--vsc-keyword); }
+.mc-o { color: var(--vsc-type); }
+.mc-score { color: var(--vsc-ok); min-width: 32px; }

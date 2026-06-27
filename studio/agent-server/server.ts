@@ -123,6 +123,11 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, getLearner().state());
     }
 
+    // Free read-only snapshot for the inspector (no cognition).
+    if (req.method === "GET" && url === "/learn/inspect") {
+      return send(res, 200, getLearner().inspect());
+    }
+
     if (req.method === "GET" && url === "/learn/recall") {
       const q = new URL(req.url || "", "http://x").searchParams.get("q") || "";
       return send(res, 200, { query: q, hits: getLearner().recall(q) });

@@ -3,6 +3,7 @@ import { useStudio, selectedItem } from "./store.js";
 import MissionControl from "./MissionControl.jsx";
 import WorkBoard from "./WorkBoard.jsx";
 import ItemDetail from "./ItemDetail.jsx";
+import Learning from "./Learning.jsx";
 import "./missioncontrol.css";
 
 // The studio shell: a section nav (the IA from STUDIO.md §3) on the left, a runtime
@@ -15,6 +16,7 @@ const NAV = [
     items: [
       { id: "mission", label: "mission control", icon: "ti-layout-dashboard" },
       { id: "work", label: "work", icon: "ti-checklist" },
+      { id: "learning", label: "agent memory", icon: "ti-database" },
     ],
   },
   {
@@ -89,6 +91,8 @@ export default function Studio({ onOpenConsole }) {
         <div className="mc-stage-body">
           {selected ? (
             <ItemDetail item={selected} dispatch={dispatch} onClose={() => dispatch({ type: "CLEAR_SELECT" })} />
+          ) : section === "learning" ? (
+            <Learning />
           ) : section === "work" ? (
             <WorkBoard state={state} dispatch={dispatch} onOpen={open} />
           ) : (

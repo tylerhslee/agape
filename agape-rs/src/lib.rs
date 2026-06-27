@@ -3,7 +3,9 @@
 //!
 //! Pipeline (filled in milestone by milestone):
 //!
-//!     source ──▶ lexer (M1) ──▶ parser/AST (M2) ──▶ checker (M3) ──▶ interp+spine (M4)
+//! ```text
+//! source ──▶ lexer (M1) ──▶ parser/AST (M2) ──▶ checker (M3) ──▶ interp+spine (M4)
+//! ```
 //!
 //! `process` is the single entry point the conformance harness drives: it runs a
 //! source string through the whole pipeline and returns either the produced spine

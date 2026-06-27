@@ -76,3 +76,21 @@ describe("query surface (§10)", () => {
     expect(mem.counts("builder").facts).toBe(1);
   });
 });
+
+describe("inspection reads (free — no cognition)", () => {
+  it("spineRecent returns events newest-first, capped", () => {
+    for (let i = 0; i < 5; i++) mem.append("builder", "Tick", `e${i}`, "");
+    const recent = mem.spineRecent("builder", 3);
+    expect(recent).toHaveLength(3);
+    expect(recent[0].tick).toBeGreaterThan(recent[2].tick); // newest first
+  });
+
+  it("listEmbeddings returns texts + provenance, without raw vectors", () => {
+    mem.internalize("builder", "Internalized", "gate", "endorse gate text", ENDORSE);
+    const embs = mem.listEmbeddings("builder", 10);
+    expect(embs).toHaveLength(1);
+    expect(embs[0].text).toContain("endorse");
+    expect(embs[0].origin_tick).toBeGreaterThan(0);
+    expect((embs[0] as any).vec).toBeUndefined();
+  });
+});

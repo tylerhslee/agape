@@ -913,7 +913,7 @@ mod tests {
 
     #[test]
     fn tool_pair_subjected_at_tool() {
-        let ast = parse(lex("tool search(text q) -> text; agent R grants { use search } { text h = search(\"q\"); } spawn R r; awake r;").unwrap()).unwrap();
+        let ast = parse(lex("tool text search(text q); agent R grants { use search } { text h = search(\"q\"); } spawn R r; awake r;").unwrap()).unwrap();
         let log = run(&ast).log;
         assert!(log.iter().any(|e| e.etype == "ToolStarted" && e.subject.as_deref() == Some("search")));
         assert!(log.iter().any(|e| e.etype == "ToolResolved" && e.subject.as_deref() == Some("search")));

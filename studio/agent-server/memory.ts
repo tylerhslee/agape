@@ -147,6 +147,17 @@ export class Memory {
       .slice(0, limit);
   }
 
+  // ── read-only inspection (free: no cognition) ──
+  spineRecent(agent: string, limit = 80): SpineEvent[] {
+    return this.db.prepare(`SELECT * FROM spine WHERE agent = ? ORDER BY tick DESC LIMIT ?`).all(agent, limit) as SpineEvent[];
+  }
+
+  listEmbeddings(agent: string, limit = 80): { text: string; origin_tick: number }[] {
+    return this.db
+      .prepare(`SELECT text, origin_tick FROM embeddings WHERE agent = ? ORDER BY id DESC LIMIT ?`)
+      .all(agent, limit) as { text: string; origin_tick: number }[];
+  }
+
   counts(agent: string) {
     const one = (t: string) =>
       (this.db.prepare(`SELECT count(*) c FROM ${t} WHERE agent = ?`).get(agent) as any).c as number;

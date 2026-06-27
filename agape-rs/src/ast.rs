@@ -202,7 +202,7 @@ pub enum Stmt {
     EnumDecl { name: String, variants: Vec<String> },
     /// `event NAME(field, ...);` — a custom spine-event type with typed payload.
     EventDecl { name: String, fields: Vec<Field> },
-    /// `tool NAME(params) [-> RET];` — a tool-seam capability (§6b).
+    /// `tool RET NAME(params);` — a tool-seam capability (§6b).
     ToolDecl { name: String, params: Vec<Param>, ret: Option<Type> },
     /// `authority EventType;` — marks an event type consequential (§13).
     Authority(String),

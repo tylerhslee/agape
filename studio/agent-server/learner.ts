@@ -115,7 +115,21 @@ export class Learner {
   }
 
   recall(q: string) {
-    return this.mem.match(this.agent, q, 0.1, 6);
+    return this.mem.match(this.agent, q, 0.1, 8);
+  }
+
+  // Full read-only snapshot for the inspector — no cognition, costs nothing.
+  inspect(limit = 80) {
+    return {
+      agent: this.agent,
+      runner: this.runner.name,
+      counts: this.mem.counts(this.agent),
+      spine: this.mem.spineRecent(this.agent, limit),
+      facts: this.mem.select(this.agent).slice(-limit),
+      triples: this.mem.find(this.agent).slice(-limit),
+      embeddings: this.mem.listEmbeddings(this.agent, limit),
+      lessons: this.mem.select(this.agent, { key: "lesson" }).map((f) => f.value),
+    };
   }
 
   // One full pass of the loop.

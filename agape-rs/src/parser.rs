@@ -390,14 +390,11 @@ impl Parser {
 
     fn tool_decl(&mut self) -> PResult<Stmt> {
         self.eat_kw("tool")?;
+        // Prefix return type, like a function signature (`tool text search(text q);`).
+        // `->` is retired (§2); use `null` for a tool with no meaningful return.
+        let ret = Some(self.parse_type()?);
         let name = self.eat_ident()?;
         let params = self.parse_params()?;
-        let ret = if self.check_op("->") {
-            self.advance();
-            Some(self.parse_type()?)
-        } else {
-            None
-        };
         self.eat_op(";")?;
         Ok(Stmt::ToolDecl { name, params, ret })
     }
@@ -1088,7 +1085,7 @@ mod tests {
 
     #[test]
     fn event_and_tool_and_authority() {
-        let s = p("event Transfer(memo: Memo); tool search(text q) -> text; authority Transfer;");
+        let s = p("event Transfer(memo: Memo); tool text search(text q); authority Transfer;");
         assert!(matches!(&s[0], Stmt::EventDecl { .. }));
         assert!(matches!(&s[1], Stmt::ToolDecl { ret: Some(_), .. }));
         assert!(matches!(&s[2], Stmt::Authority(_)));
@@ -1169,7 +1166,7 @@ mod tests {
 
     #[test]
     fn tool_call_and_agent_no_parens() {
-        let s = p("tool search(text q) -> text; agent R grants { use search } { text hits = search(\"q\"); }");
+        let s = p("tool text search(text q); agent R grants { use search } { text hits = search(\"q\"); }");
         assert!(matches!(&s[1], Stmt::AgentDecl { params, .. } if params.is_empty()));
     }
 }

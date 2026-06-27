@@ -93,13 +93,13 @@ pub const KEYWORDS: &[&str] = &[
 ];
 
 /// Operators, longest-first so multi-char operators win over their prefixes.
-/// Two operators lex on purpose despite §2's prose:
-/// - `~` lexes so the parser (not the lexer) rejects it as a ParseError (§2).
-/// - `->` lexes as the tool-seam return arrow (§6b/§15.2 `tool f() -> T`); §15
-///   wins over §2's "a `->` is a LexError" (that prose predates the v1.0 tool
-///   seam — the old v0.3 right-arrow test is superseded at v1.0).
+/// `~` lexes on purpose (the parser, not the lexer, rejects it as a ParseError, §2).
+/// `->` deliberately does NOT lex: Agape has exactly one communication arrow, `<-`,
+/// and a `->` is a `LexError` (§2). It is detected explicitly above, before this
+/// list, so it never decomposes into `-` `>`. Tools use a prefix return type
+/// (`tool T f();`), like a function signature — no arrow.
 const OPERATORS: &[&str] = &[
-    "<-", "->", "|>", ">=", "<=", "==", "!=", //
+    "<-", "|>", ">=", "<=", "==", "!=", //
     "{", "}", "(", ")", "[", "]", //
     ";", ",", ".", ":", //
     "=", "+", "-", "*", "/", "<", ">", "!", "~",
@@ -255,6 +255,16 @@ pub fn lex(src: &str) -> Result<Vec<Token>, AgapeError> {
             continue;
         }
 
+        // `->` is retired (§2): exactly one communication arrow, `<-`. Detect it
+        // explicitly so it is a `LexError`, never a `-` `>` decomposition.
+        if c == '-' && i + 1 < n && chars[i + 1] == '>' {
+            return Err(AgapeError::at(
+                ErrorClass::Lex,
+                Span::new(byte, byte + 2),
+                format!("`->` is not a token; Agape has exactly one communication arrow `<-` (§2), at line {line} col {col}"),
+            ));
+        }
+
         // operators (longest match first)
         let mut matched = false;
         for op in OPERATORS {
@@ -322,10 +332,11 @@ mod tests {
     }
 
     #[test]
-    fn right_arrow_lexes_as_tool_return() {
-        // `->` lexes (the tool-seam return arrow, §6b/§15.2); the parser places it.
-        let toks = lex("tool f() -> text;").unwrap();
-        assert!(toks.iter().any(|t| t.is_op("->")));
+    fn right_arrow_is_lex_error() {
+        // `->` is retired (§2): exactly one communication arrow, `<-`.
+        assert!(lex("a -> b").is_err());
+        // tools now use a prefix return type — no arrow, lexes cleanly.
+        assert!(lex("tool text search(text q);").is_ok());
     }
 
     #[test]
