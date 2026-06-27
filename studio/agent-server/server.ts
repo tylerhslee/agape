@@ -81,8 +81,11 @@ function readBody(req: http.IncomingMessage): Promise<string> {
 }
 
 function sendText(res: http.ServerResponse, code: number, body: string): void {
-  res.writeHead(code, { "content-type": "text/plain; charset=utf-8", "access-control-allow-origin": "*" });
-  res.end(body);
+  // Set Content-Length explicitly so Node never falls back to chunked encoding —
+  // the zero-dep Rust client reads a plain body after the header block.
+  const buf = Buffer.from(body, "utf-8");
+  res.writeHead(code, { "content-type": "text/plain; charset=utf-8", "content-length": buf.length, "access-control-allow-origin": "*" });
+  res.end(buf);
 }
 
 // Which declared variant a model's forced-choice answer picked (or null).
