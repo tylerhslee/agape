@@ -879,7 +879,7 @@ mod tests {
         ok("event Note(text m); sync null log(text m) { emit Note(m); return null; }");
         ok("sync bool over(Credence<bool> c) { verify c; return decide(c, > 0.9); }");
         rej("agent A {} sync text ask(A a) { return a <- \"hi\"; }", ErrorClass::Color);
-        rej("tool text search(text q); sync text find(text q) { return search(q); }", ErrorClass::Color);
+        rej("read tool text search(text q); sync text find(text q) { return search(q); }", ErrorClass::Color);
         rej("principal alice; sync null ok(text m) { verify m by alice; return null; }", ErrorClass::Color);
     }
 
@@ -908,9 +908,9 @@ mod tests {
     fn authority() {
         // built-in Event is emittable without a grant
         ok("agent A { on awake { emit Event(\"hi\"); } } spawn A a; awake a;");
-        ok("tool text s(text q); agent R grants { use s } { text h = s(\"q\"); } spawn R r; awake r;");
-        rej("tool text s(text q); agent R { text h = s(\"q\"); } spawn R r; awake r;", ErrorClass::Authority);
-        rej("tool text s(text q); agent B grants { } {} agent C grants { use s } { extend B(); } spawn C c; awake c;", ErrorClass::Authority);
+        ok("read tool text s(text q); agent R grants { use s } { text h = s(\"q\"); } spawn R r; awake r;");
+        rej("read tool text s(text q); agent R { text h = s(\"q\"); } spawn R r; awake r;", ErrorClass::Authority);
+        rej("read tool text s(text q); agent B grants { } {} agent C grants { use s } { extend B(); } spawn C c; awake c;", ErrorClass::Authority);
     }
 
     #[test]
@@ -918,7 +918,7 @@ mod tests {
         // bare decide → U but unauthorized → cannot drive a consequential emit
         rej("authority F; event F(bool b); agent C grants { emit F } { Credence<bool> c = self <- \"q\"; bool d = decide(c, > 0.9); emit F(d); } spawn C c; awake c;", ErrorClass::Taint);
         // a tool result is T-tainted
-        rej("authority Al; event Al(text m); tool text fetch(text u); agent M grants { use fetch, emit Al } { text b = fetch(\"u\"); emit Al(b); } spawn M m; awake m;", ErrorClass::Taint);
+        rej("authority Al; event Al(text m); read tool text fetch(text u); agent M grants { use fetch, emit Al } { text b = fetch(\"u\"); emit Al(b); } spawn M m; awake m;", ErrorClass::Taint);
         // a recorded verify authorizes — but verify yields event<Verification>, so
         // the consequential value must itself be gate-authorized; a bare-decide is rejected.
         ok("authority F; event F(bool b); agent C grants { emit F } { on awake { emit Event(\"noop\"); } } spawn C c; awake c;");

@@ -3,7 +3,7 @@
 //! expect:    accept
 //! spec:      §6b, §13 (a read tool over settled inputs yields a settled result — external data settled by origin — that may drive a perform)
 //! ---
-tool int price(text sku);
+read tool int price(text sku);
 action Charge(int amount);
 agent Store grants { use price, perform Charge } {
   on awake {

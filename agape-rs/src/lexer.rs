@@ -72,8 +72,8 @@ pub const KEYWORDS: &[&str] = &[
     "int", "float", "bool", "text", "null", "event", "array",
     // declarations + marked color
     "agent", "extend", "sync", "struct", "enum",
-    // capability typing (§13) + tool declaration (§6b)
-    "grants", "authority", "tool",
+    // capability typing (§13) + tool declaration + effect class (§6b)
+    "grants", "authority", "tool", "read", "write",
     // lifecycle + external input sensor (§5, §5b)
     "spawn", "awake", "sleep", "self", "on", "prompt",
     // identity seam (§13)
@@ -336,7 +336,7 @@ mod tests {
         // `->` is retired (§2): exactly one communication arrow, `<-`.
         assert!(lex("a -> b").is_err());
         // tools now use a prefix return type — no arrow, lexes cleanly.
-        assert!(lex("tool text search(text q);").is_ok());
+        assert!(lex("read tool text search(text q);").is_ok());
     }
 
     #[test]

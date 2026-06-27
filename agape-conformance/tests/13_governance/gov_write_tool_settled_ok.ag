@@ -1,0 +1,12 @@
+//! id:        gov_write_tool_settled_ok
+//! section:   13_governance
+//! expect:    accept
+//! spec:      §6b, §13 (a write tool called with settled inputs is permitted)
+//! ---
+write tool bool transfer(int amount, text to);
+agent Bank grants { use transfer } {
+  on awake {
+    bool ok = transfer(100, "bob");
+  }
+}
+spawn Bank b; awake b;

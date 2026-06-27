@@ -169,9 +169,9 @@ values and instances are lowercase.
 int float bool text null event action     // types + spine wrappers (event = record, action = performative)
 agent extend sync                         // declarations (sync = marked color)
 struct enum                               // user nominal-type declarations
-grants tool                               // capability typing (§13); tool declaration (§6b)
+grants tool read write                    // capability typing (§13); tool decl + effect class (§6b)
 spawn awake sleep self on prompt          // lifecycle + external input sensor
-principal calibration policy              // declared dependencies + decision policy (§3, §13)
+principal policy                          // declared dependency + decision policy (§3, §13)
 when case if else return retry default         // control / reactive
 endorse attest perform emit abstain       // gate / attest / action perform / event emit / abstain clause
 find where select from match              // queries
@@ -190,7 +190,7 @@ true false                                // bool literals
 (quorum, §12), `confidence` / `margin` / `conformal` / `over` (rule clauses, §13).
 
 **Prelude identifiers** (defined in §9, not the grammar): `Entailment`, `Contradiction`,
-`Neutral`, `Credence`, `Decision`, `Principal`, `Calibration`, `Rule`, `Event`, `Error`,
+`Neutral`, `Credence`, `Decision`, `Principal`, `Rule`, `Event`, `Error`,
 `Attestation`, `Decided`, `Abstained`, `AgentCrashed`, `Delivered`, `Resolved`, `Expired`,
 `DeliveryRefused`, `QueryResult`, `ToolStarted`, `ToolResolved`, `say`.
 
@@ -294,8 +294,8 @@ fallback. A gate requires its rule (`c by` with no rule is a `ParseError`).
 Everything the program reaches but does not define is a **declared dependency**: a name declared in
 source, bound to a concrete resource by configuration (§16). It is one construct, fixed by a single
 fact — *it is supplied from outside the program* — from which the rest follows: **declared, not
-constructed** (no literal form — `text → Principal`, `float → Calibration`, etc. are `TypeError`s);
-**config-bound**; **opaque** (the program cannot read a signing key or a calibration's quantiles);
+constructed** (no literal form — `text → Principal`, etc. are `TypeError`s);
+**config-bound**; **opaque** (the program cannot read a signing key or a tool endpoint's credentials);
 **unforgeable** (only configuration may supply it); and **used only at a governed site**, recorded
 on the spine. Four flavours differ only in what they supply:
 
@@ -526,16 +526,18 @@ Tools form an enumerated capability surface (cf. eBPF helper functions: a fixed 
 approved calls, never arbitrary linkage).
 
 ```agape
-tool text search(text query);                // declares a tool capability, signature typed
-tool bool transfer(int amount, text to);     // resolved by config to an MCP server (§16)
+read  tool text search(text query);          // observes the world; result carries its inputs' trust
+write tool bool transfer(int amount, text to);  // changes the world: a consequential sink (§13)
 
 agent Researcher grants { use search } {
     text hits = search("agape language");    // a tool call: needs `use search`
 }
 ```
 
-- **Declaration.** `tool RET NAME(params);` declares the capability and its type (the return
-type leads, like a function signature; use `null` for a tool with no meaningful return). The
+- **Declaration.** `read tool RET NAME(params);` or `write tool RET NAME(params);` — every tool
+declares its **effect class**: a `read` tool observes the world, a `write` tool changes it (a
+consequential sink, below). The class is mandatory; omitting it is a `ParseError`. The return type
+leads, like a function signature; use `null` for a tool with no meaningful return. The
 binding to a concrete MCP server/endpoint is configuration (`[tools]` in the manifest,
 §16); no endpoint or secret appears in source, exactly as `<-` names no model. An
 undeclared tool call is a `TypeError`.
@@ -545,15 +547,15 @@ undeclared tool call is a `TypeError`.
 - **Color.** A tool call reaches the tool dependency → async (`A`). A `sync` function may not
 call a tool.
 - **Trust.** A read-tool result carries the join of its inputs' trust: `settled` when its inputs
-are settled (external data, settled by origin), `graded`/`raw` when a `Credence` flowed in. An
-**effecting** tool is a consequential sink — its inputs must be `settled` and endorsed, exactly
+are settled (external data, settled by origin), `graded`/`raw` when a `Credence` flowed in. A
+**write** tool is a consequential sink — its inputs must be `settled` and endorsed, exactly
 like a `perform`. Agape gates the model's judgment, not the correctness of external data.
 - **Spine.** A tool call appends a correlated `ToolStarted(NAME)` / `ToolResolved(NAME)`
 pair (§7). Every world-effect is on the log, so the spine is a complete, replayable
 account of what the program did to the world, not only what it thought.
 - **Replay.** A tool result is an external observation and is journaled (§15.4.2) like an
 oracle output; replay re-serves it from the recording and never re-invokes the tool. A
-side-effecting tool is replayed as its recorded result.
+write tool is replayed as its recorded result.
 - **Standing tool sensors.** A tool may be opened as a push sensor (a subscription, a
 socket, a file watch) rather than a pull call, in which case it behaves like `prompt`
 (§5b): it appends events as they arrive and makes the program always-on.
@@ -952,7 +954,7 @@ agent is thus human-supervised by construction and earns autonomy as it accumula
 labels. A recorded outcome that labels a judgment references that judgment's spine id, so the
 judgment↔label join stays auditable on the spine rather than in untyped host state.
 
-**The consequential-action rule.** A consequential sink — a `perform` argument or an effecting-tool
+**The consequential-action rule.** A consequential sink — a `perform` argument or a write-tool
 input — may consume a value only if it is `**settled`**: it carries no un-endorsed cognition. A
 `Credence` reaches `settled` only through a recorded gate (`endorse`/`attest`, not a bare
 `c by R`); external data is `settled` by origin and passes freely — only un-endorsed cognition is
@@ -973,7 +975,7 @@ consequential gate fails closed.
 | ---------- | --------------- | --------------- | ----- | -------------------------------------- |
 | provider   | a model         | `self <- p`     | `A`   | `raw` / `graded` (Credence slot)       |
 | identity   | a `principal`   | `attest … by p` | `A`   | `settled` (endorsed)                   |
-| tool       | the world (MCP) | `name(args)`    | `A`   | `⊔` inputs (read) / a sink (effecting) |
+| tool       | the world (MCP) | `name(args)`    | `A`   | `⊔` inputs (read) / a sink (write) |
 
 
 All three are external, non-deterministic, journaled, and swappable by config. A conformal gate
@@ -997,7 +999,7 @@ desugars).
 call), though it may `emit` and `endorse` an in-hand `Credence`; `event<T>` marks spine
 presence; a send bound to a `Credence<E>` slot yields a graded judgment, never a
 committed value; the collapse `c by R` settles (`graded → settled`) off-spine, `endorse` records
-it, and only a `settled` value may drive a consequential sink (a `perform` arg or an effecting-tool
+it, and only a `settled` value may drive a consequential sink (a `perform` arg or a write-tool
 input); fusion of two or more `Credence`s (including `quorum`) requires a total
 `independent`/`dependent` declaration over the `array<Credence>`; `attest … by p` takes a
 `Principal` (no `text → Principal`); user `struct`/`enum`/`event`/`action` types are explicitly
@@ -1054,7 +1056,7 @@ typedecl  ::= "struct" Ident "{" field ("," field)* "}"
             | "event"  Ident "(" field ("," field)* ")" ";"   // a plain record (assertive)
             | "action" Ident "(" field ("," field)* ")" ";"   // a performative; a power is needed
 field     ::= type Ident                                     // "name: T" also accepted
-tool      ::= "effecting"? "tool" type Ident params config?  // read-only default; effecting = world-impacting
+tool      ::= ("read"|"write") "tool" type Ident params config?  // mandatory effect class; write = consequential sink
 agent     ::= "agent" Ident params grants? "{" abody* "}"
 policy    ::= "policy" Ident config                          // a decision policy (§13)
 grants    ::= "grants" "{" ( "*" | cap ("," cap)* ) "}"
@@ -1145,7 +1147,7 @@ both contagious upward (a value is as `raw` as its least-settled input) unless a
 ─────────────────────────────────────────────  (T-Credence)
 Γ ⊢ (Credence<E> _ = d <- p) : Credence<E> ! A · graded    // any destination d
 
-Γ ⊢ aᵢ : Tᵢ · tᵢ    tool R K(T₁..Tₙ) declared, read-only      ("use",K) ∈ G ∨ G = {*}
+Γ ⊢ aᵢ : Tᵢ · tᵢ    tool R K(T₁..Tₙ) declared `read`      ("use",K) ∈ G ∨ G = {*}
 ─────────────────────────────────────────────────────────────────────────  (T-Tool-Read)
 Γ ⊢ K(a₁..aₙ) : R ! A · (⊔tᵢ)        // result carries its inputs' provenance; ILL-FORMED if use not granted
 
@@ -1169,7 +1171,7 @@ both contagious upward (a value is as `raw` as its least-settled input) unless a
 
 The GATE rules (`T-Collapse`, `T-Endorse`, `T-Attest`) are the only routes to `settled`; only
 `endorse`/`attest` set `endorsed`. A read-`tool` is async and carries its inputs' provenance (an
-effecting tool is a consequential sink, §15.3.3); both require a `use` grant. `T-Endorse` is
+write tool is a consequential sink, §15.3.3); both require a `use` grant. `T-Endorse` is
 synchronous (no dependency reach); the inline form inherits `A` from its `<-`. T-Fuse (covering
 `all`/`any`/`quorum`) requires total dependence coverage over the `array<Credence>`.
 
@@ -1180,7 +1182,7 @@ synchronous (no dependency reach); the inline form inherits `A` from its `<-`. T
 - `c_f ∈ {S,A}` — `A` if its body reaches any declared dependency (including a tool call) or calls any
 `A`-colored `g`; else `S`. A `sync`-declared `f` asserts `c_f = S`.
 - `ρ_f` — trust-transparent parameters (trust flows to the result, three-level).
-- `κ_f` — consequentially-consumed parameters (fed into a `perform`/reach/effecting-tool, or a
+- `κ_f` — consequentially-consumed parameters (fed into a `perform`/reach/write-tool, or a
 `use` tool whose result is consequentially consumed).
 
 `Φ` is the least fixpoint over the call graph; a builtin is `(A, ∅, ∅)` unless modeled.
@@ -1207,7 +1209,7 @@ grants(C) ⊆ grants(P)        // ⊥ ⊆ G ⊆ {*}; covers perform/reach/use un
 // THE CONSEQUENTIAL-ACTION RULE (static endorsement; runtime margin):
 sink(s)     Γ ⊢ e : _ · t     t ≠ settled
 ──────────────────────────────────────────────────────────────  (W-Consequential-static)
-s(…e…)  is ILL-FORMED       // sink = perform arg / effecting-tool input; an un-settled value rejected
+s(…e…)  is ILL-FORMED       // sink = perform arg / write-tool input; an un-settled value rejected
 // at runtime, for a gated decision:  endorsed(e) ⇒ margin(e) ≥ m   else the action faults
 
 // ATTEST capability:
@@ -1242,7 +1244,7 @@ invoke : Ω × Tool × Args      ⇝  Value × Ω              (tool dependency;
 
 All three oracles' results are journaled to the spine as produced (`ThinkResolved` /
 `Attestation` / `ToolResolved`). Replay never re-invokes an oracle or a tool: it serves
-each from the recording in order — a side-effecting tool is replayed as its recorded
+each from the recording in order — a write tool is replayed as its recorded
 result, not re-run. The spine is hash-chained, so a faithful replay regenerates an
 identical chain — chain-head equality is the proof of replay-equivalence.
 
@@ -1278,7 +1280,7 @@ v' = collapse(eval(e), r) ;  ev = (v' = abstain) ? Abstained(src) : Decided(src,
 ("use",K) granted    (Ω, K, eval(a…)) ⇝ (v, Ω')    t = ⊔ trust(aᵢ)
 S' = append(append(S, ToolStarted(K)), ToolResolved(K, v))
 ─────────────────────────────────────────────  (E-Tool)
-⟨…|Ω|μ|S| x = K(a…); k⟩ → ⟨…|Ω'|μ[x↦v (trust t)]|S'| k⟩   // an effecting tool is a consequential sink (W-Consequential)
+⟨…|Ω|μ|S| x = K(a…); k⟩ → ⟨…|Ω'|μ[x↦v (trust t)]|S'| k⟩   // a write tool is a consequential sink (W-Consequential)
 
 // SPAWN — allocate + bind ctor args + run constructor; mailbox closed; hoist subs:
 Â' = Â[name ↦ { type, params := eval(args), awake:false }] ;  register-hoisted-subs(ctor-body)
@@ -1399,7 +1401,7 @@ sequence `d`, independent of every un-settled (`raw`/`graded`) value.
 > the invariant under `→`. Non-interference modulo delimited release (Sabelfeld–Myers;
 > Sabelfeld–Sands). A read-`tool` adds no declassifier: its result carries the join of its
 > inputs' provenance, so it reaches `obs` only as `settled` (clean inputs) or through a gate
-> (cognition in its inputs); an effecting tool is a consequential sink, covered by the same
+> (cognition in its inputs); a write tool is a consequential sink, covered by the same
 > rule as `perform`. ∎ *(The two-run bisimulation is the mechanization obligation — §15.7,
 > and the first artifact to be built with Agape.)*
 
@@ -1435,7 +1437,7 @@ extends them. **(T2) Endorsement** — the only operation that settles a `graded
 gate (`endorse`/`attest`), which records the discharge; a gate commits a singleton `Decision`
 (recorded, `margin ≥ m`) or `abstain`s. **(T3) Consequential non-interference** — no value
 carrying un-endorsed cognition reaches a consequential sink (a `perform` argument or an
-effecting-tool input); equivalently, varying the model's raw judgments
+write-tool input); equivalently, varying the model's raw judgments
 changes no world-effect except through a gate (Lemma 1, §15.5). **(T4) Reproducibility up to
 `≈`** — state is a function of the spine plus recorded oracle results; a recorded run replays
 to chain-head equality unconditionally; inter-agent message content is derived, not stored.

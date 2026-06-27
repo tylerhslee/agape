@@ -1,10 +1,10 @@
-//! id:        gov_effecting_tool_unsettled_reject
+//! id:        gov_write_tool_unsettled_reject
 //! section:   13_governance
 //! expect:    reject
 //! error:     TaintViolation
-//! spec:      §6b, §13 (an effecting tool is a consequential sink; a cognition-derived input is un-settled → reject)
+//! spec:      §6b, §13 (a write tool is a consequential sink; a cognition-derived input is un-settled → reject)
 //! ---
-effecting tool bool transfer(int amount, text to);
+write tool bool transfer(int amount, text to);
 agent Bank grants { use transfer } {
   on awake {
     event<text> who = self <- "who should we pay?";

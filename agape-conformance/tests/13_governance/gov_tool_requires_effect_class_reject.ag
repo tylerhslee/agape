@@ -1,0 +1,11 @@
+//! id:        gov_tool_requires_effect_class_reject
+//! section:   13_governance
+//! expect:    reject
+//! error:     ParseError
+//! spec:      §6b, §15.2 (every tool declares an effect class — `read` or `write`; omitting it is a ParseError)
+//! note:      a bare `tool` with no read/write prefix does not parse — the class is mandatory, never defaulted
+//! ---
+tool text search(text q);
+agent R grants { use search } {
+  text hits = search("q");
+}

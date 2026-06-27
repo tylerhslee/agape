@@ -179,6 +179,15 @@ pub enum RetryTail {
     Predicate { ty: Type, bind: String, pred: Expr, body: Vec<Stmt> },
 }
 
+/// A tool's effect class (§6b): `read` observes the world (its result carries its
+/// inputs' trust); `write` changes the world (a consequential sink whose inputs must
+/// be settled). The class is mandatory on every `tool` declaration — never defaulted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolEffect {
+    Read,
+    Write,
+}
+
 /// Statements (and declarations — both are `decl`/`stmt` in §15.2).
 #[derive(Debug, Clone, PartialEq)]
 pub enum Stmt {
@@ -202,8 +211,9 @@ pub enum Stmt {
     EnumDecl { name: String, variants: Vec<String> },
     /// `event NAME(field, ...);` — a custom spine-event type with typed payload.
     EventDecl { name: String, fields: Vec<Field> },
-    /// `tool RET NAME(params);` — a tool-seam capability (§6b).
-    ToolDecl { name: String, params: Vec<Param>, ret: Option<Type> },
+    /// `read|write tool RET NAME(params);` — a tool-seam capability (§6b). The effect
+    /// class is mandatory: `read` observes the world, `write` is a consequential sink.
+    ToolDecl { name: String, params: Vec<Param>, ret: Option<Type>, effect: ToolEffect },
     /// `authority EventType;` — marks an event type consequential (§13).
     Authority(String),
     /// `principal NAME;` — an identity-seam principal binding (§13).

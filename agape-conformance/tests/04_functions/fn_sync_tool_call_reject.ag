@@ -4,5 +4,5 @@
 //! error:     ColorViolation
 //! spec:      §4, §6b (a tool call reaches the tool dependency → async)
 //! ---
-tool text search(text q);
+read tool text search(text q);
 sync text find(text q) { return search(q); }

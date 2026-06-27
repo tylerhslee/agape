@@ -4,7 +4,7 @@
 //! error:     AuthorityViolation
 //! spec:      §6b, §13 (default-deny: a tool call needs a `use` grant)
 //! ---
-tool text search(text q);
+read tool text search(text q);
 agent R {
   text hits = search("q");
 }

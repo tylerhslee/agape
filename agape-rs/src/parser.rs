@@ -162,8 +162,12 @@ impl Parser {
             }
             return self.event_decl();
         }
-        if t.is_kw("tool") {
+        if t.is_kw("read") || t.is_kw("write") {
             return self.tool_decl();
+        }
+        if t.is_kw("tool") {
+            // The effect class (`read`/`write`) is mandatory and leads the declaration (§6b).
+            return Err(self.err("a tool declaration must begin with `read` or `write` — the effect class is mandatory (§6b)"));
         }
         if t.is_kw("authority") {
             self.advance();
@@ -389,14 +393,23 @@ impl Parser {
     }
 
     fn tool_decl(&mut self) -> PResult<Stmt> {
+        // Mandatory effect class (§6b): `read` observes the world, `write` is a
+        // consequential sink. The decl dispatcher only enters here on `read`/`write`.
+        let effect = if self.check_kw("write") {
+            self.advance();
+            ToolEffect::Write
+        } else {
+            self.eat_kw("read")?;
+            ToolEffect::Read
+        };
         self.eat_kw("tool")?;
-        // Prefix return type, like a function signature (`tool text search(text q);`).
+        // Prefix return type, like a function signature (`read tool text search(text q);`).
         // `->` is retired (§2); use `null` for a tool with no meaningful return.
         let ret = Some(self.parse_type()?);
         let name = self.eat_ident()?;
         let params = self.parse_params()?;
         self.eat_op(";")?;
-        Ok(Stmt::ToolDecl { name, params, ret })
+        Ok(Stmt::ToolDecl { name, params, ret, effect })
     }
 
     fn agent_decl(&mut self) -> PResult<Stmt> {
@@ -1085,7 +1098,7 @@ mod tests {
 
     #[test]
     fn event_and_tool_and_authority() {
-        let s = p("event Transfer(memo: Memo); tool text search(text q); authority Transfer;");
+        let s = p("event Transfer(memo: Memo); read tool text search(text q); authority Transfer;");
         assert!(matches!(&s[0], Stmt::EventDecl { .. }));
         assert!(matches!(&s[1], Stmt::ToolDecl { ret: Some(_), .. }));
         assert!(matches!(&s[2], Stmt::Authority(_)));
@@ -1166,7 +1179,7 @@ mod tests {
 
     #[test]
     fn tool_call_and_agent_no_parens() {
-        let s = p("tool text search(text q); agent R grants { use search } { text hits = search(\"q\"); }");
+        let s = p("read tool text search(text q); agent R grants { use search } { text hits = search(\"q\"); }");
         assert!(matches!(&s[1], Stmt::AgentDecl { params, .. } if params.is_empty()));
     }
 }

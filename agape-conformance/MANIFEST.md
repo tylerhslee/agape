@@ -1,6 +1,6 @@
 # Agape v1.0 — Conformance Test Index
 
-**77 tests** — accept: 52, reject: 25
+**78 tests** — accept: 52, reject: 26
 
 A conformant implementation must satisfy every `accept`/`reject` test (rejects with the declared error class; accepts matching any asserted spine).
 
@@ -132,8 +132,6 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 | `gov_attest_by_principal_ok` | accept | — | §13 (attest e by p reaches the identity dependency and records an Attestation — the principal basis) |
 | `gov_conformal_gate_ok` | accept | — | §13 (the conformal basis `by conformal α` is a distribution-free finite-sample gate calibrated from the spine) |
 | `gov_consequential_bare_collapse_reject` | reject | TaintViolation | §13 (a bare `c by R` is settled but off-spine/unendorsed → may not license a perform) |
-| `gov_effecting_tool_settled_ok` | accept | — | §6b, §13 (an effecting tool called with settled inputs is permitted) |
-| `gov_effecting_tool_unsettled_reject` | reject | TaintViolation | §6b, §13 (an effecting tool is a consequential sink; a cognition-derived input is un-settled → reject) |
 | `gov_endorse_abstain_ok` | accept | — | §13 (the optional abstain clause runs when the gate cannot commit a singleton prediction set) |
 | `gov_endorse_records_decided_ok` | accept | — | §9, §13 (endorse records the collapse as a Decided event on the spine, subject = the binding) |
 | `gov_endorsed_perform_ok` | accept | — | §13 (an endorsed Decision may license a consequential perform) |
@@ -142,9 +140,12 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 | `gov_perform_ungranted_reject` | reject | AuthorityViolation | §13 (default-deny: an agent may only perform actions in its grants) |
 | `gov_reach_ungranted_reject` | reject | AuthorityViolation | §13 (sending into another agent requires a `reach` grant) |
 | `gov_read_tool_settled_perform_ok` | accept | — | §6b, §13 (a read tool over settled inputs yields a settled result — external data settled by origin — that may drive a perform) |
+| `gov_tool_requires_effect_class_reject` | reject | ParseError | §6b, §15.2 (every tool declares an effect class — `read` or `write`; omitting it is a ParseError) |
 | `gov_tool_result_tainted_perform_reject` | reject | TaintViolation | §6b, §13 (a tool result carries the join of its inputs' trust; a cognition-derived input is un-settled → cannot drive a consequential perform without a gate) |
 | `gov_use_tool_granted_ok` | accept | — | §6b, §13 (a granted `use TOOL` permits the tool call) |
 | `gov_use_tool_ungranted_reject` | reject | AuthorityViolation | §6b, §13 (default-deny: a tool call needs a `use` grant) |
+| `gov_write_tool_settled_ok` | accept | — | §6b, §13 (a write tool called with settled inputs is permitted) |
+| `gov_write_tool_unsettled_reject` | reject | TaintViolation | §6b, §13 (a write tool is a consequential sink; a cognition-derived input is un-settled → reject) |
 
 ## 15_reproducibility
 

@@ -4,7 +4,7 @@
 //! error:     AuthorityViolation
 //! spec:      §5, §13 (capabilities, incl. `use`, are subtractive under extend)
 //! ---
-tool text search(text q);
+read tool text search(text q);
 agent Base grants { } {}
 agent Child grants { use search } {
   extend Base();
