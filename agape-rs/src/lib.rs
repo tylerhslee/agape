@@ -21,10 +21,41 @@ pub mod lexer; // M1
 pub mod parser; // M2
 pub mod spine;
 
+use ast::Stmt;
 use diag::AgapeError;
 use spine::Spine;
 
 pub use interp::{HarnessConfig, ProviderMode};
+
+/// One compiled module: its fully-qualified path (the root module's path is its
+/// `module` header, or `""` if it has none) and its top-level statements (§19.2).
+#[derive(Debug, Clone)]
+pub struct Module {
+    pub path: String,
+    pub stmts: Vec<Stmt>,
+}
+
+/// Lex + parse one source string into a [`Module`]; the path is taken from its
+/// `module` header (else `fallback`).
+pub fn parse_module(source: &str, fallback: &str) -> Result<Module, AgapeError> {
+    let tokens = lexer::lex(source)?;
+    let stmts = parser::parse(tokens)?;
+    let path = stmts
+        .iter()
+        .find_map(|s| match s {
+            Stmt::ModuleDecl { path } => Some(path.clone()),
+            _ => None,
+        })
+        .unwrap_or_else(|| fallback.to_string());
+    Ok(Module { path, stmts })
+}
+
+/// Run a multi-module program (the root plus its companion modules) through the
+/// whole pipeline (§19). The first module is the root (the program entry).
+pub fn process_modules(modules: &[Module], config: &HarnessConfig) -> Result<Spine, AgapeError> {
+    check::check_program(modules)?;
+    Ok(interp::run_program(modules, config))
+}
 
 /// Run a program through the entire pipeline:
 /// `lex` → `parse` → `check` → `interp`. A program that passes the static checks
@@ -39,8 +70,6 @@ pub fn process(source: &str) -> Result<Spine, AgapeError> {
 /// scripted provider distribution, an empty/schema-violating provider, a denying
 /// identity seam, or the eager-internalize memory trigger.
 pub fn process_with_config(source: &str, config: &HarnessConfig) -> Result<Spine, AgapeError> {
-    let tokens = lexer::lex(source)?;
-    let ast = parser::parse(tokens)?;
-    check::check(&ast)?;
-    Ok(interp::run_with(&ast, config))
+    let root = parse_module(source, "")?;
+    process_modules(&[root], config)
 }
