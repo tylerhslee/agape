@@ -1,145 +1,51 @@
-/* Agape Studio — unified design system.
-   A sleek dark surface built on the VS Code "Dark+" baseline, modernized: cooler
-   near-black surfaces, one accent, soft borders, a single radius scale. The
-   semantic tokens are the source of truth; the legacy --vsc-* names alias onto
-   them so every existing surface inherits the new look without being touched. */
+/* Agape Studio — the VS Code "Dark+" skin.
+   These are VS Code's own theme tokens, reused so the shell reads as VS Code. */
 :root {
-  /* surfaces — deep → raised */
-  --bg: #121419;
-  --surface: #171a20;
-  --surface-2: #1d212a;
-  --surface-3: #262b35;
-  --border: #2a2f3a;
-  --border-soft: #20242d;
-
-  /* text */
-  --text: #e6e9ef;
-  --muted: #9aa4b2;
-  --faint: #6b7588;
-  --bright: #ffffff;
-
-  /* accent + semantics */
-  --accent: #58a6ff;
-  --accent-ink: #051426;
-  --accent-soft: rgba(88, 166, 255, 0.14);
-  --ok: #3fb950;
-  --warn: #d29922;
-  --err: #f85149;
-  --type: #4ec9b0;
-  --keyword: #c586c0;
-  --string: #ce9178;
-
-  /* shape + type */
-  --radius: 9px;
-  --radius-sm: 6px;
-  --shadow: 0 10px 34px rgba(0, 0, 0, 0.38);
+  --vsc-bg: #1e1e1e;            /* editor background */
+  --vsc-bg2: #252526;           /* side bar */
+  --vsc-bg3: #2d2d2d;           /* tabs / inactive */
+  --vsc-activity: #333333;      /* activity bar */
+  --vsc-titlebar: #3c3c3c;
+  --vsc-statusbar: #007acc;     /* the signature blue */
+  --vsc-border: #3c3c3c;
+  --vsc-ink: #d4d4d4;
+  --vsc-dim: #858585;
+  --vsc-bright: #ffffff;
+  --vsc-accent: #569cd6;        /* keyword blue */
+  --vsc-type: #4ec9b0;          /* type teal */
+  --vsc-string: #ce9178;        /* string orange */
+  --vsc-keyword: #c586c0;       /* control purple */
+  --vsc-error: #f48771;
+  --vsc-warn: #e3b341;
+  --vsc-ok: #4ec9b0;
   --mono: "Cascadia Code", "JetBrains Mono", Menlo, Consolas, monospace;
-  --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-
-  /* ── legacy VS Code aliases → semantic tokens (keep old class rules working) ── */
-  --vsc-bg: var(--bg);
-  --vsc-bg2: var(--surface);
-  --vsc-bg3: var(--surface-2);
-  --vsc-activity: var(--surface);
-  --vsc-titlebar: var(--surface);
-  --vsc-statusbar: var(--accent);
-  --vsc-border: var(--border);
-  --vsc-ink: var(--text);
-  --vsc-dim: var(--muted);
-  --vsc-bright: var(--bright);
-  --vsc-accent: var(--accent);
-  --vsc-type: var(--type);
-  --vsc-string: var(--string);
-  --vsc-keyword: var(--keyword);
-  --vsc-error: var(--err);
-  --vsc-warn: var(--warn);
-  --vsc-ok: var(--ok);
 }
 
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; margin: 0; }
 body {
-  background: var(--bg);
-  color: var(--text);
-  font: 13px/1.5 var(--sans);
+  background: var(--vsc-bg);
+  color: var(--vsc-ink);
+  font: 13px/1.5 var(--mono);
   overflow: hidden;
 }
-
-/* ── controls ── */
 button {
-  font: inherit; color: var(--text); background: var(--surface-2);
-  border: 1px solid var(--border); border-radius: var(--radius-sm);
-  padding: 5px 12px; cursor: pointer;
-  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+  font: inherit; color: var(--vsc-ink); background: #0e639c;
+  border: none; border-radius: 3px; padding: 3px 10px; cursor: pointer;
 }
-button:hover { background: var(--surface-3); border-color: #3a414f; }
-button:disabled { opacity: 0.5; cursor: default; }
-button.primary, button.accent {
-  background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600;
+button:hover { background: #1177bb; }
+button.ghost { background: transparent; border: 1px solid var(--vsc-border); }
+button.ghost:hover { background: #2a2d2e; }
+input, textarea {
+  font: inherit; color: var(--vsc-ink); background: #3c3c3c;
+  border: 1px solid #3c3c3c; border-radius: 3px; padding: 4px 8px;
 }
-button.primary:hover, button.accent:hover { background: #6cb3ff; border-color: #6cb3ff; }
-button.ghost { background: transparent; }
-button.ghost:hover { background: var(--surface-2); }
-input, textarea, select {
-  font: inherit; color: var(--text); background: var(--surface-2);
-  border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 5px 9px;
-}
-input:focus, textarea:focus, select:focus { outline: none; border-color: var(--accent); }
+input:focus, textarea:focus { outline: 1px solid var(--vsc-accent); }
 ::-webkit-scrollbar { width: 10px; height: 10px; }
-::-webkit-scrollbar-thumb { background: #2f343d; border-radius: 6px; }
-::-webkit-scrollbar-thumb:hover { background: #3a414f; }
+::-webkit-scrollbar-thumb { background: #424242; border-radius: 5px; }
+::-webkit-scrollbar-thumb:hover { background: #4f4f4f; }
 
-/* ════════════════════════════════════════════════════════════════════
-   Unified app shell — a persistent icon rail + a content stage.
-   This is the single navigation chrome shared by every space.
-   ════════════════════════════════════════════════════════════════════ */
-.app { height: 100vh; display: flex; background: var(--bg); color: var(--text); font-family: var(--sans); }
-
-.app-rail {
-  width: 68px; flex: none; background: var(--surface); border-right: 1px solid var(--border-soft);
-  display: flex; flex-direction: column; padding: 10px 0; gap: 2px;
-}
-.app-brand {
-  display: flex; align-items: center; justify-content: center; height: 38px;
-  color: var(--accent); font-size: 22px; margin-bottom: 10px;
-}
-.rail-item {
-  position: relative; display: flex; flex-direction: column; align-items: center; gap: 4px;
-  padding: 9px 4px; color: var(--muted); cursor: pointer; border-left: 2px solid transparent;
-  transition: color 0.12s ease, background 0.12s ease;
-}
-.rail-item i { font-size: 21px; }
-.rail-item span { font-size: 9.5px; letter-spacing: 0.01em; }
-.rail-item:hover { color: var(--text); background: var(--surface-2); }
-.rail-item.active { color: var(--accent); border-left-color: var(--accent); background: var(--accent-soft); }
-.rail-spacer { flex: 1; }
-
-.app-main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
-.app-topbar {
-  flex: none; display: flex; align-items: center; gap: 11px; height: 48px; padding: 0 18px;
-  background: var(--surface); border-bottom: 1px solid var(--border-soft);
-}
-.app-title { font-size: 13.5px; font-weight: 600; }
-.app-sub { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.app-topbar .right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
-
-.app-stage { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
-.app-scroll { flex: 1; min-height: 0; overflow-y: auto; }
-
-.app-loading, .app-empty {
-  position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
-  color: var(--muted); font: 14px/1.6 var(--sans); gap: 4px; padding: 40px; text-align: center;
-}
-.app-empty { position: static; margin: auto; max-width: 420px; }
-.app-empty i { font-size: 36px; color: var(--faint); margin-bottom: 10px; }
-.app-empty b { color: var(--text); }
-.app-empty code { font: 12px var(--mono); color: var(--accent); }
-
-/* ════════════════════════════════════════════════════════════════════
-   Legacy editor-cockpit classes (the VS Code-skinned console). Retained so
-   the standalone console still renders if mounted; re-skinned via the tokens
-   above. Not part of the default navigation.
-   ════════════════════════════════════════════════════════════════════ */
+/* ── shell layout ── */
 .shell { display: grid; grid-template-rows: 30px 1fr 22px; height: 100vh; }
 .titlebar {
   background: var(--vsc-titlebar); display: flex; align-items: center; gap: 8px;
@@ -173,7 +79,7 @@ input:focus, textarea:focus, select:focus { outline: none; border-color: var(--a
   display: flex; align-items: center; gap: 8px; padding: 3px 14px; font-size: 12px;
   cursor: default;
 }
-.tree-item:hover { background: var(--surface-3); }
+.tree-item:hover { background: #2a2d2e; }
 .dot { width: 8px; height: 8px; border-radius: 50%; background: #5a5a5a; flex: none; }
 .dot.awake { background: var(--vsc-ok); box-shadow: 0 0 5px var(--vsc-ok); }
 .tree-item .type { color: #6a6a6a; }
@@ -192,7 +98,7 @@ input:focus, textarea:focus, select:focus { outline: none; border-color: var(--a
 .tabs { display: flex; height: 35px; background: var(--vsc-bg3); flex: none; }
 .tab {
   display: flex; align-items: center; gap: 6px; padding: 0 14px; font-size: 12px;
-  background: var(--vsc-bg3); color: #969696; border-right: 1px solid var(--border-soft);
+  background: var(--vsc-bg3); color: #969696; border-right: 1px solid #252526;
 }
 .tab.active { background: var(--vsc-bg); color: var(--vsc-bright); border-top: 1px solid var(--vsc-accent); }
 .editor-toolbar {
@@ -203,6 +109,7 @@ input:focus, textarea:focus, select:focus { outline: none; border-color: var(--a
 .editor-toolbar .msg.err { color: var(--vsc-error); }
 .editor-toolbar .msg.ok { color: var(--vsc-ok); }
 
+/* ── bottom panel (the event cockpit) ── */
 .panel { height: 300px; display: flex; flex-direction: column; border-top: 1px solid var(--vsc-border); flex: none; }
 .panel-tabs { display: flex; align-items: center; gap: 16px; padding: 6px 14px; background: var(--vsc-bg); font-size: 11px; letter-spacing: .5px; }
 .panel-tab { color: #969696; cursor: pointer; padding-bottom: 4px; text-transform: uppercase; }
@@ -213,9 +120,8 @@ input:focus, textarea:focus, select:focus { outline: none; border-color: var(--a
 .ev {
   display: grid; grid-template-columns: 40px 150px 1fr auto; gap: 10px;
   padding: 1px 14px; font-size: 11.5px; align-items: baseline; border-left: 2px solid transparent;
-  font-family: var(--mono);
 }
-.ev:hover { background: var(--surface-3); }
+.ev:hover { background: #2a2d2e; }
 .ev .tick { color: #6a6a6a; text-align: right; }
 .ev .etype { font-weight: 500; }
 .ev .subj { color: #9cdcfe; }
@@ -227,7 +133,7 @@ input:focus, textarea:focus, select:focus { outline: none; border-color: var(--a
 .ev.emit .etype { color: var(--vsc-type); }
 .ev.verify .etype { color: var(--vsc-warn); }
 
-.query { display: flex; flex-direction: column; flex: 1; min-height: 0; font-family: var(--mono); }
+.query { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 .query .log { flex: 1; overflow-y: auto; padding: 8px 14px; font-size: 11.5px; }
 .query .line { padding: 1px 0; }
 .query .line .sigil { color: var(--vsc-ok); }
@@ -238,7 +144,7 @@ input:focus, textarea:focus, select:focus { outline: none; border-color: var(--a
 .query .input-row input { flex: 1; }
 
 .statusbar {
-  background: var(--vsc-statusbar); color: var(--accent-ink); display: flex; align-items: center;
+  background: var(--vsc-statusbar); color: #ffffff; display: flex; align-items: center;
   gap: 14px; padding: 0 12px; font-size: 11px;
 }
 .statusbar .right { margin-left: auto; display: flex; gap: 14px; }
