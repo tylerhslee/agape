@@ -346,6 +346,12 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, await getLearner().step(String(task)));
     }
 
+    if (req.method === "POST" && url === "/learn/context") {
+      const { task } = (await readJson(req)) || {};
+      if (!task) return send(res, 400, { error: "task is required" });
+      return send(res, 200, getLearner().codingContext(String(task)));
+    }
+
     if (req.method === "GET" && url === "/learn/state") {
       return send(res, 200, getLearner().state());
     }

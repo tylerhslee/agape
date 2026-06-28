@@ -67,6 +67,26 @@ export class Learner {
     return { context, hits, triples, lessons };
   }
 
+  codingContext(task: string) {
+    const retrieved = this.retrieve(task);
+    const rules = [
+      "Prefer `decide ... default ... defer` for application workflows; use `endorse` for lower-level/manual gates.",
+      "Bind model testimony as `Credence<E>` over a closed enum, then gate before any consequential sink.",
+      "`perform` and write tools need explicit grants plus settled, endorsed inputs.",
+      "`prompt` inputs are settled by origin; private `mem ->` recall is always tainted and must be re-gated before action.",
+      "`sync` code may emit and collapse in-hand credences, but may not reach provider, principal, memory recall, or tools.",
+      "Run `agape check` first, then inspect the ledger with `agape run`.",
+    ];
+    return {
+      task,
+      agent: this.agent,
+      runner: this.runner.name,
+      rules,
+      ...retrieved,
+      counts: this.mem.counts(this.agent),
+    };
+  }
+
   async writeCode(task: string, context: string): Promise<string> {
     const system =
       "You write Agape source code. Output ONLY Agape code — no prose, no fences. " +

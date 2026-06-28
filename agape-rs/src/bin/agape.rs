@@ -282,6 +282,8 @@ fn cmd_studio(_args: &[String]) {
     let web_dist = home.join("web-dist");
     if web_dist.is_dir() {
         // Bundle mode: the agent-server serves the prebuilt web app — one process.
+        let port = std::env::var("AGENT_PORT").ok().filter(|p| !p.trim().is_empty()).unwrap_or_else(|| "8799".to_string());
+        let url = format!("http://localhost:{port}");
         let agent = Command::new("npx")
             .args(["tsx", "server.ts"])
             .current_dir(home.join("agent-server"))
@@ -291,8 +293,8 @@ fn cmd_studio(_args: &[String]) {
             .spawn();
         match agent {
             Ok(_) => {
-                println!("  serving at http://localhost:8799  (Ctrl-C to stop)");
-                open_browser("http://localhost:8799");
+                println!("  serving at {url}  (Ctrl-C to stop)");
+                open_browser(&url);
                 let _ = std::io::Read::read(&mut std::io::stdin(), &mut [0u8; 1]);
             }
             Err(_) => eprintln!(
@@ -600,9 +602,9 @@ agent Responder {
 // Agent 2 — fact-checks every draft; only verified answers are delivered.
 agent FactChecker grants { perform Reply } {
   when (Draft d) {
-    Credence<bool> sound = self <- f"is this answer factually correct and well-supported? answer: {d}";
+    Credence<bool> sound = self <- f"is this answer factually correct and well-supported? answer: {d.answer}";
     endorse (sound by confidence 0.8) {
-      true:  perform Reply(d);                  // verified -> deliver to the user
+      true:  perform Reply(d.answer);           // verified -> deliver to the user
       false: emit Event("rejected: not verified");
     } abstain {
       emit Event("uncertain: needs human review");

@@ -7,7 +7,18 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-PORT="${SMOKE_PORT:-8799}"
+if [ -n "${SMOKE_PORT:-}" ]; then
+  PORT="$SMOKE_PORT"
+else
+  PORT="$(python3 - <<'PY'
+import socket
+s = socket.socket()
+s.bind(("127.0.0.1", 0))
+print(s.getsockname()[1])
+s.close()
+PY
+)"
+fi
 
 BIN="$ROOT/agape-rs/target/debug/agape"
 [ -x "$BIN" ] || BIN="$ROOT/agape-rs/target/release/agape"

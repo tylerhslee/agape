@@ -18,7 +18,7 @@ import "./missioncontrol/missioncontrol.css";
 //   agentic app in its own right; this is where that lives. Reached via the gear
 //   at the bottom of the rail (the workspace-vs-settings split).
 const PROJECT_SPACES = [
-  { id: "overview", label: "Overview", icon: "ti-layout-dashboard" },
+  { id: "overview", label: "Agents", icon: "ti-robot" },
   { id: "work", label: "Work", icon: "ti-checklist" },
   { id: "explorer", label: "Files", icon: "ti-folder" },
   { id: "run", label: "Run", icon: "ti-player-play" },
@@ -120,7 +120,7 @@ export default function Shell({ info }) {
                 ) : view === "work" ? (
                   <WorkBoard state={state} dispatch={dispatch} onOpen={open} />
                 ) : (
-                  <MissionControl state={state} dispatch={dispatch} onOpen={open} goWork={() => setView("work")} />
+                  <MissionControl state={state} info={info} dispatch={dispatch} onOpen={open} goWork={() => setView("work")} goRun={() => setView("run")} goFiles={() => setView("explorer")} goStudio={() => setView("studio")} />
                 )}
               </div>
             </div>

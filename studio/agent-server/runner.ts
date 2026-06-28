@@ -27,7 +27,12 @@ export class AgapeRsRunner implements Runner {
   readonly name = "agape-rs";
   private bin: string;
   constructor(agapeRsDir: string) {
-    this.bin = path.join(agapeRsDir, "target", "release", "agape");
+    this.bin = [
+      process.env.AGAPE_BIN,
+      path.join(agapeRsDir, "target", "release", "agape"),
+      path.join(agapeRsDir, "target", "debug", "agape"),
+      path.resolve(agapeRsDir, "..", "dist", "agape-1.0.0-x86_64-unknown-linux-gnu", "bin", "agape"),
+    ].filter(Boolean).find((p) => fs.existsSync(p as string)) as string || path.join(agapeRsDir, "target", "release", "agape");
   }
 
   available(): boolean {

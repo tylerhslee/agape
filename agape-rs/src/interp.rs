@@ -858,7 +858,12 @@ impl Interp {
             let sub = self.subs[i].clone();
             let mut frame = sub.frame.clone();
             if let Some(b) = &sub.binding {
-                frame.insert(b.clone(), Value::Text(payload.clone()));
+                let bound = sub
+                    .etype
+                    .as_deref()
+                    .and_then(|t| self.event_value(t, &payload))
+                    .unwrap_or_else(|| Value::Text(payload.clone()));
+                frame.insert(b.clone(), bound);
             }
             // A `when … if (guard)` fires only when the predicate holds.
             if let Some(g) = &sub.guard {
@@ -868,6 +873,25 @@ impl Interp {
             }
             let _ = self.exec_block(&sub.body, &mut frame, sub.agent.as_deref());
         }
+    }
+
+    fn event_value(&self, etype: &str, payload: &str) -> Option<Value> {
+        let bare = etype.rsplit('.').next().unwrap_or(etype);
+        let fields = self.event_fields.get(etype).or_else(|| self.event_fields.get(bare))?;
+        if fields.is_empty() {
+            return Some(Value::Struct { name: bare.to_string(), fields: Vec::new() });
+        }
+        if fields.len() == 1 {
+            return Some(Value::Struct {
+                name: bare.to_string(),
+                fields: vec![(fields[0].name.clone(), Value::Text(payload.to_string()))],
+            });
+        }
+        let mut vals = Vec::new();
+        for field in fields {
+            vals.push((field.name.clone(), field_from_payload(payload, &field.name)));
+        }
+        Some(Value::Struct { name: bare.to_string(), fields: vals })
     }
 
     // ── expression evaluation ────────────────────────────────────────────────
@@ -1496,6 +1520,18 @@ fn reply_summary(v: &Value) -> String {
         },
         other => other.show(),
     }
+}
+
+fn field_from_payload(payload: &str, field: &str) -> Value {
+    let inner = payload.trim().strip_prefix('{').and_then(|s| s.strip_suffix('}')).unwrap_or(payload);
+    for part in inner.split(',') {
+        if let Some((k, v)) = part.split_once(':') {
+            if k.trim() == field {
+                return Value::Text(v.trim().to_string());
+            }
+        }
+    }
+    Value::Null
 }
 
 fn type_enum_name(t: &Type) -> String {

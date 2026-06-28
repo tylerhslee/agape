@@ -23,3 +23,6 @@ export const recall = (q) => get(`/learn/recall?q=${encodeURIComponent(q)}`);
 // cost Claude API calls
 export const ingest = (maxChunks) => post("/learn/ingest", { maxChunks });
 export const step = (task) => post("/learn/step", { task });
+
+// free retrieval/orientation for a coding task
+export const context = (task) => post("/learn/context", { task });
