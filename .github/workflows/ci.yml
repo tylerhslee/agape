@@ -78,12 +78,13 @@ jobs:
             exit 1
           fi
 
-  # ── the studio frontend builds (Vite) + the agent-server deps install ─────
+  # ── the studio builds AND runs: serve the app + run a project end to end ──
   studio:
-    name: studio (web build · server deps)
+    name: studio (build + run)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
@@ -97,3 +98,11 @@ jobs:
       - name: Install agent-server deps
         working-directory: studio/agent-server
         run: npm install --no-audit --no-fund
+
+      - name: Build the agape binary (the studio runs projects through it)
+        run: cargo build --manifest-path agape-rs/Cargo.toml --bin agape
+
+      # Start the agent-server serving the built app and exercise it: serve the
+      # web app, detect a scaffolded project, and run a program (mock provider).
+      - name: Studio integration smoke test
+        run: bash scripts/studio-smoke.sh

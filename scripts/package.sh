@@ -79,24 +79,26 @@ cognition is one config step away (\`configure provider claude\` + an
 \`ANTHROPIC_API_KEY\`). Put \`bin/\` on your PATH to call \`agape\` directly.
 MD
 
-# 3. the studio (best-effort — a studio build must never fail the release). The
+# 3. the studio — a REQUIRED part of the release; its build must succeed. The
 #    agent-server serves the prebuilt web app (one process, no Vite at runtime). We
 #    ship the agent-server SOURCE and let deps install on first `agape studio`, so
 #    the archive carries no native modules / deep node_modules paths (portable +
-#    Windows-safe).
-if [ "${SKIP_STUDIO:-}" != "1" ] && command -v npm >/dev/null 2>&1; then
-  if ( cd studio/web && npm install --no-audit --no-fund && npm run build ); then
-    mkdir -p "$STAGE/studio"
-    cp -r studio/web/dist "$STAGE/studio/web-dist"
-    cp -r studio/agent-server "$STAGE/studio/agent-server"
-    rm -rf "$STAGE/studio/agent-server/node_modules" "$STAGE/studio/agent-server/data"
-    echo "==> studio staged (its deps install on first \`agape studio\`)"
-  else
-    echo "==> WARNING: studio web build failed — shipping a binary-only bundle"
-    rm -rf "$STAGE/studio"
-  fi
+#    Windows-safe). SKIP_STUDIO is for fast LOCAL iteration only — the release never
+#    sets it.
+if [ "${SKIP_STUDIO:-}" = "1" ]; then
+  echo "==> SKIP_STUDIO=1 — binary-only bundle (local only; releases always include the studio)"
 else
-  echo "==> skipping studio (SKIP_STUDIO or npm unavailable) — binary-only bundle"
+  command -v npm >/dev/null 2>&1 || { echo "package.sh: npm is required to build the studio"; exit 1; }
+  echo "==> building studio web app"
+  ( cd studio/web && npm install --no-audit --no-fund && npm run build )
+  mkdir -p "$STAGE/studio"
+  cp -r studio/web/dist "$STAGE/studio/web-dist"
+  cp -r studio/agent-server "$STAGE/studio/agent-server"
+  rm -rf "$STAGE/studio/agent-server/node_modules" "$STAGE/studio/agent-server/data"
+  for f in studio/web-dist/index.html studio/agent-server/server.ts studio/agent-server/package.json; do
+    [ -f "$STAGE/$f" ] || { echo "package.sh: studio staging incomplete — missing $f"; exit 1; }
+  done
+  echo "==> studio staged (deps install on first \`agape studio\`)"
 fi
 
 # 4. archive + checksum
