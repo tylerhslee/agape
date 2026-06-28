@@ -5,7 +5,7 @@ import * as review from "./reviewApi.js";
 
 // The Review studio: inspect the conformance suite, read/proofread SPEC.md, and
 // edit the spec with an LLM in place. Built on Studio's Monaco + agent-server.
-export default function Review({ onStudio, onProject }) {
+export default function Review() {
   const [data, setData] = useState(null);
   const [err, setErr] = useState(null);
   const [tab, setTab] = useState("tests");
@@ -44,7 +44,7 @@ export default function Review({ onStudio, onProject }) {
   return (
     <div className="rv">
       <header className="rv-top">
-        <b style={{ letterSpacing: 0.3 }}>Agape · Review</b>
+        <b style={{ letterSpacing: 0.3 }}>Conformance</b>
         {data && <span className={"rv-badge " + (data.passed === data.total ? "ok" : "bad")}>{data.passed}/{data.total} pass</span>}
         {data && <span className={"rv-badge " + (data.buildOk ? "ok" : "bad")}>{data.buildOk ? "build ok" : "BUILD FAILED"}</span>}
         <nav className="rv-tabs">
@@ -58,8 +58,6 @@ export default function Review({ onStudio, onProject }) {
           {running ? "running tests…" : "▶ Run tests"}
         </button>
         <button onClick={load} disabled={loading || running} title="Reload everything (suite + spec)">{loading ? "loading…" : "↻ reload"}</button>
-        {onProject && <button onClick={onProject}>Project →</button>}
-        {onStudio && <button onClick={onStudio}>Studio →</button>}
       </header>
 
       {err && <div className="rv-err">backend error: {err}<br />— start it: <code>cd studio/agent-server &amp;&amp; npx tsx server.ts</code> (needs ANTHROPIC_API_KEY)</div>}
@@ -232,41 +230,43 @@ function ResultsView({ data }) {
 }
 
 const STYLE = `
-.rv{position:fixed;inset:0;display:flex;flex-direction:column;background:#0f1115;color:#e6e9ef;
-font:14px/1.5 -apple-system,Segoe UI,Roboto,sans-serif}
-.rv code{font:12px ui-monospace,Menlo,Consolas,monospace;color:#9aa4b2}
-.rv-top{display:flex;align-items:center;gap:12px;padding:10px 16px;border-bottom:1px solid #2a3140;background:#161a22}
-.rv-badge{font:600 12px ui-monospace,monospace;padding:4px 9px;border-radius:6px;background:#1d2330}
-.rv-badge.ok{color:#3fb950}.rv-badge.bad{color:#f85149}
+.rv{display:flex;flex-direction:column;flex:1;min-height:0;background:var(--bg);color:var(--text);
+font:14px/1.5 var(--sans)}
+.rv code{font:12px var(--mono);color:var(--muted)}
+.rv-top{display:flex;align-items:center;gap:12px;padding:10px 16px;border-bottom:1px solid var(--border-soft);background:var(--surface)}
+.rv-badge{font:600 12px var(--mono);padding:4px 9px;border-radius:var(--radius-sm);background:var(--surface-2)}
+.rv-badge.ok{color:var(--ok)}.rv-badge.bad{color:var(--err)}
 .rv-tabs{display:flex;gap:4px;margin-left:6px}
-.rv button{font:inherit;cursor:pointer;border:1px solid #2a3140;background:#1d2330;color:#e6e9ef;border-radius:7px;padding:6px 12px}
-.rv-tabs button{text-transform:capitalize;color:#9aa4b2}
-.rv-tabs button.on{background:#243049;color:#e6e9ef;border-color:#345}
-.rv button.primary{background:#58a6ff;border-color:#58a6ff;color:#04101f;font-weight:600}
+.rv button{font:inherit;cursor:pointer;border:1px solid var(--border);background:var(--surface-2);color:var(--text);border-radius:var(--radius-sm);padding:6px 12px}
+.rv button:hover{background:var(--surface-3)}
+.rv-tabs button{text-transform:capitalize;color:var(--muted)}
+.rv-tabs button.on{background:var(--surface-3);color:var(--text);border-color:var(--border)}
+.rv button.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);font-weight:600}
+.rv button.primary:hover{background:#6cb3ff}
 .rv button:disabled{opacity:.5;cursor:default}
-.rv-err{padding:14px 18px;color:#f85149;background:#1a1113;border-bottom:1px solid #3a2226}
-.rv-load{padding:40px;text-align:center;color:#9aa4b2}
-.dim{color:#9aa4b2}.ok{color:#3fb950}.bad{color:#f85149}
+.rv-err{padding:14px 18px;color:var(--err);background:rgba(248,81,73,.08);border-bottom:1px solid rgba(248,81,73,.3)}
+.rv-load{padding:40px;text-align:center;color:var(--muted)}
+.dim{color:var(--muted)}.ok{color:var(--ok)}.bad{color:var(--err)}
 .ell{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .rv-split{flex:1;display:flex;min-height:0}
-.rv-list{width:330px;border-right:1px solid #2a3140;display:flex;flex-direction:column;background:#13161d}
-.rv-filters{display:flex;gap:6px;padding:10px;border-bottom:1px solid #2a3140}
-.rv-filters input,.rv-filters select{font:inherit;background:#1d2330;border:1px solid #2a3140;color:#e6e9ef;border-radius:7px;padding:5px 8px}
+.rv-list{width:330px;border-right:1px solid var(--border-soft);display:flex;flex-direction:column;background:var(--surface)}
+.rv-filters{display:flex;gap:6px;padding:10px;border-bottom:1px solid var(--border-soft)}
+.rv-filters input,.rv-filters select{font:inherit;background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:var(--radius-sm);padding:5px 8px}
 .rv-filters input{flex:1;min-width:0}
 .rv-rows{flex:1;overflow:auto}
-.rv-row{display:flex;gap:9px;align-items:center;padding:8px 12px;cursor:pointer;border-bottom:1px solid #1b2230}
-.rv-row:hover{background:#1d2330}.rv-row.on{background:#243049}
-.dot{width:9px;height:9px;border-radius:50%;flex:none}.dot.pass{background:#3fb950}.dot.fail{background:#f85149}
-.tid{font:600 13px ui-monospace,monospace}
+.rv-row{display:flex;gap:9px;align-items:center;padding:8px 12px;cursor:pointer;border-bottom:1px solid var(--border-soft)}
+.rv-row:hover{background:var(--surface-2)}.rv-row.on{background:var(--accent-soft)}
+.dot{width:9px;height:9px;border-radius:50%;flex:none}.dot.pass{background:var(--ok)}.dot.fail{background:var(--err)}
+.tid{font:600 13px var(--mono)}
 .rv-detail{flex:1;display:flex;flex-direction:column;min-width:0}
-.rv-empty{margin:auto;color:#9aa4b2}
-.rv-detail-top{display:flex;align-items:center;padding:10px 14px;border-bottom:1px solid #2a3140;background:#161a22}
-.rv-reason{padding:8px 14px;color:#f85149;font:12.5px ui-monospace,monospace;white-space:pre-wrap;border-bottom:1px solid #2a1e22}
+.rv-empty{margin:auto;color:var(--muted)}
+.rv-detail-top{display:flex;align-items:center;padding:10px 14px;border-bottom:1px solid var(--border-soft);background:var(--surface)}
+.rv-reason{padding:8px 14px;color:var(--err);font:12.5px var(--mono);white-space:pre-wrap;border-bottom:1px solid rgba(248,81,73,.25)}
 .rv-spec{flex:1;display:flex;flex-direction:column;min-height:0}
-.rv-spec-bar{display:flex;gap:8px;align-items:center;padding:10px 14px;border-bottom:1px solid #2a3140;background:#161a22}
-.rv-spec-bar input{font:inherit;background:#1d2330;border:1px solid #2a3140;color:#e6e9ef;border-radius:7px;padding:7px 10px}
+.rv-spec-bar{display:flex;gap:8px;align-items:center;padding:10px 14px;border-bottom:1px solid var(--border-soft);background:var(--surface)}
+.rv-spec-bar input{font:inherit;background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:var(--radius-sm);padding:7px 10px}
 .rv-results{flex:1;overflow:auto;padding:24px 28px}
 .rv-rrow{display:grid;grid-template-columns:180px 1fr 56px;gap:14px;align-items:center;margin:7px 0}
-.rsec{font:600 13px ui-monospace,monospace;color:#9aa4b2}
-.rbar{height:18px;border-radius:5px;background:#241b1d;overflow:hidden}.rbar i{display:block;height:100%;background:#3fb950}
+.rsec{font:600 13px var(--mono);color:var(--muted)}
+.rbar{height:18px;border-radius:5px;background:var(--surface-2);overflow:hidden}.rbar i{display:block;height:100%;background:var(--ok)}
 `;
