@@ -1,8 +1,0 @@
-[package]
-name = "cognition"
-version = "1.1.0"
-lib = "src/lib.ag"
-
-# Targets Agape v1.1.0 (the library layer, SPEC §19): modules, visibility, generics,
-# interfaces, and minimal error subtyping. A runtime that implements §19 is required to
-# execute programs that import this package. See DESIGN.md.

@@ -1,4 +1,4 @@
-// v1.1.0 showcase — the library layer and the readable gate in one readable file.
+// v1.0.2 showcase — the library layer and the readable gate in one readable file.
 // Each line is tagged LIB (the library layer, SPEC §19) or GATE (the `decide` gate, SPEC §20).
 
 module support;                              // LIB: declares this file's namespace (§19.2)

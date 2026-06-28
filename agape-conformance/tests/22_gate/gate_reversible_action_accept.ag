@@ -1,6 +1,5 @@
 //! id:        gate_reversible_action_accept
 //! section:   22_gate
-//! since:     1.1
 //! expect:    accept
 //! spec:      §20 (`reversible action` — reversibility annotates a perform sink)
 //! ---

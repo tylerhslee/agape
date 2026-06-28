@@ -1,4 +1,4 @@
-# Agape Language Specification (v1.1.0)
+# Agape Language Specification (v1.0.2)
 
 > Agape is a programming language for multi-agent systems. This document is the
 > authoritative reference. The prose (§0–§14) defines the language for a reader; the
@@ -1912,21 +1912,21 @@ every `Error` subtype regardless of the module that appended it.
 #### 19.2a Re-export
 
 A plain `import` binds names for the importing module's *own* use; it does not republish them. A
-**`pub import`** does: `pub import { Case } from cognition.signals;` makes `Case` part of the
+**`pub import`** does: `pub import { Shape } from geometry.internal;` makes `Shape` part of the
 importing module's public surface, so a library's entry module can present a single-import facade
-(`import cognition;` then gives the user `Case`) without leaking its internal submodule structure.
+(`import geometry;` then gives the user `Shape`) without leaking its internal submodule structure.
 `pub import m;` re-exports the whole imported prefix. Re-exported names obey visibility like any
 other `pub` name; a `pub import` of a non-`pub` name is a `VisibilityError`.
 
 ### 19.3 Packages and the manifest
 
 A **package** is a directory with an `agape.toml` carrying a `[package]` table and a library
-entry. The current project is a package (§16/§17). adds two manifest keys:
+entry. The current project is a package (§16/§17). A package declares two manifest keys:
 
 ```toml
-[package]   name = "cognition"   version = "1.1.0"   lib = "src/lib.ag"   # importable root
+[package]   name = "geometry"   version = "1.0.0"   lib = "src/lib.ag"   # importable root
 [dependencies]
-cognition = { path = "../cognition" }     # path dependency
+geometry  = { path = "../geometry" }      # path dependency
 util      = { git = "…", rev = "…" }      # pinned git dependency (no registry yet)
 ```
 

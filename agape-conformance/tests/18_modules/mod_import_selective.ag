@@ -1,9 +1,8 @@
 //! id:        mod_import_selective
 //! section:   18_modules
-//! since:     1.1
 //! expect:    accept
 //! modules:   util.ag
-//! spec:      v1.1.0 design 2.3 (selective import binds the bare name)
+//! spec:      §19.2 (selective import binds the bare name)
 //! ---
 import { dbl } from util;
 int y = dbl(21);

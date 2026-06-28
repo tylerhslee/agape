@@ -1,6 +1,6 @@
 //! The conformance scoreboard.
 //!
-//!     cargo run --bin conformance                      # default: ../agape-conformance/tests at v1.1
+//!     cargo run --bin conformance                      # default: ../agape-conformance/tests at v1.0
 //!     cargo run --bin conformance -- <tests_dir> <ver> # e.g. ... ../agape-conformance/tests 0.3
 //!     cargo run --bin conformance -- --fails           # only list failing tests
 //!
@@ -23,7 +23,7 @@ fn main() {
     let version = positional
         .get(1)
         .map(|s| conformance::parse_version(s))
-        .unwrap_or((1, 1));
+        .unwrap_or((1, 0));
 
     if !dir.exists() {
         eprintln!("conformance: tests dir not found: {}", dir.display());

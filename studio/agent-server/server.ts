@@ -13,6 +13,7 @@ import { makeRunner } from "./runner.ts";
 import { Learner } from "./learner.ts";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { pickVariant, agentsAndPrompts, safeProjectPath as resolveSafe } from "./lib.ts";
 const pExecFile = promisify(execFile);
 
 const PORT = Number(process.env.AGENT_PORT) || 8799;
@@ -98,14 +99,6 @@ function sendText(res: http.ServerResponse, code: number, body: string): void {
   res.end(buf);
 }
 
-// Which declared variant a model's forced-choice answer picked (or null).
-function pickVariant(text: string, variants: string[]): string | null {
-  const t = text.toLowerCase().trim();
-  for (const v of variants) if (t === v.toLowerCase()) return v;
-  for (const v of variants) if (t.includes(v.toLowerCase())) return v;
-  return null;
-}
-
 function readJson(req: http.IncomingMessage): Promise<any> {
   return new Promise((resolve, reject) => {
     let raw = "";
@@ -174,9 +167,7 @@ function projectFiles(): Array<{ rel: string; agents: string[]; prompts: string[
   walkAg(PROJECT, out);
   out.sort();
   return out.map((f) => {
-    const src = fs.readFileSync(f, "utf8");
-    const agents = [...src.matchAll(/^\s*agent\s+([A-Za-z_]\w*)/gm)].map((m) => m[1]);
-    const prompts = [...src.matchAll(/^\s*prompt\s+\S+\s+([A-Za-z_]\w*)\s*;/gm)].map((m) => m[1]);
+    const { agents, prompts } = agentsAndPrompts(fs.readFileSync(f, "utf8"));
     return { rel: path.relative(PROJECT, f).replace(/\\/g, "/"), agents, prompts };
   });
 }
@@ -191,12 +182,10 @@ function projectName(): string {
   return path.basename(PROJECT);
 }
 
-// Resolve a project-relative path, refusing anything that escapes the root.
+// Resolve a project-relative path, refusing anything that escapes the root (the
+// guard itself lives in lib.ts so it can be unit-tested).
 function safeProjectPath(rel: string): string | null {
-  if (!PROJECT) return null;
-  const full = path.resolve(PROJECT, rel);
-  if (!full.startsWith(PROJECT) || !full.endsWith(".ag")) return null;
-  return full;
+  return PROJECT ? resolveSafe(PROJECT, rel) : null;
 }
 
 // Run one project file through the `agape` CLI (--json), feeding prompt inputs.
