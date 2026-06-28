@@ -1,4 +1,4 @@
-//! The tree-walking interpreter + runtime (M4) — SPEC-1.0 §15.4.
+//! The tree-walking interpreter + runtime (M4) — SPEC-1.0 §14 / §15.4.
 //!
 //! Runs a checked program top-to-bottom to quiescence, driving the ledger. The
 //! three seams (provider/identity/tool) are deterministic **mocks** here: the
@@ -8,9 +8,10 @@
 //! `PromptOpened`), not the stochastic wording, so a fixed mock suffices and keeps
 //! runs reproducible. A real provider swaps in behind the same seam.
 //!
-//! The interpreter is deliberately fail-soft: an unresolved name or operation
-//! evaluates to `null` rather than crashing, so a well-formed program always runs
-//! to a ledger.
+//! The runtime implements the trusted kernel: declared seams, recorded gates,
+//! grant-checked consequential sinks, and ledger replay. Non-kernel WIP cases may
+//! still use mock/null behavior to keep exploratory programs running, but a
+//! kernel boundary must not infer authority from an unresolved value.
 
 use std::collections::HashMap;
 use std::io::{Read, Write};

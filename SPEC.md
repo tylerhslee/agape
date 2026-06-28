@@ -1,4 +1,4 @@
-# Agape Language Specification (v1.0.1)
+# Agape Language Specification (v1.0.2)
 
 > Agape is a programming language for multi-agent systems. This document is the
 > authoritative reference. The prose (§0–§14) defines the language for a reader; the
@@ -42,6 +42,13 @@ Two ideas underlie the language:
    is the **provider**; accountability is a `**principal`**; the world is a `**tool`**. Swapping a
    dependency's backend changes no Agape source.
 
+These ideas form Agape's **trusted kernel**: `Credence`, `Decision`, recorded gates
+(`endorse`/`attest`), the taint lattice, default-deny grants, consequential sink checks
+(`perform` and write tools), and ledger record/replay. Everything else in the language is
+either static structure erased before runtime (§19), ordinary computation over already-settled
+values, or surface syntax that desugars into this kernel (§20). No feature may introduce a new
+path from model testimony to world effect.
+
 ### 0.1 Scope and layering
 
 Agape is a domain language for the cognitive/agentic layer; it is not a general-purpose
@@ -52,6 +59,15 @@ reached, and governed, through the tool dependency. The
 primitive Agape provides is **endorsed judgment under uncertainty**: a non-deterministic
 semantic decision, trust-tracked, collapsed by an auditable gate, recorded on an
 append-only ledger.
+
+The kernel boundary is intentionally small. Library features, ergonomic gates, memory
+queries, package resolution, studio tooling, and deployment adapters are outside the trusted
+kernel unless they directly implement one of its invariants. A conformant implementation may
+be large, but its authority to act must reduce to the same chain:
+
+```
+testimony -> Credence<E> -> Decision<E> -> endorsed sink -> ledger
+```
 
 ### 0.2 Execution model
 
@@ -1084,30 +1100,56 @@ recorded before it acts, and every fact's provenance is auditable on an append-o
 
 ---
 
-## 14. Invariants the implementation must preserve
+## 14. Trusted kernel and invariants
+
+Agape's implementation is allowed to be broad, but its trusted kernel is deliberately
+small. A conformant implementation must preserve the following invariants before any
+surface feature, optimization, host integration, or deployment adapter is considered valid.
+
+**Kernel objects** — `Credence<E>` is the only model-derived graded judgment; `Decision<E>`
+is the only committed form of a `Credence<E>`; `endorse` and `attest` are the only recorded
+operations that discharge cognition-derived trust; the taint lattice is monotone except at
+those gates; `grants` are default-deny and never widened by runtime data; `perform` and write
+tools are consequential sinks; the ledger is the root of replayable state.
+
+**Allowed trust transitions** — there are no hidden declassifiers. The only legal path from
+model testimony to world effect is:
+
+```
+raw reply -> Credence<E> -> Decision<E> -> recorded endorsement -> granted sink -> ledger
+```
+
+A helper function, library abstraction, interface dispatch, memory recall, query, tool result,
+or `decide` sugar may make this path easier to write, but may not add a second path. A bare
+collapse (`c by R`) may guide control flow, but it is off-ledger and cannot license a
+consequential sink. Recall from memory defaults to graded; read tools join the trust of their
+inputs; write tools are sinks. If the checker cannot establish a value's type, trust,
+endorsement, tool effect, grant, or replay source at a kernel boundary, the conformant behavior is
+to reject rather than infer authority.
 
 **Foundational** — the log is the source of truth; external capability (cognition,
-identity, world/tools) enters only through a declared dependency; no hidden runtime (every sugar
-desugars).
+identity, world/tools) enters only through a declared dependency; no hidden runtime exists
+outside the kernel contract; every sugar desugars into kernel operations or erases statically.
 
-**Type & effect** — `sync` is the marked color and cannot reach a declared dependency (including a tool
-call), though it may `emit` and `endorse` an in-hand `Credence`; `event<T>` marks ledger
-presence; a send bound to a `Credence<E>` slot yields a graded judgment, never a
-committed value; the collapse `c by R` settles (`graded → settled`) off-ledger, `endorse` records
-it, and only a `settled` value may drive a consequential sink (a `perform` arg or a write-tool
-input); fusion of two or more `Credence`s (including `quorum`) requires a total
-`independent`/`dependent` declaration over the `array<Credence>`; `attest … by p` takes a
-`Principal` (no `text → Principal`); user `struct`/`enum`/`event`/`action` types are explicitly
-declared; a read `tool` requires a `use` grant and carries its inputs' trust; authority, trust
-(three-level), color, and tool-use are checked statically and interprocedurally; a violation is a
-compile error.
+**Type & effect** — `sync` is the marked color and cannot reach a declared dependency
+(including a tool call), though it may `emit` and `endorse` an in-hand `Credence`;
+`event<T>` marks ledger presence; a send bound to a `Credence<E>` slot yields a graded
+judgment, never a committed value; the collapse `c by R` settles (`graded → settled`)
+off-ledger, `endorse` records it, and only a `settled` value may drive a consequential sink
+(a `perform` arg or a write-tool input); fusion of two or more `Credence`s (including
+`quorum`) requires a total `independent`/`dependent` declaration over the `array<Credence>`;
+`attest … by p` takes a `Principal` (no `text → Principal`); user
+`struct`/`enum`/`event`/`action` types are explicitly declared; a read `tool` requires a
+`use` grant and carries its inputs' trust; authority, trust (three-level), color, and
+tool-use are checked statically and interprocedurally; a violation is a compile error.
 
 **Runtime** — ticks are system-level; structured output uses constrained decoding;
 subscriptions are prospective and hoisted (never retroactive), and history is reached by
 query; multi-handler firing is registration-order; a message trace is a prefix of
 `Sent→Delivered→Resolved`; every memory write carries a provenance backpointer; all three
-dependencies journal their oracle/tool results to the ledger for replay (§15.4.2); the margin floor
-`m` is enforced at the consequential sink.
+dependencies journal their oracle/tool results to the ledger for replay (§15.4.2); replay
+re-serves recorded dependency results and never re-invokes a write sink; the margin floor `m`
+is enforced at the consequential sink.
 
 ---
 
@@ -1653,6 +1695,12 @@ execute it — the concrete contract a conformant runtime is built against, maki
 operational semantics of §15.4 buildable. Where §16 and §15 appear to differ, §15 governs the
 meaning and §16 the mechanism; a conformant runtime satisfies both. Design points not fixed by §0–§15 are settled here by explicit, conformance-visible choices.
 
+The runtime is the implementation of the trusted kernel, not a host framework around it.
+Schedulers, storage engines, cloud services, OS hooks, and tool transports may vary, but they
+must expose the same kernel boundary: no external dependency is reached except through a
+declared seam, no consequential sink runs except through grants plus endorsement, and no
+future-relevant state escapes the ledger/replay contract.
+
 ### 16.1 Execution model and the scheduler
 
 The runtime is a **discrete-event simulator** over a single growing ledger (§0.2, §15.4.1). Its state
@@ -1932,21 +1980,35 @@ declaration and the gate's `by` (§13), no manifest fixture — and the gate rec
 `Rule` in its `Decided`/`Attestation` event, so which boundary governed (policy vs inline `by`
 override, §17.2) is observable. A fixture `agape.toml` sets only **connector/dependency** config
 for the run (e.g. `exposes_logprobs` to exercise the sampling fallback, §16.8).
+- **Kernel bypass coverage.** Every surface feature introduced above the kernel (modules,
+  imports, generics, interfaces, `decide`, memory query sugar, package resolution, provider
+  fallback, studio/runtime adapters) must have negative tests proving it cannot bypass taint,
+  endorsement, grants, write-tool gating, or replay. A feature is conformant only if its
+  accepted forms reduce to kernel operations and its rejected forms fail at the correct
+  boundary.
 
 ---
 
 ## 18. Deployment
 
-An Agape runtime runs entirely in userspace. It executes programs, exposes the tool dependency as
-the gated capability surface, enforces the membrane (the capability and gating discipline of
-§13), and writes every consequential action to the ledger for audit and replay. No kernel
-support is required.
+An Agape runtime may run entirely in userspace: it executes programs, exposes the tool
+dependency as the gated capability surface, enforces the membrane (the capability and gating
+discipline of §13), and writes every consequential action to the ledger for audit and replay.
+No kernel support is required for conformance.
 
-The membrane is a verifiable safety property — capability-gated and audited — in the sense
-that an eBPF program earns an in-kernel seat by being verifiable rather than trusted. Pushing
-that enforcement boundary into the operating system, so that the system rather than a trusted
-compiler mediates an agent's consequential actions, is the aim of a separate project (AIOS)
-and is out of scope here.
+The intended deployment trajectory is stronger than "an app engine that happens to run
+Agape." The trusted kernel can be the infrastructure component itself: a cloud control plane
+whose service calls are Agape write tools, a microservice fabric whose inter-service messages
+are ledgered Agape events, or an OS/runtime boundary where process, storage, network, and tool
+effects are mediated by Agape grants and gates. In all of these deployments, the substrate is
+conformant only if it preserves the same kernel contract: declared dependencies for external
+power, endorsed decisions for cognition-derived consequences, default-deny authority, and
+record/replay as the source of truth.
+
+This is analogous to eBPF's bargain with an operating system: code earns a lower-level seat by
+being verifiable, not merely trusted. Moving Agape's enforcement boundary downward — into a
+cloud platform, service mesh, or OS — is an implementation strategy for the same language, not a
+license to add ambient authority outside the ledger.
 
 ---
 
@@ -1963,6 +2025,11 @@ oracle model, the ledger evolution, replay, and the Stability theorem (§15.5.5,
 affected. Generics are monomorphized; interfaces are erased to the concrete agent address they
 bind; visibility governs names, not ledger contents. The one runtime-visible point is that an
 event's `etype` is a fully-qualified name (§19.2).
+
+The static layer is not a second authority system. It may hide names, package code, and check
+agent surfaces, but it cannot authorize a `perform`, settle a `Credence`, lower a write-tool
+sink, or create replay-relevant state except by emitting the same qualified kernel events. Any
+library-layer feature that would need a new trust transition belongs outside v1.
 
 ### 19.2 Modules, imports, and namespacing
 
@@ -2083,6 +2150,11 @@ unaffected.
 > **derived and enforced**. It is sugar over the gate engine (`endorse`/`attest`/`c by R`, §13) —
 > "every sugar desugars" (§14) — so it adds no dynamic semantics, and the engine forms remain
 > available directly for hand-calibration. The mathematics it rests on is §15.5.6.
+
+`decide` is intentionally outside the trusted kernel. Its job is to choose the correct kernel
+gate, principal-deference, and abstention shape from a readable declaration of stakes. If a
+`decide` form cannot be desugared into `Credence -> Decision -> recorded gate -> granted sink`,
+it is malformed, not a new primitive.
 
 ### 20.1 `reversible`, gate strictness, and the cold→warm phasing
 

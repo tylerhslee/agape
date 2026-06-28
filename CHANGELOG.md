@@ -6,6 +6,92 @@ All notable changes to Agape are recorded here. The format follows
 suite, and the studio move in lockstep — a release is the whole bundle at one
 version.
 
+## [1.0.2] — 2026-06-28
+
+This release hardens Agape's trusted kernel contract. It keeps the v1 surface
+intact, but makes the core safety boundary explicit: model testimony may affect
+the world only through `Credence -> Decision -> recorded endorsement -> granted
+sink -> ledger`.
+
+### Language & runtime
+- Defined the trusted kernel in the specification: `Credence`, `Decision`,
+  recorded gates (`endorse`/`attest`), the taint lattice, default-deny grants,
+  consequential sink checks, and ledger record/replay.
+- Made fail-closed behavior normative at kernel boundaries: unknown type, trust,
+  endorsement, tool effect, grant, or replay standing must reject rather than
+  infer authority.
+- Clarified that library features, interfaces, memory/query sugar, and readable
+  `decide` must erase statically or desugar into the trusted kernel.
+- Tightened checker behavior so unknown interfaces and unknown struct literals
+  reject instead of being silently tolerated.
+- Fixed qualified/re-exported struct literal resolution so legitimate module
+  facades and path-package imports remain accepted under the stricter checker.
+
+### Conformance
+- Reframed conformance as kernel-bypass resistance: new surface features should
+  include negative tests proving they cannot launder taint, invent authority,
+  skip endorsement, bypass write-tool settling, or evade replay.
+- Added the trusted-kernel bypass matrix as an explicit remaining coverage item.
+- Confirmed the reference implementation passes the full **197/197** test suite
+  after the stricter checker changes.
+
+### Deployment
+- Clarified that Agape is not limited to an app-server role: the same trusted
+  kernel can be the cloud control plane, service-fabric, or OS/runtime boundary
+  mediating process, storage, network, and tool effects through grants, gates,
+  and ledger replay.
+
+## [1.0.1] — 2026-06-28
+
+This release tightens Agape's spec/runtime/conformance lockstep and re-tags
+`v1.0.1` as the current mainline patch release. It keeps the v1 surface intact
+while making the conformance suite much harder to accidentally drift from the
+spec.
+
+### Language & runtime
+- Added strict multi-field invocation for declared events and actions:
+  `emit E(a, b)` and `perform A(a, b)` now match declared fields positionally,
+  with exact arity and per-field type checks.
+- Preserved declared field names in ledger payload rendering for multi-field
+  event/action records, improving audit readability without changing the ledger
+  event shape.
+- Fixed event handler binding so declared event fields can be accessed
+  consistently in handlers, including the scaffolded Q&A example's `Draft.answer`
+  path.
+- Bumped the reference implementation and spec labels to `v1.0.1`.
+
+### Conformance
+- Expanded the conformance suite from **144** tests in `v1.0.0` to **197** tests.
+- Added first-class coverage for multi-field event/action payloads: accepted
+  calls, arity rejection, and positional type rejection.
+- Added lockstep coverage for previously under-tested spec surfaces, including
+  malformed f-strings, unknown operators, undeclared `perform`, struct extra
+  fields, sync memory seams, late `DeliveryRefused`, exact ledger spines,
+  schema violations, memory tombstones/internalization, expression queries,
+  aggregation dependence, attestation ledger events, config binding failures,
+  package path dependencies, private visibility checks, non-generic typeargs,
+  interface outcome mismatch, and readable-gate cold/tie/read-only behavior.
+- Added `agape-conformance/COVERAGE.md` as the audit map for remaining
+  spec-to-suite gaps.
+
+### Docs & examples
+- Replaced the README's small refund sketch with a more representative support
+  workflow: prompt input, typed classification, policy endorsement, safe replies,
+  and a consequential credit action gated before money moves.
+- Added `agape-rs/examples/support-desk.ag` as the checked-in runnable version of
+  that README sample.
+- Updated the spec grammar/prose to clarify that event/action declaration fields
+  are invoked positionally and checked strictly.
+
+### Studio & CI
+- Fixed the default scaffolded project so the Studio backend and browser E2E
+  tests deliver the verified answer under the stricter type rules.
+- Hardened Studio bundle smoke testing with an ephemeral port and binary lookup
+  fallback, so CI exercises the shipped path more reliably.
+- Restored the Studio CI path to green: language build/test/conformance,
+  manifest drift, Studio backend, Studio web, bundle smoke, and Playwright E2E
+  all pass for the `v1.0.1` commit.
+
 ## [1.0.0] — 2026-06-27
 
 The first canonical release: the Agape language, compiler, runtime, and studio,
@@ -84,4 +170,6 @@ and every effect is recorded on an append-only **ledger**.
   manifest drift; `release.yml` builds the bundle for Linux, macOS, and Windows on a
   `v1.0.0` tag and publishes a GitHub Release.
 
+[1.0.2]: https://github.com/tylerhslee/agape/releases/tag/v1.0.2
+[1.0.1]: https://github.com/tylerhslee/agape/releases/tag/v1.0.1
 [1.0.0]: https://github.com/tylerhslee/agape/releases/tag/v1.0.0

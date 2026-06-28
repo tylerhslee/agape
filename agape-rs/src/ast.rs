@@ -1,11 +1,11 @@
 //! The Agape abstract syntax tree (SPEC-1.0 §15.2).
 //!
-//! The shape the parser produces. It covers the whole v1.0 surface: the three
-//! seams (cognition `<-`, tool calls, identity `verify … by p`), the graded
-//! judgment type `Credence<E>`, the gates `decide`/`verify`, `quorum`/fusion
-//! with `independent`/`dependent` declarations, user nominal types
-//! (`struct`/`enum`/`event`), capabilities (`grants { emit/reach/use }`), the
-//! reactive/query constructs, and the somatic kernel (`while`/`array`).
+//! The shape the parser produces. It covers the whole v1.0 surface, while the
+//! trusted kernel remains small: declared seams (cognition `<-`, tool calls,
+//! identity `verify … by p` / `attest`), `Credence<E>`, `Decision<E>`, recorded
+//! gates, taint-bearing memory/query values, grants, consequential sinks, and
+//! ledgered events. Higher-level constructs (`decide`, modules, interfaces,
+//! generics, query sugar) must either erase statically or reduce to this kernel.
 
 /// A type annotation. `event<T>` marks ledger presence; `Credence<E>` is a graded
 /// judgment over enum `E` (§3); `array<T>` is the somatic aggregate.

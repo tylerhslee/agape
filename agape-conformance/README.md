@@ -7,6 +7,19 @@ are derived **only** from `SPEC-1.0.md` — never from any implementation. An
 implementation passes by feeding each test through its own front end + runtime
 and matching the declared outcome.
 
+The suite is kernel-first. The most important tests are the ones that prove no
+surface feature can bypass the trusted path:
+
+```
+testimony -> Credence<E> -> Decision<E> -> recorded endorsement -> granted sink -> ledger
+```
+
+When a new feature lands — module sugar, package resolution, interfaces, memory
+queries, readable `decide`, provider fallback, runtime adapters — it should add
+at least one positive conformance case and, more importantly, negative cases that
+show it cannot launder taint, invent authority, skip endorsement, write through
+an unsettled tool input, or evade replay.
+
 ```
 agape-conformance/
 ├── README.md            ← this file
@@ -152,3 +165,7 @@ these header directives. A test with no directives runs under the default record
 An implementation is **conformant** iff it satisfies *every* test: all `reject`
 tests reject with the correct error class, and all `accept` tests are accepted
 (matching any asserted ledger).
+
+A feature is not considered covered merely because its happy path parses. It is
+covered when the suite also exercises the kernel boundary it touches: type,
+taint, endorsement, authority, tool effect, configuration binding, and replay.

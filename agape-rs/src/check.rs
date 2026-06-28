@@ -1,7 +1,7 @@
-//! The static checker (M3) — SPEC-1.0 §15.3.
+//! The static checker (M3) — SPEC-1.0 §14 / §15.3.
 //!
-//! One pass over the AST that enforces the v1.0 guarantees, mapping each to the
-//! conformance error classes:
+//! One pass over the AST that enforces the trusted-kernel guarantees, mapping
+//! each to the conformance error classes:
 //!
 //! - **Type** — user nominal types are declared; a struct literal supplies every
 //!   field; `emit` names a declared (or built-in) event; no `text → Principal`
@@ -18,9 +18,11 @@
 //! - **Exhaustiveness** — a `case` over an enum covers every variant or has a
 //!   `default`.
 //!
-//! The checker is deliberately **fail-open** on anything it cannot resolve (an
-//! unknown name, an un-inferable type): it raises a diagnostic only on a concrete
-//! violation, so well-formed programs are never rejected by accident.
+//! The kernel policy is fail-closed at consequential boundaries: if type, trust,
+//! endorsement, grant, tool effect, or replay standing cannot be established, the
+//! conformant result is rejection. During the reference implementation's WIP
+//! phases, unresolved non-kernel surface cases may still be accepted until the
+//! relevant conformance test pins them; kernel bypasses should never be accepted.
 
 use std::collections::{HashMap, HashSet};
 
@@ -130,7 +132,7 @@ pub fn check_program(modules: &[Module]) -> Result<(), AgapeError> {
     // ── the value-level checker over the combined declaration set ───────────────
     let mut c = Checker::new();
     for m in modules {
-        c.collect(&m.stmts);
+        c.collect(&m.path, &m.stmts);
     }
     c.seed_prelude();
     c.check_interfaces()?; // InterfaceError
@@ -509,7 +511,10 @@ impl Checker {
             for iface_name in &info.ifaces {
                 let bare = iface_name.rsplit('.').next().unwrap_or(iface_name);
                 let Some(members) = self.interfaces.get(bare).or_else(|| self.interfaces.get(iface_name)) else {
-                    continue; // unknown interface: fail-open (resolved elsewhere)
+                    return Err(AgapeError::new(
+                        ErrorClass::Interface,
+                        format!("agent `{aname}` declares unknown interface `{iface_name}` (§19.5)"),
+                    ));
                 };
                 // The events this agent handles via `when (E …)`.
                 let handled = self.agent_handled_events(&info.body);
@@ -720,7 +725,7 @@ impl Checker {
 
     // ── declaration collection ──────────────────────────────────────────────
 
-    fn collect(&mut self, stmts: &[Stmt]) {
+    fn collect(&mut self, module_path: &str, stmts: &[Stmt]) {
         for s in stmts {
             let s = match s {
                 Stmt::Pub(inner) => inner.as_ref(),
@@ -729,8 +734,14 @@ impl Checker {
             match s {
                 Stmt::StructDecl { name, typarams, fields } => {
                     self.structs.insert(name.clone(), fields.clone());
+                    if !module_path.is_empty() {
+                        self.structs.insert(format!("{module_path}.{name}"), fields.clone());
+                    }
                     if !typarams.is_empty() {
                         self.generic_structs.insert(name.clone());
+                        if !module_path.is_empty() {
+                            self.generic_structs.insert(format!("{module_path}.{name}"));
+                        }
                     }
                     for tp in typarams {
                         self.typarams.insert(tp.clone());
@@ -1507,7 +1518,12 @@ impl Checker {
 
     /// A struct literal must supply exactly the declared fields (§3).
     fn check_struct_lit(&self, name: &str, fields: &[(String, Expr)]) -> Result<(), AgapeError> {
-        let Some(decl) = self.structs.get(name) else { return Ok(()) }; // unknown struct: fail-open
+        let Some(decl) = self.resolve_struct_fields(name) else {
+            return Err(AgapeError::new(
+                ErrorClass::Type,
+                format!("struct literal `{name}` names no declared struct (§3)"),
+            ));
+        };
         let supplied: HashSet<&str> = fields.iter().map(|(k, _)| k.as_str()).collect();
         for f in decl {
             if !supplied.contains(f.name.as_str()) {
@@ -1526,6 +1542,28 @@ impl Checker {
             }
         }
         Ok(())
+    }
+
+    /// Resolve a struct name exactly, or by a unique bare-name fallback for static
+    /// facades/re-exports. Ambiguous fallbacks are rejected rather than guessed.
+    fn resolve_struct_fields(&self, name: &str) -> Option<&Vec<Field>> {
+        if let Some(fields) = self.structs.get(name) {
+            return Some(fields);
+        }
+        let bare = name.rsplit('.').next().unwrap_or(name);
+        if let Some(fields) = self.structs.get(bare) {
+            return Some(fields);
+        }
+        let mut found: Option<&Vec<Field>> = None;
+        for (decl_name, fields) in &self.structs {
+            if decl_name.rsplit('.').next().unwrap_or(decl_name) == bare {
+                if found.is_some() {
+                    return None;
+                }
+                found = Some(fields);
+            }
+        }
+        found
     }
 
     fn check_generic_instantiation(&self, name: &str) -> Result<(), AgapeError> {

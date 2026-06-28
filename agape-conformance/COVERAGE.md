@@ -38,6 +38,10 @@ be added when the spec grows or a gap is found.
 These are spec-defined behaviors that still need first-class conformance tests
 before the suite can honestly be called exhaustive.
 
+- Trusted-kernel bypass matrix: every new surface feature should have negative
+  tests proving it cannot bypass taint, endorsement, default-deny grants,
+  write-tool settling, or replay. The matrix should be tracked explicitly per
+  feature instead of inferred from happy-path coverage.
 - Package resolution: pinned dependency identity beyond local path roots.
 - Configuration binding: provider-derived `exposes_logprobs` and full manifest
   precedence across project/package/runtime layers.
