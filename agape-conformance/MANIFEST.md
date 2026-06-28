@@ -1,6 +1,6 @@
 # Agape v1.0 — Conformance Test Index
 
-**131 tests** — accept: 89, reject: 42
+**139 tests** — accept: 96, reject: 43
 
 A conformant implementation must satisfy every `accept`/`reject` test (rejects with the declared error class; accepts matching any asserted spine).
 
@@ -230,3 +230,16 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 | `iface_multi_implement` | accept | — | v1.1.0 design 5.2 (an agent may implement multiple interfaces) |
 | `iface_not_instantiable_reject` | reject | TypeError | v1.1.0 design 5.2 (an interface is a type but not instantiable; spawn of one is a TypeError) |
 | `iface_subtype_binding` | accept | — | v1.1.0 design 5.2 (agent <: interface; bind a concrete agent to an interface slot; reach over the interface) |
+
+## 22_gate
+
+| id | expect | error | spec |
+|---|---|---|---|
+| `gate_all_reversible_no_principal_accept` | accept | — | §20 (all arms reversible -> argmax-forever; no principal required) |
+| `gate_decide_defer_clause_accept` | accept | — | §20 (decide with a trailing `defer to p` clause supplies the principal) |
+| `gate_decide_principal_subject_accept` | accept | — | §20 (decide with a principal subject; a non-reversible arm has a reachable principal) |
+| `gate_decision_introspection_accept` | accept | — | §20.4, §9 (Decision provenance: .basis over the Basis enum) |
+| `gate_file_conformal_decl_accept` | accept | — | §20 (file-level `conformal α;` declaration) |
+| `gate_nonreversible_no_principal_reject` | reject | GateError | §20 (a non-reversible arm with no reachable principal is a compile error) |
+| `gate_per_gate_conformal_accept` | accept | — | §20 (per-gate conformal α override on a decide) |
+| `gate_reversible_action_accept` | accept | — | §20 (`reversible action` — reversibility annotates a perform sink) |

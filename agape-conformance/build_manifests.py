@@ -17,7 +17,7 @@ Run directives (the §16.5 harness contract): provider (empty|schema_violation|c
 attest (grant|deny), manifest (key=value; `; `-separated), replay (chain_head_equal),
 modules (companion module filenames; `; `-separated; live in a sibling <id>.d/ dir — v1.1.0).
 Error classes: LexError ParseError TypeError ColorViolation TaintViolation
-AuthorityViolation ExhaustivenessError ModuleError VisibilityError InterfaceError.
+AuthorityViolation ExhaustivenessError ModuleError VisibilityError InterfaceError GateError.
 
 Run:  python3 build_manifests.py            # rebuild MANIFEST.toml + MANIFEST.md
       python3 build_manifests.py --check    # validate + verify manifests are up to date (CI)
@@ -34,8 +34,8 @@ DIRECTIVE_LIST_KEYS = ("manifest", "modules")   # `;`-separated; configure the r
 EXPECTS = {"accept", "reject", "blocked"}
 ERROR_CLASSES = {"LexError", "ParseError", "TypeError", "ColorViolation",
                  "TaintViolation", "AuthorityViolation", "ExhaustivenessError",
-                 # v1.1.0 library layer:
-                 "ModuleError", "VisibilityError", "InterfaceError"}
+                 # v1.1.0 library layer + gate:
+                 "ModuleError", "VisibilityError", "InterfaceError", "GateError"}
 # Harness directives — the §16.5 test-mode contract a conformant runtime must honor.
 PROVIDER_MODES = {"empty", "schema_violation"}   # plus a scripted `credence(...)` form
 ATTEST_MODES = {"grant", "deny"}

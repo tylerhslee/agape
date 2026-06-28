@@ -83,7 +83,8 @@ sync text find(text q) { return search(q); }
 `AuthorityViolation` · `ExhaustivenessError`. **v1.1.0 library layer adds:**
 `ModuleError` (import resolution: unresolved/cyclic/ambiguous names) ·
 `VisibilityError` (naming a non-`pub` declaration; a `pub` signature exposing a private type) ·
-`InterfaceError` (an `agent : Iface` that fails to satisfy the contract). An implementation
+`InterfaceError` (an `agent : Iface` that fails to satisfy the contract) ·
+`GateError` (a `decide` with a non-reversible arm and no reachable principal, §20). An implementation
 may use its own internal names but must map to these categories; the suite asserts the
 category, not the message text.
 

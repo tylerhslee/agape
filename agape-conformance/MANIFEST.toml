@@ -1039,3 +1039,60 @@ section = "21_interfaces"
 path = "tests/21_interfaces/iface_subtype_binding.ag"
 expect = "accept"
 spec = "v1.1.0 design 5.2 (agent <: interface; bind a concrete agent to an interface slot; reach over the interface)"
+
+[[test]]
+id = "gate_all_reversible_no_principal_accept"
+section = "22_gate"
+path = "tests/22_gate/gate_all_reversible_no_principal_accept.ag"
+expect = "accept"
+spec = "§20 (all arms reversible -> argmax-forever; no principal required)"
+
+[[test]]
+id = "gate_decide_defer_clause_accept"
+section = "22_gate"
+path = "tests/22_gate/gate_decide_defer_clause_accept.ag"
+expect = "accept"
+spec = "§20 (decide with a trailing `defer to p` clause supplies the principal)"
+
+[[test]]
+id = "gate_decide_principal_subject_accept"
+section = "22_gate"
+path = "tests/22_gate/gate_decide_principal_subject_accept.ag"
+expect = "accept"
+spec = "§20 (decide with a principal subject; a non-reversible arm has a reachable principal)"
+
+[[test]]
+id = "gate_decision_introspection_accept"
+section = "22_gate"
+path = "tests/22_gate/gate_decision_introspection_accept.ag"
+expect = "accept"
+spec = "§20.4, §9 (Decision provenance: .basis over the Basis enum)"
+
+[[test]]
+id = "gate_file_conformal_decl_accept"
+section = "22_gate"
+path = "tests/22_gate/gate_file_conformal_decl_accept.ag"
+expect = "accept"
+spec = "§20 (file-level `conformal α;` declaration)"
+
+[[test]]
+id = "gate_nonreversible_no_principal_reject"
+section = "22_gate"
+path = "tests/22_gate/gate_nonreversible_no_principal_reject.ag"
+expect = "reject"
+error = "GateError"
+spec = "§20 (a non-reversible arm with no reachable principal is a compile error)"
+
+[[test]]
+id = "gate_per_gate_conformal_accept"
+section = "22_gate"
+path = "tests/22_gate/gate_per_gate_conformal_accept.ag"
+expect = "accept"
+spec = "§20 (per-gate conformal α override on a decide)"
+
+[[test]]
+id = "gate_reversible_action_accept"
+section = "22_gate"
+path = "tests/22_gate/gate_reversible_action_accept.ag"
+expect = "accept"
+spec = "§20 (`reversible action` — reversibility annotates a perform sink)"

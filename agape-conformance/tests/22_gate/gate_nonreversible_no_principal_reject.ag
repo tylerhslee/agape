@@ -1,0 +1,19 @@
+//! id:        gate_nonreversible_no_principal_reject
+//! section:   22_gate
+//! expect:    reject
+//! error:     GateError
+//! spec:      §20 (a non-reversible arm with no reachable principal is a compile error)
+//! ---
+enum R { Approve, Reject }
+event Ask(body: text);
+action Commit(body: text)
+agent Desk grants { perform Commit } {
+  when (Ask q) {
+    Credence<R> c = self <- q.body;
+    decide c {
+      Approve: perform Commit(q.body);
+      Reject: say("rejected");
+    }
+  }
+}
+spawn Desk d; awake d;

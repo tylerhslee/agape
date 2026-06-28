@@ -1,0 +1,18 @@
+//! id:        gate_all_reversible_no_principal_accept
+//! section:   22_gate
+//! expect:    accept
+//! spec:      §20 (all arms reversible -> argmax-forever; no principal required)
+//! ---
+enum R { Ping, Pong }
+event Ask(body: text);
+reversible write tool bool send(text m)
+agent Desk grants { use send } {
+  when (Ask q) {
+    Credence<R> c = self <- q.body;
+    decide c {
+      Ping: send("ping");
+      Pong: send("pong");
+    }
+  }
+}
+spawn Desk d; awake d;
