@@ -58,11 +58,16 @@ function Settings({ provider, setProvider, editorPrefs, setEditorPrefs }) {
         <div className="studio-card-h">Editor</div>
         <div className="studio-card-sub">Keybindings and behavior for the code editor.</div>
         <label className="studio-row">
-          <span>Vim mode <em>— modal editing, <code>:w</code> to save</em></span>
+          <span>Vim mode <em>— modal editing, <code>:w</code> save, <code>:q</code> close</em></span>
           <input type="checkbox" checked={!!editorPrefs?.vim}
             onChange={(e) => setEditorPrefs((p) => ({ ...p, vim: e.target.checked }))} />
         </label>
-        <div className="studio-row-note">Also toggleable from the editor's status bar. Persists across sessions.</div>
+        <label className="studio-row">
+          <span>Word wrap <em>— wrap long lines instead of scrolling</em></span>
+          <input type="checkbox" checked={!!editorPrefs?.wrap}
+            onChange={(e) => setEditorPrefs((p) => ({ ...p, wrap: e.target.checked }))} />
+        </label>
+        <div className="studio-row-note">Both also toggle from the editor's status bar. Persists across sessions.</div>
       </section>
 
       <section className="studio-card">

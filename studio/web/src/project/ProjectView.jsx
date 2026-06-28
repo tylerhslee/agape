@@ -3,17 +3,6 @@ import Editor from "@monaco-editor/react";
 import { registerAgape, AGAPE_LANG_ID } from "../agapeLanguage.js";
 import * as project from "./projectApi.js";
 
-// True when the viewport is phone-width — drives the single-pane mobile layout.
-function useNarrow(bp = 860) {
-  const [narrow, setNarrow] = useState(typeof window !== "undefined" && window.innerWidth < bp);
-  useEffect(() => {
-    const on = () => setNarrow(window.innerWidth < bp);
-    window.addEventListener("resize", on);
-    return () => window.removeEventListener("resize", on);
-  }, [bp]);
-  return narrow;
-}
-
 // Monaco options tuned to read like a real IDE: minimap, indent + bracket-pair
 // guides, bracket-pair colorization, sticky scroll, a smooth caret, and ligatures.
 const EDITOR_OPTIONS = {
@@ -29,19 +18,21 @@ const EDITOR_OPTIONS = {
   cursorSmoothCaretAnimation: "on",
   smoothScrolling: true,
   roundedSelection: true,
-  padding: { top: 10, bottom: 10 },
+  padding: { top: 8, bottom: 8 },
   bracketPairColorization: { enabled: true },
   guides: { indentation: true, bracketPairs: "active" },
   stickyScroll: { enabled: true },
-  scrollbar: { verticalScrollbarSize: 11, horizontalScrollbarSize: 11 },
+  scrollbar: { verticalScrollbarSize: 11, horizontalScrollbarSize: 11, horizontal: "auto" },
   lineNumbersMinChars: 3,
   overviewRulerLanes: 2,
+  wordWrap: "off", // toggled live via editor prefs
 };
 
-// The Project studio: inspect a project's agents, edit their .ag code, and run it —
-// feeding the `prompt` sensors with input and watching the spine that results.
-// Desktop shows the three panels side-by-side; phone shows one at a time.
-export default function ProjectView({ info, provider, editorPrefs, setEditorPrefs, onOpenSettings }) {
+// The Project workspace. The active rail icon (`panel`) chooses the left side
+// panel — "explorer" (file tree) or "run" (run inputs + output) — and the editor
+// fills the rest with no top chrome; a full-width status bar carries the actions
+// and position, the way a real IDE does.
+export default function ProjectView({ info, provider, editorPrefs, setEditorPrefs, onOpenSettings, onShowRun, panel = "explorer" }) {
   const [sel, setSel] = useState(info.files[0]?.rel || null);
   const [src, setSrc] = useState("");
   const [dirty, setDirty] = useState(false);
@@ -49,19 +40,19 @@ export default function ProjectView({ info, provider, editorPrefs, setEditorPref
   const [result, setResult] = useState(null);
   const [running, setRunning] = useState(false);
   const [msg, setMsg] = useState(null);
-  // The cognition provider is studio-level config (Studio -> Settings); this view
-  // only consumes it.
+  // The cognition provider is studio-level config (Studio -> Settings); consumed here.
   const { claude, samples, temp } = provider;
   const vim = !!editorPrefs?.vim;
   const dirtyRef = useRef(false);
   const edRef = useRef(null);          // the Monaco editor instance
   const vimRef = useRef(null);         // active vim-mode disposable, or null
   const vimStatusRef = useRef(null);   // status-bar node vim writes its mode into
-  const saveRef = useRef(null);        // freshest save(), for the :w ex-command
+  const saveRef = useRef(null);        // freshest save(), for :w and Ctrl+S
+  const closeRef = useRef(null);       // freshest close(), for :q
   const [pos, setPos] = useState({ line: 1, col: 1 });
   const [edReady, setEdReady] = useState(false);
-  const narrow = useNarrow();
-  const [pane, setPane] = useState("code"); // mobile: files | code | run
+  const wrap = !!editorPrefs?.wrap;
+  const [sideOpen, setSideOpen] = useState(true);
 
   const file = useMemo(() => info.files.find((f) => f.rel === sel), [info, sel]);
 
@@ -85,8 +76,6 @@ export default function ProjectView({ info, provider, editorPrefs, setEditorPref
   }, [result]);
 
   // The conversation: what was asked, and the verified answer the system delivered.
-  // The "answer" is the payload of the last `perform`ed action (e.g. Reply) — an
-  // action only fires when its gate commits, so its presence means "verified".
   const convo = useMemo(() => {
     if (!result || !result.ok) return null;
     const actions = [...(src || "").matchAll(/^\s*action\s+([A-Za-z_]\w*)/gm)].map((m) => m[1]);
@@ -107,29 +96,36 @@ export default function ProjectView({ info, provider, editorPrefs, setEditorPref
     return () => { live = false; };
   }, [sel]);
 
-  const pickFile = (rel) => { setSel(rel); setPane("code"); }; // on phone, jump to the code
+  const pickFile = (rel) => setSel(rel);
   const save = async () => {
+    if (!sel) return;
     try { await project.saveFile(sel, src); setDirty(false); dirtyRef.current = false; setMsg({ ok: true, t: "saved" }); }
     catch (e) { setMsg({ ok: false, t: e.message }); }
   };
   const runIt = async () => {
+    if (!sel) return;
+    onShowRun?.();           // reveal the run panel (Run space) for the output
     setRunning(true); setMsg(null);
-    setPane("run"); // on phone, surface the output
     try {
       if (dirtyRef.current) await project.saveFile(sel, src); // run what you see
       const r = await project.run(sel, prompts, { claude, samples, temperature: temp });
-      setResult({ ...r, claude, asked: { ...prompts } }); // remember provider + what was asked
+      setResult({ ...r, claude, asked: { ...prompts } });
       setDirty(false); dirtyRef.current = false;
     } catch (e) { setResult({ ok: false, error: e.message }); }
     setRunning(false);
   };
 
-  // Keep the Vim :w command bound to the freshest save().
+  // Keep the Vim ex-commands bound to the freshest closures.
   saveRef.current = save;
+  closeRef.current = () => setSel(null); // :q -> no file open
 
-  const onEditorMount = (ed) => {
+  const disposeVim = () => { try { vimRef.current?.dispose(); } catch { /* editor already gone */ } vimRef.current = null; };
+
+  const onEditorMount = (ed, monaco) => {
     edRef.current = ed;
     ed.onDidChangeCursorPosition((e) => setPos({ line: e.position.lineNumber, col: e.position.column }));
+    // Ctrl/Cmd+S saves — works whether or not Vim mode is on.
+    ed.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => saveRef.current?.());
     setEdReady(true);
   };
 
@@ -141,27 +137,35 @@ export default function ProjectView({ info, provider, editorPrefs, setEditorPref
       import("monaco-vim").then(({ initVimMode, VimMode }) => {
         if (cancelled || vimRef.current || !edRef.current) return;
         vimRef.current = initVimMode(edRef.current, vimStatusRef.current);
-        VimMode.Vim.defineEx("write", "w", () => saveRef.current && saveRef.current());
+        const V = VimMode.Vim;
+        V.defineEx("write", "w", () => saveRef.current?.());
+        V.defineEx("quit", "q", () => closeRef.current?.());                            // :q / :q!
+        V.defineEx("wq", "wq", () => { saveRef.current?.(); closeRef.current?.(); });   // :wq
+        V.defineEx("xit", "x", () => { saveRef.current?.(); closeRef.current?.(); });   // :x
       });
     } else if (!vim && vimRef.current) {
-      vimRef.current.dispose();
-      vimRef.current = null;
+      disposeVim();
     }
     return () => { cancelled = true; };
   }, [vim, edReady]);
 
-  useEffect(() => () => { if (vimRef.current) { vimRef.current.dispose(); vimRef.current = null; } }, []);
+  // When the file closes (e.g. Vim :q), tear down the editor-bound vim instance so
+  // it re-attaches cleanly to the next file that's opened.
+  useEffect(() => {
+    if (!sel) { disposeVim(); edRef.current = null; setEdReady(false); }
+  }, [sel]);
 
-  const showFiles = !narrow || pane === "files";
-  const showCode = !narrow || pane === "code";
-  const showRun = !narrow || pane === "run";
+  useEffect(() => () => disposeVim(), []);
 
-  const sidebar = (
+  // Word wrap is a live Monaco option — flip it without recreating the editor.
+  useEffect(() => { edRef.current?.updateOptions({ wordWrap: wrap ? "on" : "off" }); }, [wrap, edReady]);
+
+  const filesPanel = (
     <aside className="pj-side">
-      <div className="pj-side-h">agents &amp; files</div>
+      <div className="pj-side-h">explorer</div>
       {info.files.map((f) => (
         <div key={f.rel} className={"pj-file" + (f.rel === sel ? " on" : "")} onClick={() => pickFile(f.rel)}>
-          <div className="pj-fname">{f.rel}</div>
+          <div className="pj-fname"><i className="ti ti-file-code" /> {f.rel}</div>
           {f.agents.map((a) => <div key={a} className="pj-agent">▸ {a}</div>)}
           {f.prompts.map((p) => <div key={p} className="pj-sensor">⌁ {p} <span className="pj-dim">(input)</span></div>)}
         </div>
@@ -170,45 +174,14 @@ export default function ProjectView({ info, provider, editorPrefs, setEditorPref
     </aside>
   );
 
-  const editor = (
-    <main className="pj-editor">
-      {sel ? (
-        <>
-          <div className="pj-ed-bar">
-            <span className="pj-ed-tab">
-              <i className="ti ti-file-code" />
-              {sel.split("/").pop()}
-              {dirty && <i className="pj-ed-dot" title="unsaved changes" />}
-            </span>
-            <span className="pj-ed-crumbs">{[info.name, ...sel.split("/")].join("  ›  ")}</span>
-          </div>
-          <div className="pj-ed-wrap">
-            <Editor height="100%" language={AGAPE_LANG_ID} theme="agape-dark" path={sel} value={src}
-              onChange={(v) => { setSrc(v ?? ""); setDirty(true); dirtyRef.current = true; }}
-              beforeMount={registerAgape} onMount={onEditorMount} options={EDITOR_OPTIONS} />
-          </div>
-          <div className="pj-ed-status">
-            <span className="pj-st"><i className="ti ti-letter-a" /> Agape</span>
-            <span className="pj-st">Ln {pos.line}, Col {pos.col}</span>
-            <span className="pj-st">Spaces: 2</span>
-            <span className="pj-st-vim" ref={vimStatusRef} />
-            <button
-              className={"pj-st-btn" + (vim ? " on" : "")}
-              onClick={() => setEditorPrefs((p) => ({ ...p, vim: !p.vim }))}
-              title="Toggle Vim mode"
-            >
-              <i className="ti ti-keyboard" />{vim ? "VIM" : "vim"}
-            </button>
-            <span className="pj-st">UTF-8</span>
-          </div>
-        </>
-      ) : <div className="pj-dim" style={{ margin: "auto" }}>select a file</div>}
-    </main>
-  );
-
   const runPanel = (
     <section className="pj-run-panel">
-      <div className="pj-side-h">run · {claude ? "🧠 live Claude" : "deterministic mock"}</div>
+      <div className="pj-side-h">
+        run · {sel ? sel.split("/").pop() : "no file"}
+        <button className="pj-run-btn" onClick={runIt} disabled={!sel || running}>
+          <i className="ti ti-player-play-filled" />{running ? "…" : "Run"}
+        </button>
+      </div>
       {file && file.prompts.length > 0 ? (
         <div className="pj-inputs">
           <div className="pj-dim" style={{ marginBottom: 6 }}>user input → the <code>prompt</code> sensors:</div>
@@ -222,8 +195,6 @@ export default function ProjectView({ info, provider, editorPrefs, setEditorPref
           ))}
         </div>
       ) : <div className="pj-dim" style={{ padding: "0 12px 8px" }}>no <code>prompt</code> sensors — runs on awake.</div>}
-
-      {msg && <div className={"pj-msg " + (msg.ok ? "ok" : "bad")}>{msg.t}</div>}
 
       <div className="pj-spine">
         {!result ? (
@@ -278,30 +249,65 @@ export default function ProjectView({ info, provider, editorPrefs, setEditorPref
 
   return (
     <div className="pj">
-      <header className="pj-top">
-        <span className="pj-provider" title="Cognition provider — change in Studio → Settings">
-          <i className="ti ti-cpu" />
-          {claude ? `live Claude · ${samples} draw${samples === 1 ? "" : "s"}${temp > 0 ? ` · temp ${temp}` : ""}` : "deterministic mock"}
-          {onOpenSettings && <button className="pj-link" onClick={onOpenSettings}>settings</button>}
-        </span>
-        <span style={{ flex: 1 }} />
-        <button onClick={save} disabled={!sel}>{dirty ? "Save*" : "Save"}</button>
-        <button className="pj-run" onClick={runIt} disabled={!sel || running}>{running ? "running…" : "▶ Run"}</button>
-      </header>
-
-      {narrow && (
-        <nav className="pj-seg">
-          <button className={pane === "files" ? "on" : ""} onClick={() => setPane("files")}>Files</button>
-          <button className={pane === "code" ? "on" : ""} onClick={() => setPane("code")}>Code</button>
-          <button className={pane === "run" ? "on" : ""} onClick={() => setPane("run")}>Run{result ? ` (${result.ok ? result.events.length : "✗"})` : ""}</button>
-        </nav>
-      )}
-
-      <div className={"pj-body" + (narrow ? " narrow" : "")}>
-        {showFiles && sidebar}
-        {showCode && editor}
-        {showRun && runPanel}
+      <div className="pj-body">
+        {sideOpen && (panel === "run" ? runPanel : filesPanel)}
+        <main className="pj-editor">
+          {sel ? (
+            <Editor height="100%" language={AGAPE_LANG_ID} theme="agape-dark" path={sel} value={src}
+              onChange={(v) => { setSrc(v ?? ""); setDirty(true); dirtyRef.current = true; }}
+              beforeMount={registerAgape} onMount={onEditorMount} options={EDITOR_OPTIONS} />
+          ) : (
+            <div className="pj-empty">
+              <i className="ti ti-file-off" />
+              <div>No file open</div>
+              <div className="pj-dim">Pick a file from the explorer to start editing.</div>
+            </div>
+          )}
+        </main>
       </div>
+
+      <footer className="pj-status">
+        <button className="pj-st-toggle" onClick={() => setSideOpen((o) => !o)}
+          title={sideOpen ? "Hide side panel" : "Show side panel"}>
+          <i className={"ti " + (sideOpen ? "ti-layout-sidebar-left-collapse" : "ti-layout-sidebar-left-expand")} />
+        </button>
+        {sel ? (
+          <>
+            <span className="pj-st-file"><i className="ti ti-file-code" />{sel.split("/").pop()}{dirty && <i className="pj-dot" title="unsaved changes" />}</span>
+            <button className="pj-st-run" onClick={runIt} disabled={running} title="Run (saves first)">
+              <i className="ti ti-player-play-filled" />{running ? "running…" : "Run"}
+            </button>
+            <button className="pj-st-save" onClick={save} disabled={!dirty} title="Save  (Ctrl/Cmd+S)">
+              <i className="ti ti-device-floppy" />{dirty ? "Save" : "Saved"}
+            </button>
+            <span className="pj-st-provider" onClick={onOpenSettings} title="Cognition provider — Studio → Settings">
+              <i className="ti ti-cpu" />{claude ? `Claude · ${samples}×${temp > 0 ? ` · ${temp}` : ""}` : "mock"}
+            </span>
+            <span className="pj-st-grow" ref={vimStatusRef} />
+            {msg && <span className={msg.ok ? "ok" : "bad"}>{msg.t}</span>}
+            <span className="pj-st-i">Ln {pos.line}, Col {pos.col}</span>
+            <span className="pj-st-i">Spaces: 2</span>
+            <span className="pj-st-i"><i className="ti ti-letter-a" />Agape</span>
+            <button className={"pj-st-tog" + (wrap ? " on" : "")} onClick={() => setEditorPrefs((p) => ({ ...p, wrap: !p.wrap }))}
+              title="Toggle word wrap">
+              <i className="ti ti-text-wrap" />wrap
+            </button>
+            <button className={"pj-st-tog" + (vim ? " on" : "")} onClick={() => setEditorPrefs((p) => ({ ...p, vim: !p.vim }))}
+              title="Toggle Vim mode">
+              <i className="ti ti-keyboard" />{vim ? "VIM" : "vim"}
+            </button>
+          </>
+        ) : (
+          <>
+            <span className="pj-st-i pj-dim">no file open</span>
+            <span className="pj-st-grow" ref={vimStatusRef} />
+            <button className={"pj-st-tog" + (wrap ? " on" : "")} onClick={() => setEditorPrefs((p) => ({ ...p, wrap: !p.wrap }))}
+              title="Toggle word wrap">
+              <i className="ti ti-text-wrap" />wrap
+            </button>
+          </>
+        )}
+      </footer>
       <style>{STYLE}</style>
     </div>
   );
@@ -328,59 +334,54 @@ function SpineRow({ e }) {
 const STYLE = `
 .pj{display:flex;flex-direction:column;flex:1;min-height:0;background:var(--bg);color:var(--text);font:14px/1.5 var(--sans)}
 .pj code{font:12px var(--mono);color:var(--muted)}
-.pj-top{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--border-soft);background:var(--surface);flex-wrap:wrap}
-.pj-badge{font:600 12px var(--mono);padding:4px 9px;border-radius:var(--radius-sm);background:var(--accent-soft);color:var(--accent)}
-.pj-path{font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:40vw}
 .pj button{font:inherit;cursor:pointer;border:1px solid var(--border);background:var(--surface-2);color:var(--text);border-radius:var(--radius-sm);padding:6px 12px}
 .pj button:hover{background:var(--surface-3)}
-.pj button.pj-run{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);font-weight:600}
-.pj button.pj-run:hover{background:#6cb3ff}
 .pj button:disabled{opacity:.5;cursor:default}
 .pj-dim{color:var(--muted)}.ok{color:var(--ok)}.bad{color:var(--err)}
-.pj-provider{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
-.pj-provider i{font-size:14px;color:var(--type)}
-.pj button.pj-link{background:none;border:none;color:var(--accent);padding:0;margin-left:4px;font-size:12px;text-decoration:underline}
-.pj button.pj-link:hover{background:none;color:#6cb3ff}
-/* mobile segmented switcher */
-.pj-seg{display:flex;gap:6px;padding:8px 12px;border-bottom:1px solid var(--border-soft);background:var(--surface)}
-.pj-seg button{flex:1;font:inherit;cursor:pointer;border:1px solid var(--border);background:var(--surface-2);color:var(--muted);border-radius:var(--radius-sm);padding:9px}
-.pj-seg button.on{background:var(--surface-3);color:var(--text);border-color:var(--border)}
 .pj-body{flex:1;display:flex;min-height:0}
-.pj-body.narrow{flex-direction:column}
-.pj-side{width:240px;border-right:1px solid var(--border-soft);background:var(--surface);overflow:auto}
-.pj-side-h{font:600 11px var(--mono);text-transform:uppercase;letter-spacing:.5px;color:var(--faint);padding:10px 12px 4px}
+/* left side panels — explorer (files) or run (inputs + output) */
+.pj-side{width:190px;flex:none;border-right:1px solid var(--border-soft);background:var(--surface);overflow:auto}
+.pj-run-panel{width:360px;flex:none;border-right:1px solid var(--border-soft);background:var(--surface);display:flex;flex-direction:column;min-height:0}
+.pj-side-h{display:flex;align-items:center;gap:8px;font:600 11px var(--mono);text-transform:uppercase;letter-spacing:.5px;color:var(--faint);padding:9px 12px 6px}
 .pj-file{padding:7px 12px;cursor:pointer;border-bottom:1px solid var(--border-soft)}
 .pj-file:hover{background:var(--surface-2)}.pj-file.on{background:var(--accent-soft)}
-.pj-fname{font:600 12.5px var(--mono)}
+.pj-fname{display:flex;align-items:center;gap:6px;font:600 12.5px var(--mono)}
+.pj-fname i.ti{color:var(--accent);font-size:14px}
 .pj-agent{font:12px var(--mono);color:var(--ok);padding-left:8px}
 .pj-sensor{font:12px var(--mono);color:var(--accent);padding-left:8px}
-.pj-editor{flex:1;display:flex;flex-direction:column;min-width:0}
-.pj-ed-bar{display:flex;align-items:flex-end;gap:12px;height:36px;padding:0 12px;background:var(--surface);border-bottom:1px solid var(--border-soft);flex:none}
-.pj-ed-tab{display:flex;align-items:center;gap:7px;height:36px;padding:0 13px;font-size:12.5px;color:var(--text);background:var(--bg);border:1px solid var(--border-soft);border-bottom-color:var(--bg);border-radius:6px 6px 0 0;margin-bottom:-1px}
-.pj-ed-tab i.ti{font-size:14px;color:var(--accent)}
-.pj-ed-dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--warn)}
-.pj-ed-crumbs{font-size:11.5px;color:var(--faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-bottom:9px}
-.pj-ed-wrap{flex:1;min-height:0}
-.pj-ed-status{display:flex;align-items:center;gap:14px;height:26px;padding:0 12px;background:var(--surface);border-top:1px solid var(--border-soft);font-size:11px;color:var(--muted);flex:none}
-.pj-st{display:flex;align-items:center;gap:4px}
-.pj-st i.ti{font-size:13px}
-.pj-st-vim{flex:1;min-width:0;font:11px var(--mono);color:var(--accent);overflow:hidden;white-space:nowrap}
-.pj button.pj-st-btn{display:flex;align-items:center;gap:4px;background:none;border:none;color:var(--muted);padding:1px 7px;border-radius:4px;font-size:10.5px;text-transform:uppercase;letter-spacing:.04em}
-.pj button.pj-st-btn:hover{background:var(--surface-3);color:var(--text)}
-.pj button.pj-st-btn.on,.pj button.pj-st-btn.on i{color:var(--accent)}
-.pj-run-panel{width:360px;border-left:1px solid var(--border-soft);background:var(--surface);display:flex;flex-direction:column;min-height:0}
-.pj-toggle{display:flex;align-items:center;gap:5px;font-size:12px;color:var(--muted);cursor:pointer;user-select:none}
-.pj-toggle input{cursor:pointer;accent-color:var(--warn)}
-.pj-toggle-hdr{border:1px solid var(--border);border-radius:var(--radius-sm);padding:5px 10px;background:var(--surface-2)}
-.pj-toggle-hdr.on{border-color:var(--warn);color:var(--text);background:rgba(210,153,34,.12)}
-.pj-cfg{display:flex;align-items:center;gap:12px;padding:2px 12px 6px;flex-wrap:wrap}
-.pj-cfg label{display:flex;align-items:center;gap:5px;font-size:12px;color:var(--muted)}
-.pj-cfg input{width:52px;font:inherit;background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:var(--radius-sm);padding:3px 6px}
+.pj button.pj-run-btn{margin-left:auto;display:flex;align-items:center;gap:4px;background:var(--accent);border-color:var(--accent);color:var(--accent-ink);font-weight:600;padding:3px 10px;font-size:11px}
+.pj button.pj-run-btn:hover{background:#6cb3ff}
+/* editor — no top chrome, fills the pane */
+.pj-editor{flex:1;min-width:0;display:flex;flex-direction:column}
+.pj-empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;color:var(--muted)}
+.pj-empty i{font-size:34px;color:var(--faint)}
+/* full-width status bar — carries the actions + position */
+.pj-status{flex:none;display:flex;align-items:center;gap:12px;height:28px;padding:0 10px;background:var(--surface);border-top:1px solid var(--border-soft);font-size:11px;color:var(--muted)}
+.pj-st-file{display:flex;align-items:center;gap:6px;color:var(--text)}
+.pj-st-file i.ti{font-size:13px;color:var(--accent)}
+.pj-dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--warn)}
+.pj button.pj-st-run{display:flex;align-items:center;gap:4px;background:none;border:none;color:var(--ok);padding:2px 7px;border-radius:4px;font-size:11px}
+.pj button.pj-st-run:hover{background:var(--surface-3)}
+.pj button.pj-st-save{display:flex;align-items:center;gap:4px;background:none;border:none;color:var(--muted);padding:2px 7px;border-radius:4px;font-size:11px}
+.pj button.pj-st-save:hover{background:var(--surface-3);color:var(--text)}
+.pj button.pj-st-save:disabled{opacity:1;color:var(--faint)}
+.pj-st-provider{display:flex;align-items:center;gap:4px;cursor:pointer}
+.pj-st-provider i.ti{font-size:13px;color:var(--type)}
+.pj-st-provider:hover{color:var(--text)}
+.pj-st-grow{flex:1;min-width:0;font:11px var(--mono);color:var(--accent);overflow:hidden;white-space:nowrap;padding-left:4px}
+.pj-st-i{display:flex;align-items:center;gap:4px}
+.pj-st-i i.ti{font-size:13px}
+.pj button.pj-st-tog{display:flex;align-items:center;gap:4px;background:none;border:none;color:var(--muted);padding:2px 7px;border-radius:4px;font-size:10.5px;text-transform:uppercase;letter-spacing:.04em}
+.pj button.pj-st-tog:hover{background:var(--surface-3);color:var(--text)}
+.pj button.pj-st-tog.on,.pj button.pj-st-tog.on i{color:var(--accent)}
+.pj button.pj-st-toggle{display:flex;align-items:center;background:none;border:none;color:var(--muted);padding:2px 5px;border-radius:4px}
+.pj button.pj-st-toggle:hover{background:var(--surface-3);color:var(--text)}
+.pj button.pj-st-toggle i.ti{font-size:15px}
+/* run panel body */
 .pj-inputs{padding:6px 12px}
 .pj-inp{display:flex;flex-direction:column;gap:3px;margin-bottom:8px}
 .pj-inp span{font:12px var(--mono);color:var(--accent)}
 .pj-inp input{font:inherit;background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:var(--radius-sm);padding:6px 9px}
-.pj-msg{padding:4px 12px;font-size:12.5px}
 .pj-spine{flex:1;overflow:auto;border-top:1px solid var(--border-soft);margin-top:4px}
 .pj-qa{display:flex;flex-direction:column;gap:8px;padding:12px}
 .pj-msg-row{display:flex;gap:8px;align-items:flex-start}
@@ -407,7 +408,4 @@ const STYLE = `
 .ev-s{grid-area:s;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ev-p{grid-area:p;color:var(--faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ev-good .ev-k{color:var(--ok)}.ev-warn .ev-k{color:var(--warn)}.ev-note .ev-k{color:var(--accent)}.ev-dim .ev-k{color:var(--faint)}
-/* phone: each visible pane fills the screen so the editor is readable */
-.pj-body.narrow .pj-side,.pj-body.narrow .pj-run-panel{width:auto;flex:1;border:none}
-.pj-body.narrow .pj-editor{flex:1}
 `;

@@ -19,7 +19,8 @@ import "./missioncontrol/missioncontrol.css";
 const PROJECT_SPACES = [
   { id: "overview", label: "Overview", icon: "ti-layout-dashboard" },
   { id: "work", label: "Work", icon: "ti-checklist" },
-  { id: "code", label: "Code", icon: "ti-code" },
+  { id: "explorer", label: "Files", icon: "ti-folder" },
+  { id: "run", label: "Run", icon: "ti-player-play" },
 ];
 
 export default function Shell({ info }) {
@@ -42,12 +43,15 @@ export default function Shell({ info }) {
   // Editor preferences (e.g. Vim mode) are studio-level too — toggled in
   // Studio -> Settings or from the editor status bar, persisted across sessions.
   const [editorPrefs, setEditorPrefs] = useState(() => {
-    try { return { vim: localStorage.getItem("agape.vim") === "1" }; }
-    catch { return { vim: false }; }
+    try { return { vim: localStorage.getItem("agape.vim") === "1", wrap: localStorage.getItem("agape.wrap") === "1" }; }
+    catch { return { vim: false, wrap: false }; }
   });
   useEffect(() => {
     try { localStorage.setItem("agape.vim", editorPrefs.vim ? "1" : "0"); } catch {}
   }, [editorPrefs.vim]);
+  useEffect(() => {
+    try { localStorage.setItem("agape.wrap", editorPrefs.wrap ? "1" : "0"); } catch {}
+  }, [editorPrefs.wrap]);
 
   const open = (id) => dispatch({ type: "SELECT", id });
   const goProject = (id) => { dispatch({ type: "CLEAR_SELECT" }); setView(id); };
@@ -83,6 +87,17 @@ export default function Shell({ info }) {
             editorPrefs={editorPrefs} setEditorPrefs={setEditorPrefs}
             onExit={() => setView("overview")}
           />
+        ) : view === "explorer" || view === "run" ? (
+          // Editor views own the whole pane (no topbar) for maximum editing space.
+          hasProject
+            ? <ProjectView
+                info={info} provider={provider}
+                editorPrefs={editorPrefs} setEditorPrefs={setEditorPrefs}
+                panel={view}
+                onShowRun={() => setView("run")}
+                onOpenSettings={() => setView("studio")}
+              />
+            : <NoProject />
         ) : (
           <>
             <header className="app-topbar">
@@ -91,25 +106,15 @@ export default function Shell({ info }) {
               {info?.root && <span className="app-sub">{info.root}</span>}
             </header>
             <div className="app-stage">
-              {view === "code" ? (
-                hasProject
-                  ? <ProjectView
-                      info={info} provider={provider}
-                      editorPrefs={editorPrefs} setEditorPrefs={setEditorPrefs}
-                      onOpenSettings={() => setView("studio")}
-                    />
-                  : <NoProject />
-              ) : (
-                <div className="app-scroll">
-                  {selected ? (
-                    <ItemDetail item={selected} dispatch={dispatch} onClose={() => dispatch({ type: "CLEAR_SELECT" })} />
-                  ) : view === "work" ? (
-                    <WorkBoard state={state} dispatch={dispatch} onOpen={open} />
-                  ) : (
-                    <MissionControl state={state} dispatch={dispatch} onOpen={open} goWork={() => setView("work")} />
-                  )}
-                </div>
-              )}
+              <div className="app-scroll">
+                {selected ? (
+                  <ItemDetail item={selected} dispatch={dispatch} onClose={() => dispatch({ type: "CLEAR_SELECT" })} />
+                ) : view === "work" ? (
+                  <WorkBoard state={state} dispatch={dispatch} onOpen={open} />
+                ) : (
+                  <MissionControl state={state} dispatch={dispatch} onOpen={open} goWork={() => setView("work")} />
+                )}
+              </div>
             </div>
           </>
         )}
