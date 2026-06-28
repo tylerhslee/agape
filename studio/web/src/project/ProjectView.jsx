@@ -14,10 +14,34 @@ function useNarrow(bp = 860) {
   return narrow;
 }
 
+// Monaco options tuned to read like a real IDE: minimap, indent + bracket-pair
+// guides, bracket-pair colorization, sticky scroll, a smooth caret, and ligatures.
+const EDITOR_OPTIONS = {
+  fontSize: 13.5,
+  fontFamily: '"Cascadia Code", "JetBrains Mono", "Fira Code", Menlo, Consolas, monospace',
+  fontLigatures: true,
+  minimap: { enabled: true, renderCharacters: false, maxColumn: 70 },
+  automaticLayout: true,
+  scrollBeyondLastLine: false,
+  tabSize: 2,
+  renderLineHighlight: "all",
+  cursorBlinking: "smooth",
+  cursorSmoothCaretAnimation: "on",
+  smoothScrolling: true,
+  roundedSelection: true,
+  padding: { top: 10, bottom: 10 },
+  bracketPairColorization: { enabled: true },
+  guides: { indentation: true, bracketPairs: "active" },
+  stickyScroll: { enabled: true },
+  scrollbar: { verticalScrollbarSize: 11, horizontalScrollbarSize: 11 },
+  lineNumbersMinChars: 3,
+  overviewRulerLanes: 2,
+};
+
 // The Project studio: inspect a project's agents, edit their .ag code, and run it —
 // feeding the `prompt` sensors with input and watching the spine that results.
 // Desktop shows the three panels side-by-side; phone shows one at a time.
-export default function ProjectView({ info }) {
+export default function ProjectView({ info, provider, editorPrefs, setEditorPrefs, onOpenSettings }) {
   const [sel, setSel] = useState(info.files[0]?.rel || null);
   const [src, setSrc] = useState("");
   const [dirty, setDirty] = useState(false);
@@ -25,11 +49,17 @@ export default function ProjectView({ info }) {
   const [result, setResult] = useState(null);
   const [running, setRunning] = useState(false);
   const [msg, setMsg] = useState(null);
-  const [claude, setClaude] = useState(() => { try { return localStorage.getItem("agape.claude") === "1"; } catch { return false; } });
-  const [samples, setSamples] = useState(5);
-  const [temp, setTemp] = useState(0); // 0 = provider default
-  useEffect(() => { try { localStorage.setItem("agape.claude", claude ? "1" : "0"); } catch {} }, [claude]);
+  // The cognition provider is studio-level config (Studio -> Settings); this view
+  // only consumes it.
+  const { claude, samples, temp } = provider;
+  const vim = !!editorPrefs?.vim;
   const dirtyRef = useRef(false);
+  const edRef = useRef(null);          // the Monaco editor instance
+  const vimRef = useRef(null);         // active vim-mode disposable, or null
+  const vimStatusRef = useRef(null);   // status-bar node vim writes its mode into
+  const saveRef = useRef(null);        // freshest save(), for the :w ex-command
+  const [pos, setPos] = useState({ line: 1, col: 1 });
+  const [edReady, setEdReady] = useState(false);
   const narrow = useNarrow();
   const [pane, setPane] = useState("code"); // mobile: files | code | run
 
@@ -94,6 +124,34 @@ export default function ProjectView({ info }) {
     setRunning(false);
   };
 
+  // Keep the Vim :w command bound to the freshest save().
+  saveRef.current = save;
+
+  const onEditorMount = (ed) => {
+    edRef.current = ed;
+    ed.onDidChangeCursorPosition((e) => setPos({ line: e.position.lineNumber, col: e.position.column }));
+    setEdReady(true);
+  };
+
+  // Attach / detach Vim mode as the preference toggles (lazy-loaded on first use).
+  useEffect(() => {
+    if (!edRef.current) return undefined;
+    let cancelled = false;
+    if (vim && !vimRef.current) {
+      import("monaco-vim").then(({ initVimMode, VimMode }) => {
+        if (cancelled || vimRef.current || !edRef.current) return;
+        vimRef.current = initVimMode(edRef.current, vimStatusRef.current);
+        VimMode.Vim.defineEx("write", "w", () => saveRef.current && saveRef.current());
+      });
+    } else if (!vim && vimRef.current) {
+      vimRef.current.dispose();
+      vimRef.current = null;
+    }
+    return () => { cancelled = true; };
+  }, [vim, edReady]);
+
+  useEffect(() => () => { if (vimRef.current) { vimRef.current.dispose(); vimRef.current = null; } }, []);
+
   const showFiles = !narrow || pane === "files";
   const showCode = !narrow || pane === "code";
   const showRun = !narrow || pane === "run";
@@ -115,9 +173,35 @@ export default function ProjectView({ info }) {
   const editor = (
     <main className="pj-editor">
       {sel ? (
-        <Editor height="100%" language={AGAPE_LANG_ID} theme="agape-dark" path={sel} value={src}
-          onChange={(v) => { setSrc(v ?? ""); setDirty(true); dirtyRef.current = true; }} beforeMount={registerAgape}
-          options={{ fontSize: 13, minimap: { enabled: false }, automaticLayout: true, scrollBeyondLastLine: false, tabSize: 2 }} />
+        <>
+          <div className="pj-ed-bar">
+            <span className="pj-ed-tab">
+              <i className="ti ti-file-code" />
+              {sel.split("/").pop()}
+              {dirty && <i className="pj-ed-dot" title="unsaved changes" />}
+            </span>
+            <span className="pj-ed-crumbs">{[info.name, ...sel.split("/")].join("  ›  ")}</span>
+          </div>
+          <div className="pj-ed-wrap">
+            <Editor height="100%" language={AGAPE_LANG_ID} theme="agape-dark" path={sel} value={src}
+              onChange={(v) => { setSrc(v ?? ""); setDirty(true); dirtyRef.current = true; }}
+              beforeMount={registerAgape} onMount={onEditorMount} options={EDITOR_OPTIONS} />
+          </div>
+          <div className="pj-ed-status">
+            <span className="pj-st"><i className="ti ti-letter-a" /> Agape</span>
+            <span className="pj-st">Ln {pos.line}, Col {pos.col}</span>
+            <span className="pj-st">Spaces: 2</span>
+            <span className="pj-st-vim" ref={vimStatusRef} />
+            <button
+              className={"pj-st-btn" + (vim ? " on" : "")}
+              onClick={() => setEditorPrefs((p) => ({ ...p, vim: !p.vim }))}
+              title="Toggle Vim mode"
+            >
+              <i className="ti ti-keyboard" />{vim ? "VIM" : "vim"}
+            </button>
+            <span className="pj-st">UTF-8</span>
+          </div>
+        </>
       ) : <div className="pj-dim" style={{ margin: "auto" }}>select a file</div>}
     </main>
   );
@@ -125,19 +209,6 @@ export default function ProjectView({ info }) {
   const runPanel = (
     <section className="pj-run-panel">
       <div className="pj-side-h">run · {claude ? "🧠 live Claude" : "deterministic mock"}</div>
-      {claude && (
-        <div className="pj-cfg">
-          <label title="Forced-choice draws per graded judgment (the sampling fallback, §16.8). More draws → finer probability, more cost.">
-            samples
-            <input type="number" min="1" max="50" value={samples} onChange={(e) => setSamples(Math.max(1, Math.min(50, +e.target.value || 1)))} />
-          </label>
-          <label title="Sampling temperature (0 = provider default). Higher → more variation across draws.">
-            temp
-            <input type="number" min="0" max="1" step="0.1" value={temp} onChange={(e) => setTemp(Math.max(0, Math.min(1, +e.target.value || 0)))} />
-          </label>
-          <span className="pj-dim" style={{ fontSize: 11 }}>{samples} draws · {temp > 0 ? `temp ${temp}` : "default temp"}</span>
-        </div>
-      )}
       {file && file.prompts.length > 0 ? (
         <div className="pj-inputs">
           <div className="pj-dim" style={{ marginBottom: 6 }}>user input → the <code>prompt</code> sensors:</div>
@@ -208,13 +279,12 @@ export default function ProjectView({ info }) {
   return (
     <div className="pj">
       <header className="pj-top">
-        <span className="pj-badge">{info.name}</span>
-        {!narrow && <span className="pj-dim pj-path" title={info.root}>{info.root}</span>}
+        <span className="pj-provider" title="Cognition provider — change in Studio → Settings">
+          <i className="ti ti-cpu" />
+          {claude ? `live Claude · ${samples} draw${samples === 1 ? "" : "s"}${temp > 0 ? ` · temp ${temp}` : ""}` : "deterministic mock"}
+          {onOpenSettings && <button className="pj-link" onClick={onOpenSettings}>settings</button>}
+        </span>
         <span style={{ flex: 1 }} />
-        <label className={"pj-toggle pj-toggle-hdr" + (claude ? " on" : "")} title="Route the ← cognition seam to a real Claude (sampling fallback for graded judgments) instead of the deterministic mock. Tune samples/temp in the Run panel.">
-          <input type="checkbox" checked={claude} onChange={(e) => setClaude(e.target.checked)} />
-          <span>🧠 Claude</span>
-        </label>
         <button onClick={save} disabled={!sel}>{dirty ? "Save*" : "Save"}</button>
         <button className="pj-run" onClick={runIt} disabled={!sel || running}>{running ? "running…" : "▶ Run"}</button>
       </header>
@@ -267,6 +337,10 @@ const STYLE = `
 .pj button.pj-run:hover{background:#6cb3ff}
 .pj button:disabled{opacity:.5;cursor:default}
 .pj-dim{color:var(--muted)}.ok{color:var(--ok)}.bad{color:var(--err)}
+.pj-provider{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
+.pj-provider i{font-size:14px;color:var(--type)}
+.pj button.pj-link{background:none;border:none;color:var(--accent);padding:0;margin-left:4px;font-size:12px;text-decoration:underline}
+.pj button.pj-link:hover{background:none;color:#6cb3ff}
 /* mobile segmented switcher */
 .pj-seg{display:flex;gap:6px;padding:8px 12px;border-bottom:1px solid var(--border-soft);background:var(--surface)}
 .pj-seg button{flex:1;font:inherit;cursor:pointer;border:1px solid var(--border);background:var(--surface-2);color:var(--muted);border-radius:var(--radius-sm);padding:9px}
@@ -280,7 +354,20 @@ const STYLE = `
 .pj-fname{font:600 12.5px var(--mono)}
 .pj-agent{font:12px var(--mono);color:var(--ok);padding-left:8px}
 .pj-sensor{font:12px var(--mono);color:var(--accent);padding-left:8px}
-.pj-editor{flex:1;display:flex;min-width:0}
+.pj-editor{flex:1;display:flex;flex-direction:column;min-width:0}
+.pj-ed-bar{display:flex;align-items:flex-end;gap:12px;height:36px;padding:0 12px;background:var(--surface);border-bottom:1px solid var(--border-soft);flex:none}
+.pj-ed-tab{display:flex;align-items:center;gap:7px;height:36px;padding:0 13px;font-size:12.5px;color:var(--text);background:var(--bg);border:1px solid var(--border-soft);border-bottom-color:var(--bg);border-radius:6px 6px 0 0;margin-bottom:-1px}
+.pj-ed-tab i.ti{font-size:14px;color:var(--accent)}
+.pj-ed-dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--warn)}
+.pj-ed-crumbs{font-size:11.5px;color:var(--faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-bottom:9px}
+.pj-ed-wrap{flex:1;min-height:0}
+.pj-ed-status{display:flex;align-items:center;gap:14px;height:26px;padding:0 12px;background:var(--surface);border-top:1px solid var(--border-soft);font-size:11px;color:var(--muted);flex:none}
+.pj-st{display:flex;align-items:center;gap:4px}
+.pj-st i.ti{font-size:13px}
+.pj-st-vim{flex:1;min-width:0;font:11px var(--mono);color:var(--accent);overflow:hidden;white-space:nowrap}
+.pj button.pj-st-btn{display:flex;align-items:center;gap:4px;background:none;border:none;color:var(--muted);padding:1px 7px;border-radius:4px;font-size:10.5px;text-transform:uppercase;letter-spacing:.04em}
+.pj button.pj-st-btn:hover{background:var(--surface-3);color:var(--text)}
+.pj button.pj-st-btn.on,.pj button.pj-st-btn.on i{color:var(--accent)}
 .pj-run-panel{width:360px;border-left:1px solid var(--border-soft);background:var(--surface);display:flex;flex-direction:column;min-height:0}
 .pj-toggle{display:flex;align-items:center;gap:5px;font-size:12px;color:var(--muted);cursor:pointer;user-select:none}
 .pj-toggle input{cursor:pointer;accent-color:var(--warn)}

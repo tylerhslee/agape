@@ -60,15 +60,6 @@ export default function MissionControl({ state, onOpen, goWork }) {
           nothing in progress — <span className="mc-link" onClick={goWork}>open the work board</span> to start something.
         </div>
       )}
-
-      <div className="mc-section-title"><i className="ti ti-robot" /> fleet</div>
-      <div className="mc-fleet-empty">
-        <i className="ti ti-plug-off" />
-        <div>
-          <div>no agents connected.</div>
-          <div className="mc-muted-sm">Slot in the Agape agentic backend to see operators routing and delegating. Until then, manage all work by hand on the <span className="mc-link" onClick={goWork}>work board</span>.</div>
-        </div>
-      </div>
     </div>
   );
 }
