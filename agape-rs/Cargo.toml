@@ -1,6 +1,6 @@
 [package]
 name = "agape-rs"
-version = "0.0.1"
+version = "1.0.0"
 edition = "2021"
 description = "A clean-room Rust implementation of the Agape language, built to pass the v1.0 conformance suite."
 

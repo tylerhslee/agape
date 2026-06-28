@@ -2,7 +2,7 @@
   "name": "agape-studio-agent-server",
   "private": true,
   "type": "module",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Somatic simulation of Agape Studio's agentic operators via the Claude API — placeholder for the Agape + MCP backend.",
   "scripts": {
     "dev": "tsx server.ts",

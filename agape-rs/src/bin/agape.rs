@@ -20,8 +20,10 @@ fn main() {
     match cmd {
         "run" => cmd_run(rest),
         "check" => cmd_check(rest),
+        "build" => cmd_build(rest),
         "init" => cmd_init(rest),
         "studio" => cmd_studio(rest),
+        "configure" | "config" => cmd_configure(rest),
         "" | "-h" | "--help" | "help" => usage(),
         other => {
             eprintln!("agape: unknown command {other:?}\n");
@@ -38,7 +40,11 @@ fn usage() {
          agape init [name]                         scaffold a new project\n  \
          agape run   <file.ag> [--prompt k=v ...]  run a program; feed `prompt` sensors with --prompt\n  \
          agape check <file.ag>                     static checks only (no run)\n  \
-         agape studio                              open Agape Studio for the current project"
+         agape build                               check every .ag in the project; emit .agape/build.json\n  \
+         agape configure [key value]               show or set project config (provider/model/samples/temperature)\n  \
+         agape studio                              open Agape Studio for the current project\n\n\
+         run flags:  --claude  --samples N  --temperature T  --provider host:port  --json\n\
+         project defaults come from agape.toml ([provider] backend/model, [runtime] samples/temperature); flags override."
     );
 }
 
@@ -67,7 +73,11 @@ fn cmd_check(args: &[String]) {
 
 fn cmd_run(args: &[String]) {
     let mut file: Option<String> = None;
+    // Project defaults (agape.toml) seed the config; explicit flags below override.
     let mut config = HarnessConfig::default();
+    if let Ok(cwd) = std::env::current_dir() {
+        apply_project_config(&mut config, &load_project_config(&cwd));
+    }
     let mut json = false;
     let mut i = 0;
     while i < args.len() {
@@ -249,12 +259,57 @@ fn cmd_studio(_args: &[String]) {
     println!("Agape Studio — project {}", project.display());
     println!("  studio home: {}", home.display());
 
-    // Launch the agent-server and the web dev server, scoped to this project via
-    // AGAPE_PROJECT. (A packaged build would embed these; here we drive the source.)
+    // The agent-server runs the project through THIS binary (so a bundle uses its
+    // own bin/agape, not a dev path).
+    let self_bin = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("agape"));
+
+    // A bundle ships the agent-server as source; install its deps once on first run.
+    let agent_dir = home.join("agent-server");
+    if !agent_dir.join("node_modules").is_dir() {
+        println!("  installing studio dependencies (first run, one-time)…");
+        let ok = Command::new("npm")
+            .args(["install", "--no-audit", "--no-fund"])
+            .current_dir(&agent_dir)
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if !ok {
+            eprintln!("agape: `npm install` for the studio failed — is Node installed?\n  (cd {} && npm install)", agent_dir.display());
+            exit(1);
+        }
+    }
+
+    let web_dist = home.join("web-dist");
+    if web_dist.is_dir() {
+        // Bundle mode: the agent-server serves the prebuilt web app — one process.
+        let agent = Command::new("npx")
+            .args(["tsx", "server.ts"])
+            .current_dir(home.join("agent-server"))
+            .env("AGAPE_PROJECT", &project)
+            .env("AGAPE_WEB_DIST", &web_dist)
+            .env("AGAPE_BIN", &self_bin)
+            .spawn();
+        match agent {
+            Ok(_) => {
+                println!("  serving at http://localhost:8799  (Ctrl-C to stop)");
+                open_browser("http://localhost:8799");
+                let _ = std::io::Read::read(&mut std::io::stdin(), &mut [0u8; 1]);
+            }
+            Err(_) => eprintln!(
+                "agape: could not start the studio — is Node installed?\n  \
+                 (cd {h}/agent-server && AGAPE_PROJECT={p} AGAPE_WEB_DIST={d} npx tsx server.ts)",
+                h = home.display(), p = project.display(), d = web_dist.display()
+            ),
+        }
+        return;
+    }
+
+    // Dev mode (running from a source checkout): agent-server + the Vite dev server.
     let agent = Command::new("npx")
         .args(["tsx", "server.ts"])
         .current_dir(home.join("agent-server"))
         .env("AGAPE_PROJECT", &project)
+        .env("AGAPE_BIN", &self_bin)
         .spawn();
     let web = Command::new("npm")
         .args(["run", "dev"])
@@ -266,12 +321,10 @@ fn cmd_studio(_args: &[String]) {
         (Ok(_), Ok(_)) => {
             println!("  serving at http://localhost:5173  (Ctrl-C to stop)");
             open_browser("http://localhost:5173");
-            // Keep the launcher alive so the child servers stay up.
             let _ = std::io::Read::read(&mut std::io::stdin(), &mut [0u8; 1]);
         }
         _ => eprintln!(
-            "agape: could not start the studio servers — is Node installed and `studio/` built?\n\
-             Start them manually:\n  \
+            "agape: could not start the studio servers — is Node installed and `studio/` built?\n  \
              (cd {h}/agent-server && AGAPE_PROJECT={p} npx tsx server.ts)\n  \
              (cd {h}/web && AGAPE_PROJECT={p} npm run dev)",
             h = home.display(),
@@ -285,19 +338,25 @@ fn cmd_studio(_args: &[String]) {
 fn studio_home() -> Option<PathBuf> {
     if let Ok(p) = std::env::var("AGAPE_STUDIO_HOME") {
         let p = PathBuf::from(p);
-        if p.join("web").is_dir() {
+        if is_studio(&p) {
             return Some(p);
         }
     }
     let mut dir = std::env::current_dir().ok()?;
-    for _ in 0..12 {
+    for _ in 0..16 {
         let s = dir.join("studio");
-        if s.join("web").is_dir() && s.join("agent-server").is_dir() {
+        if is_studio(&s) {
             return Some(s);
         }
         dir = dir.parent()?.to_path_buf();
     }
     None
+}
+
+/// A studio home has the agent-server and either source (`web/`, dev) or a
+/// prebuilt app (`web-dist/`, bundle).
+fn is_studio(p: &Path) -> bool {
+    p.join("agent-server").is_dir() && (p.join("web").is_dir() || p.join("web-dist").is_dir())
 }
 
 fn open_browser(url: &str) {
@@ -306,6 +365,209 @@ fn open_browser(url: &str) {
         if Command::new(bin).args(&args).spawn().is_ok() {
             return;
         }
+    }
+}
+
+// ── project config (agape.toml) ──────────────────────────────────────────────
+
+#[derive(Default)]
+struct ProjectConfig {
+    provider: Option<String>, // "mock" | "claude"/"anthropic" | "host:port"
+    model: Option<String>,
+    samples: Option<u32>,
+    temperature: Option<f64>,
+}
+
+/// Walk up from `start` to find the nearest `agape.toml`.
+fn find_manifest(start: &Path) -> Option<PathBuf> {
+    let mut dir = start.to_path_buf();
+    for _ in 0..16 {
+        let p = dir.join("agape.toml");
+        if p.is_file() {
+            return Some(p);
+        }
+        dir = dir.parent()?.to_path_buf();
+    }
+    None
+}
+
+/// Read the run-relevant keys from `agape.toml` ([provider] backend/model,
+/// [runtime] samples/temperature). A deliberately minimal reader, not a TOML lib.
+fn load_project_config(start: &Path) -> ProjectConfig {
+    let mut c = ProjectConfig::default();
+    let Some(path) = find_manifest(start) else { return c };
+    let Ok(text) = std::fs::read_to_string(&path) else { return c };
+    let mut section = String::new();
+    for line in text.lines() {
+        let l = line.trim();
+        if l.is_empty() || l.starts_with('#') {
+            continue;
+        }
+        if let Some(s) = l.strip_prefix('[').and_then(|x| x.strip_suffix(']')) {
+            section = s.trim().to_string();
+            continue;
+        }
+        let Some((k, v)) = l.split_once('=') else { continue };
+        let (k, v) = (k.trim(), v.trim().trim_matches('"').trim());
+        match (section.as_str(), k) {
+            ("provider", "backend") => c.provider = Some(v.to_string()),
+            ("provider", "model") => c.model = Some(v.to_string()),
+            ("runtime", "samples") => c.samples = v.parse().ok(),
+            ("runtime", "temperature") => c.temperature = v.parse().ok(),
+            _ => {}
+        }
+    }
+    c
+}
+
+/// Seed a `HarnessConfig` from project config (CLI flags override afterward).
+fn apply_project_config(cfg: &mut HarnessConfig, pc: &ProjectConfig) {
+    if let Some(p) = &pc.provider {
+        if p == "claude" || p == "anthropic" {
+            cfg.provider_url = Some("127.0.0.1:8799".to_string());
+        } else if p.contains(':') {
+            cfg.provider_url = Some(p.clone());
+        }
+        // "mock" (or anything else) → leave the deterministic mock.
+    }
+    if let Some(s) = pc.samples {
+        cfg.samples = s;
+    }
+    if let Some(t) = pc.temperature {
+        cfg.temperature = t;
+    }
+}
+
+// ── build ─────────────────────────────────────────────────────────────────────
+
+fn cmd_build(_args: &[String]) {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let root = find_manifest(&cwd).and_then(|p| p.parent().map(Path::to_path_buf)).unwrap_or(cwd);
+    let mut files = Vec::new();
+    collect_ag(&root, &mut files);
+    files.sort();
+    if files.is_empty() {
+        eprintln!("agape build: no .ag files under {}", root.display());
+        exit(1);
+    }
+    println!("building {} ({} file{})", root.display(), files.len(), if files.len() == 1 { "" } else { "s" });
+    let mut entries = Vec::new();
+    let mut ok = 0;
+    for f in &files {
+        let rel = f.strip_prefix(&root).unwrap_or(f).to_string_lossy().replace('\\', "/");
+        match agape_rs::process(&read_or_die(&f.to_string_lossy())) {
+            Ok(_) => {
+                ok += 1;
+                println!("  ✓ {rel}");
+                entries.push(format!("{{\"file\":{},\"ok\":true}}", json_str(&rel)));
+            }
+            Err(e) => {
+                println!("  ✗ {rel} — {e}");
+                entries.push(format!("{{\"file\":{},\"ok\":false,\"error\":{},\"class\":{}}}", json_str(&rel), json_str(&e.message), json_str(&e.class.to_string())));
+            }
+        }
+    }
+    let all_ok = ok == files.len();
+    let out_dir = root.join(".agape");
+    let _ = std::fs::create_dir_all(&out_dir);
+    let manifest = format!("{{\"ok\":{all_ok},\"passed\":{ok},\"total\":{},\"files\":[{}]}}", files.len(), entries.join(","));
+    let _ = std::fs::write(out_dir.join("build.json"), &manifest);
+    println!("\n{}/{} ok · wrote {}", ok, files.len(), out_dir.join("build.json").display());
+    if !all_ok {
+        exit(1);
+    }
+}
+
+/// Collect `.ag` files under `dir`, skipping build/dep output directories.
+fn collect_ag(dir: &Path, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    for e in entries.flatten() {
+        let p = e.path();
+        if p.is_dir() {
+            let name = p.file_name().and_then(|s| s.to_str()).unwrap_or("");
+            if matches!(name, ".agape" | "target" | "node_modules" | ".git" | "dist") {
+                continue;
+            }
+            collect_ag(&p, out);
+        } else if p.extension().and_then(|s| s.to_str()) == Some("ag") {
+            out.push(p);
+        }
+    }
+}
+
+// ── configure ───────────────────────────────────────────────────────────────
+
+fn cmd_configure(args: &[String]) {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let manifest = find_manifest(&cwd).unwrap_or_else(|| cwd.join("agape.toml"));
+
+    if args.is_empty() {
+        let pc = load_project_config(&cwd);
+        println!("config ({}):", manifest.display());
+        println!("  provider     = {}", pc.provider.as_deref().unwrap_or("mock"));
+        println!("  model        = {}", pc.model.as_deref().unwrap_or("(provider default)"));
+        println!("  samples      = {}", pc.samples.map(|s| s.to_string()).unwrap_or_else(|| "5 (default)".into()));
+        println!("  temperature  = {}", pc.temperature.map(|t| t.to_string()).unwrap_or_else(|| "(provider default)".into()));
+        println!("\nset with:  agape configure <provider|model|samples|temperature> <value>");
+        return;
+    }
+    if args.len() < 2 {
+        eprintln!("usage: agape configure <key> <value>   (keys: provider model samples temperature)");
+        exit(2);
+    }
+    let (key, value) = (args[0].as_str(), args[1].as_str());
+    let (section, tkey, quote) = match key {
+        "provider" => ("provider", "backend", true),
+        "model" => ("provider", "model", true),
+        "samples" => ("runtime", "samples", false),
+        "temperature" => ("runtime", "temperature", false),
+        "threshold" => ("runtime", "threshold", false),
+        other => {
+            eprintln!("agape configure: unknown key {other:?} (provider|model|samples|temperature|threshold)");
+            exit(2);
+        }
+    };
+    set_toml_value(&manifest, section, tkey, value, quote);
+    println!("set {key} = {value}   ({})", manifest.display());
+}
+
+/// Set `key = value` under `[section]` in a TOML file, creating the section/key
+/// if absent. Minimal, line-based — fine for the flat manifest we own.
+fn set_toml_value(path: &Path, section: &str, key: &str, value: &str, quote: bool) {
+    let rendered = if quote { format!("{key} = \"{value}\"") } else { format!("{key} = {value}") };
+    let text = std::fs::read_to_string(path).unwrap_or_default();
+    let mut lines: Vec<String> = text.lines().map(String::from).collect();
+
+    // Find the section's line range [start, end).
+    let header = format!("[{section}]");
+    let sec_start = lines.iter().position(|l| l.trim() == header);
+    match sec_start {
+        Some(s) => {
+            let end = lines[s + 1..]
+                .iter()
+                .position(|l| l.trim_start().starts_with('['))
+                .map(|off| s + 1 + off)
+                .unwrap_or(lines.len());
+            // Replace an existing `key =` line within the section, else insert.
+            let existing = lines[s + 1..end].iter().position(|l| l.trim_start().starts_with(&format!("{key} ")) || l.trim_start().starts_with(&format!("{key}=")));
+            match existing {
+                Some(off) => lines[s + 1 + off] = rendered,
+                None => lines.insert(end, rendered),
+            }
+        }
+        None => {
+            if !lines.is_empty() && !lines.last().map(|l| l.is_empty()).unwrap_or(true) {
+                lines.push(String::new());
+            }
+            lines.push(header);
+            lines.push(rendered);
+        }
+    }
+    let mut out = lines.join("\n");
+    out.push('\n');
+    if let Err(e) = std::fs::write(path, out) {
+        eprintln!("agape configure: cannot write {}: {e}", path.display());
+        exit(1);
     }
 }
 
@@ -362,9 +624,16 @@ fn agape_toml(name: &str) -> String {
          name = \"{name}\"\n\
          entry = \"main.ag\"\n\n\
          [provider]\n\
-         # Point this at a model connector for a live run. With no connector the\n\
-         # runtime uses a deterministic mock judgment, so `agape run` is reproducible.\n\
-         exposes_logprobs = true\n"
+         # `mock` (default — offline, deterministic, reproducible) or `claude`\n\
+         # (a live model via the studio agent-server). Switch with:\n\
+         #   agape configure provider claude\n\
+         backend = \"mock\"\n\
+         model = \"claude-haiku-4-5\"\n\n\
+         [runtime]\n\
+         # Sampling-fallback draws per graded judgment (§16.8); raise for finer\n\
+         # probabilities at higher cost.\n\
+         samples = 5\n\
+         # temperature = 0.7\n"
     )
 }
 
