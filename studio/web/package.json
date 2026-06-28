@@ -1,7 +1,7 @@
 {
   "name": "agape-studio-web",
   "private": true,
-  "version": "1.0.1",
+  "version": "1.0.2",
   "type": "module",
   "description": "Agape Studio — the VS Code-skinned React frontend for event-driven management.",
   "scripts": {
@@ -13,6 +13,8 @@
   },
   "dependencies": {
     "@monaco-editor/react": "^4.6.0",
+    "monaco-editor": "^0.55.1",
+    "monaco-vim": "^0.4.4",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },

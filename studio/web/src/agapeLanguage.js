@@ -19,8 +19,8 @@ export function registerAgape(monaco) {
 
   monaco.languages.setMonarchTokensProvider(AGAPE_LANG_ID, {
     defaultToken: "",
-    // v1.0.0 keyword set (SPEC §2). Contextual words (as/by/about/reach/use/
-    // origin/expires/of/confidence/margin/conformal/over) are deliberately NOT
+    // Keyword set (SPEC §2). Contextual words (as/by/about/reach/use/origin/
+    // expires/of/confidence/margin/conformal/over/to) are deliberately NOT
     // keywords — they lex as identifiers, meaningful only in position.
     keywords: [
       "agent", "extend", "sync", "struct", "enum", "tool", "principal", "policy",
@@ -100,6 +100,6 @@ export function registerAgape(monaco) {
       { token: "operator", foreground: "d4d4d4" },
       { token: "invalid", foreground: "f48771", fontStyle: "underline" },
     ],
-    colors: { "editor.background": "#1e1e1e" },
+    colors: { "editor.background": "#121419" },
   });
 }
