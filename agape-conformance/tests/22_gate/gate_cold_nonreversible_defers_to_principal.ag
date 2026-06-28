@@ -1,0 +1,20 @@
+//! id:        gate_cold_nonreversible_defers_to_principal
+//! section:   22_gate
+//! expect:    accept
+//! provider:  credence(Approve=0.9, Reject=0.1)
+//! contains:  Attestation(c); Commit(d)
+//! spec:      §20.1, §20.3 (cold non-reversible decide defers to a reachable principal before the action arm commits)
+//! ---
+enum R { Approve, Reject }
+action Commit(text body);
+principal boss;
+agent Desk grants { perform Commit } {
+  on awake {
+    Credence<R> c = self <- "approve?";
+    boss decide c {
+      Approve: perform Commit("approved");
+      Reject: say("rejected");
+    }
+  }
+}
+spawn Desk d; awake d;

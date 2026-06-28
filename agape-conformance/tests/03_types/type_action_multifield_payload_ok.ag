@@ -1,0 +1,11 @@
+//! id:        type_action_multifield_payload_ok
+//! section:   03_types
+//! expect:    accept
+//! ledger:    Spawned(a); AgentAwake(a); Charge(a)
+//! spec:      §3, §13 (perform invocation uses positional fields in declaration order)
+//! ---
+action Charge(int cents, text account);
+agent A grants { perform Charge } {
+  on awake { perform Charge(2500, "acct-7"); }
+}
+spawn A a; awake a;

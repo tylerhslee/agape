@@ -1,0 +1,11 @@
+//! id:        vis_private_extend_reject
+//! section:   19_visibility
+//! expect:    reject
+//! error:     VisibilityError
+//! modules:   m.ag
+//! spec:      §19.4 (a private agent cannot be named in extend from another module)
+//! ---
+import m;
+agent Child {
+  extend m.Base();
+}

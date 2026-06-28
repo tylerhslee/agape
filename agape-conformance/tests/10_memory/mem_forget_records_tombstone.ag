@@ -1,0 +1,13 @@
+//! id:        mem_forget_records_tombstone
+//! section:   10_memory
+//! expect:    accept
+//! contains:  Forgotten
+//! spec:      §10 (forget appends an audit-preserving Forgotten tombstone event)
+//! ---
+agent A {
+  on awake {
+    mem notes <- "ephemeral";
+    forget notes;
+  }
+}
+spawn A a; awake a;

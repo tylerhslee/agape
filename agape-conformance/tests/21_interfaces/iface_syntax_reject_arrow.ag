@@ -1,0 +1,11 @@
+//! id:        iface_syntax_reject_arrow
+//! section:   21_interfaces
+//! expect:    reject
+//! error:     ParseError
+//! spec:      §19.5 (interface members use `when EVENT decide RESULT`, never `->`)
+//! ---
+event Ask(body: text);
+enum R { Yes, No }
+interface Bad {
+  when Ask -> R;
+}

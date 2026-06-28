@@ -1,0 +1,2 @@
+module geometry;
+pub struct Shape { sides: int }

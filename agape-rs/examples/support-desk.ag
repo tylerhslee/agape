@@ -1,0 +1,36 @@
+// A customer-support agent that can answer safely, but must gate any money-moving
+// decision. Run it from the repo root with:
+//
+//     cargo run --manifest-path agape-rs/Cargo.toml --bin agape -- run agape-rs/examples/support-desk.ag --prompt request="my card was charged twice and I need help before rent is due"
+
+prompt text request;
+
+enum Outcome { Refund, Explain, Escalate }
+event Case(text request);
+reversible action Reply(text message);
+action IssueCredit(int amount, text reason);
+
+policy Support { threshold 0.85  floor 0.15 }
+
+agent SupportDesk grants { perform Reply, perform IssueCredit } {
+  when (Prompt p about request) {
+    emit Case(p);
+
+    Credence<Outcome> outcome =
+      self <- f"classify this support request: {p}. choose Refund, Explain, or Escalate.";
+
+    endorse (outcome by Support) {
+      Refund: {
+        perform IssueCredit(25, "duplicate charge");
+        perform Reply("I've issued a $25 credit and recorded the decision.");
+      }
+      Explain: perform Reply("I can explain the charge and the next step.");
+      Escalate: perform Reply("I'm routing this to a specialist.");
+    } abstain {
+      perform Reply("I need a human review before taking action.");
+    }
+  }
+}
+
+spawn SupportDesk desk;
+awake desk;

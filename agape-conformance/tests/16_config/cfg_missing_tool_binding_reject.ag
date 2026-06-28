@@ -1,0 +1,12 @@
+//! id:        cfg_missing_tool_binding_reject
+//! section:   16_config
+//! expect:    reject
+//! error:     ConfigError
+//! manifest:  config.require_bindings=true
+//! spec:      §17 (each tool declaration resolves to a configured world capability; missing binding is a configuration error)
+//! ---
+read tool text search(text q);
+agent A grants { use search } {
+  on awake { search("agape"); }
+}
+spawn A a; awake a;

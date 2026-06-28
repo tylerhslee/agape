@@ -1,0 +1,18 @@
+//! id:        gate_decision_introspection_committed_margin_accept
+//! section:   22_gate
+//! expect:    accept
+//! spec:      §20.4 (Decision provenance exposes .committed and .margin, not only .basis)
+//! ---
+enum R { Yes, No }
+agent Desk {
+  on awake {
+    Credence<R> c = self <- "yes or no?";
+    Decision<R> d = c by confidence 0.8;
+    case (d.committed) as r {
+      Yes: { say("yes"); }
+      No:  { say("no"); }
+    }
+    if (d.margin > 0.1) { say("clear"); } else { say("close"); }
+  }
+}
+spawn Desk d; awake d;

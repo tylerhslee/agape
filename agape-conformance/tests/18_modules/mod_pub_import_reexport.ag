@@ -1,0 +1,8 @@
+//! id:        mod_pub_import_reexport
+//! section:   18_modules
+//! expect:    accept
+//! modules:   facade.ag; internal.ag
+//! spec:      §19.2a (pub import re-exports a name through the importing module's public surface)
+//! ---
+import facade;
+facade.Shape s = facade.Shape { sides: 4 };

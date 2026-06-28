@@ -1,0 +1,10 @@
+//! id:        mem_embed_internalizes_ok
+//! section:   10_memory
+//! expect:    accept
+//! contains:  Internalized
+//! spec:      §9, §10 (embed(x) explicitly writes an embedding to memory and records Internalized)
+//! ---
+agent A {
+  on awake { embed("semantic note"); }
+}
+spawn A a; awake a;

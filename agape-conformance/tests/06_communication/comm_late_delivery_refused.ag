@@ -1,0 +1,16 @@
+//! id:        comm_late_delivery_refused
+//! section:   06_communication
+//! expect:    accept
+//! contains:  Expired(s); DeliveryRefused(s)
+//! absent:    Delivered(s)
+//! spec:      §6, §9 (a delivery attempt after expiry records DeliveryRefused, not Delivered, and is not an Error)
+//! ---
+agent Worker {}
+agent Sender grants { reach Worker } {
+  on awake {
+    spawn Worker w;
+    event<null> s = w <- "late" expires 1;
+    awake w;
+  }
+}
+spawn Sender s; awake s;

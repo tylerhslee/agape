@@ -1,0 +1,2 @@
+module m;
+action Secret(body: text);

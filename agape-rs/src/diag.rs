@@ -3,7 +3,7 @@
 //! A `reject` test names the error CLASS the implementation must raise (not the
 //! message text). The suite's classes (README "Error classes"):
 //!   LexError · ParseError · TypeError · ColorViolation · TaintViolation ·
-//!   AuthorityViolation · ExhaustivenessError
+//!   AuthorityViolation · ExhaustivenessError · ConfigError
 //!
 //! We may use richer internal names, but every failure must MAP to one of these.
 
@@ -18,6 +18,8 @@ pub enum ErrorClass {
     Taint,
     Authority,
     Exhaustiveness,
+    /// Project/dependency configuration is missing or invalid (§17).
+    Config,
     /// Import resolution: unresolved, cyclic, or ambiguous names (§19.2).
     Module,
     /// Naming a non-`pub` declaration, or a `pub` signature exposing a private type (§19.4).
@@ -43,6 +45,7 @@ impl ErrorClass {
             "TaintViolation" => ErrorClass::Taint,
             "AuthorityViolation" => ErrorClass::Authority,
             "ExhaustivenessError" => ErrorClass::Exhaustiveness,
+            "ConfigError" => ErrorClass::Config,
             "ModuleError" => ErrorClass::Module,
             "VisibilityError" => ErrorClass::Visibility,
             "InterfaceError" => ErrorClass::Interface,
@@ -61,6 +64,7 @@ impl ErrorClass {
             ErrorClass::Taint => "TaintViolation",
             ErrorClass::Authority => "AuthorityViolation",
             ErrorClass::Exhaustiveness => "ExhaustivenessError",
+            ErrorClass::Config => "ConfigError",
             ErrorClass::Module => "ModuleError",
             ErrorClass::Visibility => "VisibilityError",
             ErrorClass::Interface => "InterfaceError",

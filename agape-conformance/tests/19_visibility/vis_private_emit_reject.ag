@@ -1,0 +1,12 @@
+//! id:        vis_private_emit_reject
+//! section:   19_visibility
+//! expect:    reject
+//! error:     VisibilityError
+//! modules:   m.ag
+//! spec:      §19.4 (a private event cannot be named in emit from another module)
+//! ---
+import m;
+agent A {
+  on awake { emit m.Secret("x"); }
+}
+spawn A a; awake a;

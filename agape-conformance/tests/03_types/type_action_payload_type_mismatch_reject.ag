@@ -1,0 +1,11 @@
+//! id:        type_action_payload_type_mismatch_reject
+//! section:   03_types
+//! expect:    reject
+//! error:     TypeError
+//! spec:      §3 (perform payload must match the declared action signature)
+//! ---
+action Charge(int cents);
+agent A grants { perform Charge } {
+  on awake { perform Charge("25"); }
+}
+spawn A a; awake a;

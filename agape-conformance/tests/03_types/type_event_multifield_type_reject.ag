@@ -1,0 +1,8 @@
+//! id:        type_event_multifield_type_reject
+//! section:   03_types
+//! expect:    reject
+//! error:     TypeError
+//! spec:      §3 (emit arguments are type-checked positionally)
+//! ---
+event Pair(int left, text right);
+emit Pair("seven", "seven");

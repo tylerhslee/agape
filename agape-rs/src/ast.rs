@@ -282,13 +282,13 @@ pub enum Stmt {
     Prompt { ty: Type, name: String },
     /// `verify gatearg [by basis];` — the recorded gate (§13).
     Verify { arg: Expr, by: Option<GateBasis> },
-    /// `emit EventType(payload);`
-    Emit { event_type: String, payload: Expr },
+    /// `emit EventType(arg, ...);` — positional fields in declaration order.
+    Emit { event_type: String, args: Vec<Expr> },
     /// `endorse (arg by rule) { arms } [abstain { ... }]` — the recorded gate (§13):
     /// collapse the `Credence`, append `Decided`/`Abstained`, dispatch the arms.
     Endorse { arg: Expr, rule: GateBasis, arms: Vec<(String, Vec<Stmt>)>, abstain: Option<Vec<Stmt>> },
-    /// `perform ActionType(payload);` — a consequential act (§13).
-    Perform { action_type: String, payload: Expr },
+    /// `perform ActionType(arg, ...);` — a consequential act (§13).
+    Perform { action_type: String, args: Vec<Expr> },
     /// `attest e by PRINCIPAL (arms | ;)` — the recorded identity-seam gate (§13):
     /// reach the principal, record an `Attestation`/`FailedAttestation`. `by` is an
     /// expression so `by "alice"` parses (the checker rejects text→Principal, §3).

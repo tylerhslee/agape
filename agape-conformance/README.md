@@ -67,6 +67,7 @@ sync text find(text q) { return search(q); }
 | `attest` | optional | identity-dependency ruling for `attest` (`grant` / `deny`) |
 | `manifest` | optional | `[runtime]`/policy fixture values for the run (`; `-separated) |
 | `replay` | optional | replay assertion (`chain_head_equal`) |
+| `packages` | optional | package roots, `name=path/to/lib.ag`, `; `-separated |
 | `spec` | always | the SPEC-1.0 clause(s) the test pins |
 | `note` | optional | one-line rationale |
 
@@ -80,7 +81,7 @@ sync text find(text q) { return search(q); }
 ### Error classes (`reject` tests)
 
 `LexError` · `ParseError` · `TypeError` · `ColorViolation` · `TaintViolation` ·
-`AuthorityViolation` · `ExhaustivenessError`. **The library layer adds:**
+`AuthorityViolation` · `ExhaustivenessError` · `ConfigError`. **The library layer adds:**
 `ModuleError` (import resolution: unresolved/cyclic/ambiguous names) ·
 `VisibilityError` (naming a non-`pub` declaration; a `pub` signature exposing a private type) ·
 `InterfaceError` (an `agent : Iface` that fails to satisfy the contract) ·
@@ -134,6 +135,10 @@ these header directives. A test with no directives runs under the default record
   ignores them — they are not themselves tests). The implementation compiles the test entry
   together with its companion modules. Example: a test `mod_import_qualified.ag` with
   `modules: util.ag` has its companion at `tests/18_modules/mod_import_qualified.d/util.ag`.
+- `packages:` — package roots this test imports, `; `-separated as `name=path/to/lib.ag`.
+  Paths live under the sibling `<id>.d/` directory. The implementation compiles the listed
+  file as module `name`, mirroring `[dependencies] name = { path = ... }` plus the package's
+  `[package] lib` entry (§19.3).
 
 ## How an implementation consumes the suite
 

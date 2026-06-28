@@ -176,15 +176,27 @@ pub fn lex(src: &str) -> Result<Vec<Token>, AgapeError> {
             bump!();
             bump!();
             let mut buf = String::new();
+            let mut depth = 0i32;
             while i < n && chars[i] != '"' {
                 if chars[i] == '\n' {
                     return Err(AgapeError::at(ErrorClass::Lex, Span::new(start_byte, byte), format!("unterminated f-string at line {start_line}")));
+                }
+                if chars[i] == '{' {
+                    depth += 1;
+                } else if chars[i] == '}' {
+                    depth -= 1;
+                    if depth < 0 {
+                        return Err(AgapeError::at(ErrorClass::Parse, Span::new(start_byte, byte), "malformed f-string interpolation"));
+                    }
                 }
                 buf.push(chars[i]);
                 bump!();
             }
             if i >= n {
                 return Err(AgapeError::at(ErrorClass::Lex, Span::new(start_byte, byte), format!("unterminated f-string at line {start_line}")));
+            }
+            if depth != 0 {
+                return Err(AgapeError::at(ErrorClass::Parse, Span::new(start_byte, byte), "malformed f-string interpolation"));
             }
             bump!(); // closing quote
             toks.push(Token { kind: TokenKind::FStr, value: buf, span: Span::new(start_byte, byte), line: start_line, col: start_col });

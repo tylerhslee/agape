@@ -1,0 +1,8 @@
+//! id:        mod_package_path_dependency
+//! section:   18_modules
+//! expect:    accept
+//! packages:  geometry=geometry/src/lib.ag
+//! spec:      §19.3 (a path dependency package exposes its [package] lib as an importable module root)
+//! ---
+import geometry;
+geometry.Shape s = geometry.Shape { sides: 4 };

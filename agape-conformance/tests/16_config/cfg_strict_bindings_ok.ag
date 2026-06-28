@@ -1,0 +1,13 @@
+//! id:        cfg_strict_bindings_ok
+//! section:   16_config
+//! expect:    accept
+//! manifest:  config.require_bindings=true; identity.alice=local; prompts.question=stdin; tools.search=mock
+//! spec:      §17 (declared dependencies pass configuration binding when every dependency has a manifest entry)
+//! ---
+principal alice;
+prompt text question;
+read tool text search(text q);
+agent A grants { use search } {
+  on awake { search("agape"); }
+}
+spawn A a; awake a;

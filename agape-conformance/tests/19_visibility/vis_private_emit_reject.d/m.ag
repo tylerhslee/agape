@@ -1,0 +1,2 @@
+module m;
+event Secret(body: text);

@@ -1,0 +1,8 @@
+//! id:        type_event_multifield_payload_ok
+//! section:   03_types
+//! expect:    accept
+//! ledger:    Pair
+//! spec:      §3 (event invocation uses positional fields in declaration order)
+//! ---
+event Pair(int left, text right);
+emit Pair(7, "seven");

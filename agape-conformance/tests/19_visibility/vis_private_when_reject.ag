@@ -1,0 +1,12 @@
+//! id:        vis_private_when_reject
+//! section:   19_visibility
+//! expect:    reject
+//! error:     VisibilityError
+//! modules:   m.ag
+//! spec:      §19.4 (a private event cannot be named in when from another module)
+//! ---
+import m;
+agent A {
+  when (m.Secret s) { say("secret"); }
+}
+spawn A a; awake a;

@@ -1,0 +1,21 @@
+//! id:        gate_cold_reversible_no_defer
+//! section:   22_gate
+//! expect:    accept
+//! provider:  credence(Reply=0.9, Hold=0.1)
+//! contains:  Reply(d)
+//! absent:    Attestation(c)
+//! spec:      §20.1 (a cold reversible outcome commits without principal deferral)
+//! ---
+enum R { Reply, Hold }
+reversible action Reply(text body);
+principal boss;
+agent Desk grants { perform Reply } {
+  on awake {
+    Credence<R> c = self <- "reply?";
+    boss decide c {
+      Reply: perform Reply("ok");
+      Hold: say("hold");
+    }
+  }
+}
+spawn Desk d; awake d;

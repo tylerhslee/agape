@@ -1,0 +1,10 @@
+//! id:        cfg_missing_prompt_binding_reject
+//! section:   16_config
+//! expect:    reject
+//! error:     ConfigError
+//! manifest:  config.require_bindings=true
+//! spec:      §17 (each prompt declaration resolves to a manifest binding; missing binding is a configuration error)
+//! ---
+prompt text question;
+agent A {}
+spawn A a; awake a;

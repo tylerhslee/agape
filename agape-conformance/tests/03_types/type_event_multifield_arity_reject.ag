@@ -1,0 +1,8 @@
+//! id:        type_event_multifield_arity_reject
+//! section:   03_types
+//! expect:    reject
+//! error:     TypeError
+//! spec:      §3 (emit arity must match the declared event signature)
+//! ---
+event Pair(int left, text right);
+emit Pair(7);

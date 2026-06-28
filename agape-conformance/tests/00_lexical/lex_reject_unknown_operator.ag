@@ -1,0 +1,7 @@
+//! id:        lex_reject_unknown_operator
+//! section:   00_lexical
+//! expect:    reject
+//! error:     LexError
+//! spec:      §2 (operators outside the specified surface are rejected)
+//! ---
+int x = 1 % 2;

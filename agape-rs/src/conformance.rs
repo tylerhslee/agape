@@ -6,8 +6,8 @@
 //! test iff `since <= V` and (`until` absent or `V <= until`).
 //!
 //! Ledger assertions (`ledger:`/`contains:`/`absent:`) are matched (M4): `ledger:`
-//! is an ordered subsequence of the produced log, `contains:`/`absent:` are
-//! membership / non-membership, all subtype-aware (§9).
+//! is an exact ordered ledger spine, `order:` is an ordered subsequence, and
+//! `contains:`/`absent:` are membership / non-membership, all subtype-aware (§9).
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -57,9 +57,13 @@ pub struct TestSpec {
     pub provider: Option<String>,
     pub attest: Option<String>,
     pub manifest: Option<String>,
+    pub replay: Option<String>,
     /// Companion module filenames (`a.ag; b.ag`) living in a sibling `<id>.d/`
     /// directory, compiled together with the body so imports resolve (§19).
     pub modules: Vec<String>,
+    /// Package roots (`name=path/to/lib.ag`) living under `<id>.d/`, compiled as
+    /// module `name` to exercise package dependency resolution (§19.3).
+    pub packages: Vec<(String, String)>,
 }
 
 /// Parse one test file's header and body. Returns `None` if it has no usable
@@ -125,8 +129,19 @@ pub fn parse_test(path: &Path) -> Option<TestSpec> {
         provider: get("provider"),
         attest: get("attest"),
         manifest: get("manifest"),
+        replay: get("replay"),
         modules: get("modules")
             .map(|s| s.split(';').map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect())
+            .unwrap_or_default(),
+        packages: get("packages")
+            .map(|s| {
+                s.split(';')
+                    .filter_map(|x| {
+                        let (name, path) = x.trim().split_once('=')?;
+                        Some((name.trim().to_string(), path.trim().to_string()))
+                    })
+                    .collect()
+            })
             .unwrap_or_default(),
     })
 }
@@ -185,7 +200,7 @@ pub struct Outcome {
 }
 
 /// Translate a test's seam directives (§17.5) into a runtime [`HarnessConfig`].
-fn harness_config(test: &TestSpec) -> HarnessConfig {
+fn harness_config(test: &TestSpec) -> Result<HarnessConfig, crate::diag::AgapeError> {
     let mut c = HarnessConfig::default();
     if let Some(p) = &test.provider {
         let p = p.trim();
@@ -213,21 +228,94 @@ fn harness_config(test: &TestSpec) -> HarnessConfig {
     if let Some(m) = &test.manifest {
         // A `key=value; key=value` connector manifest; only the keys the runtime
         // honors are read (the rest are connector config, inert in test-mode).
+        let mut provider_exposes_logprobs: Option<bool> = None;
+        let mut provider_temperature: Option<f64> = None;
+        let mut provider_fallback_temperature: Option<f64> = None;
+        let mut strict_bindings = false;
+        let mut configured_principals = std::collections::HashSet::new();
+        let mut configured_tools = std::collections::HashSet::new();
+        let mut configured_prompts = std::collections::HashSet::new();
         for entry in m.split(';') {
             if let Some((k, val)) = entry.split_once('=') {
-                if k.trim() == "memory.internalize_on_receive" && val.trim() == "true" {
-                    c.internalize_on_receive = true;
+                let key = k.trim();
+                let val = val.trim();
+                match key {
+                    "memory.internalize_on_receive" if val == "true" => c.internalize_on_receive = true,
+                    "provider.exposes_logprobs" => provider_exposes_logprobs = Some(val == "true"),
+                    "provider.temperature" => provider_temperature = val.parse().ok(),
+                    "provider.fallback_temperature" => provider_fallback_temperature = val.parse().ok(),
+                    "config.require_bindings" if val == "true" => strict_bindings = true,
+                    _ if key.starts_with("identity.") => {
+                        configured_principals.insert(key.trim_start_matches("identity.").to_string());
+                    }
+                    _ if key.starts_with("tools.") => {
+                        configured_tools.insert(key.trim_start_matches("tools.").to_string());
+                    }
+                    _ if key.starts_with("prompts.") => {
+                        configured_prompts.insert(key.trim_start_matches("prompts.").to_string());
+                    }
+                    _ => {}
+                }
+            }
+        }
+        if provider_exposes_logprobs == Some(false)
+            && provider_temperature == Some(0.0)
+            && provider_fallback_temperature.is_none()
+        {
+            return Err(crate::diag::AgapeError::new(
+                ErrorClass::Config,
+                "text-only provider at temperature 0 requires provider.fallback_temperature (§17)",
+            ));
+        }
+        if strict_bindings {
+            check_config_bindings(test, &configured_principals, &configured_tools, &configured_prompts)?;
+        }
+    }
+    Ok(c)
+}
+
+fn check_config_bindings(
+    test: &TestSpec,
+    principals: &std::collections::HashSet<String>,
+    tools: &std::collections::HashSet<String>,
+    prompts: &std::collections::HashSet<String>,
+) -> Result<(), crate::diag::AgapeError> {
+    let sources = std::iter::once(test.body.as_str());
+    for src in sources {
+        for line in src.lines().map(str::trim) {
+            if let Some(rest) = line.strip_prefix("principal ") {
+                let name = rest.trim_end_matches(';').trim();
+                if !principals.contains(name) {
+                    return Err(crate::diag::AgapeError::new(ErrorClass::Config, format!("principal `{name}` has no identity binding (§17)")));
+                }
+            }
+            if let Some(rest) = line.strip_prefix("prompt ") {
+                let mut parts = rest.trim_end_matches(';').split_whitespace();
+                let _ty = parts.next();
+                if let Some(name) = parts.next() {
+                    if !prompts.contains(name) {
+                        return Err(crate::diag::AgapeError::new(ErrorClass::Config, format!("prompt `{name}` has no manifest binding (§17)")));
+                    }
+                }
+            }
+            if line.contains(" tool ") {
+                let decl = line.trim_end_matches(';');
+                if let Some(before_params) = decl.split('(').next() {
+                    let name = before_params.split_whitespace().last().unwrap_or("");
+                    if !tools.contains(name) {
+                        return Err(crate::diag::AgapeError::new(ErrorClass::Config, format!("tool `{name}` has no manifest binding (§17)")));
+                    }
                 }
             }
         }
     }
-    c
+    Ok(())
 }
 
 /// Run a test through the pipeline: the body is the root module; any `modules:`
 /// companions in the sibling `<id>.d/` directory are compiled together (§19).
 fn run_test(test: &TestSpec, config: &crate::HarnessConfig) -> Result<Ledger, crate::diag::AgapeError> {
-    if test.modules.is_empty() {
+    if test.modules.is_empty() && test.packages.is_empty() {
         return crate::process_with_config(&test.body, config);
     }
     let root = crate::parse_module(&test.body, "")?;
@@ -240,6 +328,13 @@ fn run_test(test: &TestSpec, config: &crate::HarnessConfig) -> Result<Ledger, cr
         })?;
         let stem = p.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
         modules.push(crate::parse_module(&src, &stem)?);
+    }
+    for (name, rel) in &test.packages {
+        let p = dir.join(rel);
+        let src = fs::read_to_string(&p).map_err(|_| {
+            crate::diag::AgapeError::new(ErrorClass::Module, format!("package root not found: {}", p.display()))
+        })?;
+        modules.push(crate::parse_module(&src, name)?);
     }
     crate::process_modules(&modules, config)
 }
@@ -254,14 +349,35 @@ pub fn score(test: &TestSpec, v: Version) -> Status {
             return Status::SkippedSuperseded;
         }
     }
-    let config = harness_config(test);
+    let config = match harness_config(test) {
+        Ok(c) => c,
+        Err(e) => {
+            return match test.expect {
+                Expect::Reject => match test.error {
+                    Some(want) if want == e.class => Status::Pass,
+                    Some(want) => Status::Fail(format!("rejected with wrong class: got {}, want {}", e.class, want)),
+                    None => Status::Fail("reject test missing an `error:` class".into()),
+                },
+                _ => Status::Fail(format!("configuration failed ({})", e.class)),
+            };
+        }
+    };
     match test.expect {
         Expect::Blocked | Expect::Provisional => Status::Blocked,
         Expect::Accept => match run_test(test, &config) {
-            Ok(ledger) => match check_assertions(test, &ledger) {
-                Ok(()) => Status::Pass,
-                Err(msg) => Status::Fail(msg),
-            },
+            Ok(ledger) => {
+                if test.replay.as_deref() == Some("chain_head_equal") {
+                    match run_test(test, &config) {
+                        Ok(replayed) if replayed.chain_head_hex() == ledger.chain_head_hex() => {}
+                        Ok(replayed) => return Status::Fail(format!("replay chain-head mismatch: {} != {}", replayed.chain_head_hex(), ledger.chain_head_hex())),
+                        Err(e) => return Status::Fail(format!("replay rejected ({})", e.class)),
+                    }
+                }
+                match check_assertions(test, &ledger) {
+                    Ok(()) => Status::Pass,
+                    Err(msg) => Status::Fail(msg),
+                }
+            }
             Err(e) => Status::Fail(format!("expected accept, got reject ({})", e.class)),
         },
         Expect::Reject => match run_test(test, &config) {
@@ -374,7 +490,7 @@ fn token_present(ledger: &Ledger, t: &Token) -> bool {
     }
 }
 
-/// `ledger:` — the tokens must appear as an ordered subsequence of the log.
+/// `order:` — the tokens must appear as an ordered subsequence of the log.
 fn matches_ordered(ledger: &Ledger, tokens: &[Token]) -> bool {
     let mut cursor = 0usize;
     for t in tokens {
@@ -393,11 +509,22 @@ fn matches_ordered(ledger: &Ledger, tokens: &[Token]) -> bool {
     true
 }
 
+/// `ledger:` — the tokens must match the produced log exactly.
+fn matches_exact(ledger: &Ledger, tokens: &[Token]) -> bool {
+    if tokens.len() != ledger.log.len() {
+        return false;
+    }
+    tokens.iter().zip(&ledger.log).all(|(t, ev)| match t {
+        Token::Single { etype, subj } => event_matches(ev, etype, subj, ledger),
+        Token::Pair { .. } => false,
+    })
+}
+
 fn check_assertions(test: &TestSpec, ledger: &Ledger) -> Result<(), String> {
     if let Some(s) = &test.ledger {
         let toks = parse_tokens(s);
-        if !matches_ordered(ledger, &toks) {
-            return Err(format!("ledger assertion failed: expected ordered [{s}], got [{}]", ledger.dump().replace('\n', ", ")));
+        if !matches_exact(ledger, &toks) {
+            return Err(format!("ledger assertion failed: expected exact [{s}], got [{}]", ledger.dump().replace('\n', ", ")));
         }
     }
     // `order:` — the listed events must appear in this relative order (a subsequence).

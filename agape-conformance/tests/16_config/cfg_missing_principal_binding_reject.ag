@@ -1,0 +1,10 @@
+//! id:        cfg_missing_principal_binding_reject
+//! section:   16_config
+//! expect:    reject
+//! error:     ConfigError
+//! manifest:  config.require_bindings=true
+//! spec:      §17 (each principal declaration resolves to an identity binding; missing binding is a configuration error)
+//! ---
+principal alice;
+agent A {}
+spawn A a; awake a;

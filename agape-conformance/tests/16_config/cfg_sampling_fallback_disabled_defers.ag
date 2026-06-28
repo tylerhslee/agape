@@ -1,0 +1,16 @@
+//! id:        cfg_sampling_fallback_disabled_defers
+//! section:   16_config
+//! expect:    accept
+//! manifest:  provider.exposes_logprobs=false; provider.sampling_fallback=false
+//! contains:  Abstained(c)
+//! absent:    Decided(c)
+//! spec:      §20.3, §17 (without logprobs or sampling fallback, conformal degrades to deferral/abstain)
+//! ---
+enum R { Yes, No }
+agent A {
+  on awake {
+    Credence<R> c = self <- "yes?";
+    endorse (c by conformal 0.05) { Yes: ; No: ; }
+  }
+}
+spawn A a; awake a;

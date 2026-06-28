@@ -41,22 +41,62 @@ By default everything runs on the in-box mock provider. To run against a real mo
 
 ## The shape of a program
 
-```agape
-action Refund(amount: int, to: text);
+Here is the kind of workflow Agape is built for: a support agent may send safe replies, but refunding money is a consequential action. The model can classify the case; it cannot spend on its own. The typed `Credence<Outcome>` has to pass a recorded gate first.
 
-agent HelpDesk grants { perform Refund } {
-  on awake {
-    Credence<bool> withinPolicy = self <- "is refund #4217 within policy?";
-    endorse (withinPolicy by confidence 0.9) {
-      true: perform Refund(50, "alice");
+```agape
+prompt text request;
+
+enum Outcome { Refund, Explain, Escalate }
+event Case(text request);
+reversible action Reply(text message);
+action IssueCredit(int amount, text reason);
+
+policy Support { threshold 0.85  floor 0.15 }
+
+agent SupportDesk grants { perform Reply, perform IssueCredit } {
+  when (Prompt p about request) {
+    emit Case(p);
+
+    Credence<Outcome> outcome =
+      self <- f"classify this support request: {p}. choose Refund, Explain, or Escalate.";
+
+    endorse (outcome by Support) {
+      Refund: {
+        perform IssueCredit(25, "duplicate charge");
+        perform Reply("I've issued a $25 credit and recorded the decision.");
+      }
+      Explain: perform Reply("I can explain the charge and the next step.");
+      Escalate: perform Reply("I'm routing this to a specialist.");
+    } abstain {
+      perform Reply("I need a human review before taking action.");
     }
   }
 }
 
-spawn HelpDesk d; awake d;
+spawn SupportDesk desk;
+awake desk;
 ```
 
-The model's answer is a `Credence` — **untrusted**. Calling `perform Refund` straight from it *does not compile*: an action may consume only an **endorsed** value, and a `Credence` is endorsed only by passing the `endorse` gate. `confidence 0.9` is the bar the judgment must clear; below it the gate **abstains** and nothing happens. The model can be wrong — but what it's allowed to *do* when it's wrong is fixed in advance, and on the record.
+Run the checked-in version:
+
+```sh
+agape check agape-rs/examples/support-desk.ag
+agape run agape-rs/examples/support-desk.ag --prompt request="my card was charged twice and I need help before rent is due"
+```
+
+With the deterministic mock provider, the ledger shows the whole chain:
+
+```
+[  3] Prompt       request  my card was charged twice and I need help before rent is due
+[  5] Sent         outcome  classify this support request: ...
+[  7] Resolved     outcome  Refund 0.90      ← typed model testimony
+[  8] Decided      outcome  Refund           ← endorsed by the Support policy
+[  9] IssueCredit  desk     {amount: 25, reason: duplicate charge}
+                                              ← money moves only after the gate
+[ 10] Reply        desk     I've issued a $25 credit and recorded the decision.
+```
+
+The model's answer is a `Credence` — **untrusted**. Calling `perform IssueCredit` straight from it *does not compile*: an action may consume only an **endorsed** value, and a `Credence` is endorsed only by passing the `endorse` gate. `Support` is the bar the judgment must clear; below it the gate **abstains** and only the safe reply path runs. The model can be wrong — but what it's allowed to *do* when it's wrong is fixed in advance, and on the record.
 
 ## What Agape guarantees
 
@@ -76,7 +116,7 @@ Work moves through four stages, each typed and each recorded — and because eac
 3. **Decision** — the `endorse` gate collapses a credence to a `Decision` *only* when it meets a stated standard of confidence; short of that, it **abstains** and may defer to a `principal`.
 4. **Action** — an endorsed decision may license an `action`, performed only within the agent's granted authority. Every stage is appended to the ledger.
 
-## The v1.0.0 surface
+## The v1.0.1 surface
 
 Agape is a real language, not a toy DSL. Beyond the four-stage core:
 
@@ -99,7 +139,7 @@ Agape is assembled from established ideas, not invented from nothing: treating m
 ## Project
 
 - [`SPEC.md`](SPEC.md) — the language specification (the authoritative reference).
-- [`design/v1.0.0-showcase.ag`](design/v1.0.0-showcase.ag) — one annotated program over the whole v1.0.0 surface.
+- [`design/v1.0.0-showcase.ag`](design/v1.0.0-showcase.ag) — one annotated program over the whole v1.0.1 surface.
 - [`agape-conformance/`](agape-conformance) — the black-box conformance suite an implementation must satisfy.
 - [`agape-rs/`](agape-rs) — the reference implementation (the `agape` toolchain).
 

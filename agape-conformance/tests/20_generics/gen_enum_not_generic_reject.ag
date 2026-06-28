@@ -1,0 +1,7 @@
+//! id:        gen_enum_not_generic_reject
+//! section:   20_generics
+//! expect:    reject
+//! error:     ParseError
+//! spec:      §19.5 (enums stay monomorphic; only struct and fn carry type parameters)
+//! ---
+enum Choice<T> { A, B }

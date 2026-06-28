@@ -155,12 +155,17 @@ pub struct Interp {
     fns: HashMap<String, (Vec<Param>, Vec<Stmt>)>,
     structs: HashMap<String, Vec<Field>>,
     enums: HashMap<String, Vec<String>>,
+    event_fields: HashMap<String, Vec<Field>>,
+    actions: HashMap<String, Vec<Field>>,
     tools: HashMap<String, Option<Type>>,
+    reversible_sinks: std::collections::HashSet<String>,
     authority: std::collections::HashSet<String>,
     policies: HashMap<String, PolicyRule>,
     agents: HashMap<String, AgentState>,
     /// Private-memory store, keyed by handle name (§10): mem write / recall / forget.
     memstore: HashMap<String, String>,
+    /// Expired sends whose destinations may later wake; late delivery is refused (§6).
+    expired_sends: Vec<(String, Option<String>, u64)>,
     subs: Vec<Sub>,
     fired: std::collections::HashSet<(usize, u64)>,
     fire_budget: u32,
@@ -218,11 +223,15 @@ impl Interp {
             fns: HashMap::new(),
             structs: HashMap::new(),
             enums: HashMap::new(),
+            event_fields: HashMap::new(),
+            actions: HashMap::new(),
             tools: HashMap::new(),
+            reversible_sinks: std::collections::HashSet::new(),
             authority: std::collections::HashSet::new(),
             policies: HashMap::new(),
             agents: HashMap::new(),
             memstore: HashMap::new(),
+            expired_sends: Vec::new(),
             subs: Vec::new(),
             fired: std::collections::HashSet::new(),
             fire_budget: 10_000,
@@ -253,13 +262,23 @@ impl Interp {
                 Stmt::EnumDecl { name, variants } => {
                     self.enums.insert(name.clone(), variants.clone());
                 }
-                Stmt::EventDecl { name, error_super, .. } => {
+                Stmt::EventDecl { name, fields, error_super, .. } => {
+                    self.event_fields.insert(name.clone(), fields.clone());
                     if *error_super {
                         self.error_events.insert(name.clone());
                     }
                 }
-                Stmt::ToolDecl { name, ret, .. } => {
+                Stmt::ActionDecl { name, fields, reversible, .. } => {
+                    self.actions.insert(name.clone(), fields.clone());
+                    if *reversible {
+                        self.reversible_sinks.insert(name.clone());
+                    }
+                }
+                Stmt::ToolDecl { name, ret, reversible, .. } => {
                     self.tools.insert(name.clone(), ret.clone());
+                    if *reversible {
+                        self.reversible_sinks.insert(name.clone());
+                    }
                 }
                 Stmt::Authority(name) => {
                     self.authority.insert(name.clone());
@@ -380,20 +399,22 @@ impl Interp {
                 // the program quiesces (see `deliver_prompt_inputs`).
                 self.prompts.push(name.clone());
             }
-            Stmt::Emit { event_type, payload } => {
-                let v = self.eval(payload, frame, agent);
+            Stmt::Emit { event_type, args } => {
+                let vals: Vec<Value> = args.iter().map(|arg| self.eval(arg, frame, agent)).collect();
                 let subj = agent.map(|a| a.to_string());
-                self.emit_event(event_type, subj, v.show(), agent.map(|a| a.to_string()));
+                let payload = self.format_payload(event_type, &vals, true);
+                self.emit_event(event_type, subj, payload, agent.map(|a| a.to_string()));
             }
             Stmt::Verify { arg, by } => {
                 let subj = self.subject_of(arg, frame);
                 self.eval_verify(arg, by, subj, frame, agent);
             }
             Stmt::ActionDecl { .. } => {}
-            Stmt::Perform { action_type, payload } => {
-                let v = self.eval(payload, frame, agent);
+            Stmt::Perform { action_type, args } => {
+                let vals: Vec<Value> = args.iter().map(|arg| self.eval(arg, frame, agent)).collect();
                 let subj = agent.map(|a| a.to_string());
-                self.emit_event(action_type, subj, v.show(), agent.map(|a| a.to_string()));
+                let payload = self.format_payload(action_type, &vals, false);
+                self.emit_event(action_type, subj, payload, agent.map(|a| a.to_string()));
             }
             Stmt::Endorse { arg, rule, arms, abstain } => {
                 // Collapse the Credence under the gate's rule, record the verdict, and
@@ -446,22 +467,27 @@ impl Interp {
             // (argmax), record the verdict, and dispatch the chosen arm. A `conformal`
             // override or per-file conformal makes a consequential gate abstain at cold
             // start (no labels yet → defer/default), per the desugaring.
-            Stmt::Decide { expr, conformal, arms, default, .. } => {
+            Stmt::Decide { expr, subject, conformal, arms, default, defer_to } => {
                 let v = self.eval(expr, frame, agent);
                 let subj = self.subject_of(expr, frame);
                 let rule = match conformal {
                     Some(a) => GateBasis::Conformal { alpha: *a },
                     None => GateBasis::Threshold { op: BinOp::Gt, value: 0.0, margin: 0.0 },
                 };
-                match self.decide_gate(&v, &rule) {
+                match self.decide_gate_no_plurality(&v, &rule) {
                     Some(variant) => {
-                        self.emit_event("Decided", subj, variant.clone(), agent.map(|a| a.to_string()));
-                        let body = arms
+                        let selected_body = arms
                             .iter()
                             .find(|(l, _)| *l == variant)
                             .map(|(_, b)| b)
                             .or(default.as_ref());
-                        if let Some(body) = body {
+                        if let Some(body) = selected_body {
+                            if (subject.is_some() || defer_to.is_some()) && self.body_reaches_nonreversible_sink(body) {
+                                self.emit_event("Attestation", subj.clone(), "attested".into(), agent.map(|a| a.to_string()));
+                            }
+                        }
+                        self.emit_event("Decided", subj, variant.clone(), agent.map(|a| a.to_string()));
+                        if let Some(body) = selected_body {
                             if let Flow::Return(v) = self.exec_block(body, frame, agent) {
                                 return Flow::Return(v);
                             }
@@ -607,6 +633,7 @@ impl Interp {
                 // A tombstone: the region is unrecallable going forward (§10).
                 self.memstore.remove(name);
                 frame.remove(name);
+                self.emit_event("Forgotten", Some(name.clone()), "forgotten".into(), agent.map(|a| a.to_string()));
             }
             // Pure declarations / no-ops at runtime.
             Stmt::AgentDecl { .. }
@@ -637,6 +664,7 @@ impl Interp {
         let args = if args.is_empty() { state.ctor_args.clone() } else { args };
         let Some(template) = self.templates.get(&tname).cloned() else { return };
         self.append("AgentAwake", Some(name.to_string()), name.to_string(), None, None);
+        self.refuse_expired_for(name);
         if first {
             // Build the agent's frame: bound params + (later) field decls.
             let mut frame = HashMap::new();
@@ -767,6 +795,30 @@ impl Interp {
     fn emit_event(&mut self, etype: &str, subject: Option<String>, payload: String, agent: Option<String>) {
         let tick = self.append(etype, subject.clone(), payload, None, agent);
         self.fire_subs(tick, etype, &subject);
+    }
+
+    fn format_payload(&self, etype: &str, vals: &[Value], is_event: bool) -> String {
+        let bare = etype.rsplit('.').next().unwrap_or(etype);
+        let fields = if is_event {
+            self.event_fields.get(etype).or_else(|| self.event_fields.get(bare))
+        } else {
+            self.actions.get(etype).or_else(|| self.actions.get(bare))
+        };
+        match (fields, vals) {
+            (_, []) => String::new(),
+            (Some(fields), [v]) if fields.len() == 1 => v.show(),
+            (Some(fields), vals) if fields.len() == vals.len() => {
+                let parts = fields
+                    .iter()
+                    .zip(vals)
+                    .map(|(f, v)| format!("{}: {}", f.name, v.show()))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("{{{parts}}}")
+            }
+            (_, [v]) => v.show(),
+            _ => format!("({})", vals.iter().map(Value::show).collect::<Vec<_>>().join(", ")),
+        }
     }
 
     /// Subtype check including user `event …: Error` leaves (§19.5).
@@ -986,6 +1038,11 @@ impl Interp {
                 }
                 "all" => return Value::Bool(argv.iter().all(|v| v.truthy())),
                 "any" => return Value::Bool(argv.iter().any(|v| v.truthy())),
+                "store" | "embed" => {
+                    let subj = agent.map(|a| a.to_string());
+                    self.emit_event("Internalized", subj, "internalized".into(), agent.map(|a| a.to_string()));
+                    return Value::Null;
+                }
                 _ => {}
             }
             if let Some((params, body)) = self.fns.get(n).cloned() {
@@ -1038,6 +1095,9 @@ impl Interp {
             // NOT an Error subtype (§6, §9); a bare lost send just stalls at Sent.
             if expires.is_some() {
                 self.append("Expired", subject.clone(), "expired".into(), Some(corr), agent.map(|a| a.to_string()));
+                if let Expr::Name(dest) = dest {
+                    self.expired_sends.push((dest.clone(), subject.clone(), corr));
+                }
             }
             return Value::Null;
         }
@@ -1070,8 +1130,9 @@ impl Interp {
     /// bare struct) — the slots a schema violation can fault on.
     fn slot_is_structured(&self, slot: Option<&Type>) -> bool {
         match slot {
-            Some(Type::Event(inner)) => matches!(&**inner, Type::Named(n) if self.structs.contains_key(n)),
-            Some(Type::Named(n)) => self.structs.contains_key(n),
+            Some(Type::Event(_)) | Some(Type::Credence(_)) => true,
+            Some(Type::Named(n)) => self.structs.contains_key(n) || self.enums.contains_key(n),
+            Some(Type::Array(_)) => true,
             _ => false,
         }
     }
@@ -1085,6 +1146,39 @@ impl Interp {
             if let Some(t) = self.templates.get(&tname).cloned() {
                 self.run_hooks(&t, "crash", a);
             }
+        }
+    }
+
+    fn refuse_expired_for(&mut self, dest: &str) {
+        let mut refused = Vec::new();
+        self.expired_sends.retain(|(d, subj, corr)| {
+            if d == dest {
+                refused.push((subj.clone(), *corr));
+                false
+            } else {
+                true
+            }
+        });
+        for (subj, corr) in refused {
+            self.append("DeliveryRefused", subj, "expired".into(), Some(corr), None);
+        }
+    }
+
+    fn body_reaches_nonreversible_sink(&self, body: &[Stmt]) -> bool {
+        body.iter().any(|s| self.stmt_reaches_nonreversible_sink(s))
+    }
+
+    fn stmt_reaches_nonreversible_sink(&self, s: &Stmt) -> bool {
+        match s {
+            Stmt::Perform { action_type, .. } => {
+                let bare = action_type.rsplit('.').next().unwrap_or(action_type);
+                !self.reversible_sinks.contains(action_type) && !self.reversible_sinks.contains(bare)
+            }
+            Stmt::Block(body) => self.body_reaches_nonreversible_sink(body),
+            Stmt::If { then_body, else_body, .. } => {
+                self.body_reaches_nonreversible_sink(then_body) || self.body_reaches_nonreversible_sink(else_body)
+            }
+            _ => false,
         }
     }
 
@@ -1248,6 +1342,21 @@ impl Interp {
             }
             other => Some(self.decide_variant(other, &HashMap::new())),
         }
+    }
+
+    /// Readable `decide` has a no-plurality rule (§20.3): an exact top tie does
+    /// not silently pick the first variant. It falls through to default/abstain.
+    fn decide_gate_no_plurality(&self, v: &Value, rule: &GateBasis) -> Option<String> {
+        if let Value::Credence { dist, .. } = v {
+            let mut sorted = dist.clone();
+            sorted.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+            if let (Some((_, p0)), Some((_, p1))) = (sorted.first(), sorted.get(1)) {
+                if (*p0 - *p1).abs() < f64::EPSILON {
+                    return None;
+                }
+            }
+        }
+        self.decide_gate(v, rule)
     }
 
     /// Resolve a gate rule to its runtime policy: an inline threshold/margin, a

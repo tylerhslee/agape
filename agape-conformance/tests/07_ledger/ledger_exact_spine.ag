@@ -1,0 +1,8 @@
+//! id:        ledger_exact_spine
+//! section:   07_ledger
+//! expect:    accept
+//! ledger:    Spawned(a); AgentAwake(a)
+//! spec:      §7, §16.2 (ledger assertions can pin the exact ordered event spine, with no extra events)
+//! ---
+agent A {}
+spawn A a; awake a;

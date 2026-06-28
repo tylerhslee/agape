@@ -1,0 +1,10 @@
+//! id:        mem_store_records_internalized
+//! section:   10_memory
+//! expect:    accept
+//! contains:  Internalized
+//! spec:      §9, §10 (store(x) explicitly internalizes a value and records Internalized)
+//! ---
+agent A {
+  on awake { store("fact note"); }
+}
+spawn A a; awake a;

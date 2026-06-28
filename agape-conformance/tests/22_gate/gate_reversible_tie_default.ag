@@ -1,0 +1,21 @@
+//! id:        gate_reversible_tie_default
+//! section:   22_gate
+//! expect:    accept
+//! provider:  credence(A=0.5, B=0.5)
+//! contains:  Event
+//! absent:    Note
+//! spec:      §20.3 (a reversible decide tie uses default as the tiebreak instead of silently picking)
+//! ---
+enum R { A, B }
+reversible action Note(text body);
+agent Desk grants { perform Note } {
+  on awake {
+    Credence<R> c = self <- "choose A or B";
+    decide c {
+      A: perform Note("a");
+      B: perform Note("b");
+      default: emit Event("needs-review");
+    }
+  }
+}
+spawn Desk d; awake d;

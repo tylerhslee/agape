@@ -28,21 +28,20 @@ spec = "§2 (reserved keywords may not be used as identifiers)"
 note = "`agent` is reserved."
 
 [[test]]
+id = "lex_reject_malformed_fstring"
+section = "00_lexical"
+path = "tests/00_lexical/lex_reject_malformed_fstring.ag"
+expect = "reject"
+error = "ParseError"
+spec = "§2 (f-string interpolation braces must parse as expressions)"
+
+[[test]]
 id = "lex_reject_missing_semicolon"
 section = "00_lexical"
 path = "tests/00_lexical/lex_reject_missing_semicolon.ag"
 expect = "reject"
 error = "ParseError"
 spec = "§2 (statement terminator `;` is explicit and required)"
-
-[[test]]
-id = "lex_reject_right_arrow"
-section = "00_lexical"
-path = "tests/00_lexical/lex_reject_right_arrow.ag"
-expect = "reject"
-error = "LexError"
-spec = "§2 (exactly one communication arrow `<-`; `->` is a LexError)"
-note = "the retired `->` does not lex."
 
 [[test]]
 id = "lex_reject_tilde"
@@ -52,6 +51,14 @@ expect = "reject"
 error = "ParseError"
 spec = "§2 (there is no similarity operator; `~` lexes to an Op but the parser rejects it — a ParseError, not a LexError)"
 note = "similarity is reached only through `match` (§10), never a `~` operator"
+
+[[test]]
+id = "lex_reject_unknown_operator"
+section = "00_lexical"
+path = "tests/00_lexical/lex_reject_unknown_operator.ag"
+expect = "reject"
+error = "LexError"
+spec = "§2 (operators outside the specified surface are rejected)"
 
 [[test]]
 id = "lex_string_escapes"
@@ -92,6 +99,38 @@ spec = "§1 Axis B/C, §15.3.2 T-Send (`d <- p` is on the ledger; its reply is `
 note = "a send is a ledger op yielding a raw (unstructured) reply."
 
 [[test]]
+id = "type_action_multifield_arity_reject"
+section = "03_types"
+path = "tests/03_types/type_action_multifield_arity_reject.ag"
+expect = "reject"
+error = "TypeError"
+spec = "§3, §13 (perform arity must match the declared action signature)"
+
+[[test]]
+id = "type_action_multifield_payload_ok"
+section = "03_types"
+path = "tests/03_types/type_action_multifield_payload_ok.ag"
+expect = "accept"
+ledger = ["Spawned(a)", "AgentAwake(a)", "Charge(a)"]
+spec = "§3, §13 (perform invocation uses positional fields in declaration order)"
+
+[[test]]
+id = "type_action_multifield_type_reject"
+section = "03_types"
+path = "tests/03_types/type_action_multifield_type_reject.ag"
+expect = "reject"
+error = "TypeError"
+spec = "§3, §13 (perform arguments are type-checked positionally)"
+
+[[test]]
+id = "type_action_payload_type_mismatch_reject"
+section = "03_types"
+path = "tests/03_types/type_action_payload_type_mismatch_reject.ag"
+expect = "reject"
+error = "TypeError"
+spec = "§3 (perform payload must match the declared action signature)"
+
+[[test]]
 id = "type_array_literal_and_type"
 section = "03_types"
 path = "tests/03_types/type_array_literal_and_type.ag"
@@ -130,6 +169,30 @@ expect = "accept"
 spec = "§3 (custom ledger-event declaration with a typed payload)"
 
 [[test]]
+id = "type_event_multifield_arity_reject"
+section = "03_types"
+path = "tests/03_types/type_event_multifield_arity_reject.ag"
+expect = "reject"
+error = "TypeError"
+spec = "§3 (emit arity must match the declared event signature)"
+
+[[test]]
+id = "type_event_multifield_payload_ok"
+section = "03_types"
+path = "tests/03_types/type_event_multifield_payload_ok.ag"
+expect = "accept"
+ledger = ["Pair"]
+spec = "§3 (event invocation uses positional fields in declaration order)"
+
+[[test]]
+id = "type_event_multifield_type_reject"
+section = "03_types"
+path = "tests/03_types/type_event_multifield_type_reject.ag"
+expect = "reject"
+error = "TypeError"
+spec = "§3 (emit arguments are type-checked positionally)"
+
+[[test]]
 id = "type_event_null_no_reply"
 section = "03_types"
 path = "tests/03_types/type_event_null_no_reply.ag"
@@ -160,6 +223,14 @@ spec = "§3 (struct declaration + struct literal supplying all fields)"
 note = "a declared struct constructed with every field."
 
 [[test]]
+id = "type_struct_extra_field_reject"
+section = "03_types"
+path = "tests/03_types/type_struct_extra_field_reject.ag"
+expect = "reject"
+error = "TypeError"
+spec = "§3, §8 (struct literals/schema objects are exact; extra fields are rejected)"
+
+[[test]]
 id = "type_struct_missing_field_reject"
 section = "03_types"
 path = "tests/03_types/type_struct_missing_field_reject.ag"
@@ -175,6 +246,14 @@ expect = "reject"
 error = "TypeError"
 spec = "§3 (events are not self-declaring; emit of an undeclared type is a TypeError)"
 note = "emit of a plain event needs no power, but the type must be declared."
+
+[[test]]
+id = "type_undeclared_perform_reject"
+section = "03_types"
+path = "tests/03_types/type_undeclared_perform_reject.ag"
+expect = "reject"
+error = "TypeError"
+spec = "§3 (actions are not self-declaring; perform of an undeclared type is a TypeError)"
 
 [[test]]
 id = "type_undeclared_tool_call_reject"
@@ -199,6 +278,14 @@ path = "tests/04_functions/fn_sync_calls_async_reject.ag"
 expect = "reject"
 error = "ColorViolation"
 spec = "§4 (a sync fn may only call other sync fns)"
+
+[[test]]
+id = "fn_sync_embed_reject"
+section = "04_functions"
+path = "tests/04_functions/fn_sync_embed_reject.ag"
+expect = "reject"
+error = "ColorViolation"
+spec = "§9, §10 (embed reaches the provider-backed memory substrate, so a sync function may not call it)"
 
 [[test]]
 id = "fn_sync_emit_ok"
@@ -229,6 +316,14 @@ path = "tests/04_functions/fn_sync_reaches_seam_reject.ag"
 expect = "reject"
 error = "ColorViolation"
 spec = "§1 Axis A, §4 (a sync fn may not reach the provider via `<-`)"
+
+[[test]]
+id = "fn_sync_store_reject"
+section = "04_functions"
+path = "tests/04_functions/fn_sync_store_reject.ag"
+expect = "reject"
+error = "ColorViolation"
+spec = "§9, §10 (store reaches the provider-backed memory substrate, so a sync function may not call it)"
 
 [[test]]
 id = "fn_sync_tool_call_reject"
@@ -262,6 +357,28 @@ path = "tests/05_agents/agent_first_awake_runs_constructor.ag"
 expect = "accept"
 contains = ["Spawned(a)", "AgentAwake(a)"]
 spec = "§5 (first awake opens the mailbox and runs the on-awake hook)"
+
+[[test]]
+id = "agent_instruction_global_accept"
+section = "05_agents"
+path = "tests/05_agents/agent_instruction_global_accept.ag"
+expect = "accept"
+spec = "§5 (a top-level `instruction` is the global compile-time system prompt)"
+
+[[test]]
+id = "agent_instruction_requires_string_reject"
+section = "05_agents"
+path = "tests/05_agents/agent_instruction_requires_string_reject.ag"
+expect = "reject"
+error = "ParseError"
+spec = "§5 (`instruction` takes a string literal — the system prompt)"
+
+[[test]]
+id = "agent_instruction_scoped_accept"
+section = "05_agents"
+path = "tests/05_agents/agent_instruction_scoped_accept.ag"
+expect = "accept"
+spec = "§5 (an agent-scoped `instruction` composes after the global block)"
 
 [[test]]
 id = "agent_prompt_opens_sensor"
@@ -313,6 +430,15 @@ spec = "§6 (a send whose `expires` lifetime elapses before Delivered appends an
 note = "Worker is never awakened, so the 1-tick lifetime elapses undelivered"
 
 [[test]]
+id = "comm_late_delivery_refused"
+section = "06_communication"
+path = "tests/06_communication/comm_late_delivery_refused.ag"
+expect = "accept"
+contains = ["Expired(s)", "DeliveryRefused(s)"]
+absent = ["Delivered(s)"]
+spec = "§6, §9 (a delivery attempt after expiry records DeliveryRefused, not Delivered, and is not an Error)"
+
+[[test]]
 id = "comm_lifecycle_order"
 section = "06_communication"
 path = "tests/06_communication/comm_lifecycle_order.ag"
@@ -350,6 +476,14 @@ section = "06_communication"
 path = "tests/06_communication/comm_typed_reply.ag"
 expect = "accept"
 spec = "§6 (a typed reply binds the provider answer into event<T>)"
+
+[[test]]
+id = "ledger_exact_spine"
+section = "07_ledger"
+path = "tests/07_ledger/ledger_exact_spine.ag"
+expect = "accept"
+ledger = ["Spawned(a)", "AgentAwake(a)"]
+spec = "§7, §16.2 (ledger assertions can pin the exact ordered event spine, with no extra events)"
 
 [[test]]
 id = "ledger_multi_handler_order"
@@ -430,6 +564,24 @@ error = "TypeError"
 spec = "§8 (there is no sampling combinator in the surface language; a use of `sample` is an unknown-identifier error)"
 
 [[test]]
+id = "sem_schema_violation_array_typemismatch"
+section = "08_semantic"
+path = "tests/08_semantic/sem_schema_violation_array_typemismatch.ag"
+expect = "accept"
+contains = ["TypeMismatch"]
+provider = "schema_violation"
+spec = "§8 (event<array<T>> compiles to schema-constrained output; schema failure raises TypeMismatch)"
+
+[[test]]
+id = "sem_schema_violation_enum_typemismatch"
+section = "08_semantic"
+path = "tests/08_semantic/sem_schema_violation_enum_typemismatch.ag"
+expect = "accept"
+contains = ["TypeMismatch"]
+provider = "schema_violation"
+spec = "§8 (event<Enum> compiles to a closed enum schema; schema failure raises TypeMismatch)"
+
+[[test]]
 id = "sem_schema_violation_typemismatch"
 section = "08_semantic"
 path = "tests/08_semantic/sem_schema_violation_typemismatch.ag"
@@ -487,11 +639,42 @@ expect = "accept"
 spec = "§9 (Contradiction extends Error; when (Error e) catches it by subtype)"
 
 [[test]]
+id = "mem_embed_internalizes_ok"
+section = "10_memory"
+path = "tests/10_memory/mem_embed_internalizes_ok.ag"
+expect = "accept"
+contains = ["Internalized"]
+spec = "§9, §10 (embed(x) explicitly writes an embedding to memory and records Internalized)"
+
+[[test]]
+id = "mem_expr_query_no_ledger_event"
+section = "10_memory"
+path = "tests/10_memory/mem_expr_query_no_ledger_event.ag"
+expect = "accept"
+ledger = ["Spawned(a)", "AgentAwake(a)"]
+spec = "§10 (query expression form yields a value and appends no QueryResult event)"
+
+[[test]]
 id = "mem_find_graph_origin_ok"
 section = "10_memory"
 path = "tests/10_memory/mem_find_graph_origin_ok.ag"
 expect = "accept"
 spec = "§10 (the relationship graph is queried with `find … where { triple+ }`, optionally projecting origin())"
+
+[[test]]
+id = "mem_forget_accept"
+section = "10_memory"
+path = "tests/10_memory/mem_forget_accept.ag"
+expect = "accept"
+spec = "§10 (`forget` drops a memory handle — an audit-preserving tombstone)"
+
+[[test]]
+id = "mem_forget_records_tombstone"
+section = "10_memory"
+path = "tests/10_memory/mem_forget_records_tombstone.ag"
+expect = "accept"
+contains = ["Forgotten"]
+spec = "§10 (forget appends an audit-preserving Forgotten tombstone event)"
 
 [[test]]
 id = "mem_match_is_gate"
@@ -509,11 +692,49 @@ error = "TaintViolation"
 spec = "§10, §13 (queried facts default to `graded`; must be re-gated before a consequential perform)"
 
 [[test]]
+id = "mem_recall_after_forget_reject"
+section = "10_memory"
+path = "tests/10_memory/mem_recall_after_forget_reject.ag"
+expect = "reject"
+error = "TypeError"
+spec = "§10 (forget consumes the mem handle; the region is unrecallable going forward)"
+
+[[test]]
+id = "mem_recall_requires_mem_reject"
+section = "10_memory"
+path = "tests/10_memory/mem_recall_requires_mem_reject.ag"
+expect = "reject"
+error = "TypeError"
+spec = "§10 (`->` recall requires a `mem` handle on the left; a non-`mem` LHS is a TypeError)"
+
+[[test]]
+id = "mem_select_boolean_ops_ok"
+section = "10_memory"
+path = "tests/10_memory/mem_select_boolean_ops_ok.ag"
+expect = "accept"
+spec = "§10 (select where conditions support comparison operators combined by boolean connectives)"
+
+[[test]]
 id = "mem_store_internalizes_ok"
 section = "10_memory"
 path = "tests/10_memory/mem_store_internalizes_ok.ag"
 expect = "accept"
 spec = "§9, §10 (store(x) explicitly internalizes a value into the agent's memory — the invoked, default form of internalization; eager-on-receive is opt-in config, §16.7/§17)"
+
+[[test]]
+id = "mem_store_records_internalized"
+section = "10_memory"
+path = "tests/10_memory/mem_store_records_internalized.ag"
+expect = "accept"
+contains = ["Internalized"]
+spec = "§9, §10 (store(x) explicitly internalizes a value and records Internalized)"
+
+[[test]]
+id = "mem_write_recall_accept"
+section = "10_memory"
+path = "tests/10_memory/mem_write_recall_accept.ag"
+expect = "accept"
+spec = "§10 (a `mem` handle into private memory: write with `<-`, recall with `->`)"
 
 [[test]]
 id = "ctrl_case_all_variants_ok"
@@ -592,6 +813,21 @@ expect = "accept"
 spec = "§12 (all over independent Credence<bool> judges fuses to one Credence<bool>)"
 
 [[test]]
+id = "agg_any_bool_disjunction"
+section = "12_aggregation"
+path = "tests/12_aggregation/agg_any_bool_disjunction.ag"
+expect = "accept"
+spec = "§12 (over plain bool, any is ordinary disjunction and needs no dependence declaration)"
+
+[[test]]
+id = "agg_any_no_dep_decl_reject"
+section = "12_aggregation"
+path = "tests/12_aggregation/agg_any_no_dep_decl_reject.ag"
+expect = "reject"
+error = "TypeError"
+spec = "§12 (any over Credence<bool> judges requires total independent/dependent coverage)"
+
+[[test]]
 id = "agg_dependent_fuse_ok"
 section = "12_aggregation"
 path = "tests/12_aggregation/agg_dependent_fuse_ok.ag"
@@ -642,6 +878,14 @@ expect = "accept"
 contains = ["FailedAttestation(m)"]
 attest = "deny"
 spec = "§13 (when the principal declines, the attest gate records a FailedAttestation; the decision is the principal's, deferred to the model only for the clear cases)"
+
+[[test]]
+id = "gov_attest_records_attestation"
+section = "13_governance"
+path = "tests/13_governance/gov_attest_records_attestation.ag"
+expect = "accept"
+contains = ["Attestation(m)"]
+spec = "§13, §16.4 (a granted attest records an Attestation event for the gated value)"
 
 [[test]]
 id = "gov_conformal_coldstart_abstains"
@@ -780,6 +1024,15 @@ error = "AuthorityViolation"
 spec = "§6b, §13 (default-deny: a tool call needs a `use` grant)"
 
 [[test]]
+id = "gov_write_tool_replay_chain_head"
+section = "13_governance"
+path = "tests/13_governance/gov_write_tool_replay_chain_head.ag"
+expect = "accept"
+contains = ["pair(Tool@transfer)"]
+replay = "chain_head_equal"
+spec = "§16.5 (recorded replay of a write tool regenerates the same chain-head from journaled tool results)"
+
+[[test]]
 id = "gov_write_tool_settled_ok"
 section = "13_governance"
 path = "tests/13_governance/gov_write_tool_settled_ok.ag"
@@ -819,6 +1072,42 @@ manifest = ["memory.internalize_on_receive=true"]
 spec = "§16.7, §17 (with `[memory] internalize_on_receive = true`, every received `<-` event is auto-decomposed into memory — the eager, opt-in trigger; default is off)"
 
 [[test]]
+id = "cfg_missing_principal_binding_reject"
+section = "16_config"
+path = "tests/16_config/cfg_missing_principal_binding_reject.ag"
+expect = "reject"
+error = "ConfigError"
+manifest = ["config.require_bindings=true"]
+spec = "§17 (each principal declaration resolves to an identity binding; missing binding is a configuration error)"
+
+[[test]]
+id = "cfg_missing_prompt_binding_reject"
+section = "16_config"
+path = "tests/16_config/cfg_missing_prompt_binding_reject.ag"
+expect = "reject"
+error = "ConfigError"
+manifest = ["config.require_bindings=true"]
+spec = "§17 (each prompt declaration resolves to a manifest binding; missing binding is a configuration error)"
+
+[[test]]
+id = "cfg_missing_tool_binding_reject"
+section = "16_config"
+path = "tests/16_config/cfg_missing_tool_binding_reject.ag"
+expect = "reject"
+error = "ConfigError"
+manifest = ["config.require_bindings=true"]
+spec = "§17 (each tool declaration resolves to a configured world capability; missing binding is a configuration error)"
+
+[[test]]
+id = "cfg_require_fallback_temperature_reject"
+section = "16_config"
+path = "tests/16_config/cfg_require_fallback_temperature_reject.ag"
+expect = "reject"
+error = "ConfigError"
+manifest = ["provider.exposes_logprobs=false", "provider.temperature=0"]
+spec = "§17 (a text-only provider at temperature 0 requires fallback_temperature for sampling fallback)"
+
+[[test]]
 id = "cfg_sampling_fallback"
 section = "16_config"
 path = "tests/16_config/cfg_sampling_fallback.ag"
@@ -828,6 +1117,24 @@ manifest = ["provider.exposes_logprobs=false", "provider.fallback_samples=10", "
 provider = "credence(true=0.9, false=0.1)"
 spec = "§16.8, §17 (a text-only provider — no logprobs — is served by the sampling fallback: the credence is the empirical frequency of N forced draws; a confident judgment still commits)"
 note = "the manifest sets only connector config; the decision policy is in source"
+
+[[test]]
+id = "cfg_sampling_fallback_disabled_defers"
+section = "16_config"
+path = "tests/16_config/cfg_sampling_fallback_disabled_defers.ag"
+expect = "accept"
+contains = ["Abstained(c)"]
+absent = ["Decided(c)"]
+manifest = ["provider.exposes_logprobs=false", "provider.sampling_fallback=false"]
+spec = "§20.3, §17 (without logprobs or sampling fallback, conformal degrades to deferral/abstain)"
+
+[[test]]
+id = "cfg_strict_bindings_ok"
+section = "16_config"
+path = "tests/16_config/cfg_strict_bindings_ok.ag"
+expect = "accept"
+manifest = ["config.require_bindings=true", "identity.alice=local", "prompts.question=stdin", "tools.search=mock"]
+spec = "§17 (declared dependencies pass configuration binding when every dependency has a manifest entry)"
 
 [[test]]
 id = "mod_ambiguous_name_reject"
@@ -890,6 +1197,31 @@ spec = "§19.2 (no module/import = implicit root module; v1.0.0 backward compat)
 note = "an unmodified v1.0.0 program still compiles"
 
 [[test]]
+id = "mod_package_path_dependency"
+section = "18_modules"
+path = "tests/18_modules/mod_package_path_dependency.ag"
+expect = "accept"
+packages = ["geometry=geometry/src/lib.ag"]
+spec = "§19.3 (a path dependency package exposes its [package] lib as an importable module root)"
+
+[[test]]
+id = "mod_pub_import_private_reject"
+section = "18_modules"
+path = "tests/18_modules/mod_pub_import_private_reject.ag"
+expect = "reject"
+error = "VisibilityError"
+modules = ["internal.ag"]
+spec = "§19.2a (pub import of a non-pub name is a VisibilityError)"
+
+[[test]]
+id = "mod_pub_import_reexport"
+section = "18_modules"
+path = "tests/18_modules/mod_pub_import_reexport.ag"
+expect = "accept"
+modules = ["facade.ag", "internal.ag"]
+spec = "§19.2a (pub import re-exports a name through the importing module's public surface)"
+
+[[test]]
 id = "mod_selective_import_unknown_reject"
 section = "18_modules"
 path = "tests/18_modules/mod_selective_import_unknown_reject.ag"
@@ -924,6 +1256,15 @@ spec = "§19.4 (default-private is module-internal, not decl-internal; siblings 
 note = "a private helper is visible to another decl in the same module"
 
 [[test]]
+id = "vis_private_emit_reject"
+section = "19_visibility"
+path = "tests/19_visibility/vis_private_emit_reject.ag"
+expect = "reject"
+error = "VisibilityError"
+modules = ["m.ag"]
+spec = "§19.4 (a private event cannot be named in emit from another module)"
+
+[[test]]
 id = "vis_private_event_still_on_ledger"
 section = "19_visibility"
 path = "tests/19_visibility/vis_private_event_still_on_ledger.ag"
@@ -934,6 +1275,15 @@ spec = "§19.4 (a private event still lands on the ledger; caught cross-module b
 note = "visibility gates the NAME, not ledger presence"
 
 [[test]]
+id = "vis_private_extend_reject"
+section = "19_visibility"
+path = "tests/19_visibility/vis_private_extend_reject.ag"
+expect = "reject"
+error = "VisibilityError"
+modules = ["m.ag"]
+spec = "§19.4 (a private agent cannot be named in extend from another module)"
+
+[[test]]
 id = "vis_private_not_importable_reject"
 section = "19_visibility"
 path = "tests/19_visibility/vis_private_not_importable_reject.ag"
@@ -941,6 +1291,42 @@ expect = "reject"
 error = "VisibilityError"
 modules = ["m.ag"]
 spec = "§19.4 (a non-pub declaration is not importable; naming it is a VisibilityError)"
+
+[[test]]
+id = "vis_private_perform_reject"
+section = "19_visibility"
+path = "tests/19_visibility/vis_private_perform_reject.ag"
+expect = "reject"
+error = "VisibilityError"
+modules = ["m.ag"]
+spec = "§19.4 (a private action cannot be named in perform from another module)"
+
+[[test]]
+id = "vis_private_qualified_reference_reject"
+section = "19_visibility"
+path = "tests/19_visibility/vis_private_qualified_reference_reject.ag"
+expect = "reject"
+error = "VisibilityError"
+modules = ["m.ag"]
+spec = "§19.4 (a private declaration cannot be named from another module even by qualified reference)"
+
+[[test]]
+id = "vis_private_reach_reject"
+section = "19_visibility"
+path = "tests/19_visibility/vis_private_reach_reject.ag"
+expect = "reject"
+error = "VisibilityError"
+modules = ["m.ag"]
+spec = "§19.4 (a private agent cannot be named in a reach capability from another module)"
+
+[[test]]
+id = "vis_private_when_reject"
+section = "19_visibility"
+path = "tests/19_visibility/vis_private_when_reject.ag"
+expect = "reject"
+error = "VisibilityError"
+modules = ["m.ag"]
+spec = "§19.4 (a private event cannot be named in when from another module)"
 
 [[test]]
 id = "vis_pub_importable"
@@ -968,11 +1354,27 @@ spec = "§19.5 (agents are not generic; only struct/fn carry type params)"
 note = "an agent is event-reactive — parameterization lives in its when-handlers' event types"
 
 [[test]]
+id = "gen_enum_not_generic_reject"
+section = "20_generics"
+path = "tests/20_generics/gen_enum_not_generic_reject.ag"
+expect = "reject"
+error = "ParseError"
+spec = "§19.5 (enums stay monomorphic; only struct and fn carry type parameters)"
+
+[[test]]
 id = "gen_fn_identity"
 section = "20_generics"
 path = "tests/20_generics/gen_fn_identity.ag"
 expect = "accept"
 spec = "§19.5 (user-generic function; monomorphized at the call site)"
+
+[[test]]
+id = "gen_interface_not_generic_reject"
+section = "20_generics"
+path = "tests/20_generics/gen_interface_not_generic_reject.ag"
+expect = "reject"
+error = "ParseError"
+spec = "§19.5 (interfaces are not generic; only struct and fn carry type parameters)"
 
 [[test]]
 id = "gen_monomorphize_two_instances"
@@ -994,6 +1396,14 @@ section = "20_generics"
 path = "tests/20_generics/gen_struct_box.ag"
 expect = "accept"
 spec = "§19.5 (user-generic struct with a type parameter)"
+
+[[test]]
+id = "gen_typearg_on_nongeneric_reject"
+section = "20_generics"
+path = "tests/20_generics/gen_typearg_on_nongeneric_reject.ag"
+expect = "reject"
+error = "TypeError"
+spec = "§19.5 (type arguments instantiate generic declarations only)"
 
 [[test]]
 id = "iface_decl_and_conformance"
@@ -1034,6 +1444,14 @@ error = "TypeError"
 spec = "§19.5 (an interface is a type but not instantiable; spawn of one is a TypeError)"
 
 [[test]]
+id = "iface_outcome_mismatch_reject"
+section = "21_interfaces"
+path = "tests/21_interfaces/iface_outcome_mismatch_reject.ag"
+expect = "reject"
+error = "InterfaceError"
+spec = "§19.5 (interface conformance checks the declared handled event and decided outcome)"
+
+[[test]]
 id = "iface_subtype_binding"
 section = "21_interfaces"
 path = "tests/21_interfaces/iface_subtype_binding.ag"
@@ -1041,11 +1459,38 @@ expect = "accept"
 spec = "§19.5 (agent <: interface; bind a concrete agent to an interface slot; reach over the interface)"
 
 [[test]]
+id = "iface_syntax_reject_arrow"
+section = "21_interfaces"
+path = "tests/21_interfaces/iface_syntax_reject_arrow.ag"
+expect = "reject"
+error = "ParseError"
+spec = "§19.5 (interface members use `when EVENT decide RESULT`, never `->`)"
+
+[[test]]
 id = "gate_all_reversible_no_principal_accept"
 section = "22_gate"
 path = "tests/22_gate/gate_all_reversible_no_principal_accept.ag"
 expect = "accept"
 spec = "§20 (all arms reversible -> argmax-forever; no principal required)"
+
+[[test]]
+id = "gate_cold_nonreversible_defers_to_principal"
+section = "22_gate"
+path = "tests/22_gate/gate_cold_nonreversible_defers_to_principal.ag"
+expect = "accept"
+contains = ["Attestation(c)", "Commit(d)"]
+provider = "credence(Approve=0.9, Reject=0.1)"
+spec = "§20.1, §20.3 (cold non-reversible decide defers to a reachable principal before the action arm commits)"
+
+[[test]]
+id = "gate_cold_reversible_no_defer"
+section = "22_gate"
+path = "tests/22_gate/gate_cold_reversible_no_defer.ag"
+expect = "accept"
+contains = ["Reply(d)"]
+absent = ["Attestation(c)"]
+provider = "credence(Reply=0.9, Hold=0.1)"
+spec = "§20.1 (a cold reversible outcome commits without principal deferral)"
 
 [[test]]
 id = "gate_decide_defer_clause_accept"
@@ -1062,11 +1507,26 @@ expect = "accept"
 spec = "§20 (decide with a principal subject; a non-reversible arm has a reachable principal)"
 
 [[test]]
+id = "gate_decision_field_readonly_reject"
+section = "22_gate"
+path = "tests/22_gate/gate_decision_field_readonly_reject.ag"
+expect = "reject"
+error = "TypeError"
+spec = "§20.4 (Decision provenance fields are read-only)"
+
+[[test]]
 id = "gate_decision_introspection_accept"
 section = "22_gate"
 path = "tests/22_gate/gate_decision_introspection_accept.ag"
 expect = "accept"
 spec = "§20.4, §9 (Decision provenance: .basis over the Basis enum)"
+
+[[test]]
+id = "gate_decision_introspection_committed_margin_accept"
+section = "22_gate"
+path = "tests/22_gate/gate_decision_introspection_committed_margin_accept.ag"
+expect = "accept"
+spec = "§20.4 (Decision provenance exposes .committed and .margin, not only .basis)"
 
 [[test]]
 id = "gate_file_conformal_decl_accept"
@@ -1096,3 +1556,23 @@ section = "22_gate"
 path = "tests/22_gate/gate_reversible_action_accept.ag"
 expect = "accept"
 spec = "§20 (`reversible action` — reversibility annotates a perform sink)"
+
+[[test]]
+id = "gate_reversible_tie_abstains"
+section = "22_gate"
+path = "tests/22_gate/gate_reversible_tie_abstains.ag"
+expect = "accept"
+contains = ["Abstained(c)"]
+absent = ["Note"]
+provider = "credence(A=0.5, B=0.5)"
+spec = "§20.3 (a reversible decide with no plurality and no default abstains; it never silently picks)"
+
+[[test]]
+id = "gate_reversible_tie_default"
+section = "22_gate"
+path = "tests/22_gate/gate_reversible_tie_default.ag"
+expect = "accept"
+contains = ["Event"]
+absent = ["Note"]
+provider = "credence(A=0.5, B=0.5)"
+spec = "§20.3 (a reversible decide tie uses default as the tiebreak instead of silently picking)"

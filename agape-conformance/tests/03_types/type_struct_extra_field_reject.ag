@@ -1,0 +1,8 @@
+//! id:        type_struct_extra_field_reject
+//! section:   03_types
+//! expect:    reject
+//! error:     TypeError
+//! spec:      §3, §8 (struct literals/schema objects are exact; extra fields are rejected)
+//! ---
+struct Memo { amount: int }
+Memo m = Memo { amount: 25, to: "alice" };

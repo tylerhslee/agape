@@ -1,0 +1,15 @@
+//! id:        gate_decision_field_readonly_reject
+//! section:   22_gate
+//! expect:    reject
+//! error:     TypeError
+//! spec:      §20.4 (Decision provenance fields are read-only)
+//! ---
+enum R { Yes, No }
+agent A {
+  on awake {
+    Credence<R> c = self <- "yes?";
+    Decision<R> d = c by confidence 0.8;
+    d.margin = 0.0;
+  }
+}
+spawn A a; awake a;

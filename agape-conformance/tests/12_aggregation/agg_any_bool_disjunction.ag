@@ -1,0 +1,9 @@
+//! id:        agg_any_bool_disjunction
+//! section:   12_aggregation
+//! expect:    accept
+//! spec:      §12 (over plain bool, any is ordinary disjunction and needs no dependence declaration)
+//! ---
+agent A {
+  on awake { bool ok = any(false, false, true); }
+}
+spawn A a; awake a;

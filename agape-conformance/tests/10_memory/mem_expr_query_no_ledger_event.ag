@@ -1,0 +1,12 @@
+//! id:        mem_expr_query_no_ledger_event
+//! section:   10_memory
+//! expect:    accept
+//! ledger:    Spawned(a); AgentAwake(a)
+//! spec:      §10 (query expression form yields a value and appends no QueryResult event)
+//! ---
+agent A {
+  on awake {
+    array<Event> prior = select * from ledger where { etype: "Spawned" };
+  }
+}
+spawn A a; awake a;

@@ -1,0 +1,12 @@
+//! id:        vis_private_perform_reject
+//! section:   19_visibility
+//! expect:    reject
+//! error:     VisibilityError
+//! modules:   m.ag
+//! spec:      §19.4 (a private action cannot be named in perform from another module)
+//! ---
+import m;
+agent A grants { * } {
+  on awake { perform m.Secret("x"); }
+}
+spawn A a; awake a;

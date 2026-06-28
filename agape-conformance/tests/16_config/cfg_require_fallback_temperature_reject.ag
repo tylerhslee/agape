@@ -1,0 +1,14 @@
+//! id:        cfg_require_fallback_temperature_reject
+//! section:   16_config
+//! expect:    reject
+//! error:     ConfigError
+//! manifest:  provider.exposes_logprobs=false; provider.temperature=0
+//! spec:      §17 (a text-only provider at temperature 0 requires fallback_temperature for sampling fallback)
+//! ---
+agent A {
+  on awake {
+    Credence<bool> c = self <- "true?";
+    endorse (c by confidence 0.8) { true: ; false: ; }
+  }
+}
+spawn A a; awake a;

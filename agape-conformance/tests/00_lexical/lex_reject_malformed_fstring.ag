@@ -1,0 +1,7 @@
+//! id:        lex_reject_malformed_fstring
+//! section:   00_lexical
+//! expect:    reject
+//! error:     ParseError
+//! spec:      §2 (f-string interpolation braces must parse as expressions)
+//! ---
+text s = f"hello {";

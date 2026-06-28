@@ -90,6 +90,9 @@ pub struct Checker {
     structs: HashMap<String, Vec<Field>>,
     enums: HashMap<String, Vec<String>>,
     events: HashSet<String>,
+    event_fields: HashMap<String, Vec<Field>>,
+    actions: HashMap<String, Vec<Field>>,
+    prompt_types: HashMap<String, Type>,
     tools: HashMap<String, Option<Type>>, // name -> return type
     tool_effects: HashMap<String, ToolEffect>, // name -> read/write (§6b)
     agents: HashMap<String, AgentInfo>,
@@ -100,6 +103,8 @@ pub struct Checker {
     interfaces: HashMap<String, Vec<IfaceMember>>,
     /// Type params in scope (generic struct/fn) — treated as valid opaque types.
     typarams: HashSet<String>,
+    /// Struct declarations that actually accept type arguments (§19.5).
+    generic_structs: HashSet<String>,
     /// Reversible action/tool sinks (§20), by name.
     reversible_sinks: HashSet<String>,
     /// The file-level conformal default (§20); used by the gate desugaring.
@@ -461,10 +466,20 @@ fn walk_qualified_names(s: &Stmt, f: &mut impl FnMut(&str)) {
                 walk_qualified_names(b, f);
             }
         }
-        Stmt::AgentDecl { body, ifaces, .. } => {
+        Stmt::Extend { parent, .. } => {
+            if parent.contains('.') {
+                f(parent);
+            }
+        }
+        Stmt::AgentDecl { body, ifaces, grants, .. } => {
             for i in ifaces {
                 if i.contains('.') {
                     f(i);
+                }
+            }
+            for cap in grants {
+                if cap.target.contains('.') {
+                    f(&cap.target);
                 }
             }
             for b in body {
@@ -500,13 +515,22 @@ impl Checker {
                 let handled = self.agent_handled_events(&info.body);
                 for member in members {
                     match member {
-                        IfaceMember::When { event, .. } => {
+                        IfaceMember::When { event, result } => {
                             let want = event.rsplit('.').next().unwrap_or(event);
                             if !handled.iter().any(|h| h == want || h == event) {
                                 return Err(AgapeError::new(
                                     ErrorClass::Interface,
                                     format!("agent `{aname}` declares interface `{iface_name}` but has no `when ({event} …)` handler (§19.5)"),
                                 ));
+                            }
+                            if let Some(actual) = self.handler_decision_result(&info.body, want) {
+                                let want_result = result.rsplit('.').next().unwrap_or(result);
+                                if actual != want_result && actual != *result {
+                                    return Err(AgapeError::new(
+                                        ErrorClass::Interface,
+                                        format!("agent `{aname}` handler for `{event}` decides `{actual}`, not interface result `{result}` (§19.5)"),
+                                    ));
+                                }
                             }
                         }
                         IfaceMember::Requires(cap) => {
@@ -642,11 +666,43 @@ impl Checker {
         out
     }
 
+    fn handler_decision_result(&self, body: &[Stmt], event: &str) -> Option<String> {
+        for s in body {
+            let Stmt::When { ty, body, .. } = s else { continue };
+            let Some(n) = type_nominal(ty) else { continue };
+            if n.rsplit('.').next().unwrap_or(&n) != event && n != event {
+                continue;
+            }
+            let mut credence_bindings: HashMap<String, String> = HashMap::new();
+            for stmt in body {
+                if let Stmt::VarDecl { ty: Type::Credence(inner), name, .. } = stmt {
+                    if let Some(en) = self.enum_of(inner) {
+                        credence_bindings.insert(name.clone(), en);
+                    }
+                }
+            }
+            for stmt in body {
+                match stmt {
+                    Stmt::Endorse { arg: Expr::Name(c), .. } | Stmt::Decide { expr: Expr::Name(c), .. } => {
+                        if let Some(en) = credence_bindings.get(c) {
+                            return Some(en.clone());
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        None
+    }
+
     fn new() -> Self {
         Checker {
             structs: HashMap::new(),
             enums: HashMap::new(),
             events: HashSet::new(),
+            event_fields: HashMap::new(),
+            actions: HashMap::new(),
+            prompt_types: HashMap::new(),
             tools: HashMap::new(),
             tool_effects: HashMap::new(),
             agents: HashMap::new(),
@@ -656,6 +712,7 @@ impl Checker {
             fn_async: HashMap::new(),
             interfaces: HashMap::new(),
             typarams: HashSet::new(),
+            generic_structs: HashSet::new(),
             reversible_sinks: HashSet::new(),
             file_conformal: None,
         }
@@ -672,6 +729,9 @@ impl Checker {
             match s {
                 Stmt::StructDecl { name, typarams, fields } => {
                     self.structs.insert(name.clone(), fields.clone());
+                    if !typarams.is_empty() {
+                        self.generic_structs.insert(name.clone());
+                    }
                     for tp in typarams {
                         self.typarams.insert(tp.clone());
                     }
@@ -679,10 +739,12 @@ impl Checker {
                 Stmt::EnumDecl { name, variants } => {
                     self.enums.insert(name.clone(), variants.clone());
                 }
-                Stmt::EventDecl { name, .. } => {
+                Stmt::EventDecl { name, fields, .. } => {
                     self.events.insert(name.clone());
+                    self.event_fields.insert(name.clone(), fields.clone());
                 }
-                Stmt::ActionDecl { name, reversible, .. } => {
+                Stmt::ActionDecl { name, fields, reversible } => {
+                    self.actions.insert(name.clone(), fields.clone());
                     if *reversible {
                         self.reversible_sinks.insert(name.clone());
                     }
@@ -699,6 +761,9 @@ impl Checker {
                 }
                 Stmt::ConformalDecl(a) => {
                     self.file_conformal = Some(*a);
+                }
+                Stmt::Prompt { ty, name } => {
+                    self.prompt_types.insert(name.clone(), ty.clone());
                 }
                 Stmt::Authority(name) => {
                     self.authority.insert(name.clone());
@@ -805,8 +870,8 @@ impl Checker {
             Stmt::Verify { arg, by } => e(arg) || self.gate_is_identity_seam(by, pr),
             // `attest e by p` always reaches the identity dependency → async (§13).
             Stmt::Attest { .. } => true,
-            Stmt::Emit { payload, .. } => e(payload),
-            Stmt::Perform { payload, .. } => e(payload),
+            Stmt::Emit { args, .. } => args.iter().any(e),
+            Stmt::Perform { args, .. } => args.iter().any(e),
             Stmt::Endorse { arg, arms, abstain, .. } => {
                 e(arg) || arms.iter().any(|(_, body)| b(body)) || abstain.as_deref().is_some_and(b)
             }
@@ -839,7 +904,8 @@ impl Checker {
             Expr::Recall { .. } => true, // the memory seam (§10) — agentic, async
             Expr::Call { func, args } => {
                 let is_tool = matches!(&**func, Expr::Name(n) if self.tools.contains_key(n));
-                is_tool || r(func) || args.iter().any(r)
+                let is_memory_seam = matches!(&**func, Expr::Name(n) if n == "store" || n == "embed");
+                is_tool || is_memory_seam || r(func) || args.iter().any(r)
             }
             Expr::Verify { arg, by } => r(arg) || self.gate_is_identity_seam(by, pr),
             Expr::Decide { expr, rule } => r(expr) || self.rule_reaches_seam(rule, pr),
@@ -919,6 +985,7 @@ impl Checker {
     fn walk_stmt(&self, s: &Stmt, scope: &mut Scope, agent: Option<&str>) -> Result<(), AgapeError> {
         match s {
             Stmt::VarDecl { ty, name, expr } => {
+                self.check_type_instantiation(ty)?;
                 if let Some(init) = expr {
                     self.walk_expr(init, scope, agent)?;
                     // A `Credence<E>` is produced ONLY by a provider judgment (a send,
@@ -945,21 +1012,35 @@ impl Checker {
                 scope.env.insert(name.clone(), VarInfo { ty: Type::Mem, taint: Taint::U, authorized: false });
             }
             Stmt::Assign { target, expr } => {
+                if let Expr::Member { obj, prop } = target {
+                    if matches!(prop.as_str(), "committed" | "basis" | "margin")
+                        && matches!(self.expr_type(obj, scope), Type::Decision(_))
+                    {
+                        return Err(AgapeError::new(
+                            ErrorClass::Type,
+                            "Decision provenance fields are read-only (§20.4)",
+                        ));
+                    }
+                }
                 self.walk_expr(target, scope, agent)?;
                 self.walk_expr(expr, scope, agent)?;
             }
-            Stmt::Emit { event_type, payload } => {
-                self.walk_expr(payload, scope, agent)?;
-                self.check_emit(event_type, payload, scope, agent)?;
+            Stmt::Emit { event_type, args } => {
+                for arg in args {
+                    self.walk_expr(arg, scope, agent)?;
+                }
+                self.check_emit(event_type, args, scope, agent)?;
             }
             Stmt::Verify { arg, by } => {
                 self.walk_expr(arg, scope, agent)?;
                 self.check_gate_by(by)?;
             }
             Stmt::ActionDecl { .. } | Stmt::PolicyDecl { .. } => {}
-            Stmt::Perform { action_type, payload } => {
-                self.walk_expr(payload, scope, agent)?;
-                self.check_perform(action_type, payload, scope, agent)?;
+            Stmt::Perform { action_type, args } => {
+                for arg in args {
+                    self.walk_expr(arg, scope, agent)?;
+                }
+                self.check_perform(action_type, args, scope, agent)?;
             }
             // `endorse` records the gate — its arms are the licensed (endorsed)
             // context where a `perform` may run; clear any inherited block.
@@ -1015,7 +1096,8 @@ impl Checker {
                 // The bound event evaluates to its payload; a ledger event (incl. an
                 // external `Prompt`, settled by origin §5b) is a settled fact.
                 if let Some(b) = binder {
-                    s1.env.insert(b.clone(), VarInfo { ty: ty.clone(), taint: Taint::U, authorized: false });
+                    let bty = self.when_binder_type(ty, about.as_ref(), scope);
+                    s1.env.insert(b.clone(), VarInfo { ty: bty, taint: Taint::U, authorized: false });
                 }
                 if let Some(g) = guard {
                     self.walk_expr(g, &mut s1, agent)?;
@@ -1104,7 +1186,10 @@ impl Checker {
             }
             Stmt::Pub(inner) => self.walk_stmt(inner, scope, agent)?,
             // Declarations: register agent params/principal context where useful.
-            Stmt::AgentDecl { .. } | Stmt::FnDecl { .. } | Stmt::StructDecl { .. } | Stmt::EnumDecl { .. } | Stmt::EventDecl { .. } | Stmt::ToolDecl { .. } | Stmt::InterfaceDecl { .. } | Stmt::ConformalDecl(_) | Stmt::Authority(_) | Stmt::Extend { .. } | Stmt::Import { .. } | Stmt::ModuleDecl { .. } | Stmt::ModuleAttr { .. } | Stmt::Awake { .. } | Stmt::Sleep(_) | Stmt::Break | Stmt::Return(None) | Stmt::Instruction(_) | Stmt::Forget(_) => {}
+            Stmt::Forget(name) => {
+                scope.env.remove(name);
+            }
+            Stmt::AgentDecl { .. } | Stmt::FnDecl { .. } | Stmt::StructDecl { .. } | Stmt::EnumDecl { .. } | Stmt::EventDecl { .. } | Stmt::ToolDecl { .. } | Stmt::InterfaceDecl { .. } | Stmt::ConformalDecl(_) | Stmt::Authority(_) | Stmt::Extend { .. } | Stmt::Import { .. } | Stmt::ModuleDecl { .. } | Stmt::ModuleAttr { .. } | Stmt::Awake { .. } | Stmt::Sleep(_) | Stmt::Break | Stmt::Return(None) | Stmt::Instruction(_) => {}
         }
         Ok(())
     }
@@ -1157,6 +1242,7 @@ impl Checker {
                 }
             }
             Expr::StructLit { name, fields } => {
+                self.check_generic_instantiation(name)?;
                 self.check_struct_lit(name, fields)?;
                 for (_, v) in fields {
                     self.walk_expr(v, scope, agent)?;
@@ -1214,10 +1300,10 @@ impl Checker {
 
     // ── individual checks ────────────────────────────────────────────────────
 
-    /// `emit E(payload)`: the event must be declared (Type); in an agent, a
+    /// `emit E(args...)`: the event must be declared (Type); in an agent, a
     /// non-built-in event needs an `emit` grant (Authority); a consequential
     /// (`authority`) event consumes only a `U`-and-authorized value (Taint).
-    fn check_emit(&self, event: &str, payload: &Expr, scope: &Scope, _agent: Option<&str>) -> Result<(), AgapeError> {
+    fn check_emit(&self, event: &str, args: &[Expr], scope: &Scope, _agent: Option<&str>) -> Result<(), AgapeError> {
         let bare = event.rsplit('.').next().unwrap_or(event);
         if !self.events.contains(event) && !self.events.contains(bare) {
             return Err(AgapeError::new(
@@ -1225,10 +1311,16 @@ impl Checker {
                 format!("`emit {event}` names an undeclared event type (events are not self-declaring; declare `event {event}(...)`)"),
             ));
         }
+        if let Some(fields) = self.event_fields.get(event).or_else(|| self.event_fields.get(bare)) {
+            self.check_positional_payload("emit", event, fields, args, scope)?;
+        } else if matches!(bare, "Event" | "Error") {
+            let fields = [Field { name: "message".into(), ty: Type::Text }];
+            self.check_positional_payload("emit", event, &fields, args, scope)?;
+        }
         // A plain `emit` needs no power (§13, W-Auth): only `perform`/`reach`/`use`
         // are gated. A consequential act is a `perform` of an `action`, not an emit.
         if self.authority.contains(event) {
-            let (taint, authorized) = self.value_taint(None, payload, scope);
+            let (taint, authorized) = self.args_taint(args, scope);
             if !(taint == Taint::U && authorized) {
                 return Err(AgapeError::new(
                     ErrorClass::Taint,
@@ -1272,10 +1364,18 @@ impl Checker {
         Ok(())
     }
 
-    /// `perform A(e)` (§13): default-deny `perform` grant (Authority); a settled
+    /// `perform A(args...)` (§13): default-deny `perform` grant (Authority); settled
     /// payload (Taint, W-Consequential-static); and a *recorded* licensing gate —
     /// a `perform` inside a bare-collapse `case` branch is unendorsed (Taint).
-    fn check_perform(&self, action: &str, payload: &Expr, scope: &Scope, agent: Option<&str>) -> Result<(), AgapeError> {
+    fn check_perform(&self, action: &str, args: &[Expr], scope: &Scope, agent: Option<&str>) -> Result<(), AgapeError> {
+        let bare = action.rsplit('.').next().unwrap_or(action);
+        let fields = self.actions.get(action).or_else(|| self.actions.get(bare)).ok_or_else(|| {
+            AgapeError::new(
+                ErrorClass::Type,
+                format!("`perform {action}` names an undeclared action type (actions are not self-declaring; declare `action {action}(...)`)"),
+            )
+        })?;
+        self.check_positional_payload("perform", action, fields, args, scope)?;
         if let Some(a) = agent {
             if !self.agent_allows(a, CapKind::Perform, action) {
                 return Err(AgapeError::new(
@@ -1284,7 +1384,7 @@ impl Checker {
                 ));
             }
         }
-        let (taint, _) = self.value_taint(None, payload, scope);
+        let (taint, _) = self.args_taint(args, scope);
         if taint != Taint::U {
             return Err(AgapeError::new(
                 ErrorClass::Taint,
@@ -1296,6 +1396,41 @@ impl Checker {
                 ErrorClass::Taint,
                 format!("`perform {action}` is licensed by a bare `c by R` collapse (settled but unendorsed/off-ledger) — only a recorded gate (`endorse`/`attest`) may license a consequential action (§13)"),
             ));
+        }
+        Ok(())
+    }
+
+    fn check_positional_payload(
+        &self,
+        op: &str,
+        name: &str,
+        fields: &[Field],
+        args: &[Expr],
+        scope: &Scope,
+    ) -> Result<(), AgapeError> {
+        if args.len() != fields.len() {
+            return Err(AgapeError::new(
+                ErrorClass::Type,
+                format!(
+                    "`{op} {name}` expects {} argument(s) from its declaration, got {}",
+                    fields.len(),
+                    args.len()
+                ),
+            ));
+        }
+        for (idx, (arg, field)) in args.iter().zip(fields).enumerate() {
+            let got = self.expr_type(arg, scope);
+            if got != field.ty {
+                return Err(AgapeError::new(
+                    ErrorClass::Type,
+                    format!(
+                        "`{op} {name}` argument {} (`{}`) has type {got:?}, expected {:?}",
+                        idx + 1,
+                        field.name,
+                        field.ty
+                    ),
+                ));
+            }
         }
         Ok(())
     }
@@ -1393,6 +1528,50 @@ impl Checker {
         Ok(())
     }
 
+    fn check_generic_instantiation(&self, name: &str) -> Result<(), AgapeError> {
+        if let Some((base, _)) = name.split_once('<') {
+            if !self.generic_structs.contains(base) {
+                return Err(AgapeError::new(
+                    ErrorClass::Type,
+                    format!("type arguments instantiate generic declarations only; `{base}` is not generic (§19.5)"),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn check_type_instantiation(&self, ty: &Type) -> Result<(), AgapeError> {
+        match ty {
+            Type::Generic(name, args) => {
+                if !self.generic_structs.contains(name) {
+                    return Err(AgapeError::new(
+                        ErrorClass::Type,
+                        format!("type arguments instantiate generic declarations only; `{name}` is not generic (§19.5)"),
+                    ));
+                }
+                for a in args {
+                    self.check_type_instantiation(a)?;
+                }
+            }
+            Type::Event(inner) | Type::Array(inner) | Type::Credence(inner) | Type::Decision(inner) => {
+                self.check_type_instantiation(inner)?;
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn when_binder_type(&self, ty: &Type, about: Option<&Expr>, _scope: &Scope) -> Type {
+        if matches!(ty, Type::Named(n) if n == "Prompt") {
+            if let Some(Expr::Name(sensor)) = about {
+                if let Some(t) = self.prompt_types.get(sensor) {
+                    return t.clone();
+                }
+            }
+        }
+        ty.clone()
+    }
+
     /// Fusing two or more `Credence` judgments requires a total
     /// `independent`/`dependent` declaration covering every pair (§12).
     fn check_fusion(&self, judges: &[Expr], scope: &Scope) -> Result<(), AgapeError> {
@@ -1467,6 +1646,17 @@ impl Checker {
 
     /// The taint (and authorization) a value carries, given its (optional)
     /// declared slot type and its initializer.
+    fn args_taint(&self, args: &[Expr], scope: &Scope) -> (Taint, bool) {
+        let mut taint = Taint::U;
+        let mut authorized = !args.is_empty();
+        for arg in args {
+            let (arg_taint, arg_authorized) = self.value_taint(None, arg, scope);
+            taint = taint.max(arg_taint);
+            authorized &= arg_authorized;
+        }
+        (taint, authorized)
+    }
+
     fn value_taint(&self, decl_ty: Option<&Type>, e: &Expr, scope: &Scope) -> (Taint, bool) {
         match e {
             Expr::Decide { .. } => (Taint::U, false), // untaints, but NOT recorded → unauthorized
@@ -1594,6 +1784,11 @@ impl Checker {
                                 return f.ty.clone();
                             }
                         }
+                        if let Some(fields) = self.event_fields.get(sn) {
+                            if let Some(f) = fields.iter().find(|f| &f.name == prop) {
+                                return f.ty.clone();
+                            }
+                        }
                     }
                     Type::Named("?".into())
                 }
@@ -1636,7 +1831,9 @@ fn calls_in_stmt(s: &Stmt, out: &mut Vec<String>) {
             e(expr, out);
         }
         Stmt::Verify { arg, .. } => e(arg, out),
-        Stmt::Emit { payload, .. } | Stmt::Perform { payload, .. } => e(payload, out),
+        Stmt::Emit { args, .. } | Stmt::Perform { args, .. } => {
+            args.iter().for_each(|arg| e(arg, out));
+        }
         Stmt::Attest { arg, arms, .. } => {
             e(arg, out);
             arms.iter().for_each(|(_, b)| b.iter().for_each(|s| calls_in_stmt(s, out)));

@@ -1,0 +1,11 @@
+//! id:        type_action_multifield_type_reject
+//! section:   03_types
+//! expect:    reject
+//! error:     TypeError
+//! spec:      §3, §13 (perform arguments are type-checked positionally)
+//! ---
+action Charge(int cents, text account);
+agent A grants { perform Charge } {
+  on awake { perform Charge("2500", "acct-7"); }
+}
+spawn A a; awake a;

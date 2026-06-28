@@ -1,0 +1,9 @@
+//! id:        vis_private_reach_reject
+//! section:   19_visibility
+//! expect:    reject
+//! error:     VisibilityError
+//! modules:   m.ag
+//! spec:      §19.4 (a private agent cannot be named in a reach capability from another module)
+//! ---
+import m;
+agent A grants { reach m.Worker } {}

@@ -1,0 +1,9 @@
+//! id:        gen_interface_not_generic_reject
+//! section:   20_generics
+//! expect:    reject
+//! error:     ParseError
+//! spec:      §19.5 (interfaces are not generic; only struct and fn carry type parameters)
+//! ---
+interface Resolver<T> {
+  when Ask decide T;
+}

@@ -1,0 +1,11 @@
+//! id:        mem_select_boolean_ops_ok
+//! section:   10_memory
+//! expect:    accept
+//! spec:      §10 (select where conditions support comparison operators combined by boolean connectives)
+//! ---
+agent A {
+  on awake {
+    select * from ledger where { etype != "Nope" };
+  }
+}
+spawn A a; awake a;

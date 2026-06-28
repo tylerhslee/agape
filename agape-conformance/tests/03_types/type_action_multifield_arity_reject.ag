@@ -1,0 +1,11 @@
+//! id:        type_action_multifield_arity_reject
+//! section:   03_types
+//! expect:    reject
+//! error:     TypeError
+//! spec:      §3, §13 (perform arity must match the declared action signature)
+//! ---
+action Charge(int cents, text account);
+agent A grants { perform Charge } {
+  on awake { perform Charge(2500, "acct-7", "extra"); }
+}
+spawn A a; awake a;

@@ -1,0 +1,14 @@
+//! id:        sem_schema_violation_array_typemismatch
+//! section:   08_semantic
+//! expect:    accept
+//! contains:  TypeMismatch
+//! provider:  schema_violation
+//! spec:      §8 (event<array<T>> compiles to schema-constrained output; schema failure raises TypeMismatch)
+//! ---
+struct Memo { body: text }
+agent A {
+  on awake {
+    event<array<Memo>> memos = self <- "return memos";
+  }
+}
+spawn A a; awake a;

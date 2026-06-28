@@ -284,20 +284,16 @@ impl Parser {
         if t.is_kw("emit") {
             self.advance();
             let event_type = self.parse_modpath()?;
-            self.eat_op("(")?;
-            let payload = self.expr()?;
-            self.eat_op(")")?;
+            let args = self.parse_args()?;
             self.eat_op(";")?;
-            return Ok(Stmt::Emit { event_type, payload });
+            return Ok(Stmt::Emit { event_type, args });
         }
         if t.is_kw("perform") {
             self.advance();
             let action_type = self.parse_modpath()?;
-            self.eat_op("(")?;
-            let payload = self.expr()?;
-            self.eat_op(")")?;
+            let args = self.parse_args()?;
             self.eat_op(";")?;
-            return Ok(Stmt::Perform { action_type, payload });
+            return Ok(Stmt::Perform { action_type, args });
         }
         // The readable gate (§20): `decide c { … }` (no paren — the `decide(e, rule)`
         // form is expression-only). Also `p decide c { … }` with a principal subject
@@ -1035,7 +1031,7 @@ impl Parser {
             } else {
                 return Err(self.err("expected 'perform', 'emit', 'reach', 'use', or '*' in grants"));
             };
-            let target = self.eat_ident()?;
+            let target = self.parse_modpath()?;
             caps.push(Capability { kind, target });
             if self.check_op(",") {
                 self.advance();

@@ -15,9 +15,10 @@ Header keys: id, section, expect (accept|reject|blocked), error (iff reject),
 spine|contains|absent|order (matchers; `; `-separated), question (iff blocked), spec, note.
 Run directives (the §16.5 harness contract): provider (empty|schema_violation|credence(...)),
 attest (grant|deny), manifest (key=value; `; `-separated), replay (chain_head_equal),
-modules (companion module filenames; `; `-separated; live in a sibling <id>.d/ dir — v1.1.0).
+modules (companion module filenames; `; `-separated; live in a sibling <id>.d/ dir — v1.1.0),
+packages (name=path/to/lib.ag package roots under <id>.d/).
 Error classes: LexError ParseError TypeError ColorViolation TaintViolation
-AuthorityViolation ExhaustivenessError ModuleError VisibilityError InterfaceError GateError.
+AuthorityViolation ExhaustivenessError ConfigError ModuleError VisibilityError InterfaceError GateError.
 
 Run:  python3 build_manifests.py            # rebuild MANIFEST.toml + MANIFEST.md
       python3 build_manifests.py --check    # validate + verify manifests are up to date (CI)
@@ -29,11 +30,12 @@ import sys
 ROOT = os.path.dirname(os.path.abspath(__file__))
 TESTS_DIR = os.path.join(ROOT, "tests")
 
-MATCHER_KEYS = ("spine", "contains", "absent", "order")
-DIRECTIVE_LIST_KEYS = ("manifest", "modules")   # `;`-separated; configure the run / list companion modules (v1.1.0)
+MATCHER_KEYS = ("ledger", "spine", "contains", "absent", "order")
+DIRECTIVE_LIST_KEYS = ("manifest", "modules", "packages")   # `;`-separated; configure the run / list companion modules/packages
 EXPECTS = {"accept", "reject", "blocked"}
 ERROR_CLASSES = {"LexError", "ParseError", "TypeError", "ColorViolation",
                  "TaintViolation", "AuthorityViolation", "ExhaustivenessError",
+                 "ConfigError",
                  # v1.1.0 library layer + gate:
                  "ModuleError", "VisibilityError", "InterfaceError", "GateError"}
 # Harness directives — the §16.5 test-mode contract a conformant runtime must honor.
@@ -99,6 +101,8 @@ def load_tests():
             assert t["replay"] in REPLAY_MODES, f"{path}: bad replay mode {t['replay']!r}"
         for m in t.get("manifest", []):
             assert "=" in m, f"{path}: manifest fixture needs key=value, got {m!r}"
+        for p in t.get("packages", []):
+            assert "=" in p, f"{path}: package fixture needs name=path, got {p!r}"
         tests.append(t)
     ids = [t["id"] for t in tests]
     dupes = {i for i in ids if ids.count(i) > 1}

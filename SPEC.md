@@ -1,4 +1,4 @@
-# Agape Language Specification (v1.0.0)
+# Agape Language Specification (v1.0.1)
 
 > Agape is a programming language for multi-agent systems. This document is the
 > authoritative reference. The prose (§0–§14) defines the language for a reader; the
@@ -227,7 +227,7 @@ type is a declared name with a known payload.
 ```agape
 struct Memo  { amount: int, to: text }            // a record; all fields required
 enum  Ticket { Billing, Bug, Feature }            // a closed variant set
-action Transfer(memo: Memo);                       // a performative; performing it needs a settled value
+action Transfer(int cents, text to);               // a performative; fields invoked positionally
 ```
 
 - `**struct NAME { field: T, … }**` — a record with named, typed fields. All fields are
@@ -237,10 +237,13 @@ every field; a missing field is a `TypeError`.
 - `**enum NAME { A, B, … }**` — a closed set of named variants; `case` (§11)
 pattern-matches them with compile-time exhaustiveness.
 - `**event NAME(field: T, …);**` — a plain record (assertive); anyone may `emit` it, no power
-needed. `**action NAME(field: T, …);**` — a performative: `perform NAME(v)` is a consequential
-act that needs the `perform NAME` power (§13) and a `settled` value. Both require `NAME` to be
-declared and `v` to match the payload; an undeclared `emit`/`perform` is a `TypeError`. Explicit
-declaration is what lets `grants { perform NAME }` be checked statically.
+needed. `**action NAME(field: T, …);**` — a performative: `perform NAME(v, …)` is a consequential
+act that needs the `perform NAME` power (§13) and only `settled` values. Event/action invocation
+is positional in declaration order: `emit E(a, b)` / `perform A(a, b)` must supply exactly one
+argument per declared field, and each argument must match the corresponding field type. The field
+names remain part of the declared event/action schema and canonical payload. An undeclared
+`emit`/`perform` is a `TypeError`. Explicit declaration is what lets `grants { perform NAME }` be
+checked statically.
 
 ### `Credence<E>` — a graded judgment
 
@@ -1180,8 +1183,8 @@ type       ::= "int"|"float"|"bool"|"text"|"null" | "event" "<" type ">"
 stmt       ::= vardecl | assign | spawn | prompt | principal | depdecl
              | instruction | memdecl | forget            // system prompt (§5); private-memory handle + tombstone (§10)
              | "awake" Ident ";" | "sleep" Ident ";"
-             | "emit" modpath "(" expr ")" ";"           // a plain event (no power); name may be qualified
-             | "perform" modpath "(" expr ")" ";"        // an action (needs a power + settled value); name may be qualified
+             | "emit" modpath "(" [expr ("," expr)*] ")" ";"     // plain event; args match fields positionally
+             | "perform" modpath "(" [expr ("," expr)*] ")" ";"  // action; args match fields positionally
              | endorse | attest | decide                 // `decide` (§20)
              | "say" "(" expr ")" ";" | "return" expr? ";"
              | "if" "(" expr ")" block ("else" block)?
@@ -1425,7 +1428,7 @@ Sent(corr) ∈ S   ¬Delivered(corr)   lifetime(corr) elapsed
 
 // EMIT:
 ─────────────────────────────────────────────────────────────  (E-Emit)
-⟨…|μ|S| emit E(e); k⟩ → ⟨…|μ| append(S, E(subj, eval(e))) | k⟩
+⟨…|μ|S| emit E(e₁,…,eₙ); k⟩ → ⟨…|μ| append(S, E(subj, eval(e₁),…,eval(eₙ))) | k⟩
 
 // QUERY (statement form) — reads the log, lands a QueryResult:
 ─────────────────────────────────────────────────────────────  (E-Query-Stmt)
