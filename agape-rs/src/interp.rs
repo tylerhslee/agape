@@ -1,8 +1,8 @@
 //! The tree-walking interpreter + runtime (M4) — SPEC-1.0 §15.4.
 //!
-//! Runs a checked program top-to-bottom to quiescence, driving the spine. The
+//! Runs a checked program top-to-bottom to quiescence, driving the ledger. The
 //! three seams (provider/identity/tool) are deterministic **mocks** here: the
-//! conformance suite asserts the *committed* spine shape (event types + subjects:
+//! conformance suite asserts the *committed* ledger shape (event types + subjects:
 //! lifecycle, the `Sent/Delivered/Resolved` send chain, `ToolStarted/ToolResolved`
 //! tool pairs, `Verification`/`Contradiction` gate verdicts, `QueryResult`,
 //! `PromptOpened`), not the stochastic wording, so a fixed mock suffices and keeps
@@ -10,7 +10,7 @@
 //!
 //! The interpreter is deliberately fail-soft: an unresolved name or operation
 //! evaluates to `null` rather than crashing, so a well-formed program always runs
-//! to a spine.
+//! to a ledger.
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
@@ -20,7 +20,7 @@ use std::time::Duration;
 use crate::ast::*;
 use crate::lexer::lex;
 use crate::parser::parse_expr;
-use crate::spine::Spine;
+use crate::ledger::Ledger;
 
 /// How the provider seam behaves in a test run (§17.5 test-mode). The default is a
 /// confident, well-formed judgment; the conformance harness overrides per test.
@@ -150,7 +150,7 @@ struct Sub {
 }
 
 pub struct Interp {
-    spine: Spine,
+    ledger: Ledger,
     templates: HashMap<String, Template>,
     fns: HashMap<String, (Vec<Param>, Vec<Stmt>)>,
     structs: HashMap<String, Vec<Field>>,
@@ -159,6 +159,8 @@ pub struct Interp {
     authority: std::collections::HashSet<String>,
     policies: HashMap<String, PolicyRule>,
     agents: HashMap<String, AgentState>,
+    /// Private-memory store, keyed by handle name (§10): mem write / recall / forget.
+    memstore: HashMap<String, String>,
     subs: Vec<Sub>,
     fired: std::collections::HashSet<(usize, u64)>,
     fire_budget: u32,
@@ -171,17 +173,17 @@ pub struct Interp {
     /// names external input may be delivered to once the program quiesces (§5b).
     prompts: Vec<String>,
     /// User `event …: Error` types — leaves under the built-in `Error` root (§19.5),
-    /// so a `when (Error e)` catches them and the spine matcher recognizes them.
+    /// so a `when (Error e)` catches them and the ledger matcher recognizes them.
     error_events: std::collections::HashSet<String>,
 }
 
-/// Run a checked AST to quiescence with the default (mock) seams; return the spine.
-pub fn run(stmts: &[Stmt]) -> Spine {
+/// Run a checked AST to quiescence with the default (mock) seams; return the ledger.
+pub fn run(stmts: &[Stmt]) -> Ledger {
     run_with(stmts, &HarnessConfig::default())
 }
 
 /// Run a checked AST under an injected seam configuration (§17.5 test-mode).
-pub fn run_with(stmts: &[Stmt], config: &HarnessConfig) -> Spine {
+pub fn run_with(stmts: &[Stmt], config: &HarnessConfig) -> Ledger {
     let module = crate::Module { path: String::new(), stmts: stmts.to_vec() };
     run_program(&[module], config)
 }
@@ -189,12 +191,12 @@ pub fn run_with(stmts: &[Stmt], config: &HarnessConfig) -> Spine {
 /// Run a checked multi-module program (the root plus companions, §19). Companion
 /// modules are collected (their declarations are visible) and their top-level
 /// statements run before the root's, so imports resolve and library effects land.
-pub fn run_program(modules: &[crate::Module], config: &HarnessConfig) -> Spine {
+pub fn run_program(modules: &[crate::Module], config: &HarnessConfig) -> Ledger {
     let mut it = Interp::new(config.clone());
     for m in modules {
         it.collect(&m.stmts);
     }
-    it.spine.error_subtypes = it.error_events.clone();
+    it.ledger.error_subtypes = it.error_events.clone();
     let mut frame = HashMap::new();
     // Companion modules first (their top-level effects + subscriptions), then the
     // root module is the program's entry. The first module is the root.
@@ -205,13 +207,13 @@ pub fn run_program(modules: &[crate::Module], config: &HarnessConfig) -> Spine {
         it.exec_block(&root.stmts, &mut frame, None);
     }
     it.deliver_prompt_inputs();
-    it.spine
+    it.ledger
 }
 
 impl Interp {
     fn new(config: HarnessConfig) -> Self {
         Interp {
-            spine: Spine::new(),
+            ledger: Ledger::new(),
             templates: HashMap::new(),
             fns: HashMap::new(),
             structs: HashMap::new(),
@@ -220,6 +222,7 @@ impl Interp {
             authority: std::collections::HashSet::new(),
             policies: HashMap::new(),
             agents: HashMap::new(),
+            memstore: HashMap::new(),
             subs: Vec::new(),
             fired: std::collections::HashSet::new(),
             fire_budget: 10_000,
@@ -423,7 +426,7 @@ impl Interp {
                     Expr::Name(n) => n.clone(),
                     other => self.eval(other, frame, agent).show(),
                 };
-                let corr = self.spine.fresh_corr();
+                let corr = self.ledger.fresh_corr();
                 self.append("AttestStarted", subj.clone(), principal, Some(corr), agent.map(|a| a.to_string()));
                 // The identity seam either attests or declines (§13, §17.5 `attest:`).
                 let label = if self.config.attest_deny {
@@ -543,7 +546,7 @@ impl Interp {
                     frame: frame.clone(),
                     binding: binder.clone(),
                     guard: guard.clone(),
-                    reg_tick: self.spine.len() as u64,
+                    reg_tick: self.ledger.len() as u64,
                     agent: agent.map(|a| a.to_string()),
                 });
             }
@@ -577,7 +580,7 @@ impl Interp {
             Stmt::QueryStmt(q) => {
                 let subj = match q {
                     Query::Select { source, .. } => Some(source.clone()),
-                    Query::Find { .. } => Some("spine".to_string()),
+                    Query::Find { .. } => Some("ledger".to_string()),
                     Query::Match { binding, query, .. } => {
                         let _ = self.eval(query, frame, agent);
                         Some(binding.clone())
@@ -590,6 +593,20 @@ impl Interp {
             }
             Stmt::Principal(name) => {
                 frame.insert(name.clone(), Value::Principal(name.clone()));
+            }
+            Stmt::MemDecl { name, init } => {
+                // Write the initial content (if any) under the handle; bind the name so it resolves.
+                let text = match init {
+                    Some(e) => self.eval(e, frame, agent).show(),
+                    None => String::new(),
+                };
+                self.memstore.insert(name.clone(), text);
+                frame.insert(name.clone(), Value::Text(String::new()));
+            }
+            Stmt::Forget(name) => {
+                // A tombstone: the region is unrecallable going forward (§10).
+                self.memstore.remove(name);
+                frame.remove(name);
             }
             // Pure declarations / no-ops at runtime.
             Stmt::AgentDecl { .. }
@@ -604,7 +621,8 @@ impl Interp {
             | Stmt::InterfaceDecl { .. }
             | Stmt::ConformalDecl(_)
             | Stmt::ModuleDecl { .. }
-            | Stmt::ModuleAttr { .. } => {}
+            | Stmt::ModuleAttr { .. }
+            | Stmt::Instruction(_) => {}
         }
         Flow::Normal
     }
@@ -731,7 +749,7 @@ impl Interp {
             frame: frame.clone(),
             binding,
             guard: None,
-            reg_tick: self.spine.len() as u64,
+            reg_tick: self.ledger.len() as u64,
             agent: agent.map(|a| a.to_string()),
         });
     }
@@ -778,7 +796,7 @@ impl Interp {
             .map(|(i, _)| i)
             .collect();
         // Snapshot the firing event's payload so the bound variable evaluates to it (§7).
-        let payload = self.spine.log.get(tick as usize).map(|e| e.payload.clone()).unwrap_or_default();
+        let payload = self.ledger.log.get(tick as usize).map(|e| e.payload.clone()).unwrap_or_default();
         for i in candidates {
             self.fired.insert((i, tick));
             if self.fire_budget == 0 {
@@ -802,7 +820,7 @@ impl Interp {
 
     // ── expression evaluation ────────────────────────────────────────────────
 
-    /// Evaluate an initializer whose spine events should be subjected at the
+    /// Evaluate an initializer whose ledger events should be subjected at the
     /// binding name (a send chain, an in-hand verify).
     fn eval_bound(&mut self, e: &Expr, name: &str, slot: Option<&Type>, frame: &mut HashMap<String, Value>, agent: Option<&str>) -> Value {
         match e {
@@ -841,6 +859,16 @@ impl Interp {
             Expr::FStr(raw) => Value::Text(self.interp_fstring(raw, frame, agent)),
             Expr::SelfRef => Value::Agent(agent.unwrap_or("self").to_string()),
             Expr::Name(n) => frame.get(n).cloned().unwrap_or(Value::Null),
+            Expr::Recall { mem, query } => {
+                // Recall the handle's stored content (deterministic mock; a live substrate
+                // would use `query` for semantic retrieval). Tainted at the type level (§10).
+                let key = match &**mem {
+                    Expr::Name(n) => n.clone(),
+                    other => self.eval(other, frame, agent).show(),
+                };
+                let _ = self.eval(query, frame, agent);
+                Value::Text(self.memstore.get(&key).cloned().unwrap_or_default())
+            }
             Expr::Not(x) => Value::Bool(!self.eval(x, frame, agent).truthy()),
             Expr::Binary { op, left, right } => {
                 let l = self.eval(left, frame, agent);
@@ -997,7 +1025,7 @@ impl Interp {
         // The rendered prompt is the provider/LLM input — carried on `Sent` so the
         // studio can show what each agent actually asked.
         let prompt = self.eval(payload, frame, agent).show();
-        let corr = self.spine.fresh_corr();
+        let corr = self.ledger.fresh_corr();
         self.append("Sent", subject.clone(), prompt.clone(), Some(corr), agent.map(|a| a.to_string()));
         // Determine whether the destination has an open mailbox.
         let live = match dest {
@@ -1061,7 +1089,7 @@ impl Interp {
     }
 
     fn eval_tool(&mut self, tool: &str, _frame: &mut HashMap<String, Value>, agent: Option<&str>) -> Value {
-        let corr = self.spine.fresh_corr();
+        let corr = self.ledger.fresh_corr();
         self.append("ToolStarted", Some(tool.to_string()), tool.to_string(), Some(corr), agent.map(|a| a.to_string()));
         let ret = self.tools.get(tool).cloned().flatten();
         let v = self.mock_of_type(ret.as_ref());
@@ -1076,7 +1104,7 @@ impl Interp {
         // Identity-seam gate: verify e by <principal>.
         if let Some(GateBasis::Value(e)) = by {
             if let Value::Principal(_) = self.eval(e, frame, agent) {
-                let corr = self.spine.fresh_corr();
+                let corr = self.ledger.fresh_corr();
                 self.append("AttestStarted", subject.clone(), "attest".into(), Some(corr), agent.map(|a| a.to_string()));
                 self.emit_event("Attestation", subject.clone(), "attested".into(), agent.map(|a| a.to_string()));
                 return Value::Null;
@@ -1310,7 +1338,7 @@ impl Interp {
     }
 
     fn append(&mut self, etype: &str, subject: Option<String>, payload: String, corr: Option<u64>, agent: Option<String>) -> u64 {
-        self.spine.append(etype, subject, payload, corr, agent)
+        self.ledger.append(etype, subject, payload, corr, agent)
     }
 }
 
@@ -1349,7 +1377,7 @@ fn parse_dist(resp: &str, variants: &[String]) -> Vec<(String, f64)> {
     variants.iter().map(|v| (v.clone(), got.get(v).copied().unwrap_or(0.0))).collect()
 }
 
-/// Summarize a provider reply for the spine payload: a graded judgment shows its
+/// Summarize a provider reply for the ledger payload: a graded judgment shows its
 /// top variant and probability (`true 0.90`); anything else shows as itself.
 fn reply_summary(v: &Value) -> String {
     match v {
@@ -1369,7 +1397,7 @@ fn type_enum_name(t: &Type) -> String {
     }
 }
 
-/// The spine event-type a `when (Type …)` subscribes to: a nominal type name, or
+/// The ledger event-type a `when (Type …)` subscribes to: a nominal type name, or
 /// the inner type of an `event<T>` wrapper.
 fn type_event_name(t: &Type) -> Option<String> {
     match t {
@@ -1473,12 +1501,12 @@ mod tests {
 
     #[test]
     fn query_statement_lands_result() {
-        let e = etypes("select * from spine where { etype: \"Spawned\" };");
+        let e = etypes("select * from ledger where { etype: \"Spawned\" };");
         assert_eq!(e, vec!["QueryResult"]);
     }
 
     #[test]
-    fn say_is_not_on_the_spine() {
+    fn say_is_not_on_the_ledger() {
         assert!(etypes("say(\"hello\");").is_empty());
     }
 

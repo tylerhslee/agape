@@ -1,8 +1,8 @@
 //! id:        axes_send_reply_is_raw
 //! section:   01_axes
 //! expect:    accept
-//! spec:      §1 Axis B/C, §15.3.2 T-Send (`d <- p` is on the spine; its reply is `raw`)
-//! note:      a send is a spine op yielding a raw (unstructured) reply.
+//! spec:      §1 Axis B/C, §15.3.2 T-Send (`d <- p` is on the ledger; its reply is `raw`)
+//! note:      a send is a ledger op yielding a raw (unstructured) reply.
 //! ---
 agent A {
   on awake {

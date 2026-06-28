@@ -2,7 +2,7 @@
 //! section:   13_governance
 //! expect:    reject
 //! error:     TaintViolation
-//! spec:      §13 (a bare `c by R` is settled but off-spine/unendorsed → may not license a perform)
+//! spec:      §13 (a bare `c by R` is settled but off-ledger/unendorsed → may not license a perform)
 //! note:      only a recorded gate (endorse/attest) may license a consequential action.
 //! ---
 action Flag(bool b);

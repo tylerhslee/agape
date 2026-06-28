@@ -13,7 +13,8 @@ import { makeRunner } from "./runner.ts";
 import { Learner } from "./learner.ts";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { pickVariant, agentsAndPrompts, safeProjectPath as resolveSafe } from "./lib.ts";
+import { agentsAndPrompts, safeProjectPath as resolveSafe } from "./lib.ts";
+import { makeGrader, type Grader } from "./gate.ts";
 const pExecFile = promisify(execFile);
 
 const PORT = Number(process.env.AGENT_PORT) || 8799;
@@ -53,6 +54,16 @@ function cognition(): AnthropicCognition {
     _cognition = new AnthropicCognition();
   }
   return _cognition;
+}
+
+// The GATE seam (§3) — separate from cognition: produces a `Credence` over the variant
+// set that the gate consumes. Backend = AGENT_JUDGE_PROVIDER (anthropic | openai); the
+// logprobs-vs-sampling path follows the backend's capability, not a knob. Lazy, like
+// cognition, so the server starts with no key.
+let _grader: Grader | null = null;
+function grader(): Grader {
+  if (!_grader) _grader = makeGrader();
+  return _grader;
 }
 
 // The learning subsystem, lazily started (so /agent/* works even if better-sqlite3
@@ -308,7 +319,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "OPTIONS") return send(res, 204, {});
 
     if (req.method === "GET" && url === "/agent/health") {
-      return send(res, 200, { ok: true, model: process.env.AGENT_MODEL || "claude-haiku-4-5", live: HAS_KEY });
+      return send(res, 200, { ok: true, model: process.env.AGENT_MODEL || "claude-haiku-4-5", live: HAS_KEY, judge: (process.env.AGENT_JUDGE_PROVIDER || "anthropic").toLowerCase() });
     }
 
     // ── pair / delegate ──
@@ -384,28 +395,19 @@ const server = http.createServer(async (req, res) => {
       const text = await cognition().complete(system, [{ role: "user", content: prompt }], 300);
       return sendText(res, 200, text || "(no answer)");
     }
-    // The sampling fallback (§16.8): a text-only model has no logprobs, so we force
-    // a single-label choice `samples` times and return the empirical frequency.
+    // The gate seam (§3): a `Credence` over the variant set. The grader's capability picks
+    // the path — token logprobs (OpenAI) or the sampling fallback (Anthropic, §16.8). Backend
+    // is AGENT_JUDGE_PROVIDER; `samples`/`temperature` are honored only by the sampling path.
     if (req.method === "POST" && url === "/provider/judge") {
       const raw = await readBody(req);
       const nl = raw.indexOf("\n"), nl2 = raw.indexOf("\n", nl + 1);
       const variants = raw.slice(0, nl).split(",").map((s) => s.trim()).filter(Boolean);
-      // line 2 is `samples [temperature]` — the sampling fallback knobs (§16.8, §17).
       const cfg = raw.slice(nl + 1, nl2).trim().split(/\s+/);
       const samples = Math.max(1, Math.min(50, parseInt(cfg[0], 10) || 5));
       const temperature = cfg[1] !== undefined && cfg[1] !== "" ? Math.max(0, Math.min(1, parseFloat(cfg[1]))) : undefined;
       const prompt = raw.slice(nl2 + 1);
-      const system = `You are a careful judge. Respond with EXACTLY ONE word — one of: ${variants.join(", ")}. No explanation, no punctuation.`;
-      const draws = await Promise.all(
-        Array.from({ length: samples }, () =>
-          cognition().complete(system, [{ role: "user", content: prompt }], 8, temperature).then((t) => pickVariant(t, variants)).catch(() => null))
-      );
-      const counts: Record<string, number> = {};
-      for (const v of variants) counts[v] = 0;
-      let valid = 0;
-      for (const d of draws) if (d) { counts[d]++; valid++; }
-      const denom = valid || 1;
-      const lines = variants.map((v) => `${v} ${(counts[v] / denom).toFixed(4)}`);
+      const dist = await grader().judge(prompt, variants, { samples, temperature });
+      const lines = dist.map(([v, p]) => `${v} ${p.toFixed(4)}`);
       return sendText(res, 200, lines.join("\n"));
     }
 

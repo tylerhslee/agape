@@ -1,5 +1,5 @@
-//! id:        spine_multi_handler_order
-//! section:   07_spine
+//! id:        ledger_multi_handler_order
+//! section:   07_ledger
 //! expect:    accept
 //! order:     First(a); Second(a)
 //! spec:      §7 (when several subscriptions match one appended event in one tick, they fire in registration/hoist order — within a scope, lexical order)

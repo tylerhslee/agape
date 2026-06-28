@@ -1,0 +1,13 @@
+//! id:        mem_write_recall_accept
+//! section:   10_memory
+//! expect:    accept
+//! spec:      §10 (a `mem` handle into private memory: write with `<-`, recall with `->`)
+//! ---
+agent A {
+  on awake {
+    mem notes <- "the earth is an oblate spheroid";
+    text t = notes -> "what shape is earth?";
+    say(t);
+  }
+}
+spawn A a; awake a;

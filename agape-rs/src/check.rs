@@ -752,7 +752,7 @@ impl Checker {
         self.structs
             .entry("Rule".into())
             .or_insert_with(|| vec![Field { name: "threshold".into(), ty: Type::Float }, Field { name: "margin".into(), ty: Type::Float }]);
-        // The built-in spine-event channels, always emittable (§9).
+        // The built-in ledger-event channels, always emittable (§9).
         self.events.insert("Event".into());
         self.events.insert("Error".into());
     }
@@ -836,6 +836,7 @@ impl Checker {
         let r = |e: &Expr| self.expr_reaches_seam(e, pr);
         match x {
             Expr::Send { .. } => true, // the provider/IPC seam (incl. a Credence-slot send)
+            Expr::Recall { .. } => true, // the memory seam (§10) — agentic, async
             Expr::Call { func, args } => {
                 let is_tool = matches!(&**func, Expr::Name(n) if self.tools.contains_key(n));
                 is_tool || r(func) || args.iter().any(r)
@@ -936,6 +937,13 @@ impl Checker {
                     scope.env.insert(name.clone(), VarInfo { ty: ty.clone(), taint: Taint::U, authorized: false });
                 }
             }
+            Stmt::MemDecl { name, init } => {
+                if let Some(e) = init {
+                    self.walk_expr(e, scope, agent)?;
+                }
+                // The handle itself is settled; values RECALLED through it are tainted (§10).
+                scope.env.insert(name.clone(), VarInfo { ty: Type::Mem, taint: Taint::U, authorized: false });
+            }
             Stmt::Assign { target, expr } => {
                 self.walk_expr(target, scope, agent)?;
                 self.walk_expr(expr, scope, agent)?;
@@ -1004,7 +1012,7 @@ impl Checker {
                     self.walk_expr(a, scope, agent)?;
                 }
                 let mut s1 = scope.child();
-                // The bound event evaluates to its payload; a spine event (incl. an
+                // The bound event evaluates to its payload; a ledger event (incl. an
                 // external `Prompt`, settled by origin §5b) is a settled fact.
                 if let Some(b) = binder {
                     s1.env.insert(b.clone(), VarInfo { ty: ty.clone(), taint: Taint::U, authorized: false });
@@ -1096,7 +1104,7 @@ impl Checker {
             }
             Stmt::Pub(inner) => self.walk_stmt(inner, scope, agent)?,
             // Declarations: register agent params/principal context where useful.
-            Stmt::AgentDecl { .. } | Stmt::FnDecl { .. } | Stmt::StructDecl { .. } | Stmt::EnumDecl { .. } | Stmt::EventDecl { .. } | Stmt::ToolDecl { .. } | Stmt::InterfaceDecl { .. } | Stmt::ConformalDecl(_) | Stmt::Authority(_) | Stmt::Extend { .. } | Stmt::Import { .. } | Stmt::ModuleDecl { .. } | Stmt::ModuleAttr { .. } | Stmt::Awake { .. } | Stmt::Sleep(_) | Stmt::Break | Stmt::Return(None) => {}
+            Stmt::AgentDecl { .. } | Stmt::FnDecl { .. } | Stmt::StructDecl { .. } | Stmt::EnumDecl { .. } | Stmt::EventDecl { .. } | Stmt::ToolDecl { .. } | Stmt::InterfaceDecl { .. } | Stmt::ConformalDecl(_) | Stmt::Authority(_) | Stmt::Extend { .. } | Stmt::Import { .. } | Stmt::ModuleDecl { .. } | Stmt::ModuleAttr { .. } | Stmt::Awake { .. } | Stmt::Sleep(_) | Stmt::Break | Stmt::Return(None) | Stmt::Instruction(_) | Stmt::Forget(_) => {}
         }
         Ok(())
     }
@@ -1162,6 +1170,18 @@ impl Checker {
                     let (RetryTail::Bounded { body, .. } | RetryTail::Predicate { body, .. }) = &**tail;
                     let mut s1 = scope.child();
                     self.walk_block(body, &mut s1, agent)?;
+                }
+            }
+            Expr::Recall { mem, query } => {
+                self.walk_expr(mem, scope, agent)?;
+                self.walk_expr(query, scope, agent)?;
+                // `->` requires a `mem` handle on the left; an agent (or anything else) is a
+                // TypeError — this is what makes `a -> "x"` reject (§10).
+                if !matches!(self.expr_type(mem, scope), Type::Mem) {
+                    return Err(AgapeError::new(
+                        ErrorClass::Type,
+                        "`->` recall requires a `mem` handle on the left (§10)",
+                    ));
                 }
             }
             Expr::Binary { left, right, .. } => {
@@ -1274,7 +1294,7 @@ impl Checker {
         if scope.consequential_blocked {
             return Err(AgapeError::new(
                 ErrorClass::Taint,
-                format!("`perform {action}` is licensed by a bare `c by R` collapse (settled but unendorsed/off-spine) — only a recorded gate (`endorse`/`attest`) may license a consequential action (§13)"),
+                format!("`perform {action}` is licensed by a bare `c by R` collapse (settled but unendorsed/off-ledger) — only a recorded gate (`endorse`/`attest`) may license a consequential action (§13)"),
             ));
         }
         Ok(())
@@ -1450,7 +1470,7 @@ impl Checker {
     fn value_taint(&self, decl_ty: Option<&Type>, e: &Expr, scope: &Scope) -> (Taint, bool) {
         match e {
             Expr::Decide { .. } => (Taint::U, false), // untaints, but NOT recorded → unauthorized
-            Expr::Collapse { .. } => (Taint::U, false), // settled but off-spine/unendorsed
+            Expr::Collapse { .. } => (Taint::U, false), // settled but off-ledger/unendorsed
             Expr::EndorseExpr { .. } => (Taint::U, true), // a recorded gate authorizes
             Expr::Verify { .. } => (Taint::U, true),  // a recorded gate authorizes
             Expr::Send { .. } => {
@@ -1460,9 +1480,18 @@ impl Checker {
                     (Taint::T, false) // a raw reply
                 }
             }
+            // A recall from a `mem` is agentic — tainted like a send reply (§10): graded
+            // when bound to a `Credence` slot, else raw. Re-gate before a consequential sink.
+            Expr::Recall { .. } => {
+                if matches!(decl_ty, Some(Type::Credence(_))) {
+                    (Taint::P, false)
+                } else {
+                    (Taint::T, false)
+                }
+            }
             Expr::Quorum { .. } => (Taint::P, false),
             Expr::Query(q) => match &**q {
-                Query::Match { .. } => (Taint::U, false), // a gate, but off-spine → unauthorized
+                Query::Match { .. } => (Taint::U, false), // a gate, but off-ledger → unauthorized
                 _ => (Taint::P, false),                   // a queried fact defaults to P (§10)
             },
             Expr::Call { func, args } => {
@@ -1536,6 +1565,8 @@ impl Checker {
                 other => other,
             },
             Expr::Quorum { .. } => Type::Credence(Box::new(Type::Bool)),
+            // A recall yields text by default; bind it to a typed slot to shape it (§10).
+            Expr::Recall { .. } => Type::Text,
             Expr::Binary { op, .. } => {
                 if matches!(op, BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge) {
                     Type::Bool

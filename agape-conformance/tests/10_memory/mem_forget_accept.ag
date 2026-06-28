@@ -1,0 +1,12 @@
+//! id:        mem_forget_accept
+//! section:   10_memory
+//! expect:    accept
+//! spec:      §10 (`forget` drops a memory handle — an audit-preserving tombstone)
+//! ---
+agent A {
+  on awake {
+    mem notes <- "ephemeral";
+    forget notes;
+  }
+}
+spawn A a; awake a;

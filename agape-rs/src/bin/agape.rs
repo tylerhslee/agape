@@ -1,7 +1,7 @@
 //! The `agape` CLI — the user-facing entry point.
 //!
 //!     agape init [name]                         scaffold a new project
-//!     agape run   <file.ag> [--prompt k=v ...]  run a program to a spine
+//!     agape run   <file.ag> [--prompt k=v ...]  run a program to a ledger
 //!     agape check <file.ag>                     static checks only
 //!     agape studio                              open Agape Studio for this project
 //!
@@ -63,7 +63,7 @@ fn cmd_check(args: &[String]) {
         exit(2);
     });
     match agape_rs::process(&read_or_die(file)) {
-        Ok(spine) => println!("ok — checks pass ({} spine events on a dry run)", spine.len()),
+        Ok(ledger) => println!("ok — checks pass ({} ledger events on a dry run)", ledger.len()),
         Err(e) => {
             eprintln!("{e}");
             exit(1);
@@ -134,9 +134,9 @@ fn cmd_run(args: &[String]) {
         exit(2);
     };
     match agape_rs::process_with_config(&read_or_die(&file), &config) {
-        Ok(spine) if json => print!("{}", spine_json(&spine)),
-        Ok(spine) => {
-            for ev in &spine.log {
+        Ok(ledger) if json => print!("{}", ledger_json(&ledger)),
+        Ok(ledger) => {
+            for ev in &ledger.log {
                 let subj = ev.subject.as_deref().map(|s| format!(" {s}")).unwrap_or_default();
                 let payload = if ev.payload.is_empty() || ev.payload == "sent" || ev.payload == "delivered" {
                     String::new()
@@ -145,7 +145,7 @@ fn cmd_run(args: &[String]) {
                 };
                 println!("  [{:>3}] {:<20}{subj}{payload}", ev.tick, ev.etype);
             }
-            println!("\n{} events · chain-head {}", spine.len(), &spine.chain_head_hex()[..16]);
+            println!("\n{} events · chain-head {}", ledger.len(), &ledger.chain_head_hex()[..16]);
         }
         Err(e) if json => {
             print!("{{\"ok\":false,\"error\":{},\"class\":{}}}", json_str(&e.message), json_str(&e.class.to_string()));
@@ -159,8 +159,8 @@ fn cmd_run(args: &[String]) {
 }
 
 /// The run result as JSON (for the studio): `{ ok, head, events: [{tick,etype,subject,payload}] }`.
-fn spine_json(spine: &agape_rs::spine::Spine) -> String {
-    let events: Vec<String> = spine
+fn ledger_json(ledger: &agape_rs::ledger::Ledger) -> String {
+    let events: Vec<String> = ledger
         .log
         .iter()
         .map(|e| {
@@ -174,7 +174,7 @@ fn spine_json(spine: &agape_rs::spine::Spine) -> String {
             )
         })
         .collect();
-    format!("{{\"ok\":true,\"head\":{},\"events\":[{}]}}", json_str(&spine.chain_head_hex()), events.join(","))
+    format!("{{\"ok\":true,\"head\":{},\"events\":[{}]}}", json_str(&ledger.chain_head_hex()), events.join(","))
 }
 
 /// Minimal JSON string escaping (no serde — agape-rs has zero deps).

@@ -59,9 +59,9 @@ sync text find(text q) { return search(q); }
 | `section` | always | spec-section bucket / directory |
 | `expect` | always | `accept` \| `reject` |
 | `error` | iff `reject` | the error **class** the implementation must raise |
-| `spine` | optional | exact ordered spine the run must produce |
-| `contains` | optional | events the spine must contain (order-free) |
-| `absent` | optional | events the spine must **not** contain |
+| `ledger` | optional | exact ordered ledger the run must produce |
+| `contains` | optional | events the ledger must contain (order-free) |
+| `absent` | optional | events the ledger must **not** contain |
 | `order` | optional | events that must appear in this relative order (others may interleave) |
 | `provider` | optional | stub-provider behavior for the run (§17.5 fault / credence scripting) |
 | `attest` | optional | identity-dependency ruling for `attest` (`grant` / `deny`) |
@@ -73,7 +73,7 @@ sync text find(text q) { return search(q); }
 ### Outcome statuses
 
 - **accept** — well-formed under the spec; the front end must not reject it, and
-  (if `spine`/`contains`/`absent` are present) the run must produce the asserted spine.
+  (if `ledger`/`contains`/`absent` are present) the run must produce the asserted ledger.
 - **reject** — must be rejected, **with the declared `error` class**. Rejecting for
   the wrong reason is a failure: the class is part of the assertion.
 
@@ -88,9 +88,9 @@ sync text find(text q) { return search(q); }
 may use its own internal names but must map to these categories; the suite asserts the
 category, not the message text.
 
-## Spine matcher vocabulary
+## Ledger matcher vocabulary
 
-`spine`/`contains`/`absent` use a compact event vocabulary. `x` is a subject.
+`ledger`/`contains`/`absent` use a compact event vocabulary. `x` is a subject.
 
 ```
 Spawned(x) AgentAwake(x) SleepEvent(x) PromptOpened(x) Prompt(x)
@@ -100,7 +100,7 @@ pair(op@subj)   ← a Started/Resolved pair for async op `op` on subject `subj`
 single(op@subj) ← a single (synchronous) event
 ```
 
-`spine:` is an exact ordered match. `contains:`/`absent:` are order-free. `order:` is an
+`ledger:` is an exact ordered match. `contains:`/`absent:` are order-free. `order:` is an
 **ordered subsequence** — every listed event must appear, in the given relative order, with
 anything allowed in between. Subtype matching follows §9: a gate records `Decided(x)` (a
 singleton commit) or `Abstained(x)`; `Error` matches any `Error` subtype (e.g. `Contradiction`).
@@ -126,7 +126,7 @@ these header directives. A test with no directives runs under the default record
 - `manifest:` — connector/dependency fixture config, `; `-separated, e.g.
   `manifest: provider.exposes_logprobs=false` — to exercise the sampling fallback (§16.8).
   Decision policy is in the test's own source (a `policy` declaration, §13), never the manifest.
-- `replay:` — `chain_head_equal`: record the run's journal, replay it, and assert the spine's
+- `replay:` — `chain_head_equal`: record the run's journal, replay it, and assert the ledger's
   terminal hash is identical (§15.4.2 / T4). Replay re-serves every oracle/tool result from the
   recording and re-invokes nothing.
 - `modules:` — companion module files this test imports, `; `-separated. They live in a
@@ -140,10 +140,10 @@ these header directives. A test with no directives runs under the default record
 1. Read `MANIFEST.toml` for the tests and their expectations.
 2. For each test, strip the `//!` header and feed the body to the front end.
 3. **reject**: assert rejection occurs **and** the raised error maps to the declared class.
-4. **accept**: assert no rejection; if spine matchers are present, run under the
-   recorded/stub provider and assert the spine.
+4. **accept**: assert no rejection; if ledger matchers are present, run under the
+   recorded/stub provider and assert the ledger.
 5. Report `passed / failed` per section.
 
 An implementation is **conformant** iff it satisfies *every* test: all `reject`
 tests reject with the correct error class, and all `accept` tests are accepted
-(matching any asserted spine).
+(matching any asserted ledger).

@@ -1,5 +1,5 @@
-//! id:        spine_when_guard_ok
-//! section:   07_spine
+//! id:        ledger_when_guard_ok
+//! section:   07_ledger
 //! expect:    accept
 //! spec:      §7 (a `when … if (guard)` filters by an ordinary predicate over the bound event's fields)
 //! ---

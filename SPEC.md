@@ -1,4 +1,4 @@
-# Agape Language Specification (v1.0.2)
+# Agape Language Specification (v1.0.0)
 
 > Agape is a programming language for multi-agent systems. This document is the
 > authoritative reference. The prose (§0–§14) defines the language for a reader; the
@@ -33,7 +33,7 @@ drive consequential actions, and which tools it may use, are bounded at compile 
 
 Two ideas underlie the language:
 
-1. **The event spine.** Every meaningful action appends an immutable event to a single
+1. **The event ledger.** Every meaningful action appends an immutable event to a single
   append-only log. The log is the source of truth; state is a projection of it; replay
    re-derives state by folding it.
 2. **Declared dependencies.** Everything outside the program — the model, an accountable
@@ -51,13 +51,13 @@ imperative substrate of its own. The deterministic work lives in the host and is
 reached, and governed, through the tool dependency. The
 primitive Agape provides is **endorsed judgment under uncertainty**: a non-deterministic
 semantic decision, trust-tracked, collapsed by an auditable gate, recorded on an
-append-only spine.
+append-only ledger.
 
 ### 0.2 Execution model
 
 An Agape program is evaluated **top to bottom**, like an ordinary program — not as a
 perpetual event loop. Reactivity happens *within* that evaluation: appending an event to
-the spine synchronously fires any matching subscription before evaluation continues. The
+the ledger synchronously fires any matching subscription before evaluation continues. The
 program **terminates at quiescence** — when the top-level statements are exhausted and no
 subscription work remains.
 
@@ -66,7 +66,7 @@ language itself a loop. Computation is **total**: every reaction terminates, sin
 loop — `retry(N)` — is bounded. The one way a program stays live is an open external input
 source (`prompt`, §5b, or a standing tool sensor) that keeps it from quiescing. An always-on
 agent is not one long non-terminating computation; it is an unbounded sequence of finite,
-terminating reactions — one per external event — over a single growing spine, so replay and
+terminating reactions — one per external event — over a single growing ledger, so replay and
 the reproducibility guarantees (§15.5) hold per event. The default — no open source — is
 deterministic, terminating, top-to-bottom evaluation.
 
@@ -74,7 +74,7 @@ deterministic, terminating, top-to-bottom evaluation.
 asynchronous, and event-driven: agents overlap in lifetime, a send returns immediately
 and resolves later, and a fan-out (`|>`, §12) can have many dependency calls in flight at once.
 What Agape excludes is nondeterministically scheduled interleaving. There is no shared
-mutable state to race over (each agent owns its memory, §10), and the spine assigns a
+mutable state to race over (each agent owns its memory, §10), and the ledger assigns a
 total order to observable effects, so independent cognition runs in parallel while the
 observable result is serialized. The model is a discrete-event simulation: concurrent and
 replayable at once. Determinism here is a property of the scheduler, not a denial of
@@ -97,7 +97,7 @@ propagates downward. Marking the safe property makes visible which code provably
 reach a model, the world, or a human — hot paths, schedulers, loops, and the gate-collapse
 `c by R`.
 - `emit` and an in-hand `endorse` are not dependency reaches and are permitted in `sync`: `emit`
-is a spine append, and `endorse` over a `Credence` value already in hand collapses (`c by R`)
+is a ledger append, and `endorse` over a `Credence` value already in hand collapses (`c by R`)
 and records — no dependency reach. Only reaching a declared dependency forces async.
 
 ### Axis B — value trust: how settled is the value?
@@ -111,12 +111,12 @@ constrained distribution over a closed enum's variants, §3). More structured th
 committed by a gate. Queried memory facts also default to **graded** (§10).
 - **settled** — a committed value carrying no un-endorsed cognition: a gated `Decision`, a constant, or external data settled by origin (a `prompt`, a read-tool result over settled inputs).
 
-Trust is contagious upward; only a gate moves a value down toward **settled**. A consequential action may consume only a **settled** value whose settling is recorded on the spine — endorsed (§13). External data is settled by origin; only un-endorsed cognition is withheld.
+Trust is contagious upward; only a gate moves a value down toward **settled**. A consequential action may consume only a **settled** value whose settling is recorded on the ledger — endorsed (§13). External data is settled by origin; only un-endorsed cognition is withheld.
 
-### Axis C — spine presence: `event<T>` vs bare `T`
+### Axis C — ledger presence: `event<T>` vs bare `T`
 
-- `event<T>` means the value is (or will be) present on the spine as a message. It
-marks spine presence, not async-ness or trust.
+- `event<T>` means the value is (or will be) present on the ledger as a message. It
+marks ledger presence, not async-ness or trust.
 - A bare `T` is an ordinary in-memory value. A function can be async yet return a bare
 value (handed to the caller, not emitted).
 
@@ -141,7 +141,7 @@ enum `E`, not a `bool`. To obtain a committed value, gate it (`c by R`); the thr
 never hidden.
 - The collapse `c by R` is the gate (`graded → settled`); it is `sync` — the cognition already
 happened in producing the `Credence`, and applying a `Rule` to it is pure comparison.
-- `endorse` records the collapse on the spine, which is what makes the value endorsed and
+- `endorse` records the collapse on the ledger, which is what makes the value endorsed and
 admissible for consequential use (§13).
 - A `Credence` is produced by binding a send to a `Credence<E>`-typed slot (§3, §8), whatever
 the destination; there is no separate `~` or `entail` operator.
@@ -158,23 +158,27 @@ the destination; there is no separate `~` or `entail` operator.
 - **Numbers:** `int`(`42`) and `float`(`3.5`).
 - **Identifiers:** `[A-Za-z_][A-Za-z0-9_]`*. Type names are conventionally capitalized;
 values and instances are lowercase.
-- **Operators (multi-char first):** `<-  |>  >=  <=  ==  !=  { } ( ) [ ] ; , . : =  +
+- **Operators (multi-char first):** `<-  ->  |>  >=  <=  ==  !=  { } ( ) [ ] ; , . : =  +
   - - /  <  >  !`
-- **Send operator:** exactly one communication arrow, `<-`. A `->` is a `LexError`.
+- **The two arrows:** `<-` is the one communication/write arrow (send a message, write a
+  `mem`, §6, §10); `->` is the memory-recall operator (`mem -> "query"`, §10). `->` is **not**
+  a `LexError` — it lexes as an operator, and the checker rejects it on a non-`mem` left-hand
+  side as a `TypeError` (§10). Tools use a prefix return type (`tool T f();`), never an arrow.
 - **Semantic judgment**: `Credence<E>` produced by binding a send to a `Credence` slot (§3, §8); vector-store similarity is reached through `match` (§10).
 
 ### Keywords
 
 ```
-int float bool text null event action array  // types + spine wrappers (event = record, action = performative; array = collection)
+int float bool text null event action array  // types + ledger wrappers (event = record, action = performative; array = collection)
 agent extend sync                         // declarations (sync = marked color)
 struct enum                               // user nominal-type declarations
 grants tool read write                    // capability typing (§13); tool decl + effect class (§6b)
-spawn awake sleep self on prompt          // lifecycle + external input sensor
+spawn awake sleep self on prompt instruction   // lifecycle + external input sensor + system prompt (§5)
 principal policy                          // declared dependency + decision policy (§3, §13)
 when case if else return retry default         // control / reactive
 endorse attest perform emit abstain       // gate / attest / action perform / event emit / abstain clause
 find where select from match              // queries
+mem forget                                // private-memory handle + seams (§10): `mem m <- v` / `m -> q` / `forget m`
 all any quorum independent dependent      // aggregation, dependence declaration, quorum (§12)
 true false                                // bool literals
 module import pub interface decide requires    // library layer (§19): modules/imports, visibility, interfaces (when E decide T)
@@ -207,10 +211,10 @@ user-event supertype in `event Foo(..) : Error;` (§9, §19).
 
 `int`, `float`, `bool`, `text`, `null`.
 
-### `event<T>` — spine-message type
+### `event<T>` — ledger-message type
 
-Wraps any `T` to mean "on the spine." Produced by spine-emitting constructs (`<-`,
-`endorse`, `emit`, `perform`, a tool call's pair, a query statement) and consumed by spine
+Wraps any `T` to mean "on the ledger." Produced by ledger-emitting constructs (`<-`,
+`endorse`, `emit`, `perform`, a tool call's pair, a query statement) and consumed by ledger
 constructs (`when`, retrieval built-ins, field storage). `event<null>` = "sent, but no
 typed reply bound."
 
@@ -273,7 +277,7 @@ calibration (temperature/Platt/isotonic) is a **fitted, distribution-specific** 
 applied between the raw logits and the `Credence`. A provider that exposes token probabilities
 (`exposes_logprobs`, §17) yields a `Credence` directly; one that does not (a text-only backend)
 is served by the **sampling fallback** — drawing the forced choice `fallback_samples` times and
-taking the empirical frequency (§17). Per-variant scores are journaled on the spine (§15.5.1) so
+taking the empirical frequency (§17). Per-variant scores are journaled on the ledger (§15.5.1) so
 the calibration pipeline (§13) can read them.
 
 ### `Rule` — the gate's parameter (not a primitive)
@@ -287,7 +291,7 @@ its mass ≥ `θ` and its lead over the runner-up ≥ `δ`. `margin` is a thresh
 meaningful only for three-plus variants (for `bool` it is redundant with `θ`). Cheap, needs no
 data, no guarantee — its principled value is the loss ratio `θ = c_FA / (c_FA + c_FR)` (§13).
 - **conformal** — `conformal α`: a distribution-free, finite-sample error bound at level `α`,
-calibrated from the gate's own recorded decisions on the spine (§13). The conformal procedure is
+calibrated from the gate's own recorded decisions on the ledger (§13). The conformal procedure is
 library code, not kernel.
 
 A `Rule` is a value — a literal (`confidence 0.9`), a reference (`conformal 0.1`), one a pipeline
@@ -302,7 +306,7 @@ fact — *it is supplied from outside the program* — from which the rest follo
 constructed** (no literal form — `text → Principal`, etc. are `TypeError`s);
 **config-bound**; **opaque** (the program cannot read a signing key or a tool endpoint's credentials);
 **unforgeable** (only configuration may supply it); and **used only at a governed site**, recorded
-on the spine. Four flavours differ only in what they supply:
+on the ledger. Four flavours differ only in what they supply:
 
 
 | declaration        | supplies                       | used at                      |
@@ -319,7 +323,7 @@ principal alice;          // an accountable identity, resolved by config (§17)
 A `principal` is the basis of an external gate (`attest e by alice`, §13); its own trust is
 `settled`, and a name is a forgeable claim, not a credential (`attest e by "alice"` is a
 `TypeError`). A conformal gate needs no separate dependency: it calibrates from its own recorded
-decisions on the spine, and below a configured minimum of labelled cases (§13, §17) it abstains. No
+decisions on the ledger, and below a configured minimum of labelled cases (§13, §17) it abstains. No
 credential appears in source; it is bound in the manifest (`[identity]`, §17), and
 authentication/signing happen at the gate, not the declaration. `Credence<E>` is **not** a declared
 dependency — it is a value *received* from the provider, not a declared name.
@@ -327,7 +331,7 @@ dependency — it is a value *received* from the provider, not a declared name.
 ### The judgment enums (prelude — §9)
 
 A pure enum — a categorical outcome and nothing more; all contextual metadata lives on the
-spine event that carries it.
+ledger event that carries it.
 
 - `**Entailment`** — `enum Entailment { Entails, Contradicts, Neutral }` — what a
 `Credence<Entailment>` judgment commits to. A `Credence<bool>` commits to `true`/`false`.
@@ -347,7 +351,7 @@ the decided enum does not pretend to.
 - A leading optional `sync` marks cognition-freedom and effect-freedom (Axis A); unmarked
 = async.
 - `RET_TYPE` is type-first.
-- A function returns `event<T>` only if it returns something on the spine.
+- A function returns `event<T>` only if it returns something on the ledger.
 
 ```agape
 sync int   double(int x)            { return x * 2; }                 // sync, bare int
@@ -392,7 +396,7 @@ agent NAME ( [TYPE PARAM] , ... ) [grants { CAP , ... }] {
 
 ### Lifecycle
 
-Each transition is a spine event. Construction is at `spawn`; `awake` and `sleep` toggle the
+Each transition is a ledger event. Construction is at `spawn`; `awake` and `sleep` toggle the
 mailbox:
 
 - `**spawn TYPE name(args);**` — allocate and construct. Give the instance an address, bind the
@@ -401,7 +405,7 @@ reaches no cognition and opens no mailbox yet. Appends `Spawned(name)`.
 - `**awake name;**` — announce: open the mailbox, append `AgentAwake(name)`, and run the
 `on awake` hook. It takes no arguments; the constructor already ran at `spawn`. A re-`awake`
 after `sleep` resumes the agent — and loses nothing, because the agent's state is a function of
-the spine, not fragile in-memory state.
+the ledger, not fragile in-memory state.
 - `**sleep name;**` — close the mailbox; run the `on sleep` hook; a slept agent with no
 live references is collected. A collected agent is re-entered by a fresh `spawn`; a
 still-referenced slept agent is re-entered by `awake name;`.
@@ -427,10 +431,34 @@ parent's constructor runs (with `args`) before the child's constructor body, and
 `when`/hooks fire for the child. Authority is subtractive: a child's `grants` must be a
 subset of the parent's (§13).
 
+### `instruction` — the compile-time system prompt
+
+```agape
+instruction "You are a careful agent. Prefer abstaining to guessing.";   // global
+
+agent A {
+    instruction "Answer in one sentence.";   // agent-scoped; composes after the global block
+}
+```
+
+`instruction STRING;` declares a **compile-time system prompt** — the behavioral spec the
+provider sees behind every `<-`. Its argument is a string literal; a non-string argument is a
+`ParseError`.
+
+- **Scope.** A top-level `instruction` is the **global** prompt (every agent inherits it). An
+`instruction` inside an agent body is **agent-scoped** and composes **after** the global block
+(fixed order, for determinism). `extend` inherits the parent's instructions and appends the
+child's (append-only — a child cannot silently weaken a parent's guardrails).
+- **Settled by source.** An instruction is procedural behavior, and procedural behavior lives
+in **source, not mutable memory** — it is `settled` by origin and injection-proof: no recalled
+fact or injected memory can rewrite it, because the system prompt is not in memory (contrast a
+runtime jotted note, which lands in tainted memory, §10). To change an agent's behavior you
+**ship a new version**; runtime self-modification of instructions is deliberately absent.
+
 ### Lifecycle hooks vs `when`
 
 `on awake` / `on sleep` / `on crash` are hooks tied to the agent's own transitions; `when (X)`
-is a general spine subscription keyed by an arbitrary subject `X` (§7). `on crash` runs in the
+is a general ledger subscription keyed by an arbitrary subject `X` (§7). `on crash` runs in the
 agent's own context after a contained fault (see Lifecycle), with state preserved, so it can
 compensate for or retry the abandoned work.
 
@@ -441,7 +469,7 @@ prompt text question;          // opens a standing external input SENSOR
 ```
 
 `prompt TYPE name;` declares an external input source — the push mirror of the pull send
-`<-`. Each external arrival lands a `Prompt` event on the spine with subject `name`. React
+`<-`. Each external arrival lands a `Prompt` event on the ledger with subject `name`. React
 with `when (Prompt p about name)`, where `p` evaluates to the arrived value.
 
 - A `prompt` source makes a program always-on (§0.2): while open it cannot quiesce; when
@@ -450,7 +478,7 @@ it closes (EOF) the program reaches quiescence and ends.
 so they may drive an action. Agape gates the model's judgment, not the correctness of input.
 - `prompt` is one of a family of sensors (socket, timer, queue, file watch, and a standing
 tool sensor, §6b), sharing one runtime contract: an external source that appends events
-to the spine as they arrive, so replay folds the recorded input stream deterministically.
+to the ledger as they arrive, so replay folds the recorded input stream deterministically.
 
 ---
 
@@ -465,7 +493,7 @@ same provider, so the destination changes only which agent thinks, never the kin
 (§8); binding it to a `Credence<E>` slot constrains that output to `E`'s variants and yields
 a graded `Credence` (§3, §8) — for any destination.
 - A bare reply is `raw`; the `Credence` binding is what grades it. Either way a reply is an
-ordinary value: it reaches the spine only by being emitted, performed, or gated, never by
+ordinary value: it reaches the ledger only by being emitted, performed, or gated, never by
 being produced — so a send logs its lifecycle, not its content (§15.4).
 - Every send is asynchronous and actor-routed: it carries the `Sent → Delivered → Resolved`
 lifecycle (below) and may be lost or expire — `self` included. A send is a send; the
@@ -473,7 +501,7 @@ destination is only an address.
 
 ### The message lifecycle — `Sent → Delivered → Resolved`
 
-Every send moves through three phases, each an event on the spine, correlated by `corr`:
+Every send moves through three phases, each an event on the ledger, correlated by `corr`:
 
 - `**Sent**` — the send was issued.
 - `**Delivered**` — the recipient's mailbox accepted it.
@@ -555,8 +583,8 @@ call a tool.
 are settled (external data, settled by origin), `graded`/`raw` when a `Credence` flowed in. A
 **write** tool is a consequential sink — its inputs must be `settled` and endorsed, exactly
 like a `perform`. Agape gates the model's judgment, not the correctness of external data.
-- **Spine.** A tool call appends a correlated `ToolStarted(NAME)` / `ToolResolved(NAME)`
-pair (§7). Every world-effect is on the log, so the spine is a complete, replayable
+- **Ledger.** A tool call appends a correlated `ToolStarted(NAME)` / `ToolResolved(NAME)`
+pair (§7). Every world-effect is on the log, so the ledger is a complete, replayable
 account of what the program did to the world, not only what it thought.
 - **Replay.** A tool result is an external observation and is journaled (§15.4.2) like an
 oracle output; replay re-serves it from the recording and never re-invokes the tool. A
@@ -566,13 +594,13 @@ socket, a file watch) rather than a pull call, in which case it behaves like `pr
 (§5b): it appends events as they arrive and makes the program always-on.
 
 A tool is not a new trust hole; it is the same membrane discipline (capability + trust +
-spine + replay) applied to the world. This is what lets the host's deterministic work be a
+ledger + replay) applied to the world. This is what lets the host's deterministic work be a
 general-purpose language reached through a governed boundary rather than reimplemented
 inside Agape (§0.1).
 
 ---
 
-## 7. The spine, events, and `when`
+## 7. The ledger, events, and `when`
 
 ### Events
 
@@ -584,7 +612,7 @@ is about (the `when` correlation key); `corr` links a `Started` to its `Resolved
 A send `d <- p` produces events with subject `d`; a typed binding `event<T> x = …;` gives
 the produced event subject `x`. A gate over a `Credence` produces one event for the
 operation (subject = the binding or an ephemeral). A tool call's pair is subjected at the
-tool name. A literal operand has an ephemeral address; its event still lands on the spine.
+tool name. A literal operand has an ephemeral address; its event still lands on the ledger.
 
 ### Async event discipline
 
@@ -595,7 +623,7 @@ arithmetic, the collapse `c by R`, an in-hand `endorse`) append a single event o
 
 ### `when` — the subscription
 
-`when (Type binding [about subject]) [if (guard)] { ... }` is a spine subscription. It matches
+`when (Type binding [about subject]) [if (guard)] { ... }` is a ledger subscription. It matches
 events of `Type` (by subtype, §9); the `binding` is the matched event, which evaluates to its
 payload (`binding.field`); `about subject` filters to events about a held subject; and `if (guard)`
 is an ordinary predicate over the bound event's fields. With no `about` and no guard it matches
@@ -610,9 +638,9 @@ when (Refund r) if (r.amount > 1000)  { ... }   // a payload guard
 Event-type matching is by subtype (§9). **Subscriptions are prospective and hoisted per
 scope**: registered before the scope's statements run, so lexical order between a
 subscription and the action it observes does not matter — but a subscription never fires
-for an event already on the spine before its scope began. History is reached by query
+for an event already on the ledger before its scope began. History is reached by query
 (§10), never by a subscription. A program that must react to a prior event queries the
-spine and acts on the result.
+ledger and acts on the result.
 
 **Multi-handler firing order.** When several subscriptions match one appended event in one
 tick, they fire in registration (hoist) order — the order in which they were registered
@@ -689,7 +717,7 @@ enum Basis { Argmax, Conformal, Principal }                // how a Decision was
 type Principal                                             // an accountable identity — a declared dependency (§3)
 // Rule is the gate's PARAMETER, not a type: `confidence θ [margin δ]` | `conformal α`  (§3, §13)
 
-// Built-in spine events:
+// Built-in ledger events:
 //   Event(text)            user progress/info event (via `emit`)
 //   Error(text)            ROOT error type (hierarchy below)
 //   Decided(subj)          a gate committed a Decision at subj
@@ -714,7 +742,7 @@ send are not errors. A user `event` may extend this root — `event Foo(..) : Er
 adds a *leaf* under `Error` so `when (Error e)` catches it too; the only permitted supertype is
 the built-in `Error` (no user intermediate supertypes), and `action` may not extend it (§19.5).
 
-`**say(x)`** prints its argument; it is not a spine operation. `**store(x)`** internalizes `x` into
+`**say(x)`** prints its argument; it is not a ledger operation. `**store(x)`** internalizes `x` into
 the agent's relational + graph memory and `**embed(x)`** writes `x`'s embedding to the vector store
 (§10, §16.7). Both are **async** (they reach the provider to decompose / embed) and return `null`,
 appending a journaled `Internalized` event (incidental trace, §15.5.1); a `sync` function may not
@@ -729,7 +757,7 @@ Each agent has its own memory:
 - **FACTS** → a deterministic table, queried with `select`.
 - **RELATIONSHIPS** → a graph, queried with `find ... where`.
 - **SEMANTICS** → a vector store, queried with `match`. `match` is a gate: `match { m: q } > θ` thresholds similarity, settling hits against `θ`, and yields `settled` but
-off-spine — like `c by R`, it must be `endorse`-recorded to admit a consequential use.
+off-ledger — like `c by R`, it must be `endorse`-recorded to admit a consequential use.
 
 ### Internalization
 
@@ -743,16 +771,16 @@ same.
 
 ### Provenance
 
-Every memory cell carries an immutable backpointer to the spine event that produced it;
+Every memory cell carries an immutable backpointer to the ledger event that produced it;
 `find n, origin(n) where { … }` returns the fact and its originating event.
 
 ### Trust of queried facts
 
-A queried fact carries the trust of the spine event it traces to (provenance-based).
+A queried fact carries the trust of the ledger event it traces to (provenance-based).
 Because most facts trace to internalized cognition, the default trust of a `find` /
 `select` result is `graded` (structured but not gate-committed): it may flow through
 control flow but must be re-gated before a consequential sink. A fact whose origin is an
-already-endorsed (`settled`) event carries `settled`. `match` hits are `settled` but off-spine (a
+already-endorsed (`settled`) event carries `settled`. `match` hits are `settled` but off-ledger (a
 gate, above). A value's provenance, not its having-been-stored, determines whether it may act.
 
 ### Query surface
@@ -764,13 +792,52 @@ node's type — the entities matching the pattern. Each `TRIPLE` is a `subject p
 atom (any position a variable or a literal); the body is their conjunction.
 - **Semantics (vector):** `match VECTOR > θ` → `array<Hit>` — the nearest neighbours above
 similarity `θ`, each a matched item with its score. `match` is a gate (above).
-- **Spine:** `select COLS from spine where { COND }` — the same `select` over the log itself.
+- **Ledger:** `select COLS from ledger where { COND }` — the same `select` over the log itself.
 
 Each query is an **expression** yielding its `array<…>` result set, bound by an ordinary
 declaration (`array<Refund> prior = select * from Refund where { … };`) and consumed by fan-out
 (`|>`, `all`/`any`/`quorum`, §12). A bare **statement** form binds nothing and lands a
-`QueryResult(subject)` event, where `subject` is the query target (the agent name, or `spine`). A query reads the log; it never re-emits. Replay folds the spine and appends
+`QueryResult(subject)` event, where `subject` is the query target (the agent name, or `ledger`). A query reads the log; it never re-emits. Replay folds the ledger and appends
 nothing.
+
+### Private memory — the `mem` handle and its seams
+
+A `mem` is a handle into the agent's own **private memory** substrate — subjective, agentic
+belief, distinct from the global ledger (an agent's `mem` never points at the ledger). Its
+surface is two seams plus a tombstone:
+
+```agape
+mem notes <- "nothing published yet";            // declare + write a handle
+notes <- "the earth is an oblate spheroid";      // write more into the region (`<-`)
+text t = notes -> "what shape is earth?";        // recall (`->`) — ALWAYS tainted
+forget notes;                                    // audit-preserving tombstone
+```
+
+- **`mem NAME [<- EXPR];`** declares a private-memory handle, optionally initializing it; the
+handle has type `mem`. `NAME <- EXPR` (an established `mem` on the left) writes more into the
+region — the same `<-` arrow as a send, disambiguated by the left-hand type: an *agent* on the
+left thinks (provider), a *mem* on the left stores.
+- **`NAME -> "query"`** recalls from the region. `->` requires a `mem` on the left; `->` on any
+non-`mem` left-hand side (e.g. `self -> "x"`) is a **`TypeError`** (§10).
+- **`forget NAME;`** drops the region: an **audit-preserving tombstone** (a `Forgotten` event;
+the region is unrecallable going forward, but the historical record stands — an audit log
+cannot lie about its past, cf. §6 expiry). `forget` consumes the handle.
+
+**A recall is ALWAYS tainted** — taint-equivalent to a send reply (`->` on the trust axis
+behaves exactly like `<-`): the result is `graded` when bound to a `Credence<E>` slot, else
+`raw` `text` (the same split a bare send reply takes, §13). The reason is that memory is
+**agentic** — it stores anything, and nothing
+leaves it `settled`, so there is no laundering path: a recalled value must be **re-gated** (an
+`endorse`/`by` collapse) before it reaches a consequential sink. This reuses the §13 send-taint
+rule wholesale; there is no store-side trust enforcement.
+
+**Distinction from the ledger.** The ledger is **not** memory. It is queried with `select … from
+ledger` / `find … where` (above), it is **deterministic and untainted** — a ledger read carries
+**recorded trust** (a `Decided` the gate endorsed reads back `settled`, because the ledger *is*
+the proof it was endorsed) — and it keeps **none** of `<-` / `->` / `forget`. The split is
+exactly *objective shared record* (ledger, recorded-trust) vs *subjective private belief*
+(memory, always tainted). There is no `ledger -> "prompt"`: an agentic reading of the log is
+composed — a deterministic ledger query feeds a `<-` send, and the seam taints the *result*.
 
 ---
 
@@ -841,7 +908,7 @@ conservatively first, then cluster results combine by the independent rule.
 This is the only operation Agape offers over graded values: forward evidence fusion before
 the single gate — not general inference (no `observe` / conditioning / `bind`). Fusion
 lives entirely in the credence tier (`P → P`); only the gate crosses `P → U`. Independence
-is an asserted, unverified claim, recorded on the spine so an over-confident outcome traces
+is an asserted, unverified claim, recorded on the ledger so an over-confident outcome traces
 back to the assertion that licensed it. Calibration is the provider's job (§3), not fusion's.
 
 ### Quorum
@@ -868,10 +935,10 @@ calls to the same model with the same prompt have correlated errors and gain lit
 which is why `quorum`, like all fusion, requires an explicit `independent`/`dependent`
 declaration, and why robustness comes from diverse judges (different models, framings,
 evidence). Declaring `independent` over same-source judges is a programmer error the
-spine records but the type system cannot detect.
+ledger records but the type system cannot detect.
 - `quorum` is single-runtime evidence fusion, not a consensus protocol (Paxos/BFT); those
 tolerate faults across mutually-distrusting nodes, a concern that arises only at the
-optional distributed-spine boundary (§15.4.2a).
+optional distributed-ledger boundary (§15.4.2a).
 
 ---
 
@@ -898,7 +965,7 @@ into agents of type `NAME`), or `use NAME` (may call tool `NAME`).
 
 **Default is deny.** No `grants` clause ⇒ perform/reach/use nothing (fails closed). The only
 escape hatch is the explicit `grants { * }` (unconstrained, lattice top, visible in source
-and spine). `reach` covers every agent-typed binding (parameter, `spawn` result, any
+and ledger). `reach` covers every agent-typed binding (parameter, `spawn` result, any
 variable of agent type), not only parameters.
 
 ### Taint — the three-level lattice
@@ -924,23 +991,23 @@ over three-plus variants, where a bare scalar threshold has no meaning. Two prop
 a settled value:
 
 - **Settled** (a value property): the value carries no un-endorsed cognition (`graded → settled`).
-- **Endorsement** (a provenance property): the settling is recorded on the spine, hence
+- **Endorsement** (a provenance property): the settling is recorded on the ledger, hence
 checkable.
 
 ```agape
-Decision d = c by confidence 0.9 margin 0.1;   // collapse a Credence; UNTAINTS (P→U); off-spine; sync
+Decision d = c by confidence 0.9 margin 0.1;   // collapse a Credence; UNTAINTS (P→U); off-ledger; sync
 endorse (c by confidence 0.9) { ... }            // ENDORSES: records the Decision, authorizes it for a `perform`
 attest memo by alice;                            // principal basis: alice attests; UNTAINTS + ENDORSES
-endorse (kind by conformal 0.1) { ... }          // conformal calibrates from the spine
+endorse (kind by conformal 0.1) { ... }          // conformal calibrates from the ledger
   abstain { ... } by triage_lead { ... };        // ambiguity / cold-start → defer to a principal
 ```
 
 - `**c by R**` collapses a `Credence<E>` to a `Decision` (a committed variant, or `abstain`) by a
 `Rule` `R` (§3). It settles trust (`graded → settled`) and is color-`S`. A bare `Decision` is
-settled but *off-spine* (unendorsed): it may drive control flow, not a consequential action. The
+settled but *off-ledger* (unendorsed): it may drive control flow, not a consequential action. The
 rule is mandatory.
 - `**endorse (c by R) { … }*`* records the `Decision` and **endorses** it — settled *and* on the
-spine — then dispatches on the `Decision`'s variants (the arms, written with `:`). Over an in-hand
+ledger — then dispatches on the `Decision`'s variants (the arms, written with `:`). Over an in-hand
 `Credence` it is synchronous (`sync`-permitted); the inline `endorse (self <- "…" by R)` form is
 async. An endorsed `Decision` may drive a `perform`.
 - `**attest e by p`** / the `**by p**` clause (`p` a `principal`) is the external basis: it reaches
@@ -949,7 +1016,7 @@ the identity dependency, obtains `p`'s signed `Decision`, and records an `Attest
 **The rule selects the basis (§3); the gate stays uniform.** `by confidence θ` is the
 **threshold** basis; `by conformal α` is the **conformal** basis — the prediction set is
 `{ v : nonconformity(v) ≤ q̂ }`, where `q̂` is the level-`α` quantile of the gate's own recorded
-decisions and their labels on the spine, a distribution-free, finite-sample bound (wrong at most
+decisions and their labels on the ledger, a distribution-free, finite-sample bound (wrong at most
 `α` of the time under exchangeability) that does **not** require the model's probabilities to be
 honest; `by p` is the **principal** basis. The recorded `Decision` pins which basis settled it and
 the applied rule, so a recalibration does not change how an earlier run replays.
@@ -971,13 +1038,13 @@ unhandled abstain cannot leak into an action. This removes any need for a design
 *variant* on a user enum; `Entailment`'s `Neutral` is a convenience over it.
 
 **The supervised-to-autonomous bootstrap.** A conformal gate certifies nothing without data, and
-its data is the spine itself — its own past decisions and their recorded outcomes. Below a minimum
+its data is the ledger itself — its own past decisions and their recorded outcomes. Below a minimum
 of labelled cases (§17) the gate abstains, routing every case to `abstain`/`by p` — typically a
 principal `attest`. Those attestations become the first labelled cases; once enough accrue the gate
 commits autonomously, escalating thereafter only genuinely ambiguous (non-singleton) cases. A fresh
 agent is thus human-supervised by construction and earns autonomy as it accumulates grounded
-labels. A recorded outcome that labels a judgment references that judgment's spine id, so the
-judgment↔label join stays auditable on the spine rather than in untyped host state.
+labels. A recorded outcome that labels a judgment references that judgment's ledger id, so the
+judgment↔label join stays auditable on the ledger rather than in untyped host state.
 
 **The consequential-action rule.** A consequential sink — a `perform` argument or a write-tool
 input — may consume a value only if it is `**settled`**: it carries no un-endorsed cognition. A
@@ -1004,13 +1071,13 @@ consequential gate fails closed.
 
 
 All three are external, non-deterministic, journaled, and swappable by config. A conformal gate
-needs no external dependency — it calibrates from its own recorded decisions on the spine (§13).
-The membrane — capability + trust + spine + gate — is identical across them.
+needs no external dependency — it calibrates from its own recorded decisions on the ledger (§13).
+The membrane — capability + trust + ledger + gate — is identical across them.
 
 ### Provenance
 
 Authority (including tool use) is bounded at compile time, cognition is endorsed-and-
-recorded before it acts, and every fact's provenance is auditable on an append-only spine.
+recorded before it acts, and every fact's provenance is auditable on an append-only ledger.
 
 ---
 
@@ -1021,9 +1088,9 @@ identity, world/tools) enters only through a declared dependency; no hidden runt
 desugars).
 
 **Type & effect** — `sync` is the marked color and cannot reach a declared dependency (including a tool
-call), though it may `emit` and `endorse` an in-hand `Credence`; `event<T>` marks spine
+call), though it may `emit` and `endorse` an in-hand `Credence`; `event<T>` marks ledger
 presence; a send bound to a `Credence<E>` slot yields a graded judgment, never a
-committed value; the collapse `c by R` settles (`graded → settled`) off-spine, `endorse` records
+committed value; the collapse `c by R` settles (`graded → settled`) off-ledger, `endorse` records
 it, and only a `settled` value may drive a consequential sink (a `perform` arg or a write-tool
 input); fusion of two or more `Credence`s (including `quorum`) requires a total
 `independent`/`dependent` declaration over the `array<Credence>`; `attest … by p` takes a
@@ -1036,7 +1103,7 @@ compile error.
 subscriptions are prospective and hoisted (never retroactive), and history is reached by
 query; multi-handler firing is registration-order; a message trace is a prefix of
 `Sent→Delivered→Resolved`; every memory write carries a provenance backpointer; all three
-dependencies journal their oracle/tool results to the spine for replay (§15.4.2); the margin floor
+dependencies journal their oracle/tool results to the ledger for replay (§15.4.2); the margin floor
 `m` is enforced at the consequential sink.
 
 ---
@@ -1044,7 +1111,7 @@ dependencies journal their oracle/tool results to the spine for replay (§15.4.2
 # 15. Formal Semantics
 
 > The source of truth: the abstract grammar, a static (type + effect) semantics, a dynamic
-> (operational) semantics with the spine as explicit state, and the reproducibility model.
+> (operational) semantics with the ledger as explicit state, and the reproducibility model.
 > Where §0–§14 and §15 conflict, §15 wins.
 
 ## 15.0 Modeling choices
@@ -1066,7 +1133,7 @@ c ∈ {S,A}   color   (S ⊑ A)        t ∈ {settled,graded,raw}   trust   (set
 Γ           x ↦ (T, t)             r : Rule       a decision rule {threshold, margin}
 Σ           agent signatures       A              action type names (consequential)
 G           grants set incl. ("perform",A) ("reach",D) ("use",K)
-endorsed(v) v's settling is spine-recorded (true only via endorse / attest)
+endorsed(v) v's settling is ledger-recorded (true only via endorse / attest)
 ```
 
 Judgment `**Γ; Σ; A ⊢ e : T ! c · t**`.
@@ -1111,6 +1178,7 @@ type       ::= "int"|"float"|"bool"|"text"|"null" | "event" "<" type ">"
              | modpath typeargs?                         // qualified names (enum/struct/agent/action/interface, incl. Principal, Rule); typeargs only for generic structs
 
 stmt       ::= vardecl | assign | spawn | prompt | principal | depdecl
+             | instruction | memdecl | forget            // system prompt (§5); private-memory handle + tombstone (§10)
              | "awake" Ident ";" | "sleep" Ident ";"
              | "emit" modpath "(" expr ")" ";"           // a plain event (no power); name may be qualified
              | "perform" modpath "(" expr ")" ";"        // an action (needs a power + settled value); name may be qualified
@@ -1123,6 +1191,9 @@ vardecl    ::= type Ident ("=" expr)? ";"
 assign     ::= (Ident | "self" "." Ident | postfix) "=" expr ";"
 spawn      ::= "spawn" modpath typeargs? Ident args? ";"      // allocate + construct; type may be qualified/generic
 prompt     ::= "prompt" type Ident ";"
+instruction ::= "instruction" String ";"                // compile-time system prompt; global or agent-scoped (§5)
+memdecl    ::= "mem" Ident ("<-" expr)? ";"             // declare a private-memory handle, optionally initialized (§10)
+forget     ::= "forget" Ident ";"                       // tombstone a `mem` handle; consumes it (§10)
 principal  ::= "principal" Ident config? ";"            // config lists `attest NAME, …`
 depdecl    ::= ("independent"|"dependent") Ident ("," Ident)* ";"
 when       ::= "when" "(" type Ident? ("about" expr)? ")" ("if" "(" expr ")")? block   // type may be a qualified etype
@@ -1141,13 +1212,14 @@ triple     ::= operand operand operand ";"          // subject predicate object 
 cond       ::= cmp (("&&"|"||") cmp)*                // a boolean filter over fields
 operand    ::= Ident | String | Int | Float
 
-expr       ::= expr "<-" expr ("expires" Number)?              // send; optional lifetime
+expr       ::= expr "<-" expr ("expires" Number)?              // send; or write a `mem` (LHS type-directed, §10)
+             | expr "->" expr                            // recall from a `mem` (§10); same precedence as `<-`
              | expr "|>" expr                            // pipe
              | expr "by" rule                            // collapse a Credence → Decision
              | "endorse" "(" expr "by" rule ")"          // gate (expr form): the endorsed Decision
              | "all" "(" expr ")" | "any" "(" expr ")"   // fuse an array<Credence<bool>>
              | "quorum" "(" Int "," expr ")"             // ≥ k of an array<Credence<bool>>
-             | find | select | match                     // spine/memory queries → array<…>
+             | find | select | match                     // ledger/memory queries → array<…>
              | cmp
 rule       ::= "confidence" Number ("margin" Number)? | "conformal" Number | expr  // or a Rule value
 cmp        ::= add (("=="|"!="|"<"|">"|"<="|">=") add)?
@@ -1192,7 +1264,7 @@ both contagious upward (a value is as `raw` as its least-settled input) unless a
 
 Γ ⊢ e : Credence<E> ! c · _    r : Rule
 ──────────────────────────────────────  (T-Collapse / GATE)
-Γ ⊢ (e by r) : Decision<E> ! c · settled        // graded → settled, off-spine; rule MANDATORY
+Γ ⊢ (e by r) : Decision<E> ! c · settled        // graded → settled, off-ledger; rule MANDATORY
 
 Γ ⊢ e : Credence<E> ! S · _    r : Rule          // in-hand Credence: synchronous
 ─────────────────────────────────────────────  (T-Endorse / GATE, recorded, sync)
@@ -1271,7 +1343,7 @@ margin floor is runtime.
 ### 15.4.1 Runtime configuration
 
 `⟨ Π | Ψ | Ω | Â | μ | S | k ⟩` — provider `Π`, identity `Ψ`, tool `Ω`, agents `Â`, memory
-`μ`, spine `S` (append-only, `tick(S)=|S|`), continuation `k`.
+`μ`, ledger `S` (append-only, `tick(S)=|S|`), continuation `k`.
 
 ### 15.4.2 The external dependencies as oracles (where stochasticity lives)
 
@@ -1281,29 +1353,29 @@ attest : Ψ × Principal × Value ⇝  Decision×Sig × Ψ      (identity depend
 invoke : Ω × Tool × Args      ⇝  Value × Ω              (tool dependency; external, effectful)
 ```
 
-All three oracles' results are journaled to the spine as produced (`ThinkResolved` /
+All three oracles' results are journaled to the ledger as produced (`ThinkResolved` /
 `Attestation` / `ToolResolved`). Replay never re-invokes an oracle or a tool: it serves
 each from the recording in order — a write tool is replayed as its recorded
-result, not re-run. The spine is hash-chained, so a faithful replay regenerates an
+result, not re-run. The ledger is hash-chained, so a faithful replay regenerates an
 identical chain — chain-head equality is the proof of replay-equivalence.
 
-### 15.4.2a The spine as an audit log — consensus, forking, forensics
+### 15.4.2a The ledger as an audit log — consensus, forking, forensics
 
-The spine is a hash-linked, append-only log (a Merkle-style commitment), so immutability
+The ledger is a hash-linked, append-only log (a Merkle-style commitment), so immutability
 and auditability hold by construction. This is the transparency half of a blockchain; the
 consensus half is absent: a single Agape runtime is the authority that assigns ticks, so
 consensus is pure overhead. Consensus becomes load-bearing only at one boundary — multiple
-mutually-distrusting runtimes sharing one spine — and is therefore an optional
-distributed-spine layer, never the core. (This is distinct from `quorum`, §12, which is
+mutually-distrusting runtimes sharing one ledger — and is therefore an optional
+distributed-ledger layer, never the core. (This is distinct from `quorum`, §12, which is
 single-runtime evidence fusion, not multi-node agreement.) Counterfactual/forensic replay
 (Jefferson's *Time Warp*, 1985) and fork/merge are scoped to an optional Multi-verse
 library.
 
 ```
-// COLLAPSE (c by r) — gate collapse; no oracle; off-spine:
+// COLLAPSE (c by r) — gate collapse; no oracle; off-ledger:
 v' = collapse(eval(e), r)        // singleton prediction set ⇒ that variant; else abstain
 ─────────────────────────────────────────────  (E-Collapse)
-⟨…|S| e by r ⟩ → Decision v', spine S           // off-spine; endorsed(v') = false
+⟨…|S| e by r ⟩ → Decision v', ledger S           // off-ledger; endorsed(v') = false
 
 // ENDORSE (in-hand Credence) — collapse + record; synchronous; single event:
 v' = collapse(eval(e), r) ;  ev = (v' = abstain) ? Abstained(src) : Decided(src, v')
@@ -1326,7 +1398,7 @@ S' = append(append(S, ToolStarted(K)), ToolResolved(K, v))
 ─────────────────────────────────────────────────────────────  (E-Spawn)
 ⟨…|Â|μ|S| spawn T name(args); k⟩ → ⟨…|Â'|μ| run(ctor-body); append(S, Spawned(name)) |k⟩
 
-// AWAKE — open mailbox, emit AgentAwake, run on-awake hook (no args; state is the spine):
+// AWAKE — open mailbox, emit AgentAwake, run on-awake hook (no args; state is the ledger):
 ─────────────────────────────────────────────────────────────  (E-Awake)
 ⟨…|Â| awake name; k⟩ → ⟨…|Â[name.awake:=true]| append(S, AgentAwake(name)); on-awake-hook; k⟩
 
@@ -1373,7 +1445,7 @@ src(x)=x   src(self)=current agent   src(d<-p)=binding name else @vN   src(compo
 
 ### 15.5.1 Observable outcome vs incidental trace
 
-For a terminal spine `S`, the observable outcome `obs(S)` is the subsequence of committed
+For a terminal ledger `S`, the observable outcome `obs(S)` is the subsequence of committed
 events: performed actions, gate decisions and attestations, `case`-selected
 variants, and top-level bindings of bounded type. It excludes the incidental trace:
 `Think*` payloads (the wording), `say` output, internalized memory text, raw tool-result
@@ -1433,7 +1505,7 @@ sequence `d`, independent of every un-settled (`raw`/`graded`) value.
 
 > *Proof.* Read trust as an integrity lattice tracking cognition-provenance: `raw`,`graded`
 > = un-endorsed cognition (high); `settled` = low. The gate (`endorse`/`attest`) is the only
-> operation that settles a `graded` judgment, and it records the discharge on the spine. By
+> operation that settles a `graded` judgment, and it records the discharge on the ledger. By
 > the consequential rule (W-Consequential-static) and W-Call, every constituent of `obs` is
 > `settled` — hence an input `I` (a constant or external datum, settled by origin), a gate
 > outcome `dⱼ`, or a pure settled-function of these. Progress+preservation (§15.6) preserves
@@ -1455,7 +1527,7 @@ exceeds each `δᵢ`, so `β(δ_fused) ≤ minᵢ β(δᵢ)` — a quorum tighte
 
 > **Stability theorem.**
 > **(i) Recorded replay.** With `d` fixed by the recording, `obs` is identical under
-> structural equality, unconditionally (Lemma 1; hash-chained spine).
+> structural equality, unconditionally (Lemma 1; hash-chained ledger).
 > **(ii) Live re-runs (fixed `𝒫`).** `P(obs(R₁) ≉ obs(R₂)) ≤ Σⱼ β(δⱼ)`. If every
 > consequential gate is exactly-gated, the bound is `0`. Raising the margin floor `m`
 > forces every `δⱼ ≥ m`, so the bound is `≤ k·β(m)`: stability is monotone in `m`, and
@@ -1478,7 +1550,7 @@ equivalently `|p̂ − τ|`, §15.5.5).
 
 **(A) The conformal basis — a coverage guarantee.** `by conformal α` is *split conformal
 prediction* (Vovk, Gammerman, Shafer, *Algorithmic Learning in a Random World*, 2005), calibrated
-from the gate's own labeled decisions on the spine:
+from the gate's own labeled decisions on the ledger:
 
 - **Nonconformity score** `s(x, y) = 1 − p̂(y | x)` (how poorly label `y` fits).
 - **Calibration set** `{(xᵢ, yᵢ)}_{i=1..n}` — the gate's past decisions whose true label `yᵢ`
@@ -1530,7 +1602,7 @@ gate (`endorse`/`attest`), which records the discharge; a gate commits a singlet
 carrying un-endorsed cognition reaches a consequential sink (a `perform` argument or an
 write-tool input); equivalently, varying the model's raw judgments
 changes no world-effect except through a gate (Lemma 1, §15.5). **(T4) Reproducibility up to
-`≈`** — state is a function of the spine plus recorded oracle results; a recorded run replays
+`≈`** — state is a function of the ledger plus recorded oracle results; a recorded run replays
 to chain-head equality unconditionally; inter-agent message content is derived, not stored.
 **(T5) Color safety** — no `sync` function reaches a declared dependency. Technique for
 T1/T2/T5: progress+preservation. T3 is Lemma 1 (two-run bisimulation, §15.7); T4 is the
@@ -1566,7 +1638,7 @@ rather than a struct — in §15.2–§15.4, and re-discharge the soundness stat
 the conformal bound and calibration-readiness as hypotheses (a property of the calibration, not
 provable from the semantics, alongside the oracle bound of step 4); re-prove Stability under the
 three-phase message + tool model; the identity-dependency authentication contract; the
-reliable/ordered channel surface; the optional distributed-spine and Multi-verse layers; and
+reliable/ordered channel surface; the optional distributed-ledger and Multi-verse layers; and
 interprocedural authority for top-level (non-agent) functions.
 
 ---
@@ -1580,13 +1652,13 @@ meaning and §16 the mechanism; a conformant runtime satisfies both. Design poin
 
 ### 16.1 Execution model and the scheduler
 
-The runtime is a **discrete-event simulator** over a single growing spine (§0.2, §15.4.1). Its state
+The runtime is a **discrete-event simulator** over a single growing ledger (§0.2, §15.4.1). Its state
 is the configuration `⟨Π|Ψ|Ω|Â|μ|S|k⟩` of §15.4.1 plus a **reaction queue** `Q` of pending work.
 Logical time is the **tick**: every appended event is assigned `tick = |S|` at append — system-
 assigned, monotonic, gap-free (§7).
 
 - **Top-level evaluation.** The program's top-level statements run in source order (§0.2). A statement
-  executes to a value or to a spine append; an append fires any matching subscriptions (§16.3) before
+  executes to a value or to a ledger append; an append fires any matching subscriptions (§16.3) before
   the next statement begins.
 - **Asynchrony.** Reaching a declared dependency (a send `<-`, a tool call, `attest … by p`) does not
   block: the runtime appends the operation's opening event(s) (`Sent`, `ToolStarted`, …), issues the
@@ -1603,14 +1675,14 @@ assigned, monotonic, gap-free (§7).
   empty, and no external source is open (`prompt`/standing sensor, §5b/§6b). An open source keeps the
   program live: each external arrival enqueues a reaction and the loop continues (§0.2). Every reaction
   terminates (the only loop, `retry(N)`, is bounded, §11), so an always-on program is an unbounded
-  sequence of terminating reactions over one spine.
+  sequence of terminating reactions over one ledger.
 - **Determinism.** Concurrency and determinism are independent (§0.2): the scheduler serializes
   observable effects by the issue-order rule, and there is no shared mutable state (each agent owns its
-  memory, §10), so given the journaled oracle results the spine is reproduced exactly (§16.5).
+  memory, §10), so given the journaled oracle results the ledger is reproduced exactly (§16.5).
 
-### 16.2 The spine journal — serialization, hashing, ticks
+### 16.2 The ledger journal — serialization, hashing, ticks
 
-The spine is an append-only, hash-chained log (§7, §15.4.2a). A conformant runtime fixes three things
+The ledger is an append-only, hash-chained log (§7, §15.4.2a). A conformant runtime fixes three things
 a replay (§16.5) and an audit depend on:
 
 - **Event record.** Each event is `{ tick, etype, subject, payload, corr, agent }` (§7): `tick` the
@@ -1626,7 +1698,7 @@ a replay (§16.5) and an audit depend on:
   every field, so nothing observable sits outside the commitment.
 - **Chain-head equality (T4).** Two runs are replay-equivalent iff their chain-heads are equal (§15.4.2,
   §16.5) — the operational form of observational equivalence `≈` (§15.5.2) for a recorded run: identical
-  journals ⇒ identical spine ⇒ identical head.
+  journals ⇒ identical ledger ⇒ identical head.
 
 ### 16.3 Subscription dispatch and the tick cascade
 
@@ -1644,7 +1716,7 @@ order**).
   synchronously fires any matching subscription before evaluation continues."
 - **Ticks within a cascade.** Each append takes the next tick (`|S|`, §16.2). The several subscriptions
   matching one appended event are triggered *by* that event (logically one instant), but each body's own
-  appends take subsequent ticks, in the depth-first registration order above — so the spine's total order
+  appends take subsequent ticks, in the depth-first registration order above — so the ledger's total order
   is exactly the append order, and is deterministic.
 - **Prospective.** A subscription never fires for an event whose tick precedes its registration (§7);
   history is reached only by query (§10).
@@ -1666,7 +1738,7 @@ appends its opening event, invokes the seam, journals the result (§16.5), and a
   (§16.6).
 - **Identity (`attest`).** `attest e by p` presents `(p, e)` to the identity dependency, which returns the
   principal's signed `Decision`. The backend (e.g. `local-keyring`, §17) signs a canonical
-  serialization of `(who = p, what = spine-id(e), decision)`; the runtime records
+  serialization of `(who = p, what = ledger-id(e), decision)`; the runtime records
   `Attestation { who, what, decision, signature }` (§9). A declined ruling records a `FailedAttestation`
   (§13). No key material appears in source (§3).
 - **Tool (`invoke`, MCP).** A call `K(a…)` resolves `K` to its MCP binding (`[tools]`, §17) and issues an
@@ -1677,7 +1749,7 @@ appends its opening event, invokes the seam, journals the result (§16.5), and a
 
 ### 16.5 Record and replay
 
-A run is a **recording**: every oracle result (§16.4) is journaled to the spine as the operation's
+A run is a **recording**: every oracle result (§16.4) is journaled to the ledger as the operation's
 closing event, carrying the result payload — and, for the provider, the per-variant scores (§15.5.1).
 Nondeterministic *inputs* are journaled too: external `prompt` arrivals, and a wall-clock `expires`
 lifetime's firing (§6); a logical-tick lifetime is already deterministic.
@@ -1686,7 +1758,7 @@ lifetime's firing (§6); a logical-tick lifetime is already deterministic.
   from the journal instead of invoking the seam**: the *i*-th call of a given kind, in issue order
   (§16.1), is answered by the *i*-th recorded result of that kind. Replay invokes nothing external — a
   `write` tool is replayed as its recorded result, never re-run against the world.
-- **Chain-head equality (T4).** A faithful replay regenerates an identical spine and therefore an
+- **Chain-head equality (T4).** A faithful replay regenerates an identical ledger and therefore an
   identical chain-head (§16.2); chain-head equality *is* the proof of replay-equivalence (§15.4.2), the
   operational form of `≈` (§15.5.2). The conformance test-mode asserts it (§17.5).
 - **Counterfactual replay.** Any prefix may be replayed under altered recorded facts to test a
@@ -1701,14 +1773,14 @@ lifetime's firing (§6); a logical-tick lifetime is already deterministic.
 - **Crash.** An unrecoverable seam failure (the provider returns nothing, a connector error) or an
   uncaught error within an invocation **crashes** the agent: the invocation is abandoned, `AgentCrashed`
   is appended, the `on crash` hook runs in the agent's own context, and the agent continues with its
-  fields and memory intact — they are a function of the spine, not fragile in-flight state (§5). Unlike
+  fields and memory intact — they are a function of the ledger, not fragile in-flight state (§5). Unlike
   `sleep`, the mailbox stays open. A crash loop is a policy concern for an ordinary `when (AgentCrashed …)`
   subscription (§5), not a built-in.
 - **TypeMismatch.** A schema-violating provider return is a typed `TypeMismatch` (§8) — catchable and
   retryable, not in itself a crash.
 - **Retry.** `{ block } retry(N)` re-executes `block` from its start on an `Error`, up to `N`
-  times. Variable assignments the block made carry across attempts; spine events appended by a failed
-  attempt remain on the log (the spine is immutable) — a re-attempt appends fresh events. On exhaustion the
+  times. Variable assignments the block made carry across attempts; ledger events appended by a failed
+  attempt remain on the log (the ledger is immutable) — a re-attempt appends fresh events. On exhaustion the
   runtime appends `RetryExhausted` and propagates the fault. The bound is mandatory, so every reaction
   terminates (§11).
 
@@ -1725,14 +1797,14 @@ cross-agent mutable state (§0.2).
   decision — and, when `[memory] internalize_on_receive = true` (§17, default `false`), the runtime
   decomposes every received `<-` event automatically. Default-off keeps cognition cost pay-as-you-go: a
   digest call happens only when asked for, not on every message.
-- **Provenance.** Every memory cell carries an immutable backpointer to the spine event that produced it;
+- **Provenance.** Every memory cell carries an immutable backpointer to the ledger event that produced it;
   `origin(n)` projects it (§10). A queried value carries the trust of its provenance event — `graded` by
   default (most facts trace to internalized cognition), `settled` when the origin is an already-endorsed
   event (§10, §13).
 - **Query execution.** `select COLS from G where { COND }` is a relational scan with a boolean field
   filter; `find x [, origin(x)] where { TRIPLE+ }` is a conjunctive pattern match over the graph binding
   `x`; `match v > θ` is the cosine similarity of `v` against the vector store thresholded at `θ` — a gate
-  yielding a `settled`, off-spine result (§10). `select … from spine` runs the same relational query over
+  yielding a `settled`, off-ledger result (§10). `select … from ledger` runs the same relational query over
   the log itself.
 - **The `Record` row type (§10).** A projected `select COLS …` yields `array<Record>`, where
   `Record` is the structural row type of the projected, typed columns; `select * from F …` yields
@@ -1746,14 +1818,14 @@ A `Credence<E>` is read from the provider's token-level probability on the force
 - **From logprobs.** A logprob-exposing connector (`exposes_logprobs`, §17) yields the per-variant mass
   directly; the runtime normalizes it over `E`'s variants to the distribution.
 - **Calibration fit.** Raw logits are overconfident, so a fitted calibrator (temperature / Platt /
-  isotonic) is applied between the raw scores and the `Credence`. It is fit from the spine's recorded
+  isotonic) is applied between the raw scores and the `Credence`. It is fit from the ledger's recorded
   `(judgment, outcome)` pairs (§3, §13) — the same labelled data the conformal gate reads — and refit as
   labels accrue; below a minimum it is identity (and a consequential conformal gate abstains, §13).
 - **Sampling fallback.** A text-only connector is served by drawing the forced choice `fallback_samples`
   times (min 10, at `fallback_temperature`) and taking the empirical frequency as the distribution (§17).
 - **Conformal.** The conformal gate (§13) scores each variant's nonconformity and forms the prediction set
   `{ v : nonconformity(v) ≤ q̂ }`, with `q̂` the level-`α` quantile of the gate's own recorded
-  decisions-and-labels on the spine; below the readiness floor (a minimum of labelled cases) it abstains —
+  decisions-and-labels on the ledger; below the readiness floor (a minimum of labelled cases) it abstains —
   the supervised cold start (§13).
 
 ---
@@ -1776,7 +1848,7 @@ resolves to a manifest entry; an undeclared-in-config dependency is a configurat
 
 # the cognition dependency
 [provider]  backend = "anthropic"   model = "claude-…"   temperature = 0
-            exposes_logprobs = false      # connector capability; false ⇒ sampling fallback
+            exposes_logprobs = false      # DERIVED from backend (anthropic=false, openai/gemini=true); set only to force fallback
             fallback_samples = 10         # samples to estimate one judgment's distribution (min 10)
             fallback_temperature = 0.7    # REQUIRED when temperature = 0 and exposes_logprobs = false
 
@@ -1786,7 +1858,7 @@ resolves to a manifest entry; an undeclared-in-config dependency is a configurat
 # memory — the internalization trigger (§10, §16.7); default off keeps cognition pay-as-you-go
 [memory]    internalize_on_receive = false
 
-# conformal needs no manifest entry: it calibrates from the spine, and a gate's readiness
+# conformal needs no manifest entry: it calibrates from the ledger, and a gate's readiness
 # floor and default α live in its `policy` declaration in source (§13)
 
 # world capabilities (the `tool NAME;` dependencies)
@@ -1799,13 +1871,16 @@ transfer = { mcp = "https://payments.internal/mcp" }
 # e.g. `policy RuleFloor { threshold 0.9  margin 0.2  floor 0.1 }`, applied at a gate.
 ```
 
-- `**exposes_logprobs**` declares whether the provider connector returns the per-variant
-distribution (`true` — e.g. OpenAI, or a local vLLM/TGI connector reading logits) or only the
-committed variant (`false` — e.g. a text-only backend). When `false`, a graded gate is served by
-the **sampling fallback**: the judgment is drawn `fallback_samples` times (minimum 10) and its
-distribution is the empirical frequency. Sampling needs variation, so `fallback_temperature` is
-**required when `temperature = 0`**. A custom connector for a local model may set
-`exposes_logprobs = true`.
+- `**exposes_logprobs**` is a **capability of the chosen backend — derived, not a knob to
+hand-set**: `anthropic` ⇒ `false` (the Messages API exposes no token logprobs), `openai`/`gemini` ⇒
+`true` (the per-variant mass is read from token logprobs — OpenAI Chat-Completions `top_logprobs`,
+Gemini enum-mode `responseLogprobs`). When the capability is `false`, a graded gate is served by the
+**sampling fallback**: the judgment is drawn `fallback_samples` times (minimum 10) and its
+distribution is the empirical frequency; sampling needs variation, so `fallback_temperature` is
+**required when `temperature = 0`** (newer Claude models reject `temperature` — use a
+sampling-capable model). The manifest may **override** the derived value only to force the fallback
+path for testing or cost control (cf. `sampling_fallback`, §20.3); a custom local connector reading
+logits declares `true`.
 - **Decision policy lives in source, not the manifest.** A gate's rule and floor are a source-level
 `policy NAME { threshold θ, margin δ, floor m, … }` declaration (§13), applied per gate (`c by NAME`)
 or written inline (`confidence θ`); the manifest binds only the dependencies (provider, identity,
@@ -1847,7 +1922,7 @@ A conformant implementation ships a test mode the black-box suite drives:
 - **Fault injection.** A designated stub provider returns schema-violating output on
 demand, so a `TypeMismatch` is triggerable deterministically.
 - **Recorded replay.** The runner can capture a run's journal and replay it; "chain-head
-equality" is equality of the spine's terminal hash under the canonical event
+equality" is equality of the ledger's terminal hash under the canonical event
 serialization.
 - **Rule/precedence observation.** Decision policy is in the test's own source — a `policy`
 declaration and the gate's `by` (§13), no manifest fixture — and the gate records the applied
@@ -1861,7 +1936,7 @@ for the run (e.g. `exposes_logprobs` to exercise the sampling fallback, §16.8).
 
 An Agape runtime runs entirely in userspace. It executes programs, exposes the tool dependency as
 the gated capability surface, enforces the membrane (the capability and gating discipline of
-§13), and writes every consequential action to the spine for audit and replay. No kernel
+§13), and writes every consequential action to the ledger for audit and replay. No kernel
 support is required.
 
 The membrane is a verifiable safety property — capability-gated and audited — in the sense
@@ -1881,9 +1956,9 @@ generics, and interfaces. The grammar is in §15.2; the keywords in §2; the pre
 
 The library layer is **static / compile-time**. Modules, imports, generics, interfaces, and
 visibility are resolved, checked, and erased before the dynamic semantics (§15.4) run, so the
-oracle model, the spine evolution, replay, and the Stability theorem (§15.5.5, §15.6) are not
+oracle model, the ledger evolution, replay, and the Stability theorem (§15.5.5, §15.6) are not
 affected. Generics are monomorphized; interfaces are erased to the concrete agent address they
-bind; visibility governs names, not spine contents. The one runtime-visible point is that an
+bind; visibility governs names, not ledger contents. The one runtime-visible point is that an
 event's `etype` is a fully-qualified name (§19.2).
 
 ### 19.2 Modules, imports, and namespacing
@@ -1903,9 +1978,9 @@ another module it is reached via its imported prefix/alias or a selective bare i
 own module it is bare. An ambiguous bare reference (e.g. the same bare name selectively imported
 from two modules) is a **`ModuleError`**; resolve it by qualifying.
 
-**The spine `etype` is qualified (the one dynamic touch).** An event/action type on the spine
+**The ledger `etype` is qualified (the one dynamic touch).** An event/action type on the ledger
 (§7, §15.4) is identified by its fully-qualified name, so the same simple name declared in two
-modules denotes two *distinct* spine types (`a.Tick` ≠ `b.Tick`) and `when (a.Tick t)` binds only
+modules denotes two *distinct* ledger types (`a.Tick` ≠ `b.Tick`) and `when (a.Tick t)` binds only
 the qualified one. The built-in subtype hierarchy (§9) is cross-module: `when (Error e)` catches
 every `Error` subtype regardless of the module that appended it.
 
@@ -1941,8 +2016,8 @@ A declaration is prefixed by an optional `pub`. The **default (absent) is module
 name is reachable only within its module. `pub` exports it for import. A single-module program is
 one module, so private-by-default leaves every name mutually visible within it.
 
-Visibility governs **names, not the spine.** A private `event`/`action` still physically lands on
-the spine (§7) and is visible to audit and replay; visibility only controls what *source in
+Visibility governs **names, not the ledger.** A private `event`/`action` still physically lands on
+the ledger (§7) and is visible to audit and replay; visibility only controls what *source in
 another module may name*:
 
 - naming a non-`pub` declaration from another module (import, qualified reference, `spawn`,
@@ -1965,7 +2040,7 @@ generic `agent` or `interface` is a **`ParseError`**. Generics serve data (`stru
 
 **Interfaces.** An `interface` names an agent's external surface: the events it handles and the
 outcome each produces, plus the powers it `requires`. A member is written **`when EVENT decide
-RESULT`** (reusing existing keywords — there is no `->`, which is a `LexError`, §2). An interface
+RESULT`** (reusing existing keywords — an interface member uses no arrow; `->` is the memory-recall operator, §2, §10). An interface
 is a **type** (usable as a binding/parameter/`reach` target) but is **not instantiable** —
 `spawn` of an interface is a **`TypeError`**. Conformance is **nominal**: an agent declares the
 interfaces it implements (`agent Desk : Resolver`), and the compiler checks that for each `when A
@@ -2036,7 +2111,7 @@ default (precedence as §17); absent, α defaults (0.05). Only the conformal pat
 distribution (provider logprobs, or the §16 sampling fallback).
 
 **Calibration scope is a design decision, not a language construct.** A gate calibrates from *its
-own* recorded decisions on the spine; the calibration pool is exactly the decisions made at that
+own* recorded decisions on the ledger; the calibration pool is exactly the decisions made at that
 gate site (pooling across instances of the same site, which are exchangeable — keeping the §15.5.6
 coverage guarantee valid). Authors control scope by how they *factor* gates: a shared decision
 routed through one gate shares a pool; separate gates keep separate pools. There is deliberately no
@@ -2050,7 +2125,7 @@ cross-site pooling construct.
 - **default** — an optional `default:` arm, the autonomous safe fallback.
 - **defer** — a **principal** (the `subject decide …` form, or a trailing `defer to p`) decides the
   cold/contested case (blocking); the ruling re-enters the arms and becomes a label.
-- **notify** is orthogonal — a plain `emit` (no dedicated form); the spine records it.
+- **notify** is orthogonal — a plain `emit` (no dedicated form); the ledger records it.
 
 **Tie / no-plurality** (a `reversible` gate with no clear top): the `default:` arm is the tiebreak;
 absent a `default:`, the gate **abstains** (no effect) and records an `Abstained` event — never a

@@ -1,0 +1,8 @@
+//! id:        agent_instruction_global_accept
+//! section:   05_agents
+//! expect:    accept
+//! spec:      §5 (a top-level `instruction` is the global compile-time system prompt)
+//! ---
+instruction "You are a careful agent. Prefer abstaining to guessing.";
+agent A { on awake { say("ok"); } }
+spawn A a; awake a;

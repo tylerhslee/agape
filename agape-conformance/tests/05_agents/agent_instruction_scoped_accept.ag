@@ -1,0 +1,11 @@
+//! id:        agent_instruction_scoped_accept
+//! section:   05_agents
+//! expect:    accept
+//! spec:      §5 (an agent-scoped `instruction` composes after the global block)
+//! ---
+instruction "Global: be careful.";
+agent A {
+  instruction "Agent: answer in one sentence.";
+  on awake { say("ok"); }
+}
+spawn A a; awake a;

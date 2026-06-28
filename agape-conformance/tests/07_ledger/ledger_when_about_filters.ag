@@ -1,5 +1,5 @@
-//! id:        spine_when_about_filters
-//! section:   07_spine
+//! id:        ledger_when_about_filters
+//! section:   07_ledger
 //! expect:    accept
 //! contains:  Got(a)
 //! spec:      §7 (a `when (Type b about subj)` fires only for events about the held subject; the bound event evaluates to its payload)

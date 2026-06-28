@@ -1,0 +1,12 @@
+//! id:        mem_recall_requires_mem_reject
+//! section:   10_memory
+//! expect:    reject
+//! error:     TypeError
+//! spec:      §10 (`->` recall requires a `mem` handle on the left; a non-`mem` LHS is a TypeError)
+//! ---
+agent A {
+  on awake {
+    text t = self -> "x";
+  }
+}
+spawn A a; awake a;

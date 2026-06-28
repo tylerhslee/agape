@@ -1,5 +1,5 @@
-//! id:        spine_prospective_only
-//! section:   07_spine
+//! id:        ledger_prospective_only
+//! section:   07_ledger
 //! expect:    accept
 //! absent:  Event
 //! spec:      §7 (subscriptions are prospective; never fire for prior events)

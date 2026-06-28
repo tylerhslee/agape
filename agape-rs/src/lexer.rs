@@ -2,8 +2,8 @@
 //!
 //! Tokenizes the SPEC-1.0 surface (§2). Notable v1.0 lexical rules:
 //!
-//! - There is exactly one communication arrow, `<-`. A `->` is a **`LexError`**
-//!   (§2) — detected explicitly, not left to decompose into `-` `>`.
+//! - Two arrows: `<-` (send / memory write) and `->` (memory recall, §10). Both lex
+//!   as operators; the checker rejects `->` on a non-`mem` left-hand side.
 //! - There is no similarity operator. `~` still *lexes* (to an `Op` token) so the
 //!   parser can reject it as a **`ParseError`** (`v1_lex_tilde_removed`), rather
 //!   than the lexer failing on an "unexpected character".
@@ -68,22 +68,24 @@ impl Token {
 /// `Verification`, `Entailment`, `say`, ...), and the retired words
 /// (`entail`, `calibrate`).
 pub const KEYWORDS: &[&str] = &[
-    // types + spine wrapper + somatic aggregate
+    // types + ledger wrapper + somatic aggregate
     "int", "float", "bool", "text", "null", "event", "array",
     // declarations + marked color
     "agent", "extend", "sync", "struct", "enum",
     // capability typing (§13) + tool declaration + effect class (§6b)
     "grants", "authority", "tool", "read", "write",
     // lifecycle + external input sensor (§5, §5b)
-    "spawn", "awake", "sleep", "self", "on", "prompt",
+    "spawn", "awake", "sleep", "self", "on", "prompt", "instruction",
     // identity seam (§13)
     "principal",
     // control / reactive
     "when", "catch", "case", "if", "else", "return", "retry", "default",
-    // gate / spine emit / action perform (v1.0); verify/decide are legacy
+    // gate / ledger emit / action perform (v1.0); verify/decide are legacy
     "verify", "decide", "emit", "endorse", "attest", "perform", "abstain", "action", "policy",
     // queries (§10)
     "find", "where", "select", "from", "match",
+    // private-memory handles + seams (§10): mem m <- v / m += v / m -> q / forget m
+    "mem", "forget",
     // aggregation + dependence declaration + quorum (§12)
     "all", "any", "quorum", "independent", "dependent",
     // bool literals
@@ -96,12 +98,11 @@ pub const KEYWORDS: &[&str] = &[
 
 /// Operators, longest-first so multi-char operators win over their prefixes.
 /// `~` lexes on purpose (the parser, not the lexer, rejects it as a ParseError, §2).
-/// `->` deliberately does NOT lex: Agape has exactly one communication arrow, `<-`,
-/// and a `->` is a `LexError` (§2). It is detected explicitly above, before this
-/// list, so it never decomposes into `-` `>`. Tools use a prefix return type
-/// (`tool T f();`), like a function signature — no arrow.
+/// Two arrows: `<-` (send / memory write) and `->` (memory recall, §10). Both lex as
+/// operators; the checker rejects `->` on a non-`mem` left-hand side. Tools use a prefix
+/// return type (`tool T f();`), like a function signature — no arrow.
 const OPERATORS: &[&str] = &[
-    "<-", "|>", ">=", "<=", "==", "!=", //
+    "<-", "->", "|>", ">=", "<=", "==", "!=", //
     "{", "}", "(", ")", "[", "]", //
     ";", ",", ".", ":", //
     "=", "+", "-", "*", "/", "<", ">", "!", "~",
@@ -257,15 +258,8 @@ pub fn lex(src: &str) -> Result<Vec<Token>, AgapeError> {
             continue;
         }
 
-        // `->` is retired (§2): exactly one communication arrow, `<-`. Detect it
-        // explicitly so it is a `LexError`, never a `-` `>` decomposition.
-        if c == '-' && i + 1 < n && chars[i + 1] == '>' {
-            return Err(AgapeError::at(
-                ErrorClass::Lex,
-                Span::new(byte, byte + 2),
-                format!("`->` is not a token; Agape has exactly one communication arrow `<-` (§2), at line {line} col {col}"),
-            ));
-        }
+        // `->` is the memory-recall operator (§10): `mem m -> "query"`. It lexes as an
+        // operator (see OPERATORS); the checker rejects it on a non-`mem` LHS.
 
         // operators (longest match first)
         let mut matched = false;
@@ -334,10 +328,11 @@ mod tests {
     }
 
     #[test]
-    fn right_arrow_is_lex_error() {
-        // `->` is retired (§2): exactly one communication arrow, `<-`.
-        assert!(lex("a -> b").is_err());
-        // tools now use a prefix return type — no arrow, lexes cleanly.
+    fn right_arrow_lexes_as_operator() {
+        // `->` is the memory-recall operator (§10); it lexes (the checker rejects a
+        // non-`mem` LHS). Tools use a prefix return type — no arrow.
+        let toks = lex("m -> \"q\"").unwrap();
+        assert!(toks.iter().any(|t| t.is_op("->")));
         assert!(lex("read tool text search(text q);").is_ok());
     }
 

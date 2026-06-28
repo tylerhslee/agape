@@ -1,0 +1,7 @@
+//! id:        ledger_query_result_event
+//! section:   07_ledger
+//! expect:    accept
+//! contains:  QueryResult(ledger)
+//! spec:      §10 (a query STATEMENT lands a QueryResult event on the ledger)
+//! ---
+select * from ledger where { etype: "Spawned" };

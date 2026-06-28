@@ -1,6 +1,6 @@
 //! A hand-rolled SHA-256 (FIPS 180-4) — keeps agape-rs dependency-free.
 //!
-//! Used for the spine's hash-chain (§16.2): each event commits to its predecessor's
+//! Used for the ledger's hash-chain (§16.2): each event commits to its predecessor's
 //! head, so the chain-head is a function of the whole journal's content. Chain-head
 //! equality is the operational proof of replay-equivalence (T4, §15.4.2 / §16.5).
 

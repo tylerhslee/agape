@@ -2,144 +2,86 @@
 
 All notable changes to Agape are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com), and the project follows
-[Semantic Versioning](https://semver.org). The language/runtime, the v1.0
-conformance suite, and the studio move in lockstep — a release is the whole
-bundle at one version.
-
-## [1.0.2] — 2026-06-27
-
-The library layer and a readable decision gate — pieces of the v1.0 language left
-unfinished in 1.0.0. **Backward compatible:** every well-typed 1.0.1 program is a
-well-typed 1.0.2 program with identical observable behavior. All additions are
-static / compile-time and desugar to the unchanged 1.0 engine.
-
-### Added
-- **Library layer (SPEC §19)** — agape code can now be modularized, hidden,
-  parameterized, and abstracted:
-  - **Modules & imports** — one `.ag` file is one module (`module path;`, else the
-    implicit root); `import m;`, `import m as x;`, `import { a, b } from m;`, and
-    `pub import` for re-export. Packages declare `[package]` / `[dependencies]` in
-    `agape.toml` (path or git deps; no registry yet).
-  - **Namespacing** — fully-qualified names; the spine's event `etype` is now
-    qualified, so the same simple name in two modules is two distinct spine types.
-  - **Visibility** — `pub` (default module-private), governing *names, not the
-    spine* (a private event still lands on the spine for audit); `pub` is shallow.
-  - **Generics** — plain type parameters on `struct` and `fn`, monomorphized at
-    compile time. Agents and interfaces are not generic.
-  - **Interfaces** — `interface I { when EVENT decide RESULT; requires CAP }` with
-    nominal conformance; an implementor is a subtype (`reach I` authorizes any
-    implementor), erased at runtime.
-  - **Error subtyping** — `event Foo(..) : Error;`, single-level under the built-in
-    `Error` root, caught by `when (Error e)`.
-- **Readable decision gate (SPEC §20)** — a surface where a non-programmer states
-  intent plus one fact about stakes, and the decision theory is derived and
-  enforced. `reversible` marks a consequential sink; `decide { … }` carries
-  commit / `default:` / `defer` arms with a principal for the contested case; one
-  `conformal α` dial sets the error guarantee (file, per-gate, or manifest scope).
-  A non-reversible arm with no reachable principal is a **compile error**. It
-  desugars to the `endorse` / `c by R` engine, which remains available for
-  hand-calibration.
-- **Conformance suite grows to 139** (was 102): `18_modules`, `19_visibility`,
-  `20_generics`, `21_interfaces`, `22_gate`, and error-subtyping cases in
-  `09_prelude` — still a hard CI gate (139/139).
-- New conformance error classes: `ModuleError`, `VisibilityError`,
-  `InterfaceError`, `GateError`.
-
-### Changed
-- **The qualified event `etype` changes chain-head hashes** for the same source vs
-  1.0.1 — a representational change, not a semantic one (observable behavior and all
-  soundness guarantees are preserved). Journals recorded under 1.0.x should be
-  re-recorded under 1.0.2.
-- Bump `agape-rs` to 1.0.2.
-
-## [1.0.1] — 2026-06-27
-
-A test-and-pipeline patch. **No language, compiler, runtime, or spec changes**:
-the `agape` binary is functionally identical to 1.0.0 (only its reported version
-differs). What's new is a real studio test suite and a CI pipeline that gates on
-it — so future studio changes can't regress the shipped user journeys unnoticed.
-
-### Added
-- **Studio test pyramid**, run as a hard gate in CI:
-  - **Unit** — `studio/agent-server/lib.test.ts` covers the pure helpers,
-    including path-traversal cases for `safeProjectPath` (the guard that keeps
-    `/project/file` from escaping the project root or reading non-`.ag` files).
-  - **Integration** — `studio/agent-server/server.integration.test.ts` boots the
-    real agent-server against an `agape init` project and drives the journeys end
-    to end: health, project info/agents, a mock run returning a decided + verified
-    reply, a rejected program surfacing `ok:false` (not a crash), and a rejected
-    path traversal.
-  - **End-to-end** — `studio/web/e2e/studio.spec.ts` (Playwright) drives a real
-    browser against the served app and the real binary: ask a question, get a
-    ✓-verified answer, and see the gate decision + delivered reply recorded on the
-    spine.
-  - `studio/TESTING.md` — the testing strategy plus a J1–J9 user-journey
-    inventory, each journey mapped to the test that covers it.
-- `@playwright/test` dev dependency, an `e2e` npm script, and a Playwright config
-  (`playwright.config.ts`) with a `serve.mjs` launcher that boots the bundle path.
-
-### Changed
-- **CI gates on the studio tests.** The `studio` job now runs both Vitest suites
-  (agent-server + web) with JUnit reporting and uploads the results, and a new
-  `e2e` job builds the binary + web app and runs Playwright. Previously CI only
-  *built* the studio. (`.github/workflows/ci.yml`)
-- **Agent-server refactor — behavior preserving.** The pure helpers `pickVariant`,
-  `agentsAndPrompts`, and `safeProjectPath` were lifted out of `server.ts` into a
-  new `studio/agent-server/lib.ts` so they can be unit-tested in isolation;
-  `server.ts` now imports them. No runtime behavior changed.
-- Vitest is scoped to `studio/web/src/` so it no longer tries to execute the
-  Playwright `*.spec` files (both tools claim `.spec`).
-
-### Chore
-- Ignore test output (`test-results/`, `playwright-report/`).
-- Commit the `package-lock.json` updates for the new dev dependency so installs
-  stay reproducible.
-- Bump `agape-rs`, `studio/web`, and `studio/agent-server` to 1.0.1 so the release
-  bundle (named from `Cargo.toml`) matches the `v1.0.1` tag.
+[Semantic Versioning](https://semver.org). The language/runtime, the conformance
+suite, and the studio move in lockstep — a release is the whole bundle at one
+version.
 
 ## [1.0.0] — 2026-06-27
 
-First release: the Agape language, compiler, runtime, and studio, packaged as one
-self-contained `agape` CLI.
+The first canonical release: the Agape language, compiler, runtime, and studio,
+packaged as one self-contained `agape` CLI. Agape governs multi-agent systems —
+model output is *testimony* with no authority until a calibrated gate endorses it,
+and every effect is recorded on an append-only **ledger**.
 
 ### Language & runtime
-- A clean-room Rust implementation (lexer → parser → checker → interpreter +
-  event spine) passing the full v1.0 conformance suite — **102/102**, enforced as
-  a CI gate.
-- The decision surface: testimony → `Credence<E>` → a gate (`endorse` / `attest`
-  with `c by R` readiness) → a `Decision` that drives `perform` actions and `emit`
-  events. Static checks reject unauthorized authority, tainted/settled inputs, and
+- A clean-room Rust implementation (lexer → parser → checker → interpreter + the
+  event **ledger**) passing the full conformance suite — **144/144**, a hard CI gate.
+- **The decision surface** — testimony → `Credence<E>` (a graded judgment over a
+  closed enum, read from the provider's token probabilities) → a gate (`endorse` /
+  `attest` / the readable `decide`, by `c by R` / `conformal α`) → a settled
+  `Decision` that alone may drive a `perform` action. Static checks reject
+  unauthorized authority, un-endorsed (tainted) values at consequential sinks, and
   ill-typed gates before anything runs.
-- A hash-chained event spine (tamper-evident journal), a deterministic
-  scheduler/tick cascade, injectable seams (cognition / memory / spine) for
-  test-mode, replay, and fault injection, and a sampling fallback for graded
-  judgments when a model can't return log-probabilities.
+- **The ledger** — a hash-chained, append-only, tamper-evident event log (the
+  objective shared record of what happened), queried deterministically by
+  `select … from ledger` and `find … where`. A deterministic scheduler/tick
+  cascade, plus injectable seams (cognition / memory / ledger) for test-mode,
+  replay, and fault injection.
 
-### CLI
-- `agape init` (scaffold a project), `run` (with `--prompt` / `--claude` /
-  `--samples` / `--temperature` / `--json`), `check` (static guarantees only),
-  `build` (check every `.ag` → `.agape/build.json`), `configure` (provider/model/
-  runtime defaults in `agape.toml`), and `studio`.
-- The mock provider ships in-box, so `run` works offline with no API key; a live
-  Claude model is one `configure` step away.
+### Library layer (§19)
+- **Modules & imports** — `module path;`; `import m;` / `import m as x;` /
+  `import { a, b } from m;`; `pub import` re-export; packages via `[package]` /
+  `[dependencies]` in `agape.toml`.
+- **Namespacing & visibility** — fully-qualified event types; `pub` (default
+  module-private) governs *names, not the ledger* (a private event still lands on
+  the ledger for audit; `pub` is shallow).
+- **Generics & interfaces** — type parameters on `struct`/`fn`, monomorphized;
+  `interface I { when EVENT decide RESULT; requires CAP }` with nominal conformance
+  (an implementor is a subtype); single-level **error subtyping** (`event Foo(..) : Error;`).
 
-### Studio
-- A project-aware IDE: inspect, edit, and run a project's agents, with a question
-  → verified-answer view and the underlying spine.
-- Runs offline on the deterministic mock provider, or against a live Claude model
-  (with the sampling fallback when log-probabilities aren't available).
-- One-process bundle mode: the agent-server serves the prebuilt web app, no Vite
-  at runtime.
+### The readable decision gate (§20)
+- A surface where intent plus one fact about stakes derives and enforces the
+  decision theory: `reversible` marks a consequential sink; `decide { … }` carries
+  commit / `default:` / `defer` arms with a principal for the contested case; one
+  `conformal α` dial sets the error guarantee (file, per-gate, or manifest scope).
+  A non-reversible arm with no reachable principal is a **compile error**. It
+  desugars to the `endorse` / `c by R` engine, which remains for hand-calibration.
+
+### Compile-time behavior (§5) and private memory (§10)
+- **`instruction "…";`** — a compile-time system prompt: global at the top level, or
+  agent-scoped (composing after the global block). Procedural behavior lives in
+  *source*, versioned and reviewable — no recalled fact or injected memory can
+  rewrite it; to change behavior, ship a new version.
+- **`mem` private memory** — `mem m <- v` writes a handle, `m -> "q"` recalls,
+  `forget m` is an audit-preserving tombstone. A recall is **always tainted**
+  (taint-equivalent to a send reply): memory cannot launder trust, so a recalled
+  value must be re-gated before it reaches a consequential sink. The ledger, by
+  contrast, is the objective record and reads back at recorded trust.
+
+### Gate providers (§17)
+- Pluggable LLM backends for the gate's `Credence`: **OpenAI** and **Gemini** read
+  per-variant mass from token **logprobs** (OpenAI Chat-Completions `top_logprobs`,
+  Gemini enum-mode `responseLogprobs`); **Anthropic** exposes no logprobs and is
+  served by the **sampling fallback** (draw the forced choice N times, take the
+  empirical frequency). `exposes_logprobs` is **derived from the backend**, not
+  hand-set; API secrets bind from the environment, never the manifest.
+
+### CLI & studio
+- `agape init` / `run` (`--prompt` / `--claude` / `--samples` / `--temperature` /
+  `--json`) / `check` (static guarantees only) / `build` / `configure` / `studio`.
+  The mock provider ships in-box, so `run` works offline with no API key; a live
+  model is one `configure` step away.
+- A project-aware IDE: inspect, edit, and run a project's agents, with a question →
+  verified-answer view over the ledger; offline on the deterministic mock provider
+  or against a live model. One-process bundle mode (the agent-server serves the
+  prebuilt web app — no Vite at runtime).
 
 ### Packaging & CI
-- `scripts/package.sh` builds a portable, self-contained bundle (binary + studio
-  source + a runnable example + default `agape.toml`), archives it with a SHA-256
-  sidecar, and verifies by running the *shipped* binary with no repo present.
-- `release.yml` builds that bundle for Linux, macOS, and Windows on a `v*` tag and
-  publishes a GitHub Release.
-- `ci.yml` builds and tests the language, gates on conformance (102/102) and
-  manifest drift, and builds the studio.
+- `scripts/package.sh` builds a portable, self-contained bundle (binary + studio +
+  a runnable example + default `agape.toml`), archived with a SHA-256 sidecar and
+  verified by running the *shipped* binary with no repo present.
+- `ci.yml` builds and tests the language and gates on conformance (**144/144**) and
+  manifest drift; `release.yml` builds the bundle for Linux, macOS, and Windows on a
+  `v1.0.0` tag and publishes a GitHub Release.
 
-[1.0.2]: https://github.com/tylerhslee/agape/compare/v1.0.1...v1.0.2
-[1.0.1]: https://github.com/tylerhslee/agape/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/tylerhslee/agape/releases/tag/v1.0.0

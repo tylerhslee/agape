@@ -1,0 +1,7 @@
+//! id:        agent_instruction_requires_string_reject
+//! section:   05_agents
+//! expect:    reject
+//! error:     ParseError
+//! spec:      §5 (`instruction` takes a string literal — the system prompt)
+//! ---
+instruction 42;

@@ -1,0 +1,60 @@
+// v1.0.0 showcase — a fact-checked Q&A system, exercising the v1.0.0 additions:
+//   - `instruction` (§5): the compile-time system prompt — behavior is versioned source,
+//     never mutable memory; to change it, ship a new version.
+//   - the calibrated gate (§13): a `Credence<bool>` must be `endorse`d before any
+//     consequential act — an unendorsed judgment carries no authority.
+//   - private memory `mem` (§10): write with `<-`, recall with `->`, `forget`. A recall is
+//     ALWAYS tainted (taint-equivalent to a send), so it is re-gated before it reaches a sink.
+//
+// (The library layer §19 and the readable `decide` gate §20 are exercised by the conformance suite, §18–22.)
+
+instruction "You are a careful fact-checker. Prefer abstaining to guessing; never invent a citation.";
+
+prompt text question;                 // §5b — the external input sensor (the push side of `<-`)
+
+event  Draft(text answer);            // a drafted answer, awaiting fact-check
+action Reply(text answer);            // the consequential act: deliver a verified answer
+
+// Agent 1 — drafts an answer to each incoming question.
+agent Answerer {
+  instruction "Answer concisely, in one sentence.";   // agent-scoped: composes after the global block
+
+  when (Prompt p about question) {
+    text draft = self <- f"answer concisely: {p}";     // a bare reply is `raw` text
+    emit Draft(draft);
+  }
+}
+
+// Agent 2 — fact-checks every draft; only a verified answer is delivered, and it keeps a
+// private-memory note of what it has settled.
+agent Checker grants { perform Reply } {
+  mem settled <- "nothing published yet";              // §10 — private memory, distinct from the ledger
+
+  when (Draft d) {
+    // A graded judgment, read from the model's own token probabilities (§3, §8).
+    Credence<bool> sound = self <- f"is this answer factually grounded? {d.answer}";
+
+    // THE GATE (§13): a `Credence` has no authority. `endorse` records a `Decided`, and only an
+    // endorsed decision may license a `perform`; short of that it abstains.
+    endorse (sound by conformal 0.1) {
+      true:  perform Reply(d.answer);                  // endorsed -> a consequential action is licensed
+      false: emit Event("withheld: not grounded");
+    } abstain {
+      emit Event("uncertain: needs human review");     // cold-start / ambiguous -> defer
+    }
+  }
+
+  // A later question RECALLS what we settled. A recall is ALWAYS tainted (§10), so the recalled
+  // note must be re-gated before it can act; a stale note is forgotten (an audit-preserving tombstone).
+  when (Prompt p about question) {
+    text prior = settled -> "what have we already published?";   // tainted
+    Credence<bool> reusable = self <- f"is this prior answer still correct? {prior}";
+    endorse (reusable by conformal 0.1) {
+      true:  emit Event("prior answer still holds");
+      false: forget settled;                           // tombstone the stale region
+    }
+  }
+}
+
+spawn Checker  chk; awake chk;        // checker up first, so its subscription is live
+spawn Answerer ans; awake ans;

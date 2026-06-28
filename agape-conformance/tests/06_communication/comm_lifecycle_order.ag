@@ -2,7 +2,7 @@
 //! section:   06_communication
 //! expect:    accept
 //! order:     Sent(s); Delivered(s); Resolved(s)
-//! spec:      §6 (a delivered send moves through Sent → Delivered → Resolved, in that order, each a spine event correlated by corr)
+//! spec:      §6 (a delivered send moves through Sent → Delivered → Resolved, in that order, each a ledger event correlated by corr)
 //! ---
 agent Worker { on awake {} }
 agent Boss grants { reach Worker } {

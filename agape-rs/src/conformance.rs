@@ -5,7 +5,7 @@
 //! follows the suite contract (README "Versions"): a build of version V runs a
 //! test iff `since <= V` and (`until` absent or `V <= until`).
 //!
-//! Spine assertions (`spine:`/`contains:`/`absent:`) are matched (M4): `spine:`
+//! Ledger assertions (`ledger:`/`contains:`/`absent:`) are matched (M4): `ledger:`
 //! is an ordered subsequence of the produced log, `contains:`/`absent:` are
 //! membership / non-membership, all subtype-aware (§9).
 
@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 
 use crate::diag::ErrorClass;
 use crate::interp::{is_subtype, HarnessConfig, ProviderMode};
-use crate::spine::Spine;
+use crate::ledger::Ledger;
 
 /// A semantic version as (major, minor), e.g. "1.0" -> (1, 0), "0.3" -> (0, 3).
 /// Ordered lexicographically, which matches 0.3 < 0.4 < 1.0.
@@ -47,8 +47,8 @@ pub struct TestSpec {
     pub expect: Expect,
     pub error: Option<ErrorClass>,
     pub body: String,
-    /// Spine assertions, kept verbatim for the M4 matcher.
-    pub spine: Option<String>,
+    /// Ledger assertions, kept verbatim for the M4 matcher.
+    pub ledger: Option<String>,
     pub contains: Option<String>,
     pub absent: Option<String>,
     pub order: Option<String>,
@@ -118,7 +118,7 @@ pub fn parse_test(path: &Path) -> Option<TestSpec> {
         expect,
         error: get("error").and_then(|e| ErrorClass::from_suite(&e)),
         body,
-        spine: get("spine"),
+        ledger: get("ledger"),
         contains: get("contains"),
         absent: get("absent"),
         order: get("order"),
@@ -226,7 +226,7 @@ fn harness_config(test: &TestSpec) -> HarnessConfig {
 
 /// Run a test through the pipeline: the body is the root module; any `modules:`
 /// companions in the sibling `<id>.d/` directory are compiled together (§19).
-fn run_test(test: &TestSpec, config: &crate::HarnessConfig) -> Result<Spine, crate::diag::AgapeError> {
+fn run_test(test: &TestSpec, config: &crate::HarnessConfig) -> Result<Ledger, crate::diag::AgapeError> {
     if test.modules.is_empty() {
         return crate::process_with_config(&test.body, config);
     }
@@ -258,7 +258,7 @@ pub fn score(test: &TestSpec, v: Version) -> Status {
     match test.expect {
         Expect::Blocked | Expect::Provisional => Status::Blocked,
         Expect::Accept => match run_test(test, &config) {
-            Ok(spine) => match check_assertions(test, &spine) {
+            Ok(ledger) => match check_assertions(test, &ledger) {
                 Ok(()) => Status::Pass,
                 Err(msg) => Status::Fail(msg),
             },
@@ -307,7 +307,7 @@ impl Report {
     }
 }
 
-// ── spine assertion matcher (§7 vocabulary; README "Spine matcher") ──────────
+// ── ledger assertion matcher (§7 vocabulary; README "Ledger matcher") ──────────
 
 /// One assertion token: a single event `Etype(subj)?`, or a `pair(op@subj)`
 /// (a started + resolved pair for async op `op` on subject `subj`).
@@ -343,10 +343,10 @@ fn parse_tokens(s: &str) -> Vec<Token> {
     s.split(';').filter_map(parse_token).collect()
 }
 
-fn event_matches(ev: &crate::spine::Event, etype: &str, subj: &Option<String>, spine: &Spine) -> bool {
+fn event_matches(ev: &crate::ledger::Event, etype: &str, subj: &Option<String>, ledger: &Ledger) -> bool {
     let subtype = is_subtype(&ev.etype, etype)
         // A user `event …: Error` leaf (§19.5) matches the `Error` root.
-        || (etype == "Error" && spine.error_subtypes.contains(&ev.etype));
+        || (etype == "Error" && ledger.error_subtypes.contains(&ev.etype));
     subtype && match subj {
         Some(want) => ev.subject.as_deref() == Some(want.as_str()),
         None => true,
@@ -362,30 +362,30 @@ fn pair_etypes(op: &str) -> (String, String) {
     }
 }
 
-fn token_present(spine: &Spine, t: &Token) -> bool {
+fn token_present(ledger: &Ledger, t: &Token) -> bool {
     match t {
-        Token::Single { etype, subj } => spine.log.iter().any(|ev| event_matches(ev, etype, subj, spine)),
+        Token::Single { etype, subj } => ledger.log.iter().any(|ev| event_matches(ev, etype, subj, ledger)),
         Token::Pair { op, subj } => {
             let (started, resolved) = pair_etypes(op);
             let s = Some(subj.clone());
-            spine.log.iter().any(|ev| event_matches(ev, &started, &s, spine))
-                && spine.log.iter().any(|ev| event_matches(ev, &resolved, &s, spine))
+            ledger.log.iter().any(|ev| event_matches(ev, &started, &s, ledger))
+                && ledger.log.iter().any(|ev| event_matches(ev, &resolved, &s, ledger))
         }
     }
 }
 
-/// `spine:` — the tokens must appear as an ordered subsequence of the log.
-fn matches_ordered(spine: &Spine, tokens: &[Token]) -> bool {
+/// `ledger:` — the tokens must appear as an ordered subsequence of the log.
+fn matches_ordered(ledger: &Ledger, tokens: &[Token]) -> bool {
     let mut cursor = 0usize;
     for t in tokens {
         let Token::Single { etype, subj } = t else {
             // A `pair` in an ordered spec: require both present (order-free).
-            if !token_present(spine, t) {
+            if !token_present(ledger, t) {
                 return false;
             }
             continue;
         };
-        match spine.log[cursor..].iter().position(|ev| event_matches(ev, etype, subj, spine)) {
+        match ledger.log[cursor..].iter().position(|ev| event_matches(ev, etype, subj, ledger)) {
             Some(off) => cursor += off + 1,
             None => return false,
         }
@@ -393,31 +393,31 @@ fn matches_ordered(spine: &Spine, tokens: &[Token]) -> bool {
     true
 }
 
-fn check_assertions(test: &TestSpec, spine: &Spine) -> Result<(), String> {
-    if let Some(s) = &test.spine {
+fn check_assertions(test: &TestSpec, ledger: &Ledger) -> Result<(), String> {
+    if let Some(s) = &test.ledger {
         let toks = parse_tokens(s);
-        if !matches_ordered(spine, &toks) {
-            return Err(format!("spine assertion failed: expected ordered [{s}], got [{}]", spine.dump().replace('\n', ", ")));
+        if !matches_ordered(ledger, &toks) {
+            return Err(format!("ledger assertion failed: expected ordered [{s}], got [{}]", ledger.dump().replace('\n', ", ")));
         }
     }
     // `order:` — the listed events must appear in this relative order (a subsequence).
     if let Some(s) = &test.order {
         let toks = parse_tokens(s);
-        if !matches_ordered(spine, &toks) {
-            return Err(format!("order assertion failed: expected [{s}], got [{}]", spine.dump().replace('\n', ", ")));
+        if !matches_ordered(ledger, &toks) {
+            return Err(format!("order assertion failed: expected [{s}], got [{}]", ledger.dump().replace('\n', ", ")));
         }
     }
     if let Some(s) = &test.contains {
         for t in parse_tokens(s) {
-            if !token_present(spine, &t) {
-                return Err(format!("contains assertion failed: missing {t:?} in [{}]", spine.dump().replace('\n', ", ")));
+            if !token_present(ledger, &t) {
+                return Err(format!("contains assertion failed: missing {t:?} in [{}]", ledger.dump().replace('\n', ", ")));
             }
         }
     }
     if let Some(s) = &test.absent {
         for t in parse_tokens(s) {
-            if token_present(spine, &t) {
-                return Err(format!("absent assertion failed: present {t:?} in [{}]", spine.dump().replace('\n', ", ")));
+            if token_present(ledger, &t) {
+                return Err(format!("absent assertion failed: present {t:?} in [{}]", ledger.dump().replace('\n', ", ")));
             }
         }
     }

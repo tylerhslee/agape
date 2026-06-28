@@ -1,7 +1,7 @@
 //! id:        type_event_decl
 //! section:   03_types
 //! expect:    accept
-//! spec:      §3 (custom spine-event declaration with a typed payload)
+//! spec:      §3 (custom ledger-event declaration with a typed payload)
 //! ---
 struct Memo { amount: int, to: text }
 event Transferred(memo: Memo);

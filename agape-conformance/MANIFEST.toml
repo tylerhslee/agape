@@ -65,7 +65,7 @@ id = "axes_collapse_is_decision"
 section = "01_axes"
 path = "tests/01_axes/axes_collapse_is_decision.ag"
 expect = "accept"
-spec = "§13, §15.2 (`c by R` collapses a Credence to a Decision — settled, off-spine, in hand)"
+spec = "§13, §15.2 (`c by R` collapses a Credence to a Decision — settled, off-ledger, in hand)"
 
 [[test]]
 id = "axes_credence_is_graded_judgment"
@@ -88,8 +88,8 @@ id = "axes_send_reply_is_raw"
 section = "01_axes"
 path = "tests/01_axes/axes_send_reply_is_raw.ag"
 expect = "accept"
-spec = "§1 Axis B/C, §15.3.2 T-Send (`d <- p` is on the spine; its reply is `raw`)"
-note = "a send is a spine op yielding a raw (unstructured) reply."
+spec = "§1 Axis B/C, §15.3.2 T-Send (`d <- p` is on the ledger; its reply is `raw`)"
+note = "a send is a ledger op yielding a raw (unstructured) reply."
 
 [[test]]
 id = "type_array_literal_and_type"
@@ -127,7 +127,7 @@ id = "type_event_decl"
 section = "03_types"
 path = "tests/03_types/type_event_decl.ag"
 expect = "accept"
-spec = "§3 (custom spine-event declaration with a typed payload)"
+spec = "§3 (custom ledger-event declaration with a typed payload)"
 
 [[test]]
 id = "type_event_null_no_reply"
@@ -205,7 +205,7 @@ id = "fn_sync_emit_ok"
 section = "04_functions"
 path = "tests/04_functions/fn_sync_emit_ok.ag"
 expect = "accept"
-spec = "§4 (emit is a spine append, permitted in sync; a plain event needs no power)"
+spec = "§4 (emit is a ledger append, permitted in sync; a plain event needs no power)"
 
 [[test]]
 id = "fn_sync_inhand_endorse_ok"
@@ -318,7 +318,7 @@ section = "06_communication"
 path = "tests/06_communication/comm_lifecycle_order.ag"
 expect = "accept"
 order = ["Sent(s)", "Delivered(s)", "Resolved(s)"]
-spec = "§6 (a delivered send moves through Sent → Delivered → Resolved, in that order, each a spine event correlated by corr)"
+spec = "§6 (a delivered send moves through Sent → Delivered → Resolved, in that order, each a ledger event correlated by corr)"
 
 [[test]]
 id = "comm_self_send_thinks"
@@ -352,50 +352,50 @@ expect = "accept"
 spec = "§6 (a typed reply binds the provider answer into event<T>)"
 
 [[test]]
-id = "spine_multi_handler_order"
-section = "07_spine"
-path = "tests/07_spine/spine_multi_handler_order.ag"
+id = "ledger_multi_handler_order"
+section = "07_ledger"
+path = "tests/07_ledger/ledger_multi_handler_order.ag"
 expect = "accept"
 order = ["First(a)", "Second(a)"]
 spec = "§7 (when several subscriptions match one appended event in one tick, they fire in registration/hoist order — within a scope, lexical order)"
 
 [[test]]
-id = "spine_prospective_only"
-section = "07_spine"
-path = "tests/07_spine/spine_prospective_only.ag"
+id = "ledger_prospective_only"
+section = "07_ledger"
+path = "tests/07_ledger/ledger_prospective_only.ag"
 expect = "accept"
 absent = ["Event"]
 spec = "§7 (subscriptions are prospective; never fire for prior events)"
 note = "a when registered after an emit does NOT fire for that earlier event."
 
 [[test]]
-id = "spine_query_result_event"
-section = "07_spine"
-path = "tests/07_spine/spine_query_result_event.ag"
+id = "ledger_query_result_event"
+section = "07_ledger"
+path = "tests/07_ledger/ledger_query_result_event.ag"
 expect = "accept"
-contains = ["QueryResult(spine)"]
-spec = "§10 (a query STATEMENT lands a QueryResult event on the spine)"
+contains = ["QueryResult(ledger)"]
+spec = "§10 (a query STATEMENT lands a QueryResult event on the ledger)"
 
 [[test]]
-id = "spine_tool_pair"
-section = "07_spine"
-path = "tests/07_spine/spine_tool_pair.ag"
+id = "ledger_tool_pair"
+section = "07_ledger"
+path = "tests/07_ledger/ledger_tool_pair.ag"
 expect = "accept"
 contains = ["pair(Tool@search)"]
 spec = "§6b, §7 (a tool call appends a ToolStarted/ToolResolved pair)"
 
 [[test]]
-id = "spine_when_about_filters"
-section = "07_spine"
-path = "tests/07_spine/spine_when_about_filters.ag"
+id = "ledger_when_about_filters"
+section = "07_ledger"
+path = "tests/07_ledger/ledger_when_about_filters.ag"
 expect = "accept"
 contains = ["Got(a)"]
 spec = "§7 (a `when (Type b about subj)` fires only for events about the held subject; the bound event evaluates to its payload)"
 
 [[test]]
-id = "spine_when_guard_ok"
-section = "07_spine"
-path = "tests/07_spine/spine_when_guard_ok.ag"
+id = "ledger_when_guard_ok"
+section = "07_ledger"
+path = "tests/07_ledger/ledger_when_guard_ok.ag"
 expect = "accept"
 spec = "§7 (a `when … if (guard)` filters by an ordinary predicate over the bound event's fields)"
 
@@ -464,12 +464,12 @@ absent = ["Caught"]
 spec = "§9 (Expired and a lost send are NOT Error subtypes; a `when (Error e)` does not fire for an Expired tombstone)"
 
 [[test]]
-id = "prelude_say_not_spine"
+id = "prelude_say_not_ledger"
 section = "09_prelude"
-path = "tests/09_prelude/prelude_say_not_spine.ag"
+path = "tests/09_prelude/prelude_say_not_ledger.ag"
 expect = "accept"
 absent = ["Event"]
-spec = "§9 (`say(x)` prints its argument; it is NOT a spine operation and appends no event)"
+spec = "§9 (`say(x)` prints its argument; it is NOT a ledger operation and appends no event)"
 
 [[test]]
 id = "prelude_user_error_subtype_caught"
@@ -498,7 +498,7 @@ id = "mem_match_is_gate"
 section = "10_memory"
 path = "tests/10_memory/mem_match_is_gate.ag"
 expect = "accept"
-spec = "§10 (match > θ is a gate; yields a settled result off-spine)"
+spec = "§10 (match > θ is a gate; yields a settled result off-ledger)"
 
 [[test]]
 id = "mem_queried_fact_taint_reject"
@@ -656,7 +656,7 @@ id = "gov_conformal_gate_ok"
 section = "13_governance"
 path = "tests/13_governance/gov_conformal_gate_ok.ag"
 expect = "accept"
-spec = "§13 (the conformal basis `by conformal α` is a distribution-free finite-sample gate calibrated from the spine)"
+spec = "§13 (the conformal basis `by conformal α` is a distribution-free finite-sample gate calibrated from the ledger)"
 
 [[test]]
 id = "gov_consequential_bare_collapse_reject"
@@ -664,7 +664,7 @@ section = "13_governance"
 path = "tests/13_governance/gov_consequential_bare_collapse_reject.ag"
 expect = "reject"
 error = "TaintViolation"
-spec = "§13 (a bare `c by R` is settled but off-spine/unendorsed → may not license a perform)"
+spec = "§13 (a bare `c by R` is settled but off-ledger/unendorsed → may not license a perform)"
 note = "only a recorded gate (endorse/attest) may license a consequential action."
 
 [[test]]
@@ -680,7 +680,7 @@ section = "13_governance"
 path = "tests/13_governance/gov_endorse_records_decided_ok.ag"
 expect = "accept"
 contains = ["Decided(c)"]
-spec = "§9, §13 (endorse records the collapse as a Decided event on the spine, subject = the binding)"
+spec = "§9, §13 (endorse records the collapse as a Decided event on the ledger, subject = the binding)"
 
 [[test]]
 id = "gov_endorsed_perform_ok"
@@ -803,11 +803,11 @@ replay = "chain_head_equal"
 spec = "§15.4.2, §15.5 / T4 (a recorded run replays to an identical chain-head: every oracle/tool result is re-served from the journal in order and nothing is re-invoked)"
 
 [[test]]
-id = "repro_collapse_off_spine"
+id = "repro_collapse_off_ledger"
 section = "15_reproducibility"
-path = "tests/15_reproducibility/repro_collapse_off_spine.ag"
+path = "tests/15_reproducibility/repro_collapse_off_ledger.ag"
 expect = "accept"
-spec = "§15 (`c by R` is a pure projection of a Credence; off-spine and synchronous)"
+spec = "§15 (`c by R` is a pure projection of a Credence; off-ledger and synchronous)"
 
 [[test]]
 id = "cfg_eager_internalize"
@@ -924,14 +924,14 @@ spec = "§19.4 (default-private is module-internal, not decl-internal; siblings 
 note = "a private helper is visible to another decl in the same module"
 
 [[test]]
-id = "vis_private_event_still_on_spine"
+id = "vis_private_event_still_on_ledger"
 section = "19_visibility"
-path = "tests/19_visibility/vis_private_event_still_on_spine.ag"
+path = "tests/19_visibility/vis_private_event_still_on_ledger.ag"
 expect = "accept"
 contains = ["Error"]
 modules = ["m.ag"]
-spec = "§19.4 (a private event still lands on the spine; caught cross-module by its Error supertype, not its private name)"
-note = "visibility gates the NAME, not spine presence"
+spec = "§19.4 (a private event still lands on the ledger; caught cross-module by its Error supertype, not its private name)"
+note = "visibility gates the NAME, not ledger presence"
 
 [[test]]
 id = "vis_private_not_importable_reject"

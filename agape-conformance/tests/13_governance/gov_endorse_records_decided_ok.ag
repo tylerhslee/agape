@@ -2,7 +2,7 @@
 //! section:   13_governance
 //! expect:    accept
 //! contains:  Decided(c)
-//! spec:      §9, §13 (endorse records the collapse as a Decided event on the spine, subject = the binding)
+//! spec:      §9, §13 (endorse records the collapse as a Decided event on the ledger, subject = the binding)
 //! ---
 agent A {
   on awake {

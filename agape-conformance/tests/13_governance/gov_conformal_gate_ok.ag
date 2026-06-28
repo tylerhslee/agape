@@ -1,7 +1,7 @@
 //! id:        gov_conformal_gate_ok
 //! section:   13_governance
 //! expect:    accept
-//! spec:      §13 (the conformal basis `by conformal α` is a distribution-free finite-sample gate calibrated from the spine)
+//! spec:      §13 (the conformal basis `by conformal α` is a distribution-free finite-sample gate calibrated from the ledger)
 //! ---
 enum Ticket { Billing, Bug, Feature }
 agent A {

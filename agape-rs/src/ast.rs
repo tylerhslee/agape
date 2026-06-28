@@ -7,7 +7,7 @@
 //! (`struct`/`enum`/`event`), capabilities (`grants { emit/reach/use }`), the
 //! reactive/query constructs, and the somatic kernel (`while`/`array`).
 
-/// A type annotation. `event<T>` marks spine presence; `Credence<E>` is a graded
+/// A type annotation. `event<T>` marks ledger presence; `Credence<E>` is a graded
 /// judgment over enum `E` (§3); `array<T>` is the somatic aggregate.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Type {
@@ -22,7 +22,7 @@ pub enum Type {
     Named(String),
     /// A generic instantiation `Name<T, ...>` (a monomorphized struct, §19.5).
     Generic(String, Vec<Type>),
-    /// `event<T>` — present (or to be present) on the spine.
+    /// `event<T>` — present (or to be present) on the ledger.
     Event(Box<Type>),
     /// `array<T>` — the one primitive aggregate.
     Array(Box<Type>),
@@ -30,6 +30,9 @@ pub enum Type {
     Credence(Box<Type>),
     /// `Decision<E>` — a gate's committed outcome over enum `E` (§3, settled).
     Decision(Box<Type>),
+    /// `mem` — a handle into the agent's private memory substrate (§10). Agentic:
+    /// values recalled through it are tainted, like a send reply.
+    Mem,
 }
 
 /// Binary operators. There is no similarity operator in v1.0 (§2).
@@ -75,7 +78,7 @@ pub enum GateBasis {
     /// `> 0.8` / `> 0.8 margin 0.1` / `confidence 0.8 margin 0.1` — a
     /// threshold/margin `Rule` written as sugar.
     Threshold { op: BinOp, value: f64, margin: f64 },
-    /// `conformal α` — the conformal basis; calibrates from the spine, abstains
+    /// `conformal α` — the conformal basis; calibrates from the ledger, abstains
     /// below its readiness floor (§13).
     Conformal { alpha: f64 },
     /// A named `policy`, a `Rule` value, or (for `verify`/`attest … by p`) a `Principal`.
@@ -112,12 +115,15 @@ pub enum Expr {
         expires: Option<f64>,
         retry: Option<Box<RetryTail>>,
     },
+    /// `mem -> query` — recall from a private-memory handle (§10). Agentic: the result
+    /// is tainted like a send reply; re-gate before a consequential sink.
+    Recall { mem: Box<Expr>, query: Box<Expr> },
     /// `source |> func` — concurrent fan-out over a collection (§12).
     Pipe { source: Box<Expr>, func: Box<Expr> },
     /// `decide(e, rule)` — the somatic gate-collapse `P → U` (§13). Rule mandatory.
     Decide { expr: Box<Expr>, rule: GateBasis },
     /// `e by rule` — collapse a `Credence<E>` to a `Decision<E>` (§13): settled,
-    /// off-spine, in hand, *unendorsed* (not recorded). Rule mandatory.
+    /// off-ledger, in hand, *unendorsed* (not recorded). Rule mandatory.
     Collapse { expr: Box<Expr>, rule: GateBasis },
     /// `endorse(e by rule)` — the recorded gate in expression position (§13):
     /// collapse + record, yielding an *endorsed* `Decision<E>`.
@@ -131,12 +137,12 @@ pub enum Expr {
     Query(Box<Query>),
 }
 
-/// The three memory/spine query forms (§10).
+/// The three memory/ledger query forms (§10).
 #[derive(Debug, Clone, PartialEq)]
 pub enum Query {
     /// `find BINDING [, origin(BINDING)] where { S P O; ... }` — graph query.
     Find { binding: String, origin: Option<String>, pattern: Vec<(String, String, String)> },
-    /// `select COLS from SOURCE where { col op value, ... }` — fact/spine scan.
+    /// `select COLS from SOURCE where { col op value, ... }` — fact/ledger scan.
     Select { cols: Vec<String>, source: String, star: bool, conds: Vec<Cond> },
     /// `match { BINDING: QUERY } > THRESHOLD` — vector store; a gate (§10).
     Match { binding: String, query: Box<Expr>, threshold: f64 },
@@ -237,7 +243,7 @@ pub enum Stmt {
     StructDecl { name: String, typarams: Vec<String>, fields: Vec<Field> },
     /// `enum NAME { A, B, ... }` — a closed variant set (no payloads in v1.0).
     EnumDecl { name: String, variants: Vec<String> },
-    /// `event NAME(field, ...) [: Super];` — a custom spine-event type with typed
+    /// `event NAME(field, ...) [: Super];` — a custom ledger-event type with typed
     /// payload; `error_super` ⇒ a leaf under the built-in `Error` root (§19.5).
     /// `super_name` carries any declared supertype spelling (for the non-`Error`
     /// rejection); `None` if no supertype.
@@ -253,6 +259,13 @@ pub enum Stmt {
     ToolDecl { name: String, params: Vec<Param>, ret: Option<Type>, effect: ToolEffect, reversible: bool },
     /// `conformal α;` — a file-level default conformal guarantee (§20).
     ConformalDecl(f64),
+    /// `instruction STRING;` — a compile-time system prompt: global at the top level, or
+    /// agent-scoped in an agent body. Settled-by-source; composes global-then-agent (§5).
+    Instruction(String),
+    /// `mem NAME [<- EXPR];` — declare a private-memory handle, optionally initialized (§10).
+    MemDecl { name: String, init: Option<Expr> },
+    /// `forget NAME;` — drop a memory handle (an audit-preserving tombstone); consumes it (§10).
+    Forget(String),
     /// `authority EventType;` — marks an event type consequential (§13).
     Authority(String),
     /// `principal NAME;` — an identity-seam principal binding (§13).

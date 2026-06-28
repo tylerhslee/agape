@@ -16,28 +16,28 @@ agape init hello && cd hello
 agape run main.ag --prompt question="is the earth round?"
 ```
 
-`agape init` scaffolds a fact-checked Q&A system — two agents and one decision gate — and `agape run` executes it, printing the **spine**: the immutable, append-only log that *is* the program's state.
+`agape init` scaffolds a fact-checked Q&A system — two agents and one decision gate — and `agape run` executes it, printing the **ledger**: the immutable, append-only, hash-chained log that *is* the program's state.
 
 ```
 [  5] Prompt        question   is the earth round?
 [  6] Sent          answer     answer the user's question concisely: is the earth round?
 [  8] Resolved      answer      ok
-[  9] Draft         responder   ok
-[ 11] Resolved      sound       true 0.90          ← the model's graded judgment (a Credence)
-[ 13] Decided       sound       true               ← the gate endorsed it (≥ 0.8 confidence)
-[ 14] Reply         checker     ok                 ← only now may the answer be delivered
+[  9] Answered      responder   ok
+[ 11] Resolved      sound       Entails 0.90       ← the model's graded judgment (a Credence)
+[ 13] Decided       sound       Entails            ← the gate endorsed it (conformal, ≤ 5% error)
+[ 14] Published     checker     ok                 ← only now may the answer be delivered
 
 15 events · chain-head 61b05688d023acf8
 ```
 
-Every step is on the record, and `chain-head` hashes the whole run — replay it and you get the identical chain. Drop the model's confidence below the gate's bar and `Reply` never fires: no endorsement, no action.
+Every step is on the record, and `chain-head` hashes the whole run — replay it and you get the identical chain. Drop the model's confidence below the gate's bar and `Publish` never fires: no endorsement, no action.
 
 ```sh
-agape check main.ag      # static guarantees only — authority, endorsement, types, color
-agape studio             # open the project in Agape Studio (live spine, eval, lifecycle)
+agape check main.ag      # static guarantees only — authority, endorsement, types, trust
+agape studio             # open the project in Agape Studio (live ledger, eval, lifecycle)
 ```
 
-By default everything runs on the in-box mock provider. To run against a real model, configure a provider (`agape configure provider …`) or attach the studio's live provider (`agape run --claude`, `agape studio`). See **[DISTRIBUTION.md](DISTRIBUTION.md)**.
+By default everything runs on the in-box mock provider. To run against a real model, name a backend in the manifest and bind its key from the environment — `anthropic` (sampling fallback), `openai`, or `gemini` (token-logprob credences). See **[DISTRIBUTION.md](DISTRIBUTION.md)**.
 
 ## The shape of a program
 
@@ -63,7 +63,9 @@ The model's answer is a `Credence` — **untrusted**. Calling `perform Refund` s
 - **Cognition is typed.** A model's testimony returns as a schema-constrained `Credence<E>` — a calibrated distribution over a closed set of outcomes, read from the model's own token probabilities — not a string to parse and pray over.
 - **Authority is bounded at compile time.** An agent may `perform` only what its `grants` permit, and nothing it computes at runtime can widen that set.
 - **Endorsement is unavoidable.** A value derived from cognition is untrusted until a gate endorses it. The type checker rejects any program that lets an unendorsed `Credence` drive an action — a missing endorsement is a compile error, not a latent incident.
-- **Every run replays.** Execution is an append-only, hash-chained log; state is a function of that log. A recorded run replays exactly, and any prefix can be replayed under altered facts to test a counterfactual.
+- **Behavior is versioned, not mutable.** An agent's system prompt is an `instruction` in source — settled, reviewable, append-only under inheritance. No recalled fact or injected memory can rewrite it; changing behavior means shipping a new version.
+- **Memory cannot launder trust.** Private memory stores anything, but every recall comes out **tainted** — taint-equivalent to a fresh model reply — so a remembered "fact" must be re-gated before it can drive an action, just like a new one.
+- **Every run replays.** Execution is an append-only, hash-chained ledger; state is a function of that ledger. A recorded run replays exactly, and any prefix can be replayed under altered facts to test a counterfactual.
 
 ## How a decision is made
 
@@ -71,12 +73,20 @@ Work moves through four stages, each typed and each recorded — and because eac
 
 1. **Testimony** — a model assertion, solicited with the cognition operator `self <- "…"`. Never trusted as a string; bound as a `Credence`.
 2. **Credence** — a graded judgment over a closed set of outcomes. Carries no authority on its own.
-3. **Decision** — the `endorse` gate collapses a credence to a `Decision` *only* when it meets a stated standard of confidence; short of that, it **abstains**.
-4. **Action** — an endorsed decision may license an `action`, performed only within the agent's granted authority. Every stage is appended to the spine.
+3. **Decision** — the `endorse` gate collapses a credence to a `Decision` *only* when it meets a stated standard of confidence; short of that, it **abstains** and may defer to a `principal`.
+4. **Action** — an endorsed decision may license an `action`, performed only within the agent's granted authority. Every stage is appended to the ledger.
 
-## Beyond the basics
+## The v1.0.0 surface
 
-Agape is a real language, not a toy DSL — modules and imports, visibility, generics, and interfaces let you build and ship libraries; the readable **`decide`** gate lets a non-programmer state intent and stakes (`reversible`) while the compiler derives and enforces the decision theory underneath. See [`SPEC.md`](SPEC.md).
+Agape is a real language, not a toy DSL. Beyond the four-stage core:
+
+- **A library layer.** `module` / `import` / `pub` namespace and hide code; `interface` names an agent's external surface (the events it handles, the outcomes it decides) with nominal conformance; generics parameterize data and helpers. You build and ship libraries, not just scripts.
+- **The readable gate — `decide`.** State *intent + one fact about stakes* and the compiler derives the decision theory. Mark a sink `reversible` and the gate just acts (argmax); leave it unmarked and it runs **conformal** every time, certified to a single dial, `conformal α`. A non-reversible arm with no reachable `principal` is a *compile error* — autonomy is earned from labelled cases, never assumed.
+- **`instruction` — procedural memory in source.** The compile-time system prompt. Global or agent-scoped, append-only under `extend`; an agent's behavioral spec cannot drift without a reviewable release.
+- **Private memory — `mem` handles.** `mem m <- v` writes, `m -> "query"` recalls, `forget m` tombstones (audit-preserving). Recall is **always tainted**: re-gate it before any sink. The **ledger** is its dual — the objective, deterministic, untainted record of *what happened*, queried with `select … from ledger` and traversed by causal lineage.
+- **Pluggable gate providers.** The gate's calibrated mass comes from a backend you select in the manifest: `openai` / `gemini` read it from token logprobs; `anthropic` derives it from a sampling fallback. Capabilities are intrinsic to the backend (never hand-set knobs); secrets bind from the environment, never source.
+
+A single self-contained program touching all of this is **[`design/v1.0.0-showcase.ag`](design/v1.0.0-showcase.ag)**; the full reference is **[`SPEC.md`](SPEC.md)**.
 
 ## Who it's for
 
@@ -89,6 +99,7 @@ Agape is assembled from established ideas, not invented from nothing: treating m
 ## Project
 
 - [`SPEC.md`](SPEC.md) — the language specification (the authoritative reference).
+- [`design/v1.0.0-showcase.ag`](design/v1.0.0-showcase.ag) — one annotated program over the whole v1.0.0 surface.
 - [`agape-conformance/`](agape-conformance) — the black-box conformance suite an implementation must satisfy.
 - [`agape-rs/`](agape-rs) — the reference implementation (the `agape` toolchain).
 

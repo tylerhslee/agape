@@ -2,7 +2,7 @@
 
 **139 tests** — accept: 96, reject: 43
 
-A conformant implementation must satisfy every `accept`/`reject` test (rejects with the declared error class; accepts matching any asserted spine).
+A conformant implementation must satisfy every `accept`/`reject` test (rejects with the declared error class; accepts matching any asserted ledger).
 
 
 ## 00_lexical
@@ -21,10 +21,10 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 
 | id | expect | error | spec |
 |---|---|---|---|
-| `axes_collapse_is_decision` | accept | — | §13, §15.2 (`c by R` collapses a Credence to a Decision — settled, off-spine, in hand) |
+| `axes_collapse_is_decision` | accept | — | §13, §15.2 (`c by R` collapses a Credence to a Decision — settled, off-ledger, in hand) |
 | `axes_credence_is_graded_judgment` | accept | — | §1, §8 (a semantic judgment is a provider send bound to Credence<E> → graded) |
 | `axes_pure_call_sync_settled` | accept | — | §1 Axis A/B (a pure `sync` fn reaches no dependency and stays `settled`) |
-| `axes_send_reply_is_raw` | accept | — | §1 Axis B/C, §15.3.2 T-Send (`d <- p` is on the spine; its reply is `raw`) |
+| `axes_send_reply_is_raw` | accept | — | §1 Axis B/C, §15.3.2 T-Send (`d <- p` is on the ledger; its reply is `raw`) |
 
 ## 03_types
 
@@ -34,7 +34,7 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 | `type_collapse_requires_rule_reject` | reject | ParseError | §3, §15.2 (a gate requires its rule; `c by` with no rule is a ParseError) |
 | `type_credence_only_from_seam_reject` | reject | TypeError | §3, §8 (Credence<E> is produced ONLY by a provider judgment, never constructed literally) |
 | `type_enum_decl_and_case` | accept | — | §3, §11 (enum declaration; a gated case exhaustive over all variants) |
-| `type_event_decl` | accept | — | §3 (custom spine-event declaration with a typed payload) |
+| `type_event_decl` | accept | — | §3 (custom ledger-event declaration with a typed payload) |
 | `type_event_null_no_reply` | accept | — | §3 (event<null> = sent, no typed reply bound) |
 | `type_no_text_to_principal_reject` | reject | TypeError | §3, §13 (no text -> Principal coercion at an attest gate) |
 | `type_scalars` | accept | — | §3 (scalars int/float/bool/text/null) |
@@ -49,7 +49,7 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 |---|---|---|---|
 | `fn_sync_attest_by_principal_reject` | reject | ColorViolation | §4, §13 (attest … by Principal reaches the identity dependency → async) |
 | `fn_sync_calls_async_reject` | reject | ColorViolation | §4 (a sync fn may only call other sync fns) |
-| `fn_sync_emit_ok` | accept | — | §4 (emit is a spine append, permitted in sync; a plain event needs no power) |
+| `fn_sync_emit_ok` | accept | — | §4 (emit is a ledger append, permitted in sync; a plain event needs no power) |
 | `fn_sync_inhand_endorse_ok` | accept | — | §4, §13 (in-hand endorse = collapse + record, no dependency reach → sync-permitted) |
 | `fn_sync_pure_ok` | accept | — | §4 (a sync fn that reaches no declared dependency is well-formed) |
 | `fn_sync_reaches_seam_reject` | reject | ColorViolation | §1 Axis A, §4 (a sync fn may not reach the provider via `<-`) |
@@ -73,22 +73,22 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 | id | expect | error | spec |
 |---|---|---|---|
 | `comm_expiry_tombstone` | accept | — | §6 (a send whose `expires` lifetime elapses before Delivered appends an Expired tombstone; no Delivered follows) |
-| `comm_lifecycle_order` | accept | — | §6 (a delivered send moves through Sent → Delivered → Resolved, in that order, each a spine event correlated by corr) |
+| `comm_lifecycle_order` | accept | — | §6 (a delivered send moves through Sent → Delivered → Resolved, in that order, each a ledger event correlated by corr) |
 | `comm_self_send_thinks` | accept | — | §6 (sending to self is the agent's own cognition; needs no reach grant) |
 | `comm_send_expires_ok` | accept | — | §6 (a send may carry a lifetime: `dest <- msg expires N`; reach into Worker is granted) |
 | `comm_send_lost_no_delivery` | accept | — | §6 (a send to a non-awake agent is lost — the chain stalls at Sent, never Delivered; loss is the absence of Delivered, not an event) |
 | `comm_typed_reply` | accept | — | §6 (a typed reply binds the provider answer into event<T>) |
 
-## 07_spine
+## 07_ledger
 
 | id | expect | error | spec |
 |---|---|---|---|
-| `spine_multi_handler_order` | accept | — | §7 (when several subscriptions match one appended event in one tick, they fire in registration/hoist order — within a scope, lexical order) |
-| `spine_prospective_only` | accept | — | §7 (subscriptions are prospective; never fire for prior events) |
-| `spine_query_result_event` | accept | — | §10 (a query STATEMENT lands a QueryResult event on the spine) |
-| `spine_tool_pair` | accept | — | §6b, §7 (a tool call appends a ToolStarted/ToolResolved pair) |
-| `spine_when_about_filters` | accept | — | §7 (a `when (Type b about subj)` fires only for events about the held subject; the bound event evaluates to its payload) |
-| `spine_when_guard_ok` | accept | — | §7 (a `when … if (guard)` filters by an ordinary predicate over the bound event's fields) |
+| `ledger_multi_handler_order` | accept | — | §7 (when several subscriptions match one appended event in one tick, they fire in registration/hoist order — within a scope, lexical order) |
+| `ledger_prospective_only` | accept | — | §7 (subscriptions are prospective; never fire for prior events) |
+| `ledger_query_result_event` | accept | — | §10 (a query STATEMENT lands a QueryResult event on the ledger) |
+| `ledger_tool_pair` | accept | — | §6b, §7 (a tool call appends a ToolStarted/ToolResolved pair) |
+| `ledger_when_about_filters` | accept | — | §7 (a `when (Type b about subj)` fires only for events about the held subject; the bound event evaluates to its payload) |
+| `ledger_when_guard_ok` | accept | — | §7 (a `when … if (guard)` filters by an ordinary predicate over the bound event's fields) |
 
 ## 08_semantic
 
@@ -107,7 +107,7 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 | `prelude_action_cannot_be_error_reject` | reject | ParseError | §19.5 (only `event` may extend Error; an action supertype is a ParseError) |
 | `prelude_error_supertype_must_be_error_reject` | reject | TypeError | §19.5 (the only permitted user supertype is the built-in Error) |
 | `prelude_expired_not_error` | accept | — | §9 (Expired and a lost send are NOT Error subtypes; a `when (Error e)` does not fire for an Expired tombstone) |
-| `prelude_say_not_spine` | accept | — | §9 (`say(x)` prints its argument; it is NOT a spine operation and appends no event) |
+| `prelude_say_not_ledger` | accept | — | §9 (`say(x)` prints its argument; it is NOT a ledger operation and appends no event) |
 | `prelude_user_error_subtype_caught` | accept | — | §19.5 (event Foo : Error extends the built-in Error root; when(Error e) catches it) |
 | `prelude_when_error_catches_contradiction` | accept | — | §9 (Contradiction extends Error; when (Error e) catches it by subtype) |
 
@@ -116,7 +116,7 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 | id | expect | error | spec |
 |---|---|---|---|
 | `mem_find_graph_origin_ok` | accept | — | §10 (the relationship graph is queried with `find … where { triple+ }`, optionally projecting origin()) |
-| `mem_match_is_gate` | accept | — | §10 (match > θ is a gate; yields a settled result off-spine) |
+| `mem_match_is_gate` | accept | — | §10 (match > θ is a gate; yields a settled result off-ledger) |
 | `mem_queried_fact_taint_reject` | reject | TaintViolation | §10, §13 (queried facts default to `graded`; must be re-gated before a consequential perform) |
 | `mem_store_internalizes_ok` | accept | — | §9, §10 (store(x) explicitly internalizes a value into the agent's memory — the invoked, default form of internalization; eager-on-receive is opt-in config, §16.7/§17) |
 
@@ -152,10 +152,10 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 | `gov_attest_by_principal_ok` | accept | — | §13 (attest e by p reaches the identity dependency and records an Attestation — the principal basis) |
 | `gov_attest_deny_failed` | accept | — | §13 (when the principal declines, the attest gate records a FailedAttestation; the decision is the principal's, deferred to the model only for the clear cases) |
 | `gov_conformal_coldstart_abstains` | accept | — | §13 (a conformal gate with no recorded decisions is below its labelled-case readiness floor and abstains — the supervised cold start; autonomy is earned as grounded labels accrue) |
-| `gov_conformal_gate_ok` | accept | — | §13 (the conformal basis `by conformal α` is a distribution-free finite-sample gate calibrated from the spine) |
-| `gov_consequential_bare_collapse_reject` | reject | TaintViolation | §13 (a bare `c by R` is settled but off-spine/unendorsed → may not license a perform) |
+| `gov_conformal_gate_ok` | accept | — | §13 (the conformal basis `by conformal α` is a distribution-free finite-sample gate calibrated from the ledger) |
+| `gov_consequential_bare_collapse_reject` | reject | TaintViolation | §13 (a bare `c by R` is settled but off-ledger/unendorsed → may not license a perform) |
 | `gov_endorse_abstain_ok` | accept | — | §13 (the optional abstain clause runs when the gate cannot commit a singleton prediction set) |
-| `gov_endorse_records_decided_ok` | accept | — | §9, §13 (endorse records the collapse as a Decided event on the spine, subject = the binding) |
+| `gov_endorse_records_decided_ok` | accept | — | §9, §13 (endorse records the collapse as a Decided event on the ledger, subject = the binding) |
 | `gov_endorsed_perform_ok` | accept | — | §13 (an endorsed Decision may license a consequential perform) |
 | `gov_extend_use_subtractive_reject` | reject | AuthorityViolation | §5, §13 (capabilities, incl. `use`, are subtractive under extend) |
 | `gov_grants_star_ok` | accept | — | §13 (grants { * } is the explicit unconstrained opt-out — lattice top) |
@@ -176,7 +176,7 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 | id | expect | error | spec |
 |---|---|---|---|
 | `repro_chain_head_equal` | accept | — | §15.4.2, §15.5 / T4 (a recorded run replays to an identical chain-head: every oracle/tool result is re-served from the journal in order and nothing is re-invoked) |
-| `repro_collapse_off_spine` | accept | — | §15 (`c by R` is a pure projection of a Credence; off-spine and synchronous) |
+| `repro_collapse_off_ledger` | accept | — | §15 (`c by R` is a pure projection of a Credence; off-ledger and synchronous) |
 
 ## 16_config
 
@@ -205,7 +205,7 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 |---|---|---|---|
 | `vis_private_agent_not_spawnable_reject` | reject | VisibilityError | §19.4 (a private agent type cannot be named/spawned from another module) |
 | `vis_private_default_same_module_ok` | accept | — | §19.4 (default-private is module-internal, not decl-internal; siblings see each other) |
-| `vis_private_event_still_on_spine` | accept | — | §19.4 (a private event still lands on the spine; caught cross-module by its Error supertype, not its private name) |
+| `vis_private_event_still_on_ledger` | accept | — | §19.4 (a private event still lands on the ledger; caught cross-module by its Error supertype, not its private name) |
 | `vis_private_not_importable_reject` | reject | VisibilityError | §19.4 (a non-pub declaration is not importable; naming it is a VisibilityError) |
 | `vis_pub_importable` | accept | — | §19.4 (a pub declaration is importable) |
 | `vis_shallow_export_reject` | reject | VisibilityError | §19.4 (pub is shallow: a pub type may not expose a private field type) |

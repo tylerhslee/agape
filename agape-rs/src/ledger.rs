@@ -1,18 +1,18 @@
-//! The event spine — Agape's append-only log and single source of truth (§7, §16.2).
+//! The event ledger — Agape's append-only log and single source of truth (§7, §16.2).
 //!
 //! Every meaningful action appends an immutable `Event { tick, etype, subject,
 //! payload, corr, agent }`. `tick` is system-assigned and monotonic (`tick = |S|`);
 //! `subject` is the source the event is about (the `when` correlation key); `corr`
 //! links a `Started`/`Sent` to its `Resolved`.
 //!
-//! The spine is hash-chained (§16.2): each append folds the event's canonical
+//! The ledger is hash-chained (§16.2): each append folds the event's canonical
 //! serialization into a running SHA-256 chain seeded at `SHA-256("agape/v1")`. The
 //! **chain-head** is therefore a function of the whole journal's content, so two runs
 //! are replay-equivalent iff their heads are equal (T4, §15.4.2 / §16.5).
 
 use crate::hash::{hex, sha256};
 
-/// One immutable entry on the spine.
+/// One immutable entry on the ledger.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Event {
     pub tick: u64,
@@ -64,7 +64,7 @@ impl Event {
 
 /// The append-only event log. State is a projection of this.
 #[derive(Debug, Clone)]
-pub struct Spine {
+pub struct Ledger {
     pub log: Vec<Event>,
     next_corr: u64,
     /// The running hash-chain head (§16.2).
@@ -74,15 +74,15 @@ pub struct Spine {
     pub error_subtypes: std::collections::HashSet<String>,
 }
 
-impl Default for Spine {
+impl Default for Ledger {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl Spine {
+impl Ledger {
     pub fn new() -> Self {
-        Spine { log: Vec::new(), next_corr: 0, head: sha256(b"agape/v1"), error_subtypes: std::collections::HashSet::new() }
+        Ledger { log: Vec::new(), next_corr: 0, head: sha256(b"agape/v1"), error_subtypes: std::collections::HashSet::new() }
     }
 
     pub fn len(&self) -> usize {
@@ -146,8 +146,8 @@ impl Spine {
 mod tests {
     use super::*;
 
-    fn build(events: &[(&str, Option<&str>)]) -> Spine {
-        let mut s = Spine::new();
+    fn build(events: &[(&str, Option<&str>)]) -> Ledger {
+        let mut s = Ledger::new();
         for (etype, subj) in events {
             s.append(*etype, subj.map(|x| x.to_string()), "", None, None);
         }
@@ -156,8 +156,8 @@ mod tests {
 
     #[test]
     fn genesis_is_deterministic_and_nonzero() {
-        let a = Spine::new();
-        let b = Spine::new();
+        let a = Ledger::new();
+        let b = Ledger::new();
         assert_eq!(a.chain_head(), b.chain_head());
         assert_ne!(a.chain_head(), [0u8; 32]); // seeded, not the all-zero default
     }

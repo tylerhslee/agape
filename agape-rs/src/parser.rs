@@ -245,6 +245,36 @@ impl Parser {
             self.eat_op(";")?;
             return Ok(Stmt::Prompt { ty, name });
         }
+        if t.is_kw("instruction") {
+            // `instruction STRING;` — a compile-time system prompt (§5).
+            self.advance();
+            let tok = self.cur().clone();
+            if tok.kind != TokenKind::Str {
+                return Err(self.err("`instruction` takes a string literal — the agent's system prompt (§5)"));
+            }
+            self.advance();
+            self.eat_op(";")?;
+            return Ok(Stmt::Instruction(tok.value));
+        }
+        if t.is_kw("mem") {
+            // `mem NAME [<- EXPR];` — declare a private-memory handle (§10).
+            self.advance();
+            let name = self.eat_ident()?;
+            let init = if self.check_op("<-") {
+                self.advance();
+                Some(self.pipe()?)
+            } else {
+                None
+            };
+            self.eat_op(";")?;
+            return Ok(Stmt::MemDecl { name, init });
+        }
+        if t.is_kw("forget") {
+            self.advance();
+            let name = self.eat_ident()?;
+            self.eat_op(";")?;
+            return Ok(Stmt::Forget(name));
+        }
         if t.is_kw("verify") {
             self.advance();
             let (arg, by) = self.verify_core()?;
@@ -1308,7 +1338,7 @@ impl Parser {
         }
     }
 
-    /// A query source: an agent name or the reserved `self` / `spine`.
+    /// A query source: an agent name or the reserved `self` / `ledger`.
     fn eat_source(&mut self) -> PResult<String> {
         if self.check_kw("self") {
             self.advance();
@@ -1402,6 +1432,12 @@ impl Parser {
                 None
             };
             return Ok(Expr::Send { dest: Box::new(left), payload: Box::new(payload), expires, retry });
+        }
+        if self.check_op("->") {
+            // `mem -> query` — memory recall (§10); the checker rejects a non-`mem` LHS.
+            self.advance();
+            let query = self.pipe()?;
+            return Ok(Expr::Recall { mem: Box::new(left), query: Box::new(query) });
         }
         Ok(left)
     }
@@ -1825,7 +1861,7 @@ mod tests {
 
     #[test]
     fn query_stmt_and_expr_forms() {
-        let s = p("select * from spine where { etype: \"Spawned\" };");
+        let s = p("select * from ledger where { etype: \"Spawned\" };");
         assert!(matches!(&s[0], Stmt::QueryStmt(Query::Select { star: true, .. })));
         let s = p("Memo m = select amount, to from self where { kind: \"pending\" };");
         assert!(matches!(&s[0], Stmt::VarDecl { expr: Some(Expr::Query(_)), .. }));
