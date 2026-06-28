@@ -13,13 +13,14 @@ test("ask a question → a verified answer is delivered", async ({ page }) => {
   await page.locator(".pj-inp input").first().fill("is the earth round?");
   await page.getByRole("button", { name: /Run/ }).first().click();
 
-  // The conversation shows the user's question and a ✓-verified answer from agape.
+  // The conversation (scoped to the Q&A panel) shows the question and a ✓-verified
+  // answer from agape.
   await expect(page.locator(".pj-verified")).toBeVisible({ timeout: 20_000 });
-  await expect(page.getByText("is the earth round?")).toBeVisible();
+  await expect(page.locator(".pj-qa").getByText("is the earth round?").first()).toBeVisible();
 
   // Under the hood, the spine recorded the gate decision and the delivered reply.
-  await expect(page.getByText("Decided", { exact: false })).toBeVisible();
-  await expect(page.getByText("Reply", { exact: false })).toBeVisible();
+  await expect(page.locator(".pj-spine").getByText("Decided", { exact: false }).first()).toBeVisible();
+  await expect(page.locator(".pj-spine").getByText("Reply", { exact: false }).first()).toBeVisible();
 });
 
 // J3: a program that fails the static checks surfaces a clear error, never a crash.
