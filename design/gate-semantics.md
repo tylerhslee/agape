@@ -34,8 +34,10 @@ stakes ladder is dropped as too arbitrary.
 
 - **`reversible` = take the answer, no number.** "Don't certify — act." Needs no principal, no
   calibration, not even logprobs (a text-only model's single reply *is* the face-value answer).
-  Enum: commit the top variant even if a sub-50% plurality; exact tie → `default:`/first arm.
-  There is deliberately **nothing to configure** — a tunable bar would re-introduce arbitrariness.
+  Enum: commit the top variant even if a sub-50% plurality. **Tie / no-plurality:** the `default:`
+  arm *is* the tiebreak; if there is no `default:`, the gate **abstains** (no effect) and logs an
+  `Abstained` event — never a silent pick. There is deliberately **nothing to configure** — a
+  tunable bar would re-introduce arbitrariness.
 - **Unmarked = fail-closed = rigorous.** A consequential action you *forgot* to annotate gets the
   cautious path (§13 "absent a declaration, fail closed"). You write `reversible` to *relax*.
 
@@ -300,14 +302,21 @@ clear — and until we've learned, Alice rules the unclear ones."* ✅
 
 **B — trailing defer clause:** `decide c { … } defer to alice`. **C — arrow style:** rejected.
 
-## 9. Open questions
+## 9. Resolved decisions (all locked for v1.1.0)
 
-- **Word for "consequential"** — unmarked = cautious; is an explicit keyword ever wanted?
-- **Calibration scope** — per-action-type / per-gate-site / global? (Affects autonomy speed + how
-  the file-level α partitions labels.) ← the last load-bearing decision.
-- **First-class `notify p`** vs plain `emit`.
-- **`reversible` enum tie / no-plurality** — deterministic tiebreak → `default:`.
-- **Mixed-mode blocks** — per-outcome admission; confirm always intended.
+- **Consequential keyword** — none. Unmarked = cautious is enough; no `irreversible`/`consequential`
+  keyword.
+- **Calibration scope** — **a programmer design decision, per-gate-site.** A gate calibrates from
+  *its own* recorded decisions on the spine; the calibration pool is exactly the decisions made at
+  that gate (pooling across instances of the same code site, which are exchangeable). You control
+  scope by how you **factor your gates** — one shared decision → one gate → one pool; split them →
+  separate pools. The language adds **no** pooling construct; it documents/educates the pattern so
+  authors design gates that accumulate a clean, exchangeable conformal dataset over time. (This is
+  what keeps the §15.5.6 coverage guarantee valid — same-site decisions are comparable.)
+- **`notify`** — a plain `emit` (no first-class `notify p`); the spine already records it.
+- **`reversible` tie / no-plurality** — the programmer's `default:` arm is the tiebreak; absent a
+  `default:`, the gate **abstains** (no effect) and logs an `Abstained` event. Never a silent pick.
+- **Mixed-mode blocks** — resolved by §1b (strictest-arm gate level + per-outcome reversibility).
 
 ## 10. What to lock before grammar
 
