@@ -13,10 +13,11 @@ test("ask a question → a verified answer is delivered", async ({ page }) => {
   await page.goto("/");
   await expect(page.locator(".app-rail")).toBeVisible(); // the shell mounted
 
-  // The scaffolded project's two agents are listed in the Files explorer.
+  // The scaffolded project's two agents are listed in the Files explorer. Scope to
+  // the agent chips — the open editor also shows main.ag's source, which names them.
   await railItem(page, "Files").click();
-  await expect(page.getByText("Responder", { exact: false })).toBeVisible();
-  await expect(page.getByText("FactChecker", { exact: false })).toBeVisible();
+  await expect(page.locator(".pj-agent", { hasText: "Responder" })).toBeVisible();
+  await expect(page.locator(".pj-agent", { hasText: "FactChecker" })).toBeVisible();
 
   // The Run space exposes the program's `prompt` sensors (here: `question`) as
   // inputs; fill one and run on the mock provider.
