@@ -14,7 +14,6 @@ use std::path::{Path, PathBuf};
 
 use crate::diag::ErrorClass;
 use crate::interp::{is_subtype, HarnessConfig, ProviderMode};
-use crate::process_with_config;
 use crate::spine::Spine;
 
 /// A semantic version as (major, minor), e.g. "1.0" -> (1, 0), "0.3" -> (0, 3).
@@ -58,6 +57,9 @@ pub struct TestSpec {
     pub provider: Option<String>,
     pub attest: Option<String>,
     pub manifest: Option<String>,
+    /// Companion module filenames (`a.ag; b.ag`) living in a sibling `<id>.d/`
+    /// directory, compiled together with the body so imports resolve (§19, v1.1.0).
+    pub modules: Vec<String>,
 }
 
 /// Parse one test file's header and body. Returns `None` if it has no usable
@@ -123,6 +125,9 @@ pub fn parse_test(path: &Path) -> Option<TestSpec> {
         provider: get("provider"),
         attest: get("attest"),
         manifest: get("manifest"),
+        modules: get("modules")
+            .map(|s| s.split(';').map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect())
+            .unwrap_or_default(),
     })
 }
 
@@ -219,6 +224,26 @@ fn harness_config(test: &TestSpec) -> HarnessConfig {
     c
 }
 
+/// Run a test through the pipeline: the body is the root module; any `modules:`
+/// companions in the sibling `<id>.d/` directory are compiled together (§19).
+fn run_test(test: &TestSpec, config: &crate::HarnessConfig) -> Result<Spine, crate::diag::AgapeError> {
+    if test.modules.is_empty() {
+        return crate::process_with_config(&test.body, config);
+    }
+    let root = crate::parse_module(&test.body, "")?;
+    let dir = test.path.with_extension("d");
+    let mut modules = vec![root];
+    for fname in &test.modules {
+        let p = dir.join(fname);
+        let src = fs::read_to_string(&p).map_err(|_| {
+            crate::diag::AgapeError::new(ErrorClass::Module, format!("companion module not found: {}", p.display()))
+        })?;
+        let stem = p.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+        modules.push(crate::parse_module(&src, &stem)?);
+    }
+    crate::process_modules(&modules, config)
+}
+
 /// Score one test against the pipeline, under its declared seam configuration.
 pub fn score(test: &TestSpec, v: Version) -> Status {
     if v < test.since {
@@ -232,14 +257,14 @@ pub fn score(test: &TestSpec, v: Version) -> Status {
     let config = harness_config(test);
     match test.expect {
         Expect::Blocked | Expect::Provisional => Status::Blocked,
-        Expect::Accept => match process_with_config(&test.body, &config) {
+        Expect::Accept => match run_test(test, &config) {
             Ok(spine) => match check_assertions(test, &spine) {
                 Ok(()) => Status::Pass,
                 Err(msg) => Status::Fail(msg),
             },
             Err(e) => Status::Fail(format!("expected accept, got reject ({})", e.class)),
         },
-        Expect::Reject => match process_with_config(&test.body, &config) {
+        Expect::Reject => match run_test(test, &config) {
             Ok(_) => Status::Fail("expected reject, but accepted".into()),
             Err(e) => match test.error {
                 Some(want) if want == e.class => Status::Pass,
@@ -318,8 +343,11 @@ fn parse_tokens(s: &str) -> Vec<Token> {
     s.split(';').filter_map(parse_token).collect()
 }
 
-fn event_matches(ev: &crate::spine::Event, etype: &str, subj: &Option<String>) -> bool {
-    is_subtype(&ev.etype, etype) && match subj {
+fn event_matches(ev: &crate::spine::Event, etype: &str, subj: &Option<String>, spine: &Spine) -> bool {
+    let subtype = is_subtype(&ev.etype, etype)
+        // A user `event …: Error` leaf (§19.5) matches the `Error` root.
+        || (etype == "Error" && spine.error_subtypes.contains(&ev.etype));
+    subtype && match subj {
         Some(want) => ev.subject.as_deref() == Some(want.as_str()),
         None => true,
     }
@@ -336,12 +364,12 @@ fn pair_etypes(op: &str) -> (String, String) {
 
 fn token_present(spine: &Spine, t: &Token) -> bool {
     match t {
-        Token::Single { etype, subj } => spine.log.iter().any(|ev| event_matches(ev, etype, subj)),
+        Token::Single { etype, subj } => spine.log.iter().any(|ev| event_matches(ev, etype, subj, spine)),
         Token::Pair { op, subj } => {
             let (started, resolved) = pair_etypes(op);
             let s = Some(subj.clone());
-            spine.log.iter().any(|ev| event_matches(ev, &started, &s))
-                && spine.log.iter().any(|ev| event_matches(ev, &resolved, &s))
+            spine.log.iter().any(|ev| event_matches(ev, &started, &s, spine))
+                && spine.log.iter().any(|ev| event_matches(ev, &resolved, &s, spine))
         }
     }
 }
@@ -357,7 +385,7 @@ fn matches_ordered(spine: &Spine, tokens: &[Token]) -> bool {
             }
             continue;
         };
-        match spine.log[cursor..].iter().position(|ev| event_matches(ev, etype, subj)) {
+        match spine.log[cursor..].iter().position(|ev| event_matches(ev, etype, subj, spine)) {
             Some(off) => cursor += off + 1,
             None => return false,
         }
