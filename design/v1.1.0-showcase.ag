@@ -1,8 +1,5 @@
-// v1.1.0 showcase — everything the minor version adds, in one readable file.
-//
-// Each line is tagged LIB (the library layer, SPEC §19 — authoritative) or GATE (the readable
-// `decide` surface, design/gate-semantics.md — proposed; desugars to the v1.0.0 engine §13).
-// Illustrative: the GATE surface is not yet in SPEC.md, so this file is a design artifact.
+// v1.1.0 showcase — the library layer and the readable gate in one readable file.
+// Each line is tagged LIB (the library layer, SPEC §19) or GATE (the `decide` gate, SPEC §20).
 
 module support;                              // LIB: declares this file's namespace (§19.2)
 import { redact } from text_utils;           // LIB: import a pub helper from another module (§19.1)
