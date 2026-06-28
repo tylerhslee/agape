@@ -18,6 +18,14 @@ pub enum ErrorClass {
     Taint,
     Authority,
     Exhaustiveness,
+    /// Import resolution: unresolved, cyclic, or ambiguous names (§19.2).
+    Module,
+    /// Naming a non-`pub` declaration, or a `pub` signature exposing a private type (§19.4).
+    Visibility,
+    /// An `agent : Iface` that fails the nominal conformance check (§19.5).
+    Interface,
+    /// A `decide` with a non-reversible arm and no reachable principal (§20.3).
+    Gate,
     /// Not a suite class — used while a milestone is unimplemented so the
     /// scoreboard stays honest (matches no asserted `error:`, so a `reject` test
     /// can't accidentally "pass" against a stub).
@@ -35,6 +43,10 @@ impl ErrorClass {
             "TaintViolation" => ErrorClass::Taint,
             "AuthorityViolation" => ErrorClass::Authority,
             "ExhaustivenessError" => ErrorClass::Exhaustiveness,
+            "ModuleError" => ErrorClass::Module,
+            "VisibilityError" => ErrorClass::Visibility,
+            "InterfaceError" => ErrorClass::Interface,
+            "GateError" => ErrorClass::Gate,
             _ => return None,
         })
     }
@@ -49,6 +61,10 @@ impl ErrorClass {
             ErrorClass::Taint => "TaintViolation",
             ErrorClass::Authority => "AuthorityViolation",
             ErrorClass::Exhaustiveness => "ExhaustivenessError",
+            ErrorClass::Module => "ModuleError",
+            ErrorClass::Visibility => "VisibilityError",
+            ErrorClass::Interface => "InterfaceError",
+            ErrorClass::Gate => "GateError",
             ErrorClass::Unimplemented => "Unimplemented",
         }
     }
