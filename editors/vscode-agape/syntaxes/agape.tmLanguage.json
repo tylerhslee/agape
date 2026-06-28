@@ -118,6 +118,11 @@
           "comments": "aggregation + dependence + quorum (§12)",
           "name": "keyword.other.aggregation.agape",
           "match": "\\b(?:all|any|quorum|independent|dependent)\\b"
+        },
+        {
+          "comments": "library layer + readable gate (§19, §20)",
+          "name": "keyword.other.library.agape",
+          "match": "\\b(?:module|import|pub|interface|requires|decide|reversible|defer)\\b"
         }
       ]
     },

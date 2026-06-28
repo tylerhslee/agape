@@ -19,8 +19,8 @@ export function registerAgape(monaco) {
 
   monaco.languages.setMonarchTokensProvider(AGAPE_LANG_ID, {
     defaultToken: "",
-    // v1.0.0 keyword set (SPEC §2). Contextual words (as/by/about/reach/use/
-    // origin/expires/of/confidence/margin/conformal/over) are deliberately NOT
+    // Keyword set (SPEC §2). Contextual words (as/by/about/reach/use/origin/
+    // expires/of/confidence/margin/conformal/over/to) are deliberately NOT
     // keywords — they lex as identifiers, meaningful only in position.
     keywords: [
       "agent", "extend", "sync", "struct", "enum", "tool", "principal", "policy",
@@ -29,6 +29,8 @@ export function registerAgape(monaco) {
       "endorse", "attest", "perform", "emit", "abstain",
       "find", "where", "select", "from", "match",
       "all", "any", "quorum", "independent", "dependent",
+      // library layer + readable gate (§19, §20)
+      "module", "import", "pub", "interface", "requires", "decide", "reversible", "defer",
     ],
     typeKeywords: [
       "int", "float", "bool", "text", "event", "action", "array",
@@ -36,7 +38,7 @@ export function registerAgape(monaco) {
       "Credence", "Decision", "Entailment", "Contradiction", "Neutral",
       "Principal", "Rule", "Event", "Error", "Attestation", "Decided",
       "Abstained", "AgentCrashed", "QueryResult", "ToolStarted", "ToolResolved",
-      "Delivered", "Resolved", "Expired", "DeliveryRefused",
+      "Delivered", "Resolved", "Expired", "DeliveryRefused", "Basis",
     ],
     literals: ["true", "false", "null"],
     retired: ["calibrate", "entail"],
