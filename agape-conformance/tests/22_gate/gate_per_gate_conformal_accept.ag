@@ -1,6 +1,5 @@
 //! id:        gate_per_gate_conformal_accept
 //! section:   22_gate
-//! since:     1.1
 //! expect:    accept
 //! spec:      §20 (per-gate conformal α override on a decide)
 //! ---

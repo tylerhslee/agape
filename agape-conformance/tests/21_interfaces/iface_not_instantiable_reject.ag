@@ -1,9 +1,8 @@
 //! id:        iface_not_instantiable_reject
 //! section:   21_interfaces
-//! since:     1.1
 //! expect:    reject
 //! error:     TypeError
-//! spec:      v1.1.0 design 5.2 (an interface is a type but not instantiable; spawn of one is a TypeError)
+//! spec:      §19.5 (an interface is a type but not instantiable; spawn of one is a TypeError)
 //! ---
 event Query(ask: text);
 struct Plan { steps: int }

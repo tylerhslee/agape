@@ -104,11 +104,11 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 
 | id | expect | error | spec |
 |---|---|---|---|
-| `prelude_action_cannot_be_error_reject` | reject | ParseError | v1.1.0 design 5b (only `event` may extend Error; an action supertype is a ParseError) |
-| `prelude_error_supertype_must_be_error_reject` | reject | TypeError | v1.1.0 design 5b (the only permitted user supertype is the built-in Error) |
+| `prelude_action_cannot_be_error_reject` | reject | ParseError | §19.5 (only `event` may extend Error; an action supertype is a ParseError) |
+| `prelude_error_supertype_must_be_error_reject` | reject | TypeError | §19.5 (the only permitted user supertype is the built-in Error) |
 | `prelude_expired_not_error` | accept | — | §9 (Expired and a lost send are NOT Error subtypes; a `when (Error e)` does not fire for an Expired tombstone) |
 | `prelude_say_not_spine` | accept | — | §9 (`say(x)` prints its argument; it is NOT a spine operation and appends no event) |
-| `prelude_user_error_subtype_caught` | accept | — | v1.1.0 design 5b, 9 (event Foo : Error extends the built-in Error root; when(Error e) catches it) |
+| `prelude_user_error_subtype_caught` | accept | — | §19.5 (event Foo : Error extends the built-in Error root; when(Error e) catches it) |
 | `prelude_when_error_catches_contradiction` | accept | — | §9 (Contradiction extends Error; when (Error e) catches it by subtype) |
 
 ## 10_memory
@@ -189,47 +189,47 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 
 | id | expect | error | spec |
 |---|---|---|---|
-| `mod_ambiguous_name_reject` | reject | ModuleError | v1.1.0 design 3.1 (an ambiguous bare reference across imports is a ModuleError) |
-| `mod_etype_qualified_distinct` | accept | — | v1.1.0 design 3.2 (same event name in two modules are DISTINCT qualified etypes) |
-| `mod_import_alias` | accept | — | v1.1.0 design 2.3 (import ... as alias rebinds the prefix) |
-| `mod_import_cycle_reject` | reject | ModuleError | v1.1.0 design 2.3 (imports are acyclic; a cycle is a ModuleError) |
-| `mod_import_qualified` | accept | — | v1.1.0 design 2 (module=file; whole-module import; qualified name use) |
-| `mod_import_selective` | accept | — | v1.1.0 design 2.3 (selective import binds the bare name) |
-| `mod_no_header_is_root` | accept | — | v1.1.0 design 0,2 (no module/import = implicit root module; v1.0.0 backward compat) |
-| `mod_selective_import_unknown_reject` | reject | ModuleError | v1.1.0 design 2.3 (selective import of a non-exported name is a ModuleError) |
-| `mod_unresolved_import_reject` | reject | ModuleError | v1.1.0 design 2.3 (an import resolving to no module is a ModuleError) |
+| `mod_ambiguous_name_reject` | reject | ModuleError | §19.2 (an ambiguous bare reference across imports is a ModuleError) |
+| `mod_etype_qualified_distinct` | accept | — | §19.2 (same event name in two modules are DISTINCT qualified etypes) |
+| `mod_import_alias` | accept | — | §19.2 (import ... as alias rebinds the prefix) |
+| `mod_import_cycle_reject` | reject | ModuleError | §19.2 (imports are acyclic; a cycle is a ModuleError) |
+| `mod_import_qualified` | accept | — | §19.2 (module=file; whole-module import; qualified name use) |
+| `mod_import_selective` | accept | — | §19.2 (selective import binds the bare name) |
+| `mod_no_header_is_root` | accept | — | §19.2 (no module/import = implicit root module; v1.0.0 backward compat) |
+| `mod_selective_import_unknown_reject` | reject | ModuleError | §19.2 (selective import of a non-exported name is a ModuleError) |
+| `mod_unresolved_import_reject` | reject | ModuleError | §19.2 (an import resolving to no module is a ModuleError) |
 
 ## 19_visibility
 
 | id | expect | error | spec |
 |---|---|---|---|
-| `vis_private_agent_not_spawnable_reject` | reject | VisibilityError | v1.1.0 design 4.2 (a private agent type cannot be named/spawned from another module) |
-| `vis_private_default_same_module_ok` | accept | — | v1.1.0 design 4.1 (default-private is module-internal, not decl-internal; siblings see each other) |
-| `vis_private_event_still_on_spine` | accept | — | v1.1.0 design 4.2, 5b (a private event still lands on the spine; caught cross-module by its Error supertype, not its private name) |
-| `vis_private_not_importable_reject` | reject | VisibilityError | v1.1.0 design 4 (a non-pub declaration is not importable; naming it is a VisibilityError) |
-| `vis_pub_importable` | accept | — | v1.1.0 design 4 (a pub declaration is importable) |
-| `vis_shallow_export_reject` | reject | VisibilityError | v1.1.0 design 4.3 (pub is shallow: a pub type may not expose a private field type) |
+| `vis_private_agent_not_spawnable_reject` | reject | VisibilityError | §19.4 (a private agent type cannot be named/spawned from another module) |
+| `vis_private_default_same_module_ok` | accept | — | §19.4 (default-private is module-internal, not decl-internal; siblings see each other) |
+| `vis_private_event_still_on_spine` | accept | — | §19.4 (a private event still lands on the spine; caught cross-module by its Error supertype, not its private name) |
+| `vis_private_not_importable_reject` | reject | VisibilityError | §19.4 (a non-pub declaration is not importable; naming it is a VisibilityError) |
+| `vis_pub_importable` | accept | — | §19.4 (a pub declaration is importable) |
+| `vis_shallow_export_reject` | reject | VisibilityError | §19.4 (pub is shallow: a pub type may not expose a private field type) |
 
 ## 20_generics
 
 | id | expect | error | spec |
 |---|---|---|---|
-| `gen_agent_not_generic_reject` | reject | ParseError | v1.1.0 design 5.1 (agents are not generic; only struct/fn carry type params) |
-| `gen_fn_identity` | accept | — | v1.1.0 design 5.1 (user-generic function; monomorphized at the call site) |
-| `gen_monomorphize_two_instances` | accept | — | v1.1.0 design 5.1 (distinct instantiations monomorphize to distinct concrete types) |
-| `gen_multi_param` | accept | — | v1.1.0 design 5.1 (generics take multiple type parameters) |
-| `gen_struct_box` | accept | — | v1.1.0 design 5.1 (user-generic struct with a type parameter) |
+| `gen_agent_not_generic_reject` | reject | ParseError | §19.5 (agents are not generic; only struct/fn carry type params) |
+| `gen_fn_identity` | accept | — | §19.5 (user-generic function; monomorphized at the call site) |
+| `gen_monomorphize_two_instances` | accept | — | §19.5 (distinct instantiations monomorphize to distinct concrete types) |
+| `gen_multi_param` | accept | — | §19.5 (generics take multiple type parameters) |
+| `gen_struct_box` | accept | — | §19.5 (user-generic struct with a type parameter) |
 
 ## 21_interfaces
 
 | id | expect | error | spec |
 |---|---|---|---|
-| `iface_decl_and_conformance` | accept | — | v1.1.0 design 5.2 (interface decl; an agent nominally conforms via : Iface) |
-| `iface_missing_handler_reject` | reject | InterfaceError | v1.1.0 design 5.2 (a declared interface with no matching handler is an InterfaceError) |
-| `iface_missing_required_grant_reject` | reject | InterfaceError | v1.1.0 design 5.2 (an interface `requires` a capability the implementor lacks) |
-| `iface_multi_implement` | accept | — | v1.1.0 design 5.2 (an agent may implement multiple interfaces) |
-| `iface_not_instantiable_reject` | reject | TypeError | v1.1.0 design 5.2 (an interface is a type but not instantiable; spawn of one is a TypeError) |
-| `iface_subtype_binding` | accept | — | v1.1.0 design 5.2 (agent <: interface; bind a concrete agent to an interface slot; reach over the interface) |
+| `iface_decl_and_conformance` | accept | — | §19.5 (interface decl; an agent nominally conforms via : Iface) |
+| `iface_missing_handler_reject` | reject | InterfaceError | §19.5 (a declared interface with no matching handler is an InterfaceError) |
+| `iface_missing_required_grant_reject` | reject | InterfaceError | §19.5 (an interface `requires` a capability the implementor lacks) |
+| `iface_multi_implement` | accept | — | §19.5 (an agent may implement multiple interfaces) |
+| `iface_not_instantiable_reject` | reject | TypeError | §19.5 (an interface is a type but not instantiable; spawn of one is a TypeError) |
+| `iface_subtype_binding` | accept | — | §19.5 (agent <: interface; bind a concrete agent to an interface slot; reach over the interface) |
 
 ## 22_gate
 

@@ -58,7 +58,7 @@ pub struct TestSpec {
     pub attest: Option<String>,
     pub manifest: Option<String>,
     /// Companion module filenames (`a.ag; b.ag`) living in a sibling `<id>.d/`
-    /// directory, compiled together with the body so imports resolve (§19, v1.1.0).
+    /// directory, compiled together with the body so imports resolve (§19).
     pub modules: Vec<String>,
 }
 

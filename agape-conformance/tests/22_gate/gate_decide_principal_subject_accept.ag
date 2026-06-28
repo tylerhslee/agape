@@ -1,6 +1,5 @@
 //! id:        gate_decide_principal_subject_accept
 //! section:   22_gate
-//! since:     1.1
 //! expect:    accept
 //! spec:      §20 (decide with a principal subject; a non-reversible arm has a reachable principal)
 //! ---

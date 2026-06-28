@@ -442,19 +442,17 @@ spec = "§8 (structured output uses constrained decoding; on schema failure the 
 id = "prelude_action_cannot_be_error_reject"
 section = "09_prelude"
 path = "tests/09_prelude/prelude_action_cannot_be_error_reject.ag"
-since = "1.1"
 expect = "reject"
 error = "ParseError"
-spec = "v1.1.0 design 5b (only `event` may extend Error; an action supertype is a ParseError)"
+spec = "§19.5 (only `event` may extend Error; an action supertype is a ParseError)"
 
 [[test]]
 id = "prelude_error_supertype_must_be_error_reject"
 section = "09_prelude"
 path = "tests/09_prelude/prelude_error_supertype_must_be_error_reject.ag"
-since = "1.1"
 expect = "reject"
 error = "TypeError"
-spec = "v1.1.0 design 5b (the only permitted user supertype is the built-in Error)"
+spec = "§19.5 (the only permitted user supertype is the built-in Error)"
 
 [[test]]
 id = "prelude_expired_not_error"
@@ -477,10 +475,9 @@ spec = "§9 (`say(x)` prints its argument; it is NOT a spine operation and appen
 id = "prelude_user_error_subtype_caught"
 section = "09_prelude"
 path = "tests/09_prelude/prelude_user_error_subtype_caught.ag"
-since = "1.1"
 expect = "accept"
 contains = ["Error"]
-spec = "v1.1.0 design 5b, 9 (event Foo : Error extends the built-in Error root; when(Error e) catches it)"
+spec = "§19.5 (event Foo : Error extends the built-in Error root; when(Error e) catches it)"
 
 [[test]]
 id = "prelude_when_error_catches_contradiction"
@@ -836,244 +833,217 @@ note = "the manifest sets only connector config; the decision policy is in sourc
 id = "mod_ambiguous_name_reject"
 section = "18_modules"
 path = "tests/18_modules/mod_ambiguous_name_reject.ag"
-since = "1.1"
 expect = "reject"
 error = "ModuleError"
 modules = ["p.ag", "q.ag"]
-spec = "v1.1.0 design 3.1 (an ambiguous bare reference across imports is a ModuleError)"
+spec = "§19.2 (an ambiguous bare reference across imports is a ModuleError)"
 
 [[test]]
 id = "mod_etype_qualified_distinct"
 section = "18_modules"
 path = "tests/18_modules/mod_etype_qualified_distinct.ag"
-since = "1.1"
 expect = "accept"
 modules = ["a.ag", "b.ag"]
-spec = "v1.1.0 design 3.2 (same event name in two modules are DISTINCT qualified etypes)"
+spec = "§19.2 (same event name in two modules are DISTINCT qualified etypes)"
 note = "a.Tick and b.Tick coexist; when(a.Tick) binds the qualified type, no collision"
 
 [[test]]
 id = "mod_import_alias"
 section = "18_modules"
 path = "tests/18_modules/mod_import_alias.ag"
-since = "1.1"
 expect = "accept"
 modules = ["util.ag"]
-spec = "v1.1.0 design 2.3 (import ... as alias rebinds the prefix)"
+spec = "§19.2 (import ... as alias rebinds the prefix)"
 
 [[test]]
 id = "mod_import_cycle_reject"
 section = "18_modules"
 path = "tests/18_modules/mod_import_cycle_reject.ag"
-since = "1.1"
 expect = "reject"
 error = "ModuleError"
 modules = ["a.ag", "b.ag"]
-spec = "v1.1.0 design 2.3 (imports are acyclic; a cycle is a ModuleError)"
+spec = "§19.2 (imports are acyclic; a cycle is a ModuleError)"
 
 [[test]]
 id = "mod_import_qualified"
 section = "18_modules"
 path = "tests/18_modules/mod_import_qualified.ag"
-since = "1.1"
 expect = "accept"
 modules = ["util.ag"]
-spec = "v1.1.0 design 2 (module=file; whole-module import; qualified name use)"
+spec = "§19.2 (module=file; whole-module import; qualified name use)"
 note = "import a module and use a pub member by its qualified name"
 
 [[test]]
 id = "mod_import_selective"
 section = "18_modules"
 path = "tests/18_modules/mod_import_selective.ag"
-since = "1.1"
 expect = "accept"
 modules = ["util.ag"]
-spec = "v1.1.0 design 2.3 (selective import binds the bare name)"
+spec = "§19.2 (selective import binds the bare name)"
 
 [[test]]
 id = "mod_no_header_is_root"
 section = "18_modules"
 path = "tests/18_modules/mod_no_header_is_root.ag"
-since = "1.1"
 expect = "accept"
-spec = "v1.1.0 design 0,2 (no module/import = implicit root module; v1.0.0 backward compat)"
+spec = "§19.2 (no module/import = implicit root module; v1.0.0 backward compat)"
 note = "an unmodified v1.0.0 program still compiles"
 
 [[test]]
 id = "mod_selective_import_unknown_reject"
 section = "18_modules"
 path = "tests/18_modules/mod_selective_import_unknown_reject.ag"
-since = "1.1"
 expect = "reject"
 error = "ModuleError"
 modules = ["util.ag"]
-spec = "v1.1.0 design 2.3 (selective import of a non-exported name is a ModuleError)"
+spec = "§19.2 (selective import of a non-exported name is a ModuleError)"
 
 [[test]]
 id = "mod_unresolved_import_reject"
 section = "18_modules"
 path = "tests/18_modules/mod_unresolved_import_reject.ag"
-since = "1.1"
 expect = "reject"
 error = "ModuleError"
-spec = "v1.1.0 design 2.3 (an import resolving to no module is a ModuleError)"
+spec = "§19.2 (an import resolving to no module is a ModuleError)"
 
 [[test]]
 id = "vis_private_agent_not_spawnable_reject"
 section = "19_visibility"
 path = "tests/19_visibility/vis_private_agent_not_spawnable_reject.ag"
-since = "1.1"
 expect = "reject"
 error = "VisibilityError"
 modules = ["m.ag"]
-spec = "v1.1.0 design 4.2 (a private agent type cannot be named/spawned from another module)"
+spec = "§19.4 (a private agent type cannot be named/spawned from another module)"
 
 [[test]]
 id = "vis_private_default_same_module_ok"
 section = "19_visibility"
 path = "tests/19_visibility/vis_private_default_same_module_ok.ag"
-since = "1.1"
 expect = "accept"
-spec = "v1.1.0 design 4.1 (default-private is module-internal, not decl-internal; siblings see each other)"
+spec = "§19.4 (default-private is module-internal, not decl-internal; siblings see each other)"
 note = "a private helper is visible to another decl in the same module"
 
 [[test]]
 id = "vis_private_event_still_on_spine"
 section = "19_visibility"
 path = "tests/19_visibility/vis_private_event_still_on_spine.ag"
-since = "1.1"
 expect = "accept"
 contains = ["Error"]
 modules = ["m.ag"]
-spec = "v1.1.0 design 4.2, 5b (a private event still lands on the spine; caught cross-module by its Error supertype, not its private name)"
+spec = "§19.4 (a private event still lands on the spine; caught cross-module by its Error supertype, not its private name)"
 note = "visibility gates the NAME, not spine presence"
 
 [[test]]
 id = "vis_private_not_importable_reject"
 section = "19_visibility"
 path = "tests/19_visibility/vis_private_not_importable_reject.ag"
-since = "1.1"
 expect = "reject"
 error = "VisibilityError"
 modules = ["m.ag"]
-spec = "v1.1.0 design 4 (a non-pub declaration is not importable; naming it is a VisibilityError)"
+spec = "§19.4 (a non-pub declaration is not importable; naming it is a VisibilityError)"
 
 [[test]]
 id = "vis_pub_importable"
 section = "19_visibility"
 path = "tests/19_visibility/vis_pub_importable.ag"
-since = "1.1"
 expect = "accept"
 modules = ["m.ag"]
-spec = "v1.1.0 design 4 (a pub declaration is importable)"
+spec = "§19.4 (a pub declaration is importable)"
 
 [[test]]
 id = "vis_shallow_export_reject"
 section = "19_visibility"
 path = "tests/19_visibility/vis_shallow_export_reject.ag"
-since = "1.1"
 expect = "reject"
 error = "VisibilityError"
-spec = "v1.1.0 design 4.3 (pub is shallow: a pub type may not expose a private field type)"
+spec = "§19.4 (pub is shallow: a pub type may not expose a private field type)"
 
 [[test]]
 id = "gen_agent_not_generic_reject"
 section = "20_generics"
 path = "tests/20_generics/gen_agent_not_generic_reject.ag"
-since = "1.1"
 expect = "reject"
 error = "ParseError"
-spec = "v1.1.0 design 5.1 (agents are not generic; only struct/fn carry type params)"
+spec = "§19.5 (agents are not generic; only struct/fn carry type params)"
 note = "an agent is event-reactive — parameterization lives in its when-handlers' event types"
 
 [[test]]
 id = "gen_fn_identity"
 section = "20_generics"
 path = "tests/20_generics/gen_fn_identity.ag"
-since = "1.1"
 expect = "accept"
-spec = "v1.1.0 design 5.1 (user-generic function; monomorphized at the call site)"
+spec = "§19.5 (user-generic function; monomorphized at the call site)"
 
 [[test]]
 id = "gen_monomorphize_two_instances"
 section = "20_generics"
 path = "tests/20_generics/gen_monomorphize_two_instances.ag"
-since = "1.1"
 expect = "accept"
-spec = "v1.1.0 design 5.1 (distinct instantiations monomorphize to distinct concrete types)"
+spec = "§19.5 (distinct instantiations monomorphize to distinct concrete types)"
 
 [[test]]
 id = "gen_multi_param"
 section = "20_generics"
 path = "tests/20_generics/gen_multi_param.ag"
-since = "1.1"
 expect = "accept"
-spec = "v1.1.0 design 5.1 (generics take multiple type parameters)"
+spec = "§19.5 (generics take multiple type parameters)"
 
 [[test]]
 id = "gen_struct_box"
 section = "20_generics"
 path = "tests/20_generics/gen_struct_box.ag"
-since = "1.1"
 expect = "accept"
-spec = "v1.1.0 design 5.1 (user-generic struct with a type parameter)"
+spec = "§19.5 (user-generic struct with a type parameter)"
 
 [[test]]
 id = "iface_decl_and_conformance"
 section = "21_interfaces"
 path = "tests/21_interfaces/iface_decl_and_conformance.ag"
-since = "1.1"
 expect = "accept"
-spec = "v1.1.0 design 5.2 (interface decl; an agent nominally conforms via : Iface)"
+spec = "§19.5 (interface decl; an agent nominally conforms via : Iface)"
 
 [[test]]
 id = "iface_missing_handler_reject"
 section = "21_interfaces"
 path = "tests/21_interfaces/iface_missing_handler_reject.ag"
-since = "1.1"
 expect = "reject"
 error = "InterfaceError"
-spec = "v1.1.0 design 5.2 (a declared interface with no matching handler is an InterfaceError)"
+spec = "§19.5 (a declared interface with no matching handler is an InterfaceError)"
 
 [[test]]
 id = "iface_missing_required_grant_reject"
 section = "21_interfaces"
 path = "tests/21_interfaces/iface_missing_required_grant_reject.ag"
-since = "1.1"
 expect = "reject"
 error = "InterfaceError"
-spec = "v1.1.0 design 5.2 (an interface `requires` a capability the implementor lacks)"
+spec = "§19.5 (an interface `requires` a capability the implementor lacks)"
 
 [[test]]
 id = "iface_multi_implement"
 section = "21_interfaces"
 path = "tests/21_interfaces/iface_multi_implement.ag"
-since = "1.1"
 expect = "accept"
-spec = "v1.1.0 design 5.2 (an agent may implement multiple interfaces)"
+spec = "§19.5 (an agent may implement multiple interfaces)"
 
 [[test]]
 id = "iface_not_instantiable_reject"
 section = "21_interfaces"
 path = "tests/21_interfaces/iface_not_instantiable_reject.ag"
-since = "1.1"
 expect = "reject"
 error = "TypeError"
-spec = "v1.1.0 design 5.2 (an interface is a type but not instantiable; spawn of one is a TypeError)"
+spec = "§19.5 (an interface is a type but not instantiable; spawn of one is a TypeError)"
 
 [[test]]
 id = "iface_subtype_binding"
 section = "21_interfaces"
 path = "tests/21_interfaces/iface_subtype_binding.ag"
-since = "1.1"
 expect = "accept"
-spec = "v1.1.0 design 5.2 (agent <: interface; bind a concrete agent to an interface slot; reach over the interface)"
+spec = "§19.5 (agent <: interface; bind a concrete agent to an interface slot; reach over the interface)"
 
 [[test]]
 id = "gate_all_reversible_no_principal_accept"
 section = "22_gate"
 path = "tests/22_gate/gate_all_reversible_no_principal_accept.ag"
-since = "1.1"
 expect = "accept"
 spec = "§20 (all arms reversible -> argmax-forever; no principal required)"
 
@@ -1081,7 +1051,6 @@ spec = "§20 (all arms reversible -> argmax-forever; no principal required)"
 id = "gate_decide_defer_clause_accept"
 section = "22_gate"
 path = "tests/22_gate/gate_decide_defer_clause_accept.ag"
-since = "1.1"
 expect = "accept"
 spec = "§20 (decide with a trailing `defer to p` clause supplies the principal)"
 
@@ -1089,7 +1058,6 @@ spec = "§20 (decide with a trailing `defer to p` clause supplies the principal)
 id = "gate_decide_principal_subject_accept"
 section = "22_gate"
 path = "tests/22_gate/gate_decide_principal_subject_accept.ag"
-since = "1.1"
 expect = "accept"
 spec = "§20 (decide with a principal subject; a non-reversible arm has a reachable principal)"
 
@@ -1097,7 +1065,6 @@ spec = "§20 (decide with a principal subject; a non-reversible arm has a reacha
 id = "gate_decision_introspection_accept"
 section = "22_gate"
 path = "tests/22_gate/gate_decision_introspection_accept.ag"
-since = "1.1"
 expect = "accept"
 spec = "§20.4, §9 (Decision provenance: .basis over the Basis enum)"
 
@@ -1105,7 +1072,6 @@ spec = "§20.4, §9 (Decision provenance: .basis over the Basis enum)"
 id = "gate_file_conformal_decl_accept"
 section = "22_gate"
 path = "tests/22_gate/gate_file_conformal_decl_accept.ag"
-since = "1.1"
 expect = "accept"
 spec = "§20 (file-level `conformal α;` declaration)"
 
@@ -1113,7 +1079,6 @@ spec = "§20 (file-level `conformal α;` declaration)"
 id = "gate_nonreversible_no_principal_reject"
 section = "22_gate"
 path = "tests/22_gate/gate_nonreversible_no_principal_reject.ag"
-since = "1.1"
 expect = "reject"
 error = "GateError"
 spec = "§20 (a non-reversible arm with no reachable principal is a compile error)"
@@ -1122,7 +1087,6 @@ spec = "§20 (a non-reversible arm with no reachable principal is a compile erro
 id = "gate_per_gate_conformal_accept"
 section = "22_gate"
 path = "tests/22_gate/gate_per_gate_conformal_accept.ag"
-since = "1.1"
 expect = "accept"
 spec = "§20 (per-gate conformal α override on a decide)"
 
@@ -1130,6 +1094,5 @@ spec = "§20 (per-gate conformal α override on a decide)"
 id = "gate_reversible_action_accept"
 section = "22_gate"
 path = "tests/22_gate/gate_reversible_action_accept.ag"
-since = "1.1"
 expect = "accept"
 spec = "§20 (`reversible action` — reversibility annotates a perform sink)"

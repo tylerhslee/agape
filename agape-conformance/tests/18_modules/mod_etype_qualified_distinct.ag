@@ -1,9 +1,8 @@
 //! id:        mod_etype_qualified_distinct
 //! section:   18_modules
-//! since:     1.1
 //! expect:    accept
 //! modules:   a.ag; b.ag
-//! spec:      v1.1.0 design 3.2 (same event name in two modules are DISTINCT qualified etypes)
+//! spec:      §19.2 (same event name in two modules are DISTINCT qualified etypes)
 //! note:      a.Tick and b.Tick coexist; when(a.Tick) binds the qualified type, no collision
 //! ---
 import a;

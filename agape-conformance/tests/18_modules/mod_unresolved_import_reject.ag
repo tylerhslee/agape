@@ -1,9 +1,8 @@
 //! id:        mod_unresolved_import_reject
 //! section:   18_modules
-//! since:     1.1
 //! expect:    reject
 //! error:     ModuleError
-//! spec:      v1.1.0 design 2.3 (an import resolving to no module is a ModuleError)
+//! spec:      §19.2 (an import resolving to no module is a ModuleError)
 //! ---
 import nonexistent;
 int y = nonexistent.f();
