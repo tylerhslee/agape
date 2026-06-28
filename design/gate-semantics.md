@@ -39,6 +39,52 @@ stakes ladder is dropped as too arbitrary.
 - **Unmarked = fail-closed = rigorous.** A consequential action you *forgot* to annotate gets the
   cautious path (§13 "absent a declaration, fail closed"). You write `reversible` to *relax*.
 
+### 1b. Gate strictness, and the cold→warm phasing
+
+Reversibility operates at **two levels**, and `reversible` is really a *cold-start accelerator +
+per-commit guarantee-waiver*, not "argmax forever."
+
+**Gate level — does the gate engage conformal at all? The strictest arm decides.**
+- **All arms reversible** → **argmax-forever**: no labels, no principal, no conformal, never warms.
+- **Any arm non-reversible** → **consequential**: needs a principal (§2) and warms over time.
+
+**Phase — for a consequential gate (the cold→warm bootstrap):**
+- **Cold** (labels < readiness): run **argmax**. Picked outcome **reversible** → commit; **non-
+  reversible** → **defer** to the principal (cannot certify yet). The deferrals become the labels.
+- **Warm** (labels ≥ readiness): run **conformal every time** (the set is computed for all
+  outcomes). Then per-outcome reversibility decides what to do with it: a **non-reversible**
+  outcome commits iff the set is a singleton, else defers (coverage guarantee *required*); a
+  **reversible** outcome commits the argmax of the set (guarantee *waived*).
+
+| | cold (no labels) | warm (calibrated) |
+|---|---|---|
+| all-reversible gate | argmax → commit | stays cold — argmax forever |
+| reversible arm (mixed gate) | argmax → commit | conformal set → commit argmax (guarantee waived) |
+| non-reversible arm | argmax → **defer** | conformal → singleton commit, else **defer** |
+
+So "the mode depends on the strictest arm" (gate level), "cold: argmax-or-defer", "warm: conformal
+every time", and "reversible never defers" all hold at once.
+
+### 1c. Inspecting a decision (provenance, not reflection)
+
+A `Decision<E>` is **introspectable** for how it was settled — the data already exists (§13: "the
+recorded `Decision` pins which basis settled it and the applied rule"). Expose it as read-only
+fields:
+
+```agape
+Decision<Resolution> d = manager decide c { … };
+d.committed   // the chosen variant (or abstained)
+d.basis       // Argmax | Conformal | Principal  — runtime: cold/reversible vs warm vs deferred
+d.margin      // the gap g
+if (d.basis == Conformal) { … } else { … }   // e.g. log/escalate uncertified commits differently
+```
+
+Two readable forms: **static** — "does this *gate* require conformance?" is known at compile time
+from the arms (strictest-arm); **runtime** — "how was *this* decision settled?" is `d.basis`. This
+is agape's idiomatic answer to `typeof`: **provenance introspection** over the audit metadata the
+spine already records — not general structural reflection (which tensions with the small core,
+determinism, and erased/monomorphized generics, and is deferred).
+
 ## 2. commit / default / defer (+ notify orthogonal)
 
 - **commit** — act on a named outcome (admitted by its action's mode: face-value if `reversible`,
