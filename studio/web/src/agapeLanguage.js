@@ -98,6 +98,6 @@ export function registerAgape(monaco) {
       { token: "operator", foreground: "d4d4d4" },
       { token: "invalid", foreground: "f48771", fontStyle: "underline" },
     ],
-    colors: { "editor.background": "#1e1e1e" },
+    colors: { "editor.background": "#121419" },
   });
 }

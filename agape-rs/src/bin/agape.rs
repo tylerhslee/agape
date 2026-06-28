@@ -263,6 +263,22 @@ fn cmd_studio(_args: &[String]) {
     // own bin/agape, not a dev path).
     let self_bin = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("agape"));
 
+    // A bundle ships the agent-server as source; install its deps once on first run.
+    let agent_dir = home.join("agent-server");
+    if !agent_dir.join("node_modules").is_dir() {
+        println!("  installing studio dependencies (first run, one-time)…");
+        let ok = Command::new("npm")
+            .args(["install", "--no-audit", "--no-fund"])
+            .current_dir(&agent_dir)
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if !ok {
+            eprintln!("agape: `npm install` for the studio failed — is Node installed?\n  (cd {} && npm install)", agent_dir.display());
+            exit(1);
+        }
+    }
+
     let web_dist = home.join("web-dist");
     if web_dist.is_dir() {
         // Bundle mode: the agent-server serves the prebuilt web app — one process.

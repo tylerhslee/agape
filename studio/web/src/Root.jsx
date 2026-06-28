@@ -1,29 +1,20 @@
 import { useState, useEffect } from "react";
-import Studio from "./missioncontrol/Studio.jsx";
-import App from "./App.jsx";
-import Review from "./review/Review.jsx";
-import ProjectView from "./project/ProjectView.jsx";
+import Shell from "./Shell.jsx";
 import * as project from "./project/projectApi.js";
 
-// Top-level switch between studio surfaces:
-//  - "project" — the user's own Agape project (opened via `agape studio`): the landing
-//    when AGAPE_PROJECT is set on the agent-server.
-//  - "review"  — the spec + conformance review studio.
-//  - "studio"  — the work-centric shell (mission control + work board + detail).
-//  - "console" — the VS Code-skinned event console (code editing).
+// Loads whatever project the studio was launched on (if any), then mounts the
+// single app shell. There is no longer a top-level "which screen" router — the
+// shell's activity rail owns navigation between spaces.
 export default function Root() {
-  const [view, setView] = useState(null); // null until we know whether a project is open
   const [info, setInfo] = useState(null);
+  const [ready, setReady] = useState(false);
 
   useEffect(() => {
     project.info()
-      .then((d) => { setInfo(d); setView(d.hasProject ? "project" : "review"); })
-      .catch(() => setView("review"));
+      .then((d) => { setInfo(d); setReady(true); })
+      .catch(() => setReady(true)); // no project / backend — shell still opens
   }, []);
 
-  if (view === null) return <div style={{ position: "fixed", inset: 0, background: "#0f1115", color: "#9aa4b2", display: "flex", alignItems: "center", justifyContent: "center", font: "14px sans-serif" }}>opening studio…</div>;
-  if (view === "console") return <App onHome={() => setView("review")} />;
-  if (view === "studio") return <Studio onOpenConsole={() => setView("console")} />;
-  if (view === "project" && info?.hasProject) return <ProjectView info={info} onReview={() => setView("review")} />;
-  return <Review onStudio={() => setView("studio")} onProject={info?.hasProject ? () => setView("project") : undefined} />;
+  if (!ready) return <div className="app-loading">opening studio…</div>;
+  return <Shell info={info} />;
 }
