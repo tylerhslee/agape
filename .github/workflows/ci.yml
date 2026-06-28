@@ -44,9 +44,9 @@ jobs:
         run: cargo test
 
       # The conformance binary exits with the number of failing tests, so a
-      # non-zero exit fails the job — this is the gate that the language stays
-      # at full v1.0 conformance.
-      - name: Conformance suite (must be 102/102)
+      # non-zero exit fails the job — the gate that the language stays at full
+      # conformance at the toolchain's version.
+      - name: Conformance suite (zero failures)
         run: cargo run --quiet --bin conformance
 
       # Style is informative, never blocking — CI must not pressure the
