@@ -6,6 +6,52 @@ All notable changes to Agape are recorded here. The format follows
 conformance suite, and the studio move in lockstep — a release is the whole
 bundle at one version.
 
+## [1.0.2] — 2026-06-27
+
+The library layer and a readable decision gate — pieces of the v1.0 language left
+unfinished in 1.0.0. **Backward compatible:** every well-typed 1.0.1 program is a
+well-typed 1.0.2 program with identical observable behavior. All additions are
+static / compile-time and desugar to the unchanged 1.0 engine.
+
+### Added
+- **Library layer (SPEC §19)** — agape code can now be modularized, hidden,
+  parameterized, and abstracted:
+  - **Modules & imports** — one `.ag` file is one module (`module path;`, else the
+    implicit root); `import m;`, `import m as x;`, `import { a, b } from m;`, and
+    `pub import` for re-export. Packages declare `[package]` / `[dependencies]` in
+    `agape.toml` (path or git deps; no registry yet).
+  - **Namespacing** — fully-qualified names; the spine's event `etype` is now
+    qualified, so the same simple name in two modules is two distinct spine types.
+  - **Visibility** — `pub` (default module-private), governing *names, not the
+    spine* (a private event still lands on the spine for audit); `pub` is shallow.
+  - **Generics** — plain type parameters on `struct` and `fn`, monomorphized at
+    compile time. Agents and interfaces are not generic.
+  - **Interfaces** — `interface I { when EVENT decide RESULT; requires CAP }` with
+    nominal conformance; an implementor is a subtype (`reach I` authorizes any
+    implementor), erased at runtime.
+  - **Error subtyping** — `event Foo(..) : Error;`, single-level under the built-in
+    `Error` root, caught by `when (Error e)`.
+- **Readable decision gate (SPEC §20)** — a surface where a non-programmer states
+  intent plus one fact about stakes, and the decision theory is derived and
+  enforced. `reversible` marks a consequential sink; `decide { … }` carries
+  commit / `default:` / `defer` arms with a principal for the contested case; one
+  `conformal α` dial sets the error guarantee (file, per-gate, or manifest scope).
+  A non-reversible arm with no reachable principal is a **compile error**. It
+  desugars to the `endorse` / `c by R` engine, which remains available for
+  hand-calibration.
+- **Conformance suite grows to 139** (was 102): `18_modules`, `19_visibility`,
+  `20_generics`, `21_interfaces`, `22_gate`, and error-subtyping cases in
+  `09_prelude` — still a hard CI gate (139/139).
+- New conformance error classes: `ModuleError`, `VisibilityError`,
+  `InterfaceError`, `GateError`.
+
+### Changed
+- **The qualified event `etype` changes chain-head hashes** for the same source vs
+  1.0.1 — a representational change, not a semantic one (observable behavior and all
+  soundness guarantees are preserved). Journals recorded under 1.0.x should be
+  re-recorded under 1.0.2.
+- Bump `agape-rs` to 1.0.2.
+
 ## [1.0.1] — 2026-06-27
 
 A test-and-pipeline patch. **No language, compiler, runtime, or spec changes**:
@@ -94,5 +140,6 @@ self-contained `agape` CLI.
 - `ci.yml` builds and tests the language, gates on conformance (102/102) and
   manifest drift, and builds the studio.
 
+[1.0.2]: https://github.com/tylerhslee/agape/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/tylerhslee/agape/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/tylerhslee/agape/releases/tag/v1.0.0
