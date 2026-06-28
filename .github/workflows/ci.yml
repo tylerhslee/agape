@@ -78,22 +78,81 @@ jobs:
             exit 1
           fi
 
-  # ── the studio frontend builds (Vite) + the agent-server deps install ─────
+  # ── the studio: test (unit + integration) → build → run the bundle path ───
   studio:
-    name: studio (web build · server deps)
+    name: studio (test · build · run)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
 
+      - name: Install deps
+        run: |
+          (cd studio/web && npm install --no-audit --no-fund)
+          (cd studio/agent-server && npm install --no-audit --no-fund)
+
+      # The integration tests boot the backend, which runs projects through the binary.
+      - name: Build the agape binary
+        run: cargo build --manifest-path agape-rs/Cargo.toml --bin agape
+
+      - name: Test — agent-server (unit + integration)
+        run: cd studio/agent-server && npx vitest run --reporter=default --reporter=junit --outputFile=../../test-results/agent-server.xml
+
+      - name: Test — web (components)
+        run: cd studio/web && npx vitest run --reporter=default --reporter=junit --outputFile=../../test-results/web.xml
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: studio-test-results
+          path: test-results/*.xml
+          if-no-files-found: ignore
+
       - name: Build the web app
         working-directory: studio/web
-        run: |
-          npm install --no-audit --no-fund
-          npm run build
+        run: npm run build
 
-      - name: Install agent-server deps
-        working-directory: studio/agent-server
-        run: npm install --no-audit --no-fund
+      # End-to-end on the SHIPPED bundle path: serve the built app + run a project.
+      - name: Studio bundle smoke test
+        run: bash scripts/studio-smoke.sh
+
+  # ── E2E: a real browser drives the marquee user flow against the real studio ─
+  e2e:
+    name: studio E2E (Playwright)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install deps
+        run: |
+          (cd studio/web && npm install --no-audit --no-fund)
+          (cd studio/agent-server && npm install --no-audit --no-fund)
+
+      - name: Build the agape binary + the web app
+        run: |
+          cargo build --manifest-path agape-rs/Cargo.toml --bin agape
+          (cd studio/web && npm run build)
+
+      - name: Install Playwright (chromium + system deps)
+        working-directory: studio/web
+        run: npx playwright install --with-deps chromium
+
+      - name: Run E2E (Playwright drives the served app + the real backend)
+        working-directory: studio/web
+        run: npx playwright test
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: studio/web/playwright-report
+          if-no-files-found: ignore
