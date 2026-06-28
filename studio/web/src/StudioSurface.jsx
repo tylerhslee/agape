@@ -1,6 +1,7 @@
 import { useState } from "react";
 import Review from "./review/Review.jsx";
 import Learning from "./missioncontrol/Learning.jsx";
+import { STUDIO, RUNTIME, LANGUAGE } from "virtual:agape-versions";
 
 // The Studio surface — the studio *itself*, not the user's project. Reached via the
 // gear in the rail. Its own sub-nav: settings (incl. the cognition provider, which
@@ -100,6 +101,14 @@ function Settings({ provider, setProvider, editorPrefs, setEditorPrefs }) {
             </label>
           </>
         )}
+      </section>
+
+      <section className="studio-card" style={{ marginTop: 16 }}>
+        <div className="studio-card-h">About</div>
+        <div className="studio-card-sub">Versions running in this studio.</div>
+        <div className="studio-row"><span>Studio</span><code className="studio-ver">v{STUDIO}</code></div>
+        <div className="studio-row"><span>Runtime <em>— agape-rs</em></span><code className="studio-ver">v{RUNTIME}</code></div>
+        <div className="studio-row"><span>Language <em>— spec</em></span><code className="studio-ver">v{LANGUAGE}</code></div>
       </section>
     </div>
   );

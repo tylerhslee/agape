@@ -113,6 +113,8 @@ input:focus, textarea:focus, select:focus { outline: none; border-color: var(--a
 .rail-item:hover { color: var(--text); background: var(--surface-2); }
 .rail-item.active { color: var(--accent); border-left-color: var(--accent); background: var(--accent-soft); }
 .rail-spacer { flex: 1; }
+.rail-ver { text-align: center; font-size: 8px; color: var(--faint); padding: 5px 2px 2px; cursor: pointer; letter-spacing: 0.02em; }
+.rail-ver:hover { color: var(--muted); }
 
 .app-main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 .app-topbar {
@@ -281,3 +283,4 @@ input:focus, textarea:focus, select:focus { outline: none; border-color: var(--a
 .studio-row span em { color: var(--faint); font-style: normal; font-size: 11.5px; }
 .studio-row input[type="number"] { width: 84px; }
 .studio-row-note { font-size: 12px; color: var(--faint); margin-top: 6px; line-height: 1.5; }
+.studio-ver { font: 12px var(--mono); color: var(--text); }

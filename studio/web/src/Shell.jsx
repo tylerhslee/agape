@@ -5,6 +5,7 @@ import WorkBoard from "./missioncontrol/WorkBoard.jsx";
 import ItemDetail from "./missioncontrol/ItemDetail.jsx";
 import ProjectView from "./project/ProjectView.jsx";
 import StudioSurface from "./StudioSurface.jsx";
+import { STUDIO, RUNTIME, LANGUAGE } from "virtual:agape-versions";
 import "./missioncontrol/missioncontrol.css";
 
 // Two deliberately separate scopes:
@@ -77,6 +78,13 @@ export default function Shell({ info }) {
           title="Studio — settings, conformance, the studio's own agents"
         >
           <i className="ti ti-settings" /><span>Studio</span>
+        </div>
+        <div
+          className="rail-ver"
+          title={`studio v${STUDIO} · runtime v${RUNTIME} · language v${LANGUAGE}`}
+          onClick={() => setView("studio")}
+        >
+          v{STUDIO}
         </div>
       </nav>
 
