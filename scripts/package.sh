@@ -13,8 +13,10 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-VERSION="$(grep -m1 '^version' agape-rs/Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')"
-TARGET="${TARGET:-$(rustc -vV | sed -n 's/host: //p')}"
+# `tr -d` strips any CR — rustc -vV emits CRLF on Windows, which would otherwise
+# corrupt the bundle name and break the verify step.
+VERSION="$(grep -m1 '^version' agape-rs/Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/' | tr -d '\r\n')"
+TARGET="$(printf '%s' "${TARGET:-$(rustc -vV | sed -n 's/host: //p')}" | tr -d '\r\n')"
 NAME="agape-${VERSION}-${TARGET}"
 STAGE="$ROOT/dist/$NAME"
 
@@ -77,17 +79,22 @@ cognition is one config step away (\`configure provider claude\` + an
 \`ANTHROPIC_API_KEY\`). Put \`bin/\` on your PATH to call \`agape\` directly.
 MD
 
-# 3. the studio (optional — needs Node). One process: the agent-server serves the
-#    prebuilt web app, so there is no Vite at runtime.
+# 3. the studio (best-effort — a studio build must never fail the release). The
+#    agent-server serves the prebuilt web app (one process, no Vite at runtime). We
+#    ship the agent-server SOURCE and let deps install on first `agape studio`, so
+#    the archive carries no native modules / deep node_modules paths (portable +
+#    Windows-safe).
 if [ "${SKIP_STUDIO:-}" != "1" ] && command -v npm >/dev/null 2>&1; then
-  echo "==> building studio web app"
-  ( cd studio/web && npm install --no-audit --no-fund && npm run build )
-  mkdir -p "$STAGE/studio"
-  cp -r studio/web/dist "$STAGE/studio/web-dist"
-  cp -r studio/agent-server "$STAGE/studio/agent-server"
-  rm -rf "$STAGE/studio/agent-server/node_modules" "$STAGE/studio/agent-server/data"
-  echo "==> installing agent-server runtime deps"
-  ( cd "$STAGE/studio/agent-server" && npm install --no-audit --no-fund )
+  if ( cd studio/web && npm install --no-audit --no-fund && npm run build ); then
+    mkdir -p "$STAGE/studio"
+    cp -r studio/web/dist "$STAGE/studio/web-dist"
+    cp -r studio/agent-server "$STAGE/studio/agent-server"
+    rm -rf "$STAGE/studio/agent-server/node_modules" "$STAGE/studio/agent-server/data"
+    echo "==> studio staged (its deps install on first \`agape studio\`)"
+  else
+    echo "==> WARNING: studio web build failed — shipping a binary-only bundle"
+    rm -rf "$STAGE/studio"
+  fi
 else
   echo "==> skipping studio (SKIP_STUDIO or npm unavailable) — binary-only bundle"
 fi
