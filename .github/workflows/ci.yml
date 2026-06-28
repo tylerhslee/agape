@@ -119,3 +119,40 @@ jobs:
       # End-to-end on the SHIPPED bundle path: serve the built app + run a project.
       - name: Studio bundle smoke test
         run: bash scripts/studio-smoke.sh
+
+  # ── E2E: a real browser drives the marquee user flow against the real studio ─
+  e2e:
+    name: studio E2E (Playwright)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install deps
+        run: |
+          (cd studio/web && npm install --no-audit --no-fund)
+          (cd studio/agent-server && npm install --no-audit --no-fund)
+
+      - name: Build the agape binary + the web app
+        run: |
+          cargo build --manifest-path agape-rs/Cargo.toml --bin agape
+          (cd studio/web && npm run build)
+
+      - name: Install Playwright (chromium + system deps)
+        working-directory: studio/web
+        run: npx playwright install --with-deps chromium
+
+      - name: Run E2E (Playwright drives the served app + the real backend)
+        working-directory: studio/web
+        run: npx playwright test
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: studio/web/playwright-report
+          if-no-files-found: ignore

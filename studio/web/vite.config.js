@@ -21,4 +21,9 @@ export default defineConfig({
     outDir: "dist",
     emptyOutDir: true,
   },
+  // Vitest: component/unit tests live under src/. The Playwright E2E specs under
+  // e2e/ are run by `playwright test`, not Vitest (both claim `*.spec`).
+  test: {
+    include: ["src/**/*.{test,spec}.{js,jsx,ts,tsx}"],
+  },
 });
