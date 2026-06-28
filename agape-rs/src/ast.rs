@@ -17,8 +17,11 @@ pub enum Type {
     Text,
     Null,
     /// A user/prelude type referenced by name (enum, struct, agent, `Principal`,
-    /// `Rule`, `Verification`, `Entailment`, ...).
+    /// `Rule`, `Verification`, `Entailment`, ...). The name may be qualified
+    /// (`m.Name`) or a generic type parameter (§19.2, §19.5).
     Named(String),
+    /// A generic instantiation `Name<T, ...>` (a monomorphized struct, §19.5).
+    Generic(String, Vec<Type>),
     /// `event<T>` — present (or to be present) on the spine.
     Event(Box<Type>),
     /// `array<T>` — the one primitive aggregate.
@@ -162,6 +165,16 @@ pub struct Capability {
     pub target: String,
 }
 
+/// An `interface` member (§19.5): a handled-event→decision contract, or a
+/// required capability.
+#[derive(Debug, Clone, PartialEq)]
+pub enum IfaceMember {
+    /// `when EVENT decide RESULT` — the agent must have a `when (EVENT …)` handler.
+    When { event: String, result: String },
+    /// `requires CAP` — the capability must be in the implementor's `grants`.
+    Requires(Capability),
+}
+
 /// A formal parameter (always `type name`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Param {
@@ -206,30 +219,40 @@ pub enum ToolEffect {
 pub enum Stmt {
     /// `TYPE NAME [= EXPR];`
     VarDecl { ty: Type, name: String, expr: Option<Expr> },
-    /// `[sync] RET NAME(params) { body }`.
-    FnDecl { is_sync: bool, ret: Type, name: String, params: Vec<Param>, body: Vec<Stmt> },
-    /// `agent NAME [(params)] [grants {...}] { body }`.
+    /// `[sync] RET NAME[<typarams>](params) { body }`.
+    FnDecl { is_sync: bool, ret: Type, name: String, typarams: Vec<String>, params: Vec<Param>, body: Vec<Stmt> },
+    /// `[pub] agent NAME [(params)] [: Iface, ...] [grants {...}] { body }`.
     AgentDecl {
         name: String,
         params: Vec<Param>,
+        /// Implemented interfaces, nominal (`agent A : I, J`, §19.5).
+        ifaces: Vec<String>,
         grants: Vec<Capability>,
         has_grants: bool,
         /// `grants { * }` — the explicit unconstrained opt-out (lattice top).
         unconstrained: bool,
         body: Vec<Stmt>,
     },
-    /// `struct NAME { field, ... }`.
-    StructDecl { name: String, fields: Vec<Field> },
+    /// `[pub] struct NAME[<typarams>] { field, ... }`.
+    StructDecl { name: String, typarams: Vec<String>, fields: Vec<Field> },
     /// `enum NAME { A, B, ... }` — a closed variant set (no payloads in v1.0).
     EnumDecl { name: String, variants: Vec<String> },
-    /// `event NAME(field, ...);` — a custom spine-event type with typed payload.
-    EventDecl { name: String, fields: Vec<Field> },
-    /// `action NAME(field, ...);` — a performative event type (§3, §13); `perform`ing
-    /// it is a consequential act needing the `perform NAME` power and a settled value.
-    ActionDecl { name: String, fields: Vec<Field> },
-    /// `read|write tool RET NAME(params);` — a tool-seam capability (§6b). The effect
-    /// class is mandatory: `read` observes the world, `write` is a consequential sink.
-    ToolDecl { name: String, params: Vec<Param>, ret: Option<Type>, effect: ToolEffect },
+    /// `event NAME(field, ...) [: Super];` — a custom spine-event type with typed
+    /// payload; `error_super` ⇒ a leaf under the built-in `Error` root (§19.5).
+    /// `super_name` carries any declared supertype spelling (for the non-`Error`
+    /// rejection); `None` if no supertype.
+    EventDecl { name: String, fields: Vec<Field>, error_super: bool, super_name: Option<String> },
+    /// `interface NAME { (when EVENT decide RESULT | requires CAP);* }` (§19.5).
+    InterfaceDecl { name: String, members: Vec<IfaceMember> },
+    /// `[reversible] action NAME(field, ...);` — a performative event type (§3, §13);
+    /// `perform`ing it is a consequential act needing the `perform NAME` power and a
+    /// settled value. `reversible` marks a low-stakes sink (§20).
+    ActionDecl { name: String, fields: Vec<Field>, reversible: bool },
+    /// `[reversible] read|write tool RET NAME(params);` — a tool-seam capability (§6b).
+    /// The effect class is mandatory; `reversible` marks a low-stakes write sink (§20).
+    ToolDecl { name: String, params: Vec<Param>, ret: Option<Type>, effect: ToolEffect, reversible: bool },
+    /// `conformal α;` — a file-level default conformal guarantee (§20).
+    ConformalDecl(f64),
     /// `authority EventType;` — marks an event type consequential (§13).
     Authority(String),
     /// `principal NAME;` — an identity-seam principal binding (§13).
@@ -298,10 +321,61 @@ pub enum Stmt {
     While { cond: Expr, body: Vec<Stmt> },
     /// `break;`
     Break,
-    /// `import "path";` — file = module.
-    Import { path: String },
+    /// `module a.b;` — the module-path header (§19.2).
+    ModuleDecl { path: String },
+    /// `[pub] import m [as x];` / `[pub] import { A, B } from m;` (§19.2, §19.2a).
+    Import {
+        /// The module path imported from.
+        module: String,
+        /// `Some(alias)` for `import m as x;` (whole-module prefix rebind); `None`
+        /// for a plain whole-module import or a selective import.
+        alias: Option<String>,
+        /// Selective names for `import { A, B } from m;`; empty ⇒ whole-module.
+        names: Vec<String>,
+        /// `pub import …` re-exports (§19.2a).
+        is_pub: bool,
+    },
+    /// `[principal] decide EXPR [conformal α] { Variant: … default: … } [defer to p];`
+    /// — the readable gate (§20). Desugars to the §13 engine.
+    Decide {
+        /// The collapsed `Credence` expression.
+        expr: Expr,
+        /// A principal subject (`p decide …`), if present.
+        subject: Option<String>,
+        /// A per-gate conformal α override.
+        conformal: Option<f64>,
+        /// The commit arms.
+        arms: Vec<(String, Vec<Stmt>)>,
+        /// The optional `default:` arm.
+        default: Option<Vec<Stmt>>,
+        /// A trailing `defer to p` principal, if present.
+        defer_to: Option<String>,
+    },
     /// `#!somatic` / `#!cognitive` — a module attribute.
     ModuleAttr { name: String },
+    /// A `pub`-prefixed declaration (§19.4) — exports the wrapped decl's name. The
+    /// inner statement is the actual declaration; `pub` only affects cross-module
+    /// name visibility, never runtime behavior.
+    Pub(Box<Stmt>),
     /// A bare expression statement (e.g. a send, a tool call, a query expr).
     ExprStmt(Expr),
+}
+
+impl Stmt {
+    /// The declared name of a top-level declaration, if it has one (for module
+    /// resolution / visibility, §19). Unwraps a `pub` wrapper.
+    pub fn decl_name(&self) -> Option<&str> {
+        match self {
+            Stmt::Pub(inner) => inner.decl_name(),
+            Stmt::FnDecl { name, .. }
+            | Stmt::AgentDecl { name, .. }
+            | Stmt::StructDecl { name, .. }
+            | Stmt::EnumDecl { name, .. }
+            | Stmt::EventDecl { name, .. }
+            | Stmt::ActionDecl { name, .. }
+            | Stmt::ToolDecl { name, .. }
+            | Stmt::InterfaceDecl { name, .. } => Some(name),
+            _ => None,
+        }
+    }
 }

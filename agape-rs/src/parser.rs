@@ -23,6 +23,9 @@ fn is_lvalue(e: &Expr) -> bool {
 pub struct Parser {
     toks: Vec<Token>,
     pos: usize,
+    /// While true, a bare `Name {` is NOT a struct literal — the `{` opens a block
+    /// (used for the gate scrutinee `decide c { … }`, §20).
+    no_struct_lit: bool,
 }
 
 /// Parse a token stream into a list of top-level statements.
@@ -42,7 +45,7 @@ pub fn parse_expr(toks: Vec<Token>) -> PResult<Expr> {
 
 impl Parser {
     pub fn new(toks: Vec<Token>) -> Self {
-        Parser { toks, pos: 0 }
+        Parser { toks, pos: 0, no_struct_lit: false }
     }
 
     // ── cursor helpers ─────────────────────────────────────────────────────────
@@ -140,14 +143,31 @@ impl Parser {
             self.advance();
             return Ok(Stmt::ModuleAttr { name: t.value });
         }
-        if t.is_kw("import") {
+        if t.is_kw("module") {
             self.advance();
-            if self.cur().kind != TokenKind::Str {
-                return Err(self.err("expected a string path after `import`"));
-            }
-            let path = self.advance().value;
+            let path = self.parse_modpath()?;
             self.eat_op(";")?;
-            return Ok(Stmt::Import { path });
+            return Ok(Stmt::ModuleDecl { path });
+        }
+        if t.is_kw("import") {
+            return self.import_stmt(false);
+        }
+        if t.is_kw("pub") {
+            return self.pub_decl();
+        }
+        if t.is_kw("interface") {
+            return self.interface_decl();
+        }
+        if t.is_kw("reversible") {
+            return self.reversible_decl();
+        }
+        // File-level `conformal α;` declaration (§20). `conformal` is a contextual
+        // identifier, so only treat it as the declaration when followed by a number.
+        if t.is_ident("conformal") && matches!(self.peek(1).kind, TokenKind::Int | TokenKind::Float) {
+            self.advance();
+            let alpha = self.parse_number()?;
+            self.eat_op(";")?;
+            return Ok(Stmt::ConformalDecl(alpha));
         }
         if t.is_kw("struct") {
             return self.struct_decl();
@@ -163,10 +183,10 @@ impl Parser {
             return self.event_decl();
         }
         if t.is_kw("action") {
-            return self.action_decl();
+            return self.action_decl(false);
         }
         if t.is_kw("read") || t.is_kw("write") {
-            return self.tool_decl();
+            return self.tool_decl(false);
         }
         if t.is_kw("tool") {
             // The effect class (`read`/`write`) is mandatory and leads the declaration (§6b).
@@ -192,7 +212,12 @@ impl Parser {
         }
         if t.is_kw("spawn") {
             self.advance();
-            let agent_type = self.eat_ident()?;
+            let agent_type = self.parse_modpath()?;
+            // Optional generic type args (erased; agents are not generic, but the
+            // grammar permits the form so the checker can rule on it).
+            if self.check_op("<") {
+                self.skip_typeargs()?;
+            }
             let name = self.eat_ident()?;
             // Constructor args may be bound here (`spawn TYPE name(args)`) or deferred
             // to `awake name(args)`; both forms are accepted (§5, §15.2).
@@ -228,7 +253,7 @@ impl Parser {
         }
         if t.is_kw("emit") {
             self.advance();
-            let event_type = self.eat_ident()?;
+            let event_type = self.parse_modpath()?;
             self.eat_op("(")?;
             let payload = self.expr()?;
             self.eat_op(")")?;
@@ -237,12 +262,18 @@ impl Parser {
         }
         if t.is_kw("perform") {
             self.advance();
-            let action_type = self.eat_ident()?;
+            let action_type = self.parse_modpath()?;
             self.eat_op("(")?;
             let payload = self.expr()?;
             self.eat_op(")")?;
             self.eat_op(";")?;
             return Ok(Stmt::Perform { action_type, payload });
+        }
+        // The readable gate (§20): `decide c { … }` (no paren — the `decide(e, rule)`
+        // form is expression-only). Also `p decide c { … }` with a principal subject
+        // (handled in the fallback below).
+        if t.is_kw("decide") && !self.peek(1).is_op("(") {
+            return self.decide_stmt(None);
         }
         if t.is_kw("endorse") {
             return self.endorse_stmt();
@@ -327,6 +358,12 @@ impl Parser {
             return Ok(Stmt::Block(body));
         }
 
+        // A principal-subject gate: `p decide c { … }` (§20).
+        if t.kind == TokenKind::Ident && self.peek(1).is_kw("decide") {
+            let subject = self.eat_ident()?;
+            return self.decide_stmt(Some(subject));
+        }
+
         // A type-led declaration (var or fn).
         if self.starts_type_decl() {
             return self.decl();
@@ -364,7 +401,77 @@ impl Parser {
         if t.kind == TokenKind::Ident && self.peek(1).kind == TokenKind::Ident {
             return true;
         }
+        // A qualified type `m.Name binder` — `Ident . Ident … Ident binder`.
+        if t.kind == TokenKind::Ident && self.peek(1).is_op(".") {
+            // Find the end of the dotted path, then check it is followed by a binder
+            // (or a generic instantiation followed by a binder).
+            if let Some(after) = self.modpath_end(self.pos) {
+                if self.toks.get(after).map(|x| x.kind) == Some(TokenKind::Ident) {
+                    return true; // `m.Name binder`
+                }
+                if self.toks.get(after).map(|x| x.is_op("<")).unwrap_or(false) {
+                    if let Some(close) = self.typeargs_end(after) {
+                        if self.toks.get(close).map(|x| x.kind) == Some(TokenKind::Ident) {
+                            return true; // `m.Box<int> binder`
+                        }
+                    }
+                }
+            }
+        }
+        // A generic-instantiation var decl `Name<args> binder` (vs the comparison
+        // `a < b`): a balanced `<…>` whose closing `>` is immediately followed by a
+        // binder name.
+        if t.kind == TokenKind::Ident && self.peek(1).is_op("<") {
+            if let Some(close) = self.typeargs_end(self.pos + 1) {
+                if self.toks.get(close).map(|x| x.kind) == Some(TokenKind::Ident) {
+                    return true;
+                }
+            }
+        }
         false
+    }
+
+    /// The token index just past a dotted modpath beginning at `start` (an `Ident`
+    /// followed by `(. Ident)*`). `None` if `start` is not an identifier.
+    fn modpath_end(&self, start: usize) -> Option<usize> {
+        if self.toks.get(start)?.kind != TokenKind::Ident {
+            return None;
+        }
+        let mut i = start + 1;
+        while self.toks.get(i).map(|x| x.is_op(".")).unwrap_or(false)
+            && self.toks.get(i + 1).map(|x| x.kind == TokenKind::Ident).unwrap_or(false)
+        {
+            i += 2;
+        }
+        Some(i)
+    }
+
+    /// Given the index of an opening `<`, the index just past the matching `>` of a
+    /// balanced type-argument list (counting nested `<>`). `None` if it never closes
+    /// before a statement terminator (`;`/`{`/`}`/`(`) — in which case it is not a
+    /// type-arg list but a comparison.
+    fn typeargs_end(&self, open: usize) -> Option<usize> {
+        if !self.toks.get(open)?.is_op("<") {
+            return None;
+        }
+        let mut depth = 0usize;
+        let mut i = open;
+        while let Some(tok) = self.toks.get(i) {
+            if tok.is_op("<") {
+                depth += 1;
+            } else if tok.is_op(">") {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i + 1);
+                }
+            } else if tok.is_op(";") || tok.is_op("{") || tok.is_op("}") || tok.is_op("(")
+                || tok.is_op(")") || tok.kind == TokenKind::Eof
+            {
+                return None; // a comparison, not a type-arg list
+            }
+            i += 1;
+        }
+        None
     }
 
     /// A declaration beginning with an optional `sync`, a type, and a name.
@@ -377,11 +484,16 @@ impl Parser {
         };
         let ty = self.parse_type()?;
         let name = self.eat_binder()?;
+        // Optional generic type parameters on a function (`fn id<T>(…)`, §19.5).
+        let typarams = if self.check_op("<") { self.parse_typarams()? } else { Vec::new() };
 
         if self.check_op("(") {
             let params = self.parse_params()?;
             let body = self.block()?;
-            return Ok(Stmt::FnDecl { is_sync, ret: ty, name, params, body });
+            return Ok(Stmt::FnDecl { is_sync, ret: ty, name, typarams, params, body });
+        }
+        if !typarams.is_empty() {
+            return Err(self.err("type parameters are only valid on a function declaration"));
         }
         if is_sync {
             return Err(self.err("`sync` may only mark a function declaration"));
@@ -399,10 +511,215 @@ impl Parser {
     fn struct_decl(&mut self) -> PResult<Stmt> {
         self.eat_kw("struct")?;
         let name = self.eat_ident()?;
+        let typarams = self.parse_typarams()?;
         self.eat_op("{")?;
         let fields = self.parse_fields("}")?;
         self.eat_op("}")?;
-        Ok(Stmt::StructDecl { name, fields })
+        Ok(Stmt::StructDecl { name, typarams, fields })
+    }
+
+    /// `<A, B, ...>` type parameters on a `struct`/`fn` (§19.5). Empty if absent.
+    fn parse_typarams(&mut self) -> PResult<Vec<String>> {
+        if !self.check_op("<") {
+            return Ok(Vec::new());
+        }
+        self.advance();
+        let mut params = vec![self.eat_ident()?];
+        while self.check_op(",") {
+            self.advance();
+            params.push(self.eat_ident()?);
+        }
+        self.eat_op(">")?;
+        Ok(params)
+    }
+
+    /// Consume and discard a `<T, ...>` type-argument list (the args are erased at
+    /// monomorphization; the runtime never sees them).
+    fn skip_typeargs(&mut self) -> PResult<()> {
+        self.eat_op("<")?;
+        loop {
+            let _ = self.parse_type()?;
+            if self.check_op(",") {
+                self.advance();
+            } else {
+                break;
+            }
+        }
+        self.eat_op(">")?;
+        Ok(())
+    }
+
+    /// A dotted module / qualified-name path (`a`, `a.b`, `m.Name`) → a single
+    /// `.`-joined string (§19.2).
+    fn parse_modpath(&mut self) -> PResult<String> {
+        let mut path = self.eat_ident()?;
+        while self.check_op(".") {
+            self.advance();
+            path.push('.');
+            path.push_str(&self.eat_ident()?);
+        }
+        Ok(path)
+    }
+
+    /// `[pub] import m [as x];` / `[pub] import { A, B } from m;` (§19.2, §19.2a).
+    fn import_stmt(&mut self, is_pub: bool) -> PResult<Stmt> {
+        self.eat_kw("import")?;
+        if self.check_op("{") {
+            self.advance();
+            let mut names = vec![self.eat_ident()?];
+            while self.check_op(",") {
+                self.advance();
+                names.push(self.eat_ident()?);
+            }
+            self.eat_op("}")?;
+            self.eat_kw("from")?;
+            let module = self.parse_modpath()?;
+            self.eat_op(";")?;
+            return Ok(Stmt::Import { module, alias: None, names, is_pub });
+        }
+        let module = self.parse_modpath()?;
+        let alias = if self.cur().is_ident("as") {
+            self.advance();
+            Some(self.eat_ident()?)
+        } else {
+            None
+        };
+        self.eat_op(";")?;
+        Ok(Stmt::Import { module, alias, names: Vec::new(), is_pub })
+    }
+
+    /// A `pub`-prefixed top-level declaration / re-export (§19.4, §19.2a).
+    fn pub_decl(&mut self) -> PResult<Stmt> {
+        self.eat_kw("pub")?;
+        if self.check_kw("import") {
+            return self.import_stmt(true);
+        }
+        let inner = if self.check_kw("interface") {
+            self.interface_decl()?
+        } else if self.check_kw("reversible") {
+            self.reversible_decl()?
+        } else if self.check_kw("struct") || self.check_kw("enum") || self.check_kw("event")
+            || self.check_kw("action") || self.check_kw("agent") || self.check_kw("read")
+            || self.check_kw("write") || self.check_kw("sync")
+            || self.starts_type_decl()
+        {
+            self.stmt()?
+        } else {
+            return Err(self.err("`pub` may only prefix a top-level declaration or `import`"));
+        };
+        Ok(Stmt::Pub(Box::new(inner)))
+    }
+
+    /// `interface NAME { (when EVENT decide RESULT | requires CAP);* }` (§19.5).
+    /// A generic interface (`interface I<T>`) is a `ParseError`.
+    fn interface_decl(&mut self) -> PResult<Stmt> {
+        self.eat_kw("interface")?;
+        let name = self.eat_ident()?;
+        if self.check_op("<") {
+            return Err(self.err("an interface may not be generic (§19.5)"));
+        }
+        self.eat_op("{")?;
+        let mut members = Vec::new();
+        while !self.check_op("}") && !self.at_eof() {
+            if self.check_kw("when") {
+                self.advance();
+                let event = self.parse_modpath()?;
+                // `decide` is the contract verb (no `->`, which is a LexError, §2).
+                self.eat_kw("decide")?;
+                let result = self.parse_modpath()?;
+                members.push(IfaceMember::When { event, result });
+            } else if self.cur().is_ident("requires") || self.check_kw("requires") {
+                self.advance();
+                let cap = self.parse_cap()?;
+                members.push(IfaceMember::Requires(cap));
+            } else {
+                return Err(self.err("expected `when EVENT decide RESULT` or `requires CAP` in an interface"));
+            }
+            if self.check_op(";") {
+                self.advance();
+            }
+        }
+        self.eat_op("}")?;
+        Ok(Stmt::InterfaceDecl { name, members })
+    }
+
+    /// One capability `perform X` / `reach X` / `use X` (§13), for `requires`/`grants`.
+    fn parse_cap(&mut self) -> PResult<Capability> {
+        let kind = if self.check_kw("perform") {
+            self.advance();
+            CapKind::Perform
+        } else if self.check_kw("emit") {
+            self.advance();
+            CapKind::Emit
+        } else if self.cur().is_ident("reach") {
+            self.advance();
+            CapKind::Reach
+        } else if self.cur().is_ident("use") {
+            self.advance();
+            CapKind::Use
+        } else {
+            return Err(self.err("expected a capability (`perform`/`reach`/`use`)"));
+        };
+        let target = self.parse_modpath()?;
+        Ok(Capability { kind, target })
+    }
+
+    /// `[p] decide EXPR [conformal α] { Variant: (block|stmt) … [default: …] } [defer to p];`
+    /// — the readable gate (§20). `subject` is the optional principal subject.
+    fn decide_stmt(&mut self, subject: Option<String>) -> PResult<Stmt> {
+        self.eat_kw("decide")?;
+        self.no_struct_lit = true;
+        let expr = self.compare()?;
+        self.no_struct_lit = false;
+        let conformal = if self.cur().is_ident("conformal") {
+            self.advance();
+            Some(self.parse_number()?)
+        } else {
+            None
+        };
+        self.eat_op("{")?;
+        let mut arms = Vec::new();
+        let mut default = None;
+        while !self.check_op("}") && !self.at_eof() {
+            if self.check_kw("default") {
+                self.advance();
+                self.eat_op(":")?;
+                default = Some(self.decide_arm_body()?);
+            } else {
+                let label = if self.check_kw("true") {
+                    self.advance();
+                    "true".to_string()
+                } else if self.check_kw("false") {
+                    self.advance();
+                    "false".to_string()
+                } else {
+                    self.eat_ident()?
+                };
+                self.eat_op(":")?;
+                arms.push((label, self.decide_arm_body()?));
+            }
+        }
+        self.eat_op("}")?;
+        let defer_to = if self.check_kw("defer") {
+            self.advance();
+            self.eat_ctx("to")?;
+            Some(self.eat_ident()?)
+        } else {
+            None
+        };
+        if self.check_op(";") {
+            self.advance();
+        }
+        Ok(Stmt::Decide { expr, subject, conformal, arms, default, defer_to })
+    }
+
+    /// A `decide` arm body: a `{ block }` or a single statement (§20 grammar).
+    fn decide_arm_body(&mut self) -> PResult<Vec<Stmt>> {
+        if self.check_op("{") {
+            self.block()
+        } else {
+            Ok(vec![self.stmt()?])
+        }
     }
 
     fn enum_decl(&mut self) -> PResult<Stmt> {
@@ -426,19 +743,37 @@ impl Parser {
         self.eat_op("(")?;
         let fields = self.parse_fields(")")?;
         self.eat_op(")")?;
+        // An optional single supertype (§19.5). Only `Error` is permitted; the
+        // checker rejects any other (a `TypeError`), but it parses here so that
+        // diagnosis lands as a TypeError, not a ParseError.
+        let mut error_super = false;
+        let mut super_name: Option<String> = None;
+        if self.check_op(":") {
+            self.advance();
+            let s = self.parse_modpath()?;
+            error_super = s == "Error";
+            super_name = Some(s);
+        }
         self.eat_op(";")?;
-        Ok(Stmt::EventDecl { name, fields })
+        Ok(Stmt::EventDecl { name, fields, error_super, super_name })
     }
 
-    /// `action NAME(field, ...);` — a performative event type (§3, §13).
-    fn action_decl(&mut self) -> PResult<Stmt> {
+    /// `action NAME(field, ...);` — a performative event type (§3, §13). An `action`
+    /// may NOT carry a supertype (only `event` may extend `Error`) — a `ParseError`.
+    fn action_decl(&mut self, reversible: bool) -> PResult<Stmt> {
         self.eat_kw("action")?;
         let name = self.eat_ident()?;
         self.eat_op("(")?;
         let fields = self.parse_fields(")")?;
         self.eat_op(")")?;
-        self.eat_op(";")?;
-        Ok(Stmt::ActionDecl { name, fields })
+        if self.check_op(":") {
+            return Err(self.err("an `action` may not declare a supertype — only `event` may extend `Error` (§19.5)"));
+        }
+        // The trailing `;` is optional on a sink declaration (§15.2, §20).
+        if self.check_op(";") {
+            self.advance();
+        }
+        Ok(Stmt::ActionDecl { name, fields, reversible })
     }
 
     /// `endorse (arg by rule) { variant: stmts ... } [abstain { ... }]` (§13).
@@ -581,7 +916,7 @@ impl Parser {
         }
     }
 
-    fn tool_decl(&mut self) -> PResult<Stmt> {
+    fn tool_decl(&mut self, reversible: bool) -> PResult<Stmt> {
         // Mandatory effect class (§6b): `read` observes the world, `write` is a
         // consequential sink. The decl dispatcher only enters here on `read`/`write`.
         let effect = if self.check_kw("write") {
@@ -597,17 +932,47 @@ impl Parser {
         let ret = Some(self.parse_type()?);
         let name = self.eat_ident()?;
         let params = self.parse_params()?;
-        self.eat_op(";")?;
-        Ok(Stmt::ToolDecl { name, params, ret, effect })
+        // The trailing `;` is optional on a tool declaration (§15.2, §20).
+        if self.check_op(";") {
+            self.advance();
+        }
+        Ok(Stmt::ToolDecl { name, params, ret, effect, reversible })
+    }
+
+    /// `reversible action …` / `reversible (read|write) tool …` (§20). A
+    /// `reversible` prefix marks a low-stakes consequential sink.
+    fn reversible_decl(&mut self) -> PResult<Stmt> {
+        self.eat_kw("reversible")?;
+        if self.check_kw("action") {
+            return self.action_decl(true);
+        }
+        if self.check_kw("read") || self.check_kw("write") {
+            return self.tool_decl(true);
+        }
+        Err(self.err("`reversible` may only mark an `action` or a `(read|write) tool` (§20)"))
     }
 
     fn agent_decl(&mut self) -> PResult<Stmt> {
         self.eat_kw("agent")?;
         let name = self.eat_ident()?;
+        // Agents are not generic (§19.5): a type-parameter list is a ParseError.
+        if self.check_op("<") {
+            return Err(self.err("an agent may not be generic (§19.5) — its parameterization lives in its `when`-handlers' event types"));
+        }
         let params = if self.check_op("(") { self.parse_params()? } else { Vec::new() };
+        // Optional implemented interfaces (`: I, J`), nominal conformance (§19.5).
+        let mut ifaces = Vec::new();
+        if self.check_op(":") {
+            self.advance();
+            ifaces.push(self.parse_modpath()?);
+            while self.check_op(",") {
+                self.advance();
+                ifaces.push(self.parse_modpath()?);
+            }
+        }
         let (grants, has_grants, unconstrained) = self.grants_clause()?;
         let body = self.block()?;
-        Ok(Stmt::AgentDecl { name, params, grants, has_grants, unconstrained, body })
+        Ok(Stmt::AgentDecl { name, params, ifaces, grants, has_grants, unconstrained, body })
     }
 
     /// Optional `grants { emit X, reach Y, use Z }` / `grants { * }`. No clause ⇒
@@ -652,7 +1017,7 @@ impl Parser {
 
     fn extend_stmt(&mut self) -> PResult<Stmt> {
         self.eat_kw("extend")?;
-        let parent = self.eat_ident()?;
+        let parent = self.parse_modpath()?;
         let args = self.parse_args()?;
         self.eat_op(";")?;
         Ok(Stmt::Extend { parent, args })
@@ -842,8 +1207,19 @@ impl Parser {
             return Ok(ty);
         }
         if t.kind == TokenKind::Ident {
-            self.advance();
-            return Ok(Type::Named(t.value));
+            // A (possibly qualified) nominal type, optionally generic (`m.Box<int>`).
+            let name = self.parse_modpath()?;
+            if self.check_op("<") {
+                self.advance();
+                let mut args = vec![self.parse_type()?];
+                while self.check_op(",") {
+                    self.advance();
+                    args.push(self.parse_type()?);
+                }
+                self.eat_op(">")?;
+                return Ok(Type::Generic(name, args));
+            }
+            return Ok(Type::Named(name));
         }
         Err(self.err("expected a type"))
     }
@@ -1083,6 +1459,18 @@ impl Parser {
     fn postfix(&mut self) -> PResult<Expr> {
         let mut e = self.primary()?;
         loop {
+            // A generic call `f<T>(args)`: type args are erased; skip them when a
+            // balanced `<…>` is immediately followed by a call `(`.
+            if self.check_op("<") {
+                if let Some(close) = self.typeargs_end(self.pos) {
+                    if self.toks.get(close).map(|x| x.is_op("(")).unwrap_or(false) {
+                        self.skip_typeargs()?;
+                        let args = self.parse_args()?;
+                        e = Expr::Call { func: Box::new(e), args };
+                        continue;
+                    }
+                }
+            }
             if self.check_op("(") {
                 let args = self.parse_args()?;
                 e = Expr::Call { func: Box::new(e), args };
@@ -1122,10 +1510,36 @@ impl Parser {
                 Ok(Expr::FStr(t.value))
             }
             TokenKind::Ident => {
-                // A struct literal `Name { f: v, ... }` (only in expression position).
-                if self.peek(1).is_op("{") {
+                // A struct literal `Name { … }`, `Name<args> { … }`, or `m.Name { … }`
+                // (only in expression position; suppressed for a gate scrutinee).
+                if !self.no_struct_lit && self.peek(1).is_op("{") {
                     return self.struct_lit();
                 }
+                // `Name<args> { … }` — a generic struct literal.
+                if self.peek(1).is_op("<") {
+                    if let Some(close) = self.typeargs_end(self.pos + 1) {
+                        if self.toks.get(close).map(|x| x.is_op("{")).unwrap_or(false) {
+                            return self.struct_lit();
+                        }
+                    }
+                }
+                // `m.Name { … }` — a qualified struct literal (a dotted path then `{`).
+                if self.peek(1).is_op(".") {
+                    if let Some(after) = self.modpath_end(self.pos) {
+                        if self.toks.get(after).map(|x| x.is_op("{")).unwrap_or(false) {
+                            return self.struct_lit();
+                        }
+                        // `m.Box<int> { … }`
+                        if self.toks.get(after).map(|x| x.is_op("<")).unwrap_or(false) {
+                            if let Some(close) = self.typeargs_end(after) {
+                                if self.toks.get(close).map(|x| x.is_op("{")).unwrap_or(false) {
+                                    return self.struct_lit();
+                                }
+                            }
+                        }
+                    }
+                }
+                // A bare name; postfix handles any `.member` access / qualified path.
                 self.advance();
                 Ok(Expr::Name(t.value))
             }
@@ -1195,7 +1609,11 @@ impl Parser {
     }
 
     fn struct_lit(&mut self) -> PResult<Expr> {
-        let name = self.eat_ident()?;
+        let name = self.parse_modpath()?;
+        // Generic type args are erased (monomorphization); skip them for the literal.
+        if self.check_op("<") {
+            self.skip_typeargs()?;
+        }
         self.eat_op("{")?;
         let mut fields = Vec::new();
         while !self.check_op("}") && !self.at_eof() {
