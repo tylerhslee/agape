@@ -1,6 +1,6 @@
 # Agape v1.0 — Conformance Test Index
 
-**102 tests** — accept: 73, reject: 29
+**139 tests** — accept: 96, reject: 43
 
 A conformant implementation must satisfy every `accept`/`reject` test (rejects with the declared error class; accepts matching any asserted spine).
 
@@ -104,8 +104,11 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 
 | id | expect | error | spec |
 |---|---|---|---|
+| `prelude_action_cannot_be_error_reject` | reject | ParseError | v1.1.0 design 5b (only `event` may extend Error; an action supertype is a ParseError) |
+| `prelude_error_supertype_must_be_error_reject` | reject | TypeError | v1.1.0 design 5b (the only permitted user supertype is the built-in Error) |
 | `prelude_expired_not_error` | accept | — | §9 (Expired and a lost send are NOT Error subtypes; a `when (Error e)` does not fire for an Expired tombstone) |
 | `prelude_say_not_spine` | accept | — | §9 (`say(x)` prints its argument; it is NOT a spine operation and appends no event) |
+| `prelude_user_error_subtype_caught` | accept | — | v1.1.0 design 5b, 9 (event Foo : Error extends the built-in Error root; when(Error e) catches it) |
 | `prelude_when_error_catches_contradiction` | accept | — | §9 (Contradiction extends Error; when (Error e) catches it by subtype) |
 
 ## 10_memory
@@ -181,3 +184,62 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 |---|---|---|---|
 | `cfg_eager_internalize` | accept | — | §16.7, §17 (with `[memory] internalize_on_receive = true`, every received `<-` event is auto-decomposed into memory — the eager, opt-in trigger; default is off) |
 | `cfg_sampling_fallback` | accept | — | §16.8, §17 (a text-only provider — no logprobs — is served by the sampling fallback: the credence is the empirical frequency of N forced draws; a confident judgment still commits) |
+
+## 18_modules
+
+| id | expect | error | spec |
+|---|---|---|---|
+| `mod_ambiguous_name_reject` | reject | ModuleError | v1.1.0 design 3.1 (an ambiguous bare reference across imports is a ModuleError) |
+| `mod_etype_qualified_distinct` | accept | — | v1.1.0 design 3.2 (same event name in two modules are DISTINCT qualified etypes) |
+| `mod_import_alias` | accept | — | v1.1.0 design 2.3 (import ... as alias rebinds the prefix) |
+| `mod_import_cycle_reject` | reject | ModuleError | v1.1.0 design 2.3 (imports are acyclic; a cycle is a ModuleError) |
+| `mod_import_qualified` | accept | — | v1.1.0 design 2 (module=file; whole-module import; qualified name use) |
+| `mod_import_selective` | accept | — | v1.1.0 design 2.3 (selective import binds the bare name) |
+| `mod_no_header_is_root` | accept | — | v1.1.0 design 0,2 (no module/import = implicit root module; v1.0.0 backward compat) |
+| `mod_selective_import_unknown_reject` | reject | ModuleError | v1.1.0 design 2.3 (selective import of a non-exported name is a ModuleError) |
+| `mod_unresolved_import_reject` | reject | ModuleError | v1.1.0 design 2.3 (an import resolving to no module is a ModuleError) |
+
+## 19_visibility
+
+| id | expect | error | spec |
+|---|---|---|---|
+| `vis_private_agent_not_spawnable_reject` | reject | VisibilityError | v1.1.0 design 4.2 (a private agent type cannot be named/spawned from another module) |
+| `vis_private_default_same_module_ok` | accept | — | v1.1.0 design 4.1 (default-private is module-internal, not decl-internal; siblings see each other) |
+| `vis_private_event_still_on_spine` | accept | — | v1.1.0 design 4.2, 5b (a private event still lands on the spine; caught cross-module by its Error supertype, not its private name) |
+| `vis_private_not_importable_reject` | reject | VisibilityError | v1.1.0 design 4 (a non-pub declaration is not importable; naming it is a VisibilityError) |
+| `vis_pub_importable` | accept | — | v1.1.0 design 4 (a pub declaration is importable) |
+| `vis_shallow_export_reject` | reject | VisibilityError | v1.1.0 design 4.3 (pub is shallow: a pub type may not expose a private field type) |
+
+## 20_generics
+
+| id | expect | error | spec |
+|---|---|---|---|
+| `gen_agent_not_generic_reject` | reject | ParseError | v1.1.0 design 5.1 (agents are not generic; only struct/fn carry type params) |
+| `gen_fn_identity` | accept | — | v1.1.0 design 5.1 (user-generic function; monomorphized at the call site) |
+| `gen_monomorphize_two_instances` | accept | — | v1.1.0 design 5.1 (distinct instantiations monomorphize to distinct concrete types) |
+| `gen_multi_param` | accept | — | v1.1.0 design 5.1 (generics take multiple type parameters) |
+| `gen_struct_box` | accept | — | v1.1.0 design 5.1 (user-generic struct with a type parameter) |
+
+## 21_interfaces
+
+| id | expect | error | spec |
+|---|---|---|---|
+| `iface_decl_and_conformance` | accept | — | v1.1.0 design 5.2 (interface decl; an agent nominally conforms via : Iface) |
+| `iface_missing_handler_reject` | reject | InterfaceError | v1.1.0 design 5.2 (a declared interface with no matching handler is an InterfaceError) |
+| `iface_missing_required_grant_reject` | reject | InterfaceError | v1.1.0 design 5.2 (an interface `requires` a capability the implementor lacks) |
+| `iface_multi_implement` | accept | — | v1.1.0 design 5.2 (an agent may implement multiple interfaces) |
+| `iface_not_instantiable_reject` | reject | TypeError | v1.1.0 design 5.2 (an interface is a type but not instantiable; spawn of one is a TypeError) |
+| `iface_subtype_binding` | accept | — | v1.1.0 design 5.2 (agent <: interface; bind a concrete agent to an interface slot; reach over the interface) |
+
+## 22_gate
+
+| id | expect | error | spec |
+|---|---|---|---|
+| `gate_all_reversible_no_principal_accept` | accept | — | §20 (all arms reversible -> argmax-forever; no principal required) |
+| `gate_decide_defer_clause_accept` | accept | — | §20 (decide with a trailing `defer to p` clause supplies the principal) |
+| `gate_decide_principal_subject_accept` | accept | — | §20 (decide with a principal subject; a non-reversible arm has a reachable principal) |
+| `gate_decision_introspection_accept` | accept | — | §20.4, §9 (Decision provenance: .basis over the Basis enum) |
+| `gate_file_conformal_decl_accept` | accept | — | §20 (file-level `conformal α;` declaration) |
+| `gate_nonreversible_no_principal_reject` | reject | GateError | §20 (a non-reversible arm with no reachable principal is a compile error) |
+| `gate_per_gate_conformal_accept` | accept | — | §20 (per-gate conformal α override on a decide) |
+| `gate_reversible_action_accept` | accept | — | §20 (`reversible action` — reversibility annotates a perform sink) |

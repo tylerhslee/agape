@@ -1,0 +1,74 @@
+// examples/warden.ag — the fusion pattern applied to a CONSEQUENTIAL, authority-bearing
+// decision, with a human-escalation path and a full audit trail. (The governance / prison-
+// experiment consolidator, framed as governance + audit.)
+//
+// A Warden decides whether to sanction a prisoner for a reported infraction. Three diverse
+// lenses judge the SAME proposition independently:
+//   Se — did it literally, observably happen?
+//   Ti — does it violate a stated rule (internal consistency with the rulebook)?
+//   Fe — is a sanction proportionate to those affected?
+// The Warden fuses them (2-of-3) and gates ONCE. A confident quorum performs the sanction (a
+// consequential act, recorded on the spine). A split panel does NOT let any single lens act —
+// it defers to the Superintendent, a principal (a human authority).
+//
+// Why this is the governance story: the quorum is the check on a runaway punitive lens; the
+// grant asymmetry (a Prisoner has NO authority) is the power structure, enforced by the
+// compiler; and every judgment, decision, and escalation is on an immutable, replayable spine —
+// the instrumentation the 1971 experiment never had.
+
+import { Faculty, Se, Ti, Fe } from cognition.faculty;
+
+struct Report { prisoner: text, infraction: text, evidence: text }
+
+event  Reported(report: Report);          // an infraction is reported (a plain record)
+action Sanction(report: Report);          // a consequential act — needs `perform Sanction` + a settled value
+event  Logged(note: text);                // an audit note
+
+principal superintendent;                 // the accountable human authority (a declared dependency)
+
+policy WardenRule { threshold 0.9 margin 0.2 }   // act only on a clear, high-margin quorum
+
+agent Warden(Faculty observe, Faculty rulebook, Faculty proportion)
+    grants { perform Sanction, reach Faculty } {
+  when (Reported r) {
+    text q = f"A sanction is warranted: prisoner {r.report.prisoner} committed '{r.report.infraction}'. Evidence: {r.report.evidence}";
+
+    Credence<bool> j_se = observe    <- q;   // Se: did it literally happen?
+    Credence<bool> j_ti = rulebook   <- q;   // Ti: does it violate a stated rule?
+    Credence<bool> j_fe = proportion <- q;   // Fe: is a sanction proportionate?
+
+    independent j_se, j_ti, j_fe;                       // assert the lenses are decorrelated (§12)
+    Credence<bool> fused = quorum(2, [j_se, j_ti, j_fe]);   // 2-of-3 fusion — margin tightens (§15.5.5)
+
+    endorse (fused by WardenRule) {
+      true:  { perform Sanction(r.report); emit Logged("sanction: panel quorum"); }  // settled act
+      false: { emit Logged("no sanction: panel quorum"); }
+    } abstain {
+      // The panel split — no single lens may act. Defer to the accountable human, whose signed
+      // ruling re-enters the arms (§13). This is the safety valve, not a fallback to one opinion.
+      emit Logged("panel split, defer to superintendent");
+      attest r.report by superintendent {
+        true:  { perform Sanction(r.report); emit Logged("sanction: superintendent ruled"); }
+        false: { emit Logged("no sanction: superintendent ruled"); }
+      };
+    };
+  }
+}
+
+agent Prisoner {                          // NO grants = default-deny: cannot perform Sanction or reach anyone
+  on awake { say("prisoner present"); }   // can only observe and be observed
+}
+
+// ── orchestration ──
+spawn Faculty observe(Se());      awake observe;     // three diverse lenses, each its own agent + memory
+spawn Faculty rulebook(Ti());     awake rulebook;
+spawn Faculty proportion(Fe());   awake proportion;
+
+spawn Warden warden(observe, rulebook, proportion);  awake warden;
+spawn Prisoner p;  awake p;
+
+emit Reported(Report {
+  prisoner:   "P-17",
+  infraction: "spoke after lights-out",
+  evidence:   "single guard report, no corroboration"
+});

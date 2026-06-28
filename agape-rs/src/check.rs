@@ -26,6 +26,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::ast::*;
 use crate::diag::{AgapeError, ErrorClass};
+use crate::Module;
 
 /// The three-level taint lattice (§15.3.1): `U ⊑ P ⊑ T`. Declaration order is the
 /// lattice order, so `max` is the join `⊔` (a value is as un-settled as its least
@@ -52,6 +53,7 @@ struct AgentInfo {
     grants: Vec<Capability>,
     has_grants: bool,
     unconstrained: bool,
+    ifaces: Vec<String>,
     parent: Option<String>,
     params: Vec<Param>,
     body: Vec<Stmt>,
@@ -95,20 +97,48 @@ pub struct Checker {
     principals: HashSet<String>, // top-level principals
     authority: HashSet<String>,  // consequential event types
     fn_async: HashMap<String, bool>,
+    interfaces: HashMap<String, Vec<IfaceMember>>,
+    /// Type params in scope (generic struct/fn) — treated as valid opaque types.
+    typarams: HashSet<String>,
+    /// Reversible action/tool sinks (§20), by name.
+    reversible_sinks: HashSet<String>,
+    /// The file-level conformal default (§20); used by the gate desugaring.
+    file_conformal: Option<f64>,
 }
 
 /// Lex + parse already done; run the static pass over the AST.
 pub fn check(stmts: &[Stmt]) -> Result<(), AgapeError> {
+    let root = Module { path: String::new(), stmts: stmts.to_vec() };
+    check_program(&[root])
+}
+
+/// Check a whole program (the root module plus its companion modules, §19). Runs the
+/// library-layer static checks (modules / visibility / interfaces / the gate / error
+/// subtyping) and then the per-module value walk (color / taint / authority /
+/// exhaustiveness) over the combined declaration set.
+pub fn check_program(modules: &[Module]) -> Result<(), AgapeError> {
+    // ── library layer (§19): module resolution, visibility, interfaces ──────────
+    let table = ModuleTable::build(modules);
+    table.check_imports()?; // ModuleError / VisibilityError
+    table.check_error_supertypes()?; // TypeError (non-Error supertype)
+
+    // ── the value-level checker over the combined declaration set ───────────────
     let mut c = Checker::new();
-    c.collect(stmts);
+    for m in modules {
+        c.collect(&m.stmts);
+    }
     c.seed_prelude();
+    c.check_interfaces()?; // InterfaceError
+    c.check_gates(modules)?; // GateError
     c.compute_colors();
     c.check_colors()?;
     c.check_extends()?;
 
-    // Top-level scope (not an agent: no authority context).
-    let mut scope = Scope::default();
-    c.walk_block(stmts, &mut scope, None)?;
+    for m in modules {
+        // Top-level scope (not an agent: no authority context).
+        let mut scope = Scope::default();
+        c.walk_block(&m.stmts, &mut scope, None)?;
+    }
 
     // Each agent body under its own authority context.
     let agent_names: Vec<String> = c.agents.keys().cloned().collect();
@@ -126,7 +156,492 @@ pub fn check(stmts: &[Stmt]) -> Result<(), AgapeError> {
     Ok(())
 }
 
+// ── the library layer (§19): modules, imports, visibility ────────────────────
+
+/// One declaration's visibility within its module (§19.4).
+#[derive(Debug, Clone)]
+struct DeclInfo {
+    is_pub: bool,
+}
+
+/// The static module table — every module's declarations, used for import
+/// resolution and visibility (§19.2, §19.4).
+struct ModuleTable<'a> {
+    modules: &'a [Module],
+    /// module path → (decl name → info).
+    decls: HashMap<String, HashMap<String, DeclInfo>>,
+}
+
+impl<'a> ModuleTable<'a> {
+    fn build(modules: &'a [Module]) -> Self {
+        let mut decls: HashMap<String, HashMap<String, DeclInfo>> = HashMap::new();
+        for m in modules {
+            let entry = decls.entry(m.path.clone()).or_default();
+            for s in &m.stmts {
+                let (inner, is_pub) = match s {
+                    Stmt::Pub(b) => (b.as_ref(), true),
+                    other => (other, false),
+                };
+                if let Some(name) = inner.decl_name() {
+                    entry.insert(name.to_string(), DeclInfo { is_pub });
+                }
+            }
+        }
+        ModuleTable { modules, decls }
+    }
+
+    fn module_exists(&self, path: &str) -> bool {
+        self.decls.contains_key(path)
+    }
+
+    /// Resolve imports: a missing module / cycle / unexported selective name is a
+    /// ModuleError; a private selective name is a VisibilityError. Also detects an
+    /// ambiguous bare reference (the same name selectively imported from two modules).
+    fn check_imports(&self) -> Result<(), AgapeError> {
+        // Import graph for cycle detection.
+        let mut graph: HashMap<String, Vec<String>> = HashMap::new();
+        for m in self.modules {
+            let deps: Vec<String> = m
+                .stmts
+                .iter()
+                .filter_map(|s| match unwrap_pub(s) {
+                    Stmt::Import { module, .. } => Some(module.clone()),
+                    _ => None,
+                })
+                .collect();
+            graph.entry(m.path.clone()).or_default().extend(deps);
+        }
+
+        for m in self.modules {
+            // Track bare-name imports to detect ambiguity (§19.2).
+            let mut bare: HashMap<String, String> = HashMap::new(); // name → module
+            for s in &m.stmts {
+                let Stmt::Import { module, names, .. } = unwrap_pub(s) else { continue };
+                if !self.module_exists(module) {
+                    return Err(AgapeError::new(
+                        ErrorClass::Module,
+                        format!("import `{module}` resolves to no module (§19.2)"),
+                    ));
+                }
+                // Cycle: a module reachable from `module` that returns to `m.path`.
+                if self.reaches(&graph, module, &m.path) {
+                    return Err(AgapeError::new(
+                        ErrorClass::Module,
+                        format!("import cycle through `{module}` and `{}` — imports are acyclic (§19.2)", m.path),
+                    ));
+                }
+                let exports = &self.decls[module];
+                for name in names {
+                    match exports.get(name) {
+                        None => {
+                            return Err(AgapeError::new(
+                                ErrorClass::Module,
+                                format!("module `{module}` does not export `{name}` (§19.2)"),
+                            ));
+                        }
+                        Some(info) if !info.is_pub => {
+                            return Err(AgapeError::new(
+                                ErrorClass::Visibility,
+                                format!("`{name}` is not `pub` in module `{module}` — a non-pub declaration is not importable (§19.4)"),
+                            ));
+                        }
+                        Some(_) => {
+                            if let Some(prev) = bare.insert(name.clone(), module.clone()) {
+                                if &prev != module {
+                                    return Err(AgapeError::new(
+                                        ErrorClass::Module,
+                                        format!("`{name}` is ambiguous — selectively imported from both `{prev}` and `{module}`; qualify it (§19.2)"),
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            // Qualified cross-module references (`spawn m.Name`, `m.Name` types, etc.)
+            // against visibility.
+            self.check_qualified_visibility(m)?;
+        }
+        Ok(())
+    }
+
+    /// True if `from` can reach `target` in the import graph (a path back to a
+    /// module that imports `from` ⇒ a cycle).
+    fn reaches(&self, graph: &HashMap<String, Vec<String>>, from: &str, target: &str) -> bool {
+        let mut seen = HashSet::new();
+        let mut stack = vec![from.to_string()];
+        while let Some(cur) = stack.pop() {
+            if !seen.insert(cur.clone()) {
+                continue;
+            }
+            if let Some(deps) = graph.get(&cur) {
+                for d in deps {
+                    if d == target {
+                        return true;
+                    }
+                    stack.push(d.clone());
+                }
+            }
+        }
+        false
+    }
+
+    /// A qualified reference `prefix.Name` (via an `import`/`alias`) into another
+    /// module naming a non-`pub` declaration is a VisibilityError (§19.4).
+    fn check_qualified_visibility(&self, m: &Module) -> Result<(), AgapeError> {
+        // prefix (alias or module bare name) → module path.
+        let mut prefix: HashMap<String, String> = HashMap::new();
+        for s in &m.stmts {
+            if let Stmt::Import { module, alias, names, .. } = unwrap_pub(s) {
+                if names.is_empty() {
+                    let p = alias.clone().unwrap_or_else(|| module.clone());
+                    prefix.insert(p, module.clone());
+                }
+            }
+        }
+        let mut bad: Option<(String, String)> = None;
+        for s in &m.stmts {
+            walk_qualified_names(s, &mut |q| {
+                if bad.is_some() {
+                    return;
+                }
+                if let Some((pfx, name)) = q.rsplit_once('.') {
+                    if let Some(modpath) = prefix.get(pfx) {
+                        if let Some(info) = self.decls.get(modpath).and_then(|d| d.get(name)) {
+                            if !info.is_pub {
+                                bad = Some((modpath.clone(), name.to_string()));
+                            }
+                        }
+                    }
+                }
+            });
+        }
+        if let Some((modpath, name)) = bad {
+            return Err(AgapeError::new(
+                ErrorClass::Visibility,
+                format!("`{modpath}.{name}` names a non-pub declaration from another module (§19.4)"),
+            ));
+        }
+        Ok(())
+    }
+
+    /// A user `event` may only declare the supertype `Error` (§19.5); anything else
+    /// is a TypeError. Also a `pub` decl exposing a private type is a VisibilityError.
+    fn check_error_supertypes(&self) -> Result<(), AgapeError> {
+        for m in self.modules {
+            for s in &m.stmts {
+                if let Stmt::EventDecl { super_name: Some(sup), .. } = unwrap_pub(s) {
+                    if sup != "Error" {
+                        return Err(AgapeError::new(
+                            ErrorClass::Type,
+                            format!("a user `event` may only extend the built-in `Error`, not `{sup}` (§19.5)"),
+                        ));
+                    }
+                }
+            }
+            // Shallow export: a pub decl's signature may not expose a private type
+            // declared in the SAME module (§19.4).
+            let local = &self.decls[&m.path];
+            for s in &m.stmts {
+                if let Stmt::Pub(_) = s {
+                    let inner = unwrap_pub(s);
+                    for ty in sig_types_of(inner) {
+                        if let Some(info) = local.get(&ty) {
+                            if !info.is_pub {
+                                return Err(AgapeError::new(
+                                    ErrorClass::Visibility,
+                                    format!("`pub` declaration exposes the private type `{ty}` in its signature — `pub` is shallow (§19.4)"),
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+fn unwrap_pub(s: &Stmt) -> &Stmt {
+    match s {
+        Stmt::Pub(inner) => inner.as_ref(),
+        other => other,
+    }
+}
+
+/// The bare nominal name behind a `when (Type …)` type (qualified or not).
+fn type_nominal(t: &Type) -> Option<String> {
+    match t {
+        Type::Named(n) | Type::Generic(n, _) => Some(n.clone()),
+        Type::Event(inner) => type_nominal(inner),
+        _ => None,
+    }
+}
+
+/// Capability targets match modulo a module prefix (`reach Engineer` ≡
+/// `reach m.Engineer`).
+fn cap_target_matches(a: &str, b: &str) -> bool {
+    let ab = a.rsplit('.').next().unwrap_or(a);
+    let bb = b.rsplit('.').next().unwrap_or(b);
+    a == b || ab == bb
+}
+
+/// The user nominal type names appearing in a declaration's public signature
+/// (fields / params / return) — for the shallow-export check (§19.4).
+fn sig_types_of(s: &Stmt) -> Vec<String> {
+    let mut out = Vec::new();
+    let push = |t: &Type, out: &mut Vec<String>| {
+        if let Some(n) = nominal_name(t) {
+            out.push(n);
+        }
+    };
+    match s {
+        Stmt::StructDecl { fields, .. } => {
+            for f in fields {
+                push(&f.ty, &mut out);
+            }
+        }
+        Stmt::FnDecl { ret, params, .. } => {
+            push(ret, &mut out);
+            for p in params {
+                push(&p.ty, &mut out);
+            }
+        }
+        Stmt::AgentDecl { params, .. } => {
+            for p in params {
+                push(&p.ty, &mut out);
+            }
+        }
+        _ => {}
+    }
+    out
+}
+
+/// The bare nominal name behind a type, if it is a user type worth a visibility
+/// check (not a scalar / prelude wrapper).
+fn nominal_name(t: &Type) -> Option<String> {
+    match t {
+        Type::Named(n) if !n.contains('.') => Some(n.clone()),
+        Type::Generic(n, _) if !n.contains('.') => Some(n.clone()),
+        _ => None,
+    }
+}
+
+/// Visit every qualified name (`a.b[.c]`) referenced by a statement — in `spawn`,
+/// types, `emit`/`perform`, `when`, `reach`, struct literals. Conservative: only
+/// dotted names whose head is a single identifier are reported.
+fn walk_qualified_names(s: &Stmt, f: &mut impl FnMut(&str)) {
+    let ty = |t: &Type, f: &mut dyn FnMut(&str)| {
+        if let Type::Named(n) | Type::Generic(n, _) = t {
+            if n.contains('.') {
+                f(n);
+            }
+        }
+    };
+    match unwrap_pub(s) {
+        Stmt::Spawn { agent_type, .. } => {
+            if agent_type.contains('.') {
+                f(agent_type);
+            }
+        }
+        Stmt::Emit { event_type, .. } => {
+            if event_type.contains('.') {
+                f(event_type);
+            }
+        }
+        Stmt::Perform { action_type, .. } => {
+            if action_type.contains('.') {
+                f(action_type);
+            }
+        }
+        Stmt::VarDecl { ty: t, .. } => ty(t, f),
+        Stmt::When { ty: t, body, .. } => {
+            ty(t, f);
+            for b in body {
+                walk_qualified_names(b, f);
+            }
+        }
+        Stmt::AgentDecl { body, ifaces, .. } => {
+            for i in ifaces {
+                if i.contains('.') {
+                    f(i);
+                }
+            }
+            for b in body {
+                walk_qualified_names(b, f);
+            }
+        }
+        Stmt::On { body, .. } | Stmt::Block(body) => {
+            for b in body {
+                walk_qualified_names(b, f);
+            }
+        }
+        Stmt::If { then_body, else_body, .. } => {
+            for b in then_body.iter().chain(else_body) {
+                walk_qualified_names(b, f);
+            }
+        }
+        _ => {}
+    }
+}
+
 impl Checker {
+    /// Nominal interface conformance (§19.5): for each `agent : Iface`, every
+    /// `when E decide R` member needs a `when (E …)` handler, and every `requires
+    /// cap` must be in the agent's grants. A failure is an InterfaceError.
+    fn check_interfaces(&self) -> Result<(), AgapeError> {
+        for (aname, info) in &self.agents {
+            for iface_name in &info.ifaces {
+                let bare = iface_name.rsplit('.').next().unwrap_or(iface_name);
+                let Some(members) = self.interfaces.get(bare).or_else(|| self.interfaces.get(iface_name)) else {
+                    continue; // unknown interface: fail-open (resolved elsewhere)
+                };
+                // The events this agent handles via `when (E …)`.
+                let handled = self.agent_handled_events(&info.body);
+                for member in members {
+                    match member {
+                        IfaceMember::When { event, .. } => {
+                            let want = event.rsplit('.').next().unwrap_or(event);
+                            if !handled.iter().any(|h| h == want || h == event) {
+                                return Err(AgapeError::new(
+                                    ErrorClass::Interface,
+                                    format!("agent `{aname}` declares interface `{iface_name}` but has no `when ({event} …)` handler (§19.5)"),
+                                ));
+                            }
+                        }
+                        IfaceMember::Requires(cap) => {
+                            if !info.unconstrained && !info.grants.iter().any(|c| c.kind == cap.kind && cap_target_matches(&c.target, &cap.target)) {
+                                return Err(AgapeError::new(
+                                    ErrorClass::Interface,
+                                    format!("agent `{aname}` lacks the capability `{:?} {}` required by interface `{iface_name}` (§19.5)", cap.kind, cap.target),
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// The readable gate's static checks (§20). A `decide` with a non-reversible arm
+    /// and no reachable principal (subject or `defer to`) is a GateError. Also: a
+    /// `spawn` of an interface is a TypeError (§19.5).
+    fn check_gates(&self, modules: &[Module]) -> Result<(), AgapeError> {
+        for m in modules {
+            self.check_gates_block(&m.stmts)?;
+        }
+        Ok(())
+    }
+
+    fn check_gates_block(&self, stmts: &[Stmt]) -> Result<(), AgapeError> {
+        for s in stmts {
+            self.check_gates_stmt(s)?;
+        }
+        Ok(())
+    }
+
+    fn check_gates_stmt(&self, s: &Stmt) -> Result<(), AgapeError> {
+        match unwrap_pub(s) {
+            Stmt::Decide { subject, arms, default, defer_to, .. } => {
+                let has_principal = subject.is_some() || defer_to.is_some();
+                if !has_principal {
+                    // Any arm reaching a non-reversible sink requires a principal.
+                    let mut bodies: Vec<&Vec<Stmt>> = arms.iter().map(|(_, b)| b).collect();
+                    if let Some(d) = default {
+                        bodies.push(d);
+                    }
+                    let non_reversible = bodies.iter().any(|b| self.body_reaches_nonreversible_sink(b));
+                    if non_reversible {
+                        return Err(AgapeError::new(
+                            ErrorClass::Gate,
+                            "a `decide` with a non-reversible arm needs a reachable principal (a `subject decide` or `defer to p`) — autonomy is earned via human-label deferral; a `default:` does not substitute (§20)",
+                        ));
+                    }
+                }
+                for (_, b) in arms {
+                    self.check_gates_block(b)?;
+                }
+                if let Some(d) = default {
+                    self.check_gates_block(d)?;
+                }
+            }
+            Stmt::Spawn { agent_type, .. } => {
+                let bare = agent_type.rsplit('.').next().unwrap_or(agent_type);
+                if self.interfaces.contains_key(bare) || self.interfaces.contains_key(agent_type) {
+                    return Err(AgapeError::new(
+                        ErrorClass::Type,
+                        format!("`spawn {agent_type}` — an interface is a type but is not instantiable (§19.5)"),
+                    ));
+                }
+            }
+            Stmt::AgentDecl { body, .. } | Stmt::On { body, .. } | Stmt::Block(body) | Stmt::When { body, .. } => {
+                self.check_gates_block(body)?;
+            }
+            Stmt::If { then_body, else_body, .. } => {
+                self.check_gates_block(then_body)?;
+                self.check_gates_block(else_body)?;
+            }
+            Stmt::Case { arms, default, .. } => {
+                for (_, b) in arms {
+                    self.check_gates_block(b)?;
+                }
+                if let Some(d) = default {
+                    self.check_gates_block(d)?;
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// True if a block reaches a non-reversible consequential sink — a `perform` of a
+    /// non-reversible `action`, or a call to a non-reversible `write tool` (§20).
+    fn body_reaches_nonreversible_sink(&self, body: &[Stmt]) -> bool {
+        body.iter().any(|s| self.stmt_reaches_nonreversible_sink(s))
+    }
+
+    fn stmt_reaches_nonreversible_sink(&self, s: &Stmt) -> bool {
+        match s {
+            Stmt::Perform { action_type, .. } => {
+                let bare = action_type.rsplit('.').next().unwrap_or(action_type);
+                !self.reversible_sinks.contains(action_type) && !self.reversible_sinks.contains(bare)
+            }
+            Stmt::ExprStmt(e) | Stmt::Say(e) | Stmt::Return(Some(e)) => self.expr_reaches_nonreversible_sink(e),
+            Stmt::VarDecl { expr: Some(e), .. } => self.expr_reaches_nonreversible_sink(e),
+            Stmt::Block(b) => self.body_reaches_nonreversible_sink(b),
+            Stmt::If { then_body, else_body, .. } => {
+                self.body_reaches_nonreversible_sink(then_body) || self.body_reaches_nonreversible_sink(else_body)
+            }
+            _ => false,
+        }
+    }
+
+    fn expr_reaches_nonreversible_sink(&self, e: &Expr) -> bool {
+        if let Expr::Call { func, args } = e {
+            if let Expr::Name(n) = &**func {
+                if matches!(self.tool_effects.get(n), Some(ToolEffect::Write)) && !self.reversible_sinks.contains(n) {
+                    return true;
+                }
+            }
+            return args.iter().any(|a| self.expr_reaches_nonreversible_sink(a));
+        }
+        false
+    }
+
+    /// The event-type names a body subscribes to via `when (E …)`.
+    fn agent_handled_events(&self, body: &[Stmt]) -> Vec<String> {
+        let mut out = Vec::new();
+        for s in body {
+            if let Stmt::When { ty, .. } = s {
+                if let Some(n) = type_nominal(ty) {
+                    out.push(n.rsplit('.').next().unwrap_or(&n).to_string());
+                }
+            }
+        }
+        out
+    }
+
     fn new() -> Self {
         Checker {
             structs: HashMap::new(),
@@ -139,6 +654,10 @@ impl Checker {
             principals: HashSet::new(),
             authority: HashSet::new(),
             fn_async: HashMap::new(),
+            interfaces: HashMap::new(),
+            typarams: HashSet::new(),
+            reversible_sinks: HashSet::new(),
+            file_conformal: None,
         }
     }
 
@@ -146,9 +665,16 @@ impl Checker {
 
     fn collect(&mut self, stmts: &[Stmt]) {
         for s in stmts {
+            let s = match s {
+                Stmt::Pub(inner) => inner.as_ref(),
+                other => other,
+            };
             match s {
-                Stmt::StructDecl { name, fields } => {
+                Stmt::StructDecl { name, typarams, fields } => {
                     self.structs.insert(name.clone(), fields.clone());
+                    for tp in typarams {
+                        self.typarams.insert(tp.clone());
+                    }
                 }
                 Stmt::EnumDecl { name, variants } => {
                     self.enums.insert(name.clone(), variants.clone());
@@ -156,9 +682,23 @@ impl Checker {
                 Stmt::EventDecl { name, .. } => {
                     self.events.insert(name.clone());
                 }
-                Stmt::ToolDecl { name, ret, effect, .. } => {
+                Stmt::ActionDecl { name, reversible, .. } => {
+                    if *reversible {
+                        self.reversible_sinks.insert(name.clone());
+                    }
+                }
+                Stmt::ToolDecl { name, ret, effect, reversible, .. } => {
                     self.tools.insert(name.clone(), ret.clone());
                     self.tool_effects.insert(name.clone(), *effect);
+                    if *reversible {
+                        self.reversible_sinks.insert(name.clone());
+                    }
+                }
+                Stmt::InterfaceDecl { name, members } => {
+                    self.interfaces.insert(name.clone(), members.clone());
+                }
+                Stmt::ConformalDecl(a) => {
+                    self.file_conformal = Some(*a);
                 }
                 Stmt::Authority(name) => {
                     self.authority.insert(name.clone());
@@ -166,13 +706,16 @@ impl Checker {
                 Stmt::Principal(name) => {
                     self.principals.insert(name.clone());
                 }
-                Stmt::FnDecl { is_sync, name, params, body, .. } => {
+                Stmt::FnDecl { is_sync, name, typarams, params, body, .. } => {
                     self.fns.insert(
                         name.clone(),
                         FnInfo { is_sync: *is_sync, params: params.clone(), body: body.clone() },
                     );
+                    for tp in typarams {
+                        self.typarams.insert(tp.clone());
+                    }
                 }
-                Stmt::AgentDecl { name, params, grants, has_grants, unconstrained, body, .. } => {
+                Stmt::AgentDecl { name, params, ifaces, grants, has_grants, unconstrained, body, .. } => {
                     let parent = body.iter().find_map(|b| match b {
                         Stmt::Extend { parent, .. } => Some(parent.clone()),
                         _ => None,
@@ -183,6 +726,7 @@ impl Checker {
                             grants: grants.clone(),
                             has_grants: *has_grants,
                             unconstrained: *unconstrained,
+                            ifaces: ifaces.clone(),
                             parent,
                             params: params.clone(),
                             body: body.clone(),
@@ -201,6 +745,10 @@ impl Checker {
         self.enums
             .entry("Entailment".into())
             .or_insert_with(|| vec!["Entails".into(), "Contradicts".into(), "Neutral".into()]);
+        // `Basis` — how a Decision was settled (Decision.basis, §20/§9).
+        self.enums
+            .entry("Basis".into())
+            .or_insert_with(|| vec!["Argmax".into(), "Conformal".into(), "Principal".into()]);
         self.structs
             .entry("Rule".into())
             .or_insert_with(|| vec![Field { name: "threshold".into(), ty: Type::Float }, Field { name: "margin".into(), ty: Type::Float }]);
@@ -276,6 +824,10 @@ impl Checker {
                 RetryTail::Bounded { body, .. } => b(body),
                 RetryTail::Predicate { pred, body, .. } => e(pred) || b(body),
             },
+            Stmt::Decide { expr, arms, default, .. } => {
+                e(expr) || arms.iter().any(|(_, body)| b(body)) || default.as_deref().is_some_and(b)
+            }
+            Stmt::Pub(inner) => self.stmt_reaches_seam(inner, pr),
             _ => false,
         }
     }
@@ -526,8 +1078,25 @@ impl Checker {
             Stmt::Principal(name) => {
                 scope.env.insert(name.clone(), VarInfo { ty: Type::Named("Principal".into()), taint: Taint::U, authorized: false });
             }
+            // The readable gate (§20): desugars to the engine; walk the arms as the
+            // licensed (recorded-gate) context — like `endorse` — so a `perform` in an
+            // arm is treated as endorsed.
+            Stmt::Decide { expr, arms, default, .. } => {
+                self.walk_expr(expr, scope, agent)?;
+                for (_, body) in arms {
+                    let mut s = scope.child();
+                    s.consequential_blocked = false;
+                    self.walk_block(body, &mut s, agent)?;
+                }
+                if let Some(d) = default {
+                    let mut s = scope.child();
+                    s.consequential_blocked = false;
+                    self.walk_block(d, &mut s, agent)?;
+                }
+            }
+            Stmt::Pub(inner) => self.walk_stmt(inner, scope, agent)?,
             // Declarations: register agent params/principal context where useful.
-            Stmt::AgentDecl { .. } | Stmt::FnDecl { .. } | Stmt::StructDecl { .. } | Stmt::EnumDecl { .. } | Stmt::EventDecl { .. } | Stmt::ToolDecl { .. } | Stmt::Authority(_) | Stmt::Extend { .. } | Stmt::Import { .. } | Stmt::ModuleAttr { .. } | Stmt::Awake { .. } | Stmt::Sleep(_) | Stmt::Break | Stmt::Return(None) => {}
+            Stmt::AgentDecl { .. } | Stmt::FnDecl { .. } | Stmt::StructDecl { .. } | Stmt::EnumDecl { .. } | Stmt::EventDecl { .. } | Stmt::ToolDecl { .. } | Stmt::InterfaceDecl { .. } | Stmt::ConformalDecl(_) | Stmt::Authority(_) | Stmt::Extend { .. } | Stmt::Import { .. } | Stmt::ModuleDecl { .. } | Stmt::ModuleAttr { .. } | Stmt::Awake { .. } | Stmt::Sleep(_) | Stmt::Break | Stmt::Return(None) => {}
         }
         Ok(())
     }
@@ -629,7 +1198,8 @@ impl Checker {
     /// non-built-in event needs an `emit` grant (Authority); a consequential
     /// (`authority`) event consumes only a `U`-and-authorized value (Taint).
     fn check_emit(&self, event: &str, payload: &Expr, scope: &Scope, _agent: Option<&str>) -> Result<(), AgapeError> {
-        if !self.events.contains(event) {
+        let bare = event.rsplit('.').next().unwrap_or(event);
+        if !self.events.contains(event) && !self.events.contains(bare) {
             return Err(AgapeError::new(
                 ErrorClass::Type,
                 format!("`emit {event}` names an undeclared event type (events are not self-declaring; declare `event {event}(...)`)"),
@@ -974,6 +1544,29 @@ impl Checker {
                 }
             }
             Expr::StructLit { name, .. } => Type::Named(name.clone()),
+            // Decision introspection (§20.4): `.committed` (E), `.basis` (Basis enum),
+            // `.margin` (float).
+            Expr::Member { obj, prop } => {
+                if let Type::Decision(inner) = self.expr_type(obj, scope) {
+                    match prop.as_str() {
+                        "basis" => Type::Named("Basis".into()),
+                        "margin" => Type::Float,
+                        "committed" => *inner,
+                        _ => Type::Named("?".into()),
+                    }
+                } else {
+                    // A struct field's declared type, if resolvable.
+                    let oty = self.expr_type(obj, scope);
+                    if let Type::Named(sn) = &oty {
+                        if let Some(fields) = self.structs.get(sn) {
+                            if let Some(f) = fields.iter().find(|f| &f.name == prop) {
+                                return f.ty.clone();
+                            }
+                        }
+                    }
+                    Type::Named("?".into())
+                }
+            }
             Expr::Query(q) => match &**q {
                 Query::Match { .. } => Type::Bool,
                 _ => Type::Named("?".into()),
@@ -1052,6 +1645,14 @@ fn calls_in_stmt(s: &Stmt, out: &mut Vec<String>) {
                 body.iter().for_each(|s| calls_in_stmt(s, out));
             }
         },
+        Stmt::Decide { expr, arms, default, .. } => {
+            calls_in_expr(expr, out);
+            arms.iter().for_each(|(_, b)| b.iter().for_each(|s| calls_in_stmt(s, out)));
+            if let Some(d) = default {
+                d.iter().for_each(|s| calls_in_stmt(s, out));
+            }
+        }
+        Stmt::Pub(inner) => calls_in_stmt(inner, out),
         _ => {}
     }
 }

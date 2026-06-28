@@ -1,0 +1,13 @@
+//! id:        iface_decl_and_conformance
+//! section:   21_interfaces
+//! since:     1.1
+//! expect:    accept
+//! spec:      v1.1.0 design 5.2 (interface decl; an agent nominally conforms via : Iface)
+//! ---
+event Query(ask: text);
+struct Plan { steps: int }
+pub interface Planner { when Query decide Plan; }
+agent PM : Planner {
+  when (Query q) { say("planning"); }
+}
+spawn PM p; awake p;

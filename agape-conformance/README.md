@@ -80,9 +80,13 @@ sync text find(text q) { return search(q); }
 ### Error classes (`reject` tests)
 
 `LexError` · `ParseError` · `TypeError` · `ColorViolation` · `TaintViolation` ·
-`AuthorityViolation` · `ExhaustivenessError`. An implementation may use its own
-internal names but must map to these categories; the suite asserts the category,
-not the message text.
+`AuthorityViolation` · `ExhaustivenessError`. **v1.1.0 library layer adds:**
+`ModuleError` (import resolution: unresolved/cyclic/ambiguous names) ·
+`VisibilityError` (naming a non-`pub` declaration; a `pub` signature exposing a private type) ·
+`InterfaceError` (an `agent : Iface` that fails to satisfy the contract) ·
+`GateError` (a `decide` with a non-reversible arm and no reachable principal, §20). An implementation
+may use its own internal names but must map to these categories; the suite asserts the
+category, not the message text.
 
 ## Spine matcher vocabulary
 
@@ -125,6 +129,11 @@ these header directives. A test with no directives runs under the default record
 - `replay:` — `chain_head_equal`: record the run's journal, replay it, and assert the spine's
   terminal hash is identical (§15.4.2 / T4). Replay re-serves every oracle/tool result from the
   recording and re-invokes nothing.
+- `modules:` — (v1.1.0) companion module files this test imports, `; `-separated. They live in a
+  sibling directory `<id>.d/` next to the test (two levels deep, so the one-level test glob
+  ignores them — they are not themselves tests). The implementation compiles the test entry
+  together with its companion modules. Example: a test `mod_import_qualified.ag` with
+  `modules: util.ag` has its companion at `tests/18_modules/mod_import_qualified.d/util.ag`.
 
 ## How an implementation consumes the suite
 

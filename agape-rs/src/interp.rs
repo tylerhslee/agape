@@ -81,6 +81,9 @@ pub enum Value {
     Credence { en: String, dist: Vec<(String, f64)> },
     /// A decided enum variant.
     Variant(String),
+    /// A gate's committed outcome (§20.4): the committed variant, how it was settled
+    /// (`.basis`), and the decision margin (`.margin`).
+    Decision { committed: String, basis: String, margin: f64 },
     Struct { name: String, fields: Vec<(String, Value)> },
     Array(Vec<Value>),
     Agent(String),
@@ -96,6 +99,7 @@ impl Value {
             Value::Text(s) => s.clone(),
             Value::Null => "null".into(),
             Value::Variant(v) => v.clone(),
+            Value::Decision { committed, .. } => committed.clone(),
             Value::Credence { en, .. } => format!("<credence {en}>"),
             Value::Struct { name, .. } => format!("<{name}>"),
             Value::Array(xs) => format!("[{}]", xs.iter().map(|x| x.show()).collect::<Vec<_>>().join(", ")),
@@ -166,6 +170,9 @@ pub struct Interp {
     /// The `prompt` sensors opened this run, in declaration order — the set of
     /// names external input may be delivered to once the program quiesces (§5b).
     prompts: Vec<String>,
+    /// User `event …: Error` types — leaves under the built-in `Error` root (§19.5),
+    /// so a `when (Error e)` catches them and the spine matcher recognizes them.
+    error_events: std::collections::HashSet<String>,
 }
 
 /// Run a checked AST to quiescence with the default (mock) seams; return the spine.
@@ -175,10 +182,28 @@ pub fn run(stmts: &[Stmt]) -> Spine {
 
 /// Run a checked AST under an injected seam configuration (§17.5 test-mode).
 pub fn run_with(stmts: &[Stmt], config: &HarnessConfig) -> Spine {
+    let module = crate::Module { path: String::new(), stmts: stmts.to_vec() };
+    run_program(&[module], config)
+}
+
+/// Run a checked multi-module program (the root plus companions, §19). Companion
+/// modules are collected (their declarations are visible) and their top-level
+/// statements run before the root's, so imports resolve and library effects land.
+pub fn run_program(modules: &[crate::Module], config: &HarnessConfig) -> Spine {
     let mut it = Interp::new(config.clone());
-    it.collect(stmts);
+    for m in modules {
+        it.collect(&m.stmts);
+    }
+    it.spine.error_subtypes = it.error_events.clone();
     let mut frame = HashMap::new();
-    it.exec_block(stmts, &mut frame, None);
+    // Companion modules first (their top-level effects + subscriptions), then the
+    // root module is the program's entry. The first module is the root.
+    for m in modules.iter().skip(1) {
+        it.exec_block(&m.stmts, &mut frame, None);
+    }
+    if let Some(root) = modules.first() {
+        it.exec_block(&root.stmts, &mut frame, None);
+    }
     it.deliver_prompt_inputs();
     it.spine
 }
@@ -202,11 +227,16 @@ impl Interp {
             config,
             faulted: false,
             prompts: Vec::new(),
+            error_events: std::collections::HashSet::new(),
         }
     }
 
     fn collect(&mut self, stmts: &[Stmt]) {
         for s in stmts {
+            let s = match s {
+                Stmt::Pub(inner) => inner.as_ref(),
+                other => other,
+            };
             match s {
                 Stmt::AgentDecl { name, params, body, .. } => {
                     self.templates.insert(name.clone(), Template { params: params.clone(), body: body.clone() });
@@ -214,11 +244,16 @@ impl Interp {
                 Stmt::FnDecl { name, params, body, .. } => {
                     self.fns.insert(name.clone(), (params.clone(), body.clone()));
                 }
-                Stmt::StructDecl { name, fields } => {
+                Stmt::StructDecl { name, fields, .. } => {
                     self.structs.insert(name.clone(), fields.clone());
                 }
                 Stmt::EnumDecl { name, variants } => {
                     self.enums.insert(name.clone(), variants.clone());
+                }
+                Stmt::EventDecl { name, error_super, .. } => {
+                    if *error_super {
+                        self.error_events.insert(name.clone());
+                    }
                 }
                 Stmt::ToolDecl { name, ret, .. } => {
                     self.tools.insert(name.clone(), ret.clone());
@@ -248,6 +283,16 @@ impl Interp {
     fn ephemeral(&mut self) -> String {
         self.eph += 1;
         format!("@v{}", self.eph)
+    }
+
+    /// Resolve a (possibly qualified) agent type name to the template key: the full
+    /// name if it is a known template, else its bare last segment (§19.2).
+    fn resolve_template_name(&self, name: &str) -> String {
+        if self.templates.contains_key(name) {
+            return name.to_string();
+        }
+        let bare = name.rsplit('.').next().unwrap_or(name);
+        bare.to_string()
     }
 
     /// Deliver configured external input to its `prompt` sensors once the program
@@ -285,6 +330,11 @@ impl Interp {
                         // so the in-flight events stay but the value is the graded judgment.
                         match ty {
                             Type::Credence(_) if !matches!(raw, Value::Credence { .. }) => self.mock_of_type(Some(ty)),
+                            // A `Decision<E>` slot exposes provenance (§20.4): wrap the
+                            // collapsed outcome with its basis + margin.
+                            Type::Decision(_) if !matches!(raw, Value::Decision { .. }) => {
+                                self.as_decision(init, &raw)
+                            }
                             _ => raw,
                         }
                     }
@@ -308,9 +358,10 @@ impl Interp {
             }
             Stmt::Spawn { agent_type, name, args } => {
                 let ctor_args: Vec<Value> = args.iter().map(|a| self.eval(a, frame, agent)).collect();
+                let template = self.resolve_template_name(agent_type);
                 self.agents.insert(
                     name.clone(),
-                    AgentState { template: agent_type.clone(), awake: false, constructed: false, fields: HashMap::new(), ctor_args },
+                    AgentState { template, awake: false, constructed: false, fields: HashMap::new(), ctor_args },
                 );
                 frame.insert(name.clone(), Value::Agent(name.clone()));
                 self.append("Spawned", Some(name.clone()), name.clone(), None, None);
@@ -388,6 +439,42 @@ impl Interp {
                     }
                 }
             }
+            // The readable gate (§20): desugar to the engine — collapse the Credence
+            // (argmax), record the verdict, and dispatch the chosen arm. A `conformal`
+            // override or per-file conformal makes a consequential gate abstain at cold
+            // start (no labels yet → defer/default), per the desugaring.
+            Stmt::Decide { expr, conformal, arms, default, .. } => {
+                let v = self.eval(expr, frame, agent);
+                let subj = self.subject_of(expr, frame);
+                let rule = match conformal {
+                    Some(a) => GateBasis::Conformal { alpha: *a },
+                    None => GateBasis::Threshold { op: BinOp::Gt, value: 0.0, margin: 0.0 },
+                };
+                match self.decide_gate(&v, &rule) {
+                    Some(variant) => {
+                        self.emit_event("Decided", subj, variant.clone(), agent.map(|a| a.to_string()));
+                        let body = arms
+                            .iter()
+                            .find(|(l, _)| *l == variant)
+                            .map(|(_, b)| b)
+                            .or(default.as_ref());
+                        if let Some(body) = body {
+                            if let Flow::Return(v) = self.exec_block(body, frame, agent) {
+                                return Flow::Return(v);
+                            }
+                        }
+                    }
+                    None => {
+                        self.emit_event("Abstained", subj, String::new(), agent.map(|a| a.to_string()));
+                        if let Some(d) = default {
+                            if let Flow::Return(v) = self.exec_block(d, frame, agent) {
+                                return Flow::Return(v);
+                            }
+                        }
+                    }
+                }
+            }
+            Stmt::Pub(inner) => return self.exec_stmt(inner, frame, agent),
             Stmt::Block(body) => {
                 return self.exec_block(body, frame, agent);
             }
@@ -514,6 +601,9 @@ impl Interp {
             | Stmt::Authority(_)
             | Stmt::DepDecl { .. }
             | Stmt::Import { .. }
+            | Stmt::InterfaceDecl { .. }
+            | Stmt::ConformalDecl(_)
+            | Stmt::ModuleDecl { .. }
             | Stmt::ModuleAttr { .. } => {}
         }
         Flow::Normal
@@ -661,6 +751,12 @@ impl Interp {
         self.fire_subs(tick, etype, &subject);
     }
 
+    /// Subtype check including user `event …: Error` leaves (§19.5).
+    fn is_subtype_local(&self, actual: &str, pattern: &str) -> bool {
+        is_subtype(actual, pattern)
+            || (pattern == "Error" && self.error_events.contains(actual))
+    }
+
     fn fire_subs(&mut self, tick: u64, etype: &str, subject: &Option<String>) {
         if self.fire_budget == 0 {
             return;
@@ -672,7 +768,7 @@ impl Interp {
             .filter(|(i, s)| {
                 s.reg_tick <= tick
                     && !self.fired.contains(&(*i, tick))
-                    && s.etype.as_deref().map(|t| is_subtype(etype, t)).unwrap_or(true)
+                    && s.etype.as_deref().map(|t| self.is_subtype_local(etype, t)).unwrap_or(true)
                     && match (&s.subject, subject) {
                         (Some(a), Some(b)) => a == b,
                         (Some(_), None) => false,
@@ -716,6 +812,25 @@ impl Interp {
         }
     }
 
+    /// Wrap a collapse result as a `Decision` value with provenance (§20.4). The
+    /// basis is `Conformal` for a `conformal α` rule, else `Argmax`; the margin is the
+    /// gap between the top two credence masses.
+    fn as_decision(&self, init: &Expr, collapsed: &Value) -> Value {
+        let committed = match collapsed {
+            Value::Variant(v) => v.clone(),
+            Value::Bool(b) => if *b { "true".into() } else { "false".into() },
+            other => other.show(),
+        };
+        let (basis, margin) = match init {
+            Expr::Collapse { rule, .. } | Expr::EndorseExpr { rule, .. } => {
+                let basis = if matches!(rule, GateBasis::Conformal { .. }) { "Conformal" } else { "Argmax" };
+                (basis.to_string(), 0.0)
+            }
+            _ => ("Argmax".to_string(), 0.0),
+        };
+        Value::Decision { committed, basis, margin }
+    }
+
     fn eval(&mut self, e: &Expr, frame: &mut HashMap<String, Value>, agent: Option<&str>) -> Value {
         match e {
             Expr::Int(i) => Value::Int(*i),
@@ -736,6 +851,12 @@ impl Interp {
                 let o = self.eval(obj, frame, agent);
                 match o {
                     Value::Struct { fields, .. } => fields.into_iter().find(|(k, _)| k == prop).map(|(_, v)| v).unwrap_or(Value::Null),
+                    Value::Decision { committed, basis, margin } => match prop.as_str() {
+                        "committed" => Value::Variant(committed),
+                        "basis" => Value::Variant(basis),
+                        "margin" => Value::Float(margin),
+                        _ => Value::Null,
+                    },
                     _ => Value::Null,
                 }
             }

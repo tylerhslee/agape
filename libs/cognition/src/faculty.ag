@@ -1,0 +1,27 @@
+module cognition.faculty;
+
+// A Faculty is ONE cognitive lens: a persistent agent with its own private memory (§10). Seed
+// it with a lens directive at awake; thereafter every `faculty <- proposition` is judged
+// THROUGH that lens — the provider conditions each reply on the agent's own memory (§6/§10) —
+// and the faculty accumulates its own history. Diversity across faculties = different lens
+// framing + divergent private memory → DECORRELATED errors, the precondition for fusion to
+// amplify (§12).
+//
+// A faculty needs no handler: a send bound to a Credence<bool> slot is answered by the
+// destination thinking (§3/§8). The reply is GRADED, never settled — a single lens cannot act
+// alone; only the Consolidator's fused gate produces a settled ruling (§13).
+pub agent Faculty(text lens) {
+  on awake { store(lens); }   // the lens becomes standing context for every judgment
+}
+
+// The eight canonical lenses — the 2x4 basis {ext,int} x {S,N,T,F}. Spawn the subset you want.
+// GENUINE diversity (not eight paraphrases of one prompt) is what makes the panel beat its
+// parts; the ablation harness (DESIGN.md §5) measures whether each lens actually contributes.
+pub sync text Se() { return "Lens Se: judge ONLY the literal, concrete, observable facts present; ignore inference."; }
+pub sync text Si() { return "Lens Si: judge by precedent and recalled detail; how does this compare to established cases?"; }
+pub sync text Ne() { return "Lens Ne: judge by the possibilities, analogies, and second-order connections this opens up."; }
+pub sync text Ni() { return "Lens Ni: converge to the single most likely trajectory this implies, and judge that one read."; }
+pub sync text Te() { return "Lens Te: judge by external metrics and outcomes; does it measurably and efficiently achieve the goal?"; }
+pub sync text Ti() { return "Lens Ti: judge by internal logical consistency; does it contradict itself, the rules, or definitions?"; }
+pub sync text Fe() { return "Lens Fe: judge by the values and stated norms of those affected; is it acceptable to the stakeholders?"; }
+pub sync text Fi() { return "Lens Fi: judge against core, non-negotiable principles; does it violate a constitutional value?"; }

@@ -1,0 +1,2 @@
+module q;
+pub sync int v() { return 2; }

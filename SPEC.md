@@ -1,4 +1,4 @@
-# Agape Language Specification (v1.0.0)
+# Agape Language Specification (v1.1.0)
 
 > Agape is a programming language for multi-agent systems. This document is the
 > authoritative reference. The prose (§0–§14) defines the language for a reader; the
@@ -177,6 +177,8 @@ endorse attest perform emit abstain       // gate / attest / action perform / ev
 find where select from match              // queries
 all any quorum independent dependent      // aggregation, dependence declaration, quorum (§12)
 true false                                // bool literals
+module import pub interface decide requires    // library layer (§19): modules/imports, visibility, interfaces (when E decide T)
+reversible defer                               // readable gate (§20): reversible sink + decide's defer-to-principal
 ```
 
  `endorse` is the gate; the collapse
@@ -187,7 +189,10 @@ true false                                // bool literals
 **Contextual words** (lexed as identifiers, meaningful only in position): `as`, `by`
 (gate rule / principal-defer clause), `about` (the `when` subject filter, §7), `reach` /
 `use` (grants), `origin` (find projection), `expires` (send-lifetime clause, §6), `of`
-(quorum, §12), `confidence` / `margin` / `conformal` / `over` (rule clauses, §13).
+(quorum, §12), `confidence` / `margin` / `conformal` / `over` (rule clauses, §13). `as` and
+`from` (already a query keyword) double as the import-clause words (`import m as x;`,
+`import { a } from m;`, §19); `Error` (a prelude identifier) doubles as the only permitted
+user-event supertype in `event Foo(..) : Error;` (§9, §19).
 
 **Prelude identifiers** (defined in §9, not the grammar): `Entailment`, `Contradiction`,
 `Neutral`, `Credence`, `Decision`, `Principal`, `Rule`, `Event`, `Error`,
@@ -679,7 +684,8 @@ of the constrained decode, calibrated (§3).
 ```
 enum Entailment { Entails, Contradicts, Neutral }          // committed from a Credence<Entailment>
 type Credence<E>                                           // a graded judgment over enum E (§3)
-type Decision<E>                                           // a gate's committed outcome over E (§13)
+type Decision<E>                                           // a gate's committed outcome over E (§13); fields: .committed (E|abstained), .basis (Basis), .margin (float) — §20
+enum Basis { Argmax, Conformal, Principal }                // how a Decision was settled (Decision.basis, §20)
 type Principal                                             // an accountable identity — a declared dependency (§3)
 // Rule is the gate's PARAMETER, not a type: `confidence θ [margin δ]` | `conformal α`  (§3, §13)
 
@@ -704,7 +710,9 @@ type Principal                                             // an accountable ide
 `RetryExhausted`, `FailedAttestation`, and `AgentCrashed` extend it. `when` matches by
 subtype, so `when (Error e)` catches a `Contradiction`; a contradiction is an `Error`
 subtype, and code that wants only faults matches the specific types. `Expired` and a lost
-send are not errors.
+send are not errors. A user `event` may extend this root — `event Foo(..) : Error;`
+adds a *leaf* under `Error` so `when (Error e)` catches it too; the only permitted supertype is
+the built-in `Error` (no user intermediate supertypes), and `action` may not extend it (§19.5).
 
 `**say(x)`** prints its argument; it is not a spine operation. `**store(x)`** internalizes `x` into
 the agent's relational + graph memory and `**embed(x)`** writes `x`'s embedding to the vector store
@@ -1066,77 +1074,91 @@ Judgment `**Γ; Σ; A ⊢ e : T ! c · t**`.
 ## 15.2 Abstract syntax (EBNF)
 
 ```
-program   ::= decl*
-decl      ::= typedecl | tool | agent | policy | fn | stmt
-typedecl  ::= "struct" Ident "{" field ("," field)* "}"
-            | "enum" Ident "{" Ident ("," Ident)* "}"
-            | "event"  Ident "(" field ("," field)* ")" ";"   // a plain record (assertive)
-            | "action" Ident "(" field ("," field)* ")" ";"   // a performative; a power is needed
-field     ::= type Ident                                     // "name: T" also accepted
-tool      ::= ("read"|"write") "tool" type Ident params config?  // mandatory effect class; write = consequential sink
-agent     ::= "agent" Ident params grants? "{" abody* "}"
-policy    ::= "policy" Ident config                          // a decision policy (§13)
-grants    ::= "grants" "{" ( "*" | cap ("," cap)* ) "}"
-cap       ::= "perform" Ident | "reach" Ident | "use" Ident
-config    ::= "{" directive* "}"                             // colon-free `keyword operand…` directives
-directive ::= Ident operand*
-abody     ::= extend | on | stmt
-extend    ::= "extend" Ident args ";"
-on        ::= "on" ("awake"|"sleep"|"crash") block
-fn        ::= "sync"? type Ident params block          // async is the default
-params    ::= "(" (type Ident ("," type Ident)*)? ")"
-type      ::= "int"|"float"|"bool"|"text"|"null" | "event" "<" type ">"
-            | "array" "<" type ">"                     // collection (query results, fan-out source)
-            | "Credence" "<" type ">"                  // graded judgment over enum
-            | "Decision" "<" type ">"                  // a gate's committed outcome
-            | Ident                                    // enum/struct/agent/action names, incl. Principal, Rule
+program    ::= moduledecl? import* decl*                      // optional module header, then imports (§19.2)
+moduledecl ::= "module" modpath ";"                           // optional, else derived from the file path
+import     ::= "pub"? "import" modpath ("as" Ident)? ";"      // whole-module; `pub import` re-exports (§19.2a)
+             | "pub"? "import" "{" Ident ("," Ident)* "}" "from" modpath ";"   // selective; `pub` re-exports
+modpath    ::= Ident ("." Ident)*                             // a dotted module / qualified-name path
+decl       ::= vis? (typedecl | tool | agent | policy | fn | interface) | confdecl | stmt   // vis, interface, confdecl
+vis        ::= "pub"                                          // default (absent) = module-private (§19.4)
+confdecl   ::= "conformal" Number ";"                        // file-level default conformal α (§20)
+typedecl   ::= "struct" Ident typarams? "{" field ("," field)* "}"            // typarams
+             | "enum" Ident "{" Ident ("," Ident)* "}"                        // enums stay monomorphic
+             | "event"  Ident "(" field ("," field)* ")" (":" "Error")? ";"   // optional Error supertype (§19.5)
+             | "reversible"? "action" Ident "(" field ("," field)* ")" ";"   // performative; `reversible` = low-stakes sink (§20)
+field      ::= type Ident                                     // "name: T" also accepted
+tool       ::= "reversible"? ("read"|"write") "tool" type Ident params config?  // effect class; `reversible` = low-stakes sink (§20)
+agent      ::= "agent" Ident params ifaces? grants? "{" abody* "}"   // ifaces (§19.5); agents are NOT generic
+ifaces     ::= ":" modpath ("," modpath)*                     // implemented interfaces (nominal)
+interface  ::= "interface" Ident "{" ifmember* "}"            // (§19.5); a type, not instantiable; not generic
+ifmember   ::= ("when" type "decide" type | "requires" cap) ";"?   // handled-event→decision contract / required power (no `->`)
+policy     ::= "policy" Ident config                          // a decision policy (§13)
+grants     ::= "grants" "{" ( "*" | cap ("," cap)* ) "}"
+cap        ::= "perform" Ident | "reach" Ident | "use" Ident
+config     ::= "{" directive* "}"                             // colon-free `keyword operand…` directives
+directive  ::= Ident operand*
+abody      ::= extend | on | stmt
+extend     ::= "extend" Ident args ";"
+on         ::= "on" ("awake"|"sleep"|"crash") block
+fn         ::= "sync"? type Ident typarams? params block      // typarams; async is the default
+typarams   ::= "<" Ident ("," Ident)* ">"                    // plain type params, struct/fn only (§19.5); no kind bounds
+typeargs   ::= "<" type ("," type)* ">"                       // generic instantiation
+params     ::= "(" (type Ident ("," type Ident)*)? ")"
+type       ::= "int"|"float"|"bool"|"text"|"null" | "event" "<" type ">"
+             | "array" "<" type ">"                     // collection (query results, fan-out source)
+             | "Credence" "<" type ">"                  // graded judgment over enum
+             | "Decision" "<" type ">"                  // a gate's committed outcome
+             | modpath typeargs?                         // qualified names (enum/struct/agent/action/interface, incl. Principal, Rule); typeargs only for generic structs
 
-stmt      ::= vardecl | assign | spawn | prompt | principal | depdecl
-            | "awake" Ident ";" | "sleep" Ident ";"
-            | "emit" Ident "(" expr ")" ";"            // a plain event (no power)
-            | "perform" Ident "(" expr ")" ";"         // an action (needs a power and a settled value)
-            | endorse | attest
-            | "say" "(" expr ")" ";" | "return" expr? ";"
-            | "if" "(" expr ")" block ("else" block)?
-            | when | case | retry
-            | expr ";"
-vardecl   ::= type Ident ("=" expr)? ";"
-assign    ::= (Ident | "self" "." Ident | postfix) "=" expr ";"
-spawn     ::= "spawn" Ident Ident args? ";"            // allocate + construct (args here)
-prompt    ::= "prompt" type Ident ";"
-principal ::= "principal" Ident config? ";"            // config lists `attest NAME, …`
-depdecl   ::= ("independent"|"dependent") Ident ("," Ident)* ";"
-when      ::= "when" "(" type Ident? ("about" expr)? ")" ("if" "(" expr ")")? block
-endorse   ::= "endorse" "(" expr "by" rule ")" arms ("abstain" block)? ("by" Ident block)?
-attest    ::= "attest" expr "by" Ident (arms | ";")
-arms      ::= "{" (Ident ":" block)* "}"               // dispatch on a Decision's variants
-case      ::= "case" "(" expr ")" "as" Ident "{" (Ident ":" block)* ("default" ":" block)? "}"
-retry     ::= block "retry" "(" Int ")"          // re-attempt the block up to N times on a fault
-find      ::= "find" Ident ("," "origin" "(" Ident ")")? "where" "{" triple+ "}"   // → array<T>
-select    ::= "select" (Ident ("," Ident)* | "*") "from" Ident "where" "{" cond "}"  // → array<Record>
-match     ::= "match" expr ">" Number                                             // → array<Hit>
-triple    ::= operand operand operand ";"          // subject predicate object (vars or literals)
-cond      ::= cmp (("&&"|"||") cmp)*                // a boolean filter over fields
-operand   ::= Ident | String | Int | Float
+stmt       ::= vardecl | assign | spawn | prompt | principal | depdecl
+             | "awake" Ident ";" | "sleep" Ident ";"
+             | "emit" modpath "(" expr ")" ";"           // a plain event (no power); name may be qualified
+             | "perform" modpath "(" expr ")" ";"        // an action (needs a power + settled value); name may be qualified
+             | endorse | attest | decide                 // `decide` (§20)
+             | "say" "(" expr ")" ";" | "return" expr? ";"
+             | "if" "(" expr ")" block ("else" block)?
+             | when | case | retry
+             | expr ";"
+vardecl    ::= type Ident ("=" expr)? ";"
+assign     ::= (Ident | "self" "." Ident | postfix) "=" expr ";"
+spawn      ::= "spawn" modpath typeargs? Ident args? ";"      // allocate + construct; type may be qualified/generic
+prompt     ::= "prompt" type Ident ";"
+principal  ::= "principal" Ident config? ";"            // config lists `attest NAME, …`
+depdecl    ::= ("independent"|"dependent") Ident ("," Ident)* ";"
+when       ::= "when" "(" type Ident? ("about" expr)? ")" ("if" "(" expr ")")? block   // type may be a qualified etype
+endorse    ::= "endorse" "(" expr "by" rule ")" arms ("abstain" block)? ("by" Ident block)?
+attest     ::= "attest" expr "by" Ident (arms | ";")
+decide     ::= Ident? "decide" expr ("conformal" Number)?    // (§20): optional principal subject, optional per-gate α
+               "{" (Ident ":" (block|stmt))* ("default" ":" (block|stmt))? "}"
+               ("defer" "to" Ident)? ";"?                    // principal via subject OR `defer to` (one of them)
+arms       ::= "{" (Ident ":" block)* "}"               // dispatch on a Decision's variants
+case       ::= "case" "(" expr ")" "as" Ident "{" (Ident ":" block)* ("default" ":" block)? "}"
+retry      ::= block "retry" "(" Int ")"          // re-attempt the block up to N times on a fault
+find       ::= "find" Ident ("," "origin" "(" Ident ")")? "where" "{" triple+ "}"   // → array<T>
+select     ::= "select" (Ident ("," Ident)* | "*") "from" Ident "where" "{" cond "}"  // → array<Record>
+match      ::= "match" expr ">" Number                                             // → array<Hit>
+triple     ::= operand operand operand ";"          // subject predicate object (vars or literals)
+cond       ::= cmp (("&&"|"||") cmp)*                // a boolean filter over fields
+operand    ::= Ident | String | Int | Float
 
-expr      ::= expr "<-" expr ("expires" Number)?              // send; optional lifetime
-            | expr "|>" expr                            // pipe
-            | expr "by" rule                            // collapse a Credence → Decision
-            | "endorse" "(" expr "by" rule ")"          // gate (expr form): the endorsed Decision
-            | "all" "(" expr ")" | "any" "(" expr ")"   // fuse an array<Credence<bool>>
-            | "quorum" "(" Int "," expr ")"             // ≥ k of an array<Credence<bool>>
-            | find | select | match                     // spine/memory queries → array<…>
-            | cmp
-rule      ::= "confidence" Number ("margin" Number)? | "conformal" Number | expr  // or a Rule value
-cmp       ::= add (("=="|"!="|"<"|">"|"<="|">=") add)?
-add       ::= mul (("+"|"-") mul)*
-mul       ::= unary (("*"|"/") unary)*
-unary     ::= "!" unary | postfix
-postfix   ::= primary ("." Ident | args | "[" expr "]")*
-primary   ::= Int|Float|String|FString|"true"|"false"|"null"|"self"|Ident
-            | "(" expr ")"
-            | Ident "{" (Ident ":" expr ("," Ident ":" expr)*)? "}"  // struct literal
-            | "[" (expr ("," expr)*)? "]"               // array literal
+expr       ::= expr "<-" expr ("expires" Number)?              // send; optional lifetime
+             | expr "|>" expr                            // pipe
+             | expr "by" rule                            // collapse a Credence → Decision
+             | "endorse" "(" expr "by" rule ")"          // gate (expr form): the endorsed Decision
+             | "all" "(" expr ")" | "any" "(" expr ")"   // fuse an array<Credence<bool>>
+             | "quorum" "(" Int "," expr ")"             // ≥ k of an array<Credence<bool>>
+             | find | select | match                     // spine/memory queries → array<…>
+             | cmp
+rule       ::= "confidence" Number ("margin" Number)? | "conformal" Number | expr  // or a Rule value
+cmp        ::= add (("=="|"!="|"<"|">"|"<="|">=") add)?
+add        ::= mul (("+"|"-") mul)*
+mul        ::= unary (("*"|"/") unary)*
+unary      ::= "!" unary | postfix
+postfix    ::= primary ("." Ident | args | "[" expr "]")*    // "." Ident also forms qualified names
+primary    ::= Int|Float|String|FString|"true"|"false"|"null"|"self"|Ident
+             | "(" expr ")"
+             | modpath typeargs? "{" (Ident ":" expr ("," Ident ":" expr)*)? "}"  // struct literal; qualified/generic
+             | "[" (expr ("," expr)*)? "]"               // array literal
 ```
 
 **Collections.** `array<T>` is the collection type *produced* by queries (`find`, which may
@@ -1445,6 +1467,58 @@ exceeds each `δᵢ`, so `β(δ_fused) ≤ minᵢ β(δᵢ)` — a quorum tighte
 **Pipeline corollary.** Make every value that writes to a sink exactly-gated, set a high
 consequential `m`, and (for noisy judgments) fuse independent judges by `quorum`. A
 `recorded` run replays to structural equality unconditionally.
+
+## 15.5.6 Conformal calibration, and the margin — the gate's evidence
+
+This subsection establishes the two distinct guarantees a gate offers, so the `Rule` bases
+(§13) rest on stated mathematics rather than assertion. Let the provider's calibrated credence
+for input `x` over the enum's variants be `p̂(y | x)` (§3); let `g(x) = p̂_top(x) − p̂_2nd(x)` be
+the **margin** (the lead of the top variant over the runner-up — for binary at threshold `τ`,
+equivalently `|p̂ − τ|`, §15.5.5).
+
+**(A) The conformal basis — a coverage guarantee.** `by conformal α` is *split conformal
+prediction* (Vovk, Gammerman, Shafer, *Algorithmic Learning in a Random World*, 2005), calibrated
+from the gate's own labeled decisions on the spine:
+
+- **Nonconformity score** `s(x, y) = 1 − p̂(y | x)` (how poorly label `y` fits).
+- **Calibration set** `{(xᵢ, yᵢ)}_{i=1..n}` — the gate's past decisions whose true label `yᵢ`
+  was later recorded (an `attest` ruling or a fed-back outcome, §13); score each at its *true*
+  label, `sᵢ = s(xᵢ, yᵢ)`.
+- **Quantile** `q̂ = ` the `⌈(n+1)(1−α)⌉`-th smallest of `{s₁,…,sₙ}`.
+- **Prediction set** `Cα(x) = { y : s(x, y) ≤ q̂ } = { y : p̂(y | x) ≥ 1 − q̂ }`.
+
+> **Coverage theorem.** If `(x₁,y₁),…,(xₙ,yₙ),(x,y)` are exchangeable, then
+> `Pr( y_true ∈ Cα(x) ) ≥ 1 − α` (and `≤ 1 − α + 1/(n+1)`). Finite-sample, distribution-free,
+> and **assuming nothing about whether `p̂` is calibrated** — this is exactly why a conformal gate
+> converts an untrusted `p̂` into a decision with an honest error rate.
+
+The gate **commits iff `|Cα(x)| = 1`**, else **abstains** (a non-singleton set is the principled
+"ambiguous" signal over three-plus variants, where a scalar threshold has none). The operating
+cutoff `1 − q̂` is *derived* to achieve `α`; nobody sets it. **Cold start:** below a readiness
+minimum of labelled cases the quantile is uncertified, so the gate abstains/defers to a
+principal (§13); those rulings are the first labels — the supervised→autonomous bootstrap.
+
+**(B) The margin — a stability property, and the clarification of `δ` vs `m`.** The margin `g`
+governs a *different* property from coverage: run-to-run **stability**. By the oracle model (O,
+§15.5.5) two fixed-`𝒫` draws flip only if they straddle the boundary, `Pr(flip) ≤ β(g)` with `β`
+nonincreasing and `β(g) → 0` as `g` grows.
+
+> **`δ` and `m` are the same quantity `g`, checked at two sites.** `δ` is the threshold rule's
+> requirement `g ≥ δ` at *decision time* (a parameter of `by confidence θ margin δ`); `m` (the
+> consequential floor, `[runtime] consequential_margin`) is the requirement `g ≥ m` at the
+> *consequential sink*, applied to *any* committed decision before it acts. They are not two
+> margins; one quantity, two checkpoints. For a threshold gate with `δ ≥ m`, `m` is redundant;
+> the conformal basis has no `δ`, so `m` is the only place to add a stability floor on top of
+> coverage — a conformal singleton can satisfy coverage yet sit on a knife-edge `g` (flipping at
+> `temperature > 0`), and `m` is the optional cure.
+
+**Two orthogonal properties, then.** `α` bounds *how often the committed decision is wrong*
+(coverage, basis A); `g` (as `δ` or `m`) bounds *how often two runs disagree* (stability, basis
+B / §15.5.5). `α` is **not** a margin. The threshold basis approximates coverage with a hand-set
+`θ` and supplies stability with `δ`; the conformal basis gives certified coverage via `α` and
+takes stability from `m`. Calibration-readiness and the coverage bound are stated as hypotheses
+(a property of the calibration pipeline, §3 / §16, not provable from the operational semantics),
+exactly as the oracle bound (O) is (§15.7).
 
 ## 15.6 Soundness statements
 
@@ -1795,3 +1869,220 @@ that an eBPF program earns an in-kernel seat by being verifiable rather than tru
 that enforcement boundary into the operating system, so that the system rather than a trusted
 compiler mediates an agent's consequential actions, is the aim of a separate project (AIOS)
 and is out of scope here.
+
+---
+
+## 19. The library layer
+
+A static packaging layer: modules, imports and re-export, namespacing, declaration visibility,
+generics, and interfaces. The grammar is in §15.2; the keywords in §2; the prelude in §9.
+
+### 19.1 The static-layer property
+
+The library layer is **static / compile-time**. Modules, imports, generics, interfaces, and
+visibility are resolved, checked, and erased before the dynamic semantics (§15.4) run, so the
+oracle model, the spine evolution, replay, and the Stability theorem (§15.5.5, §15.6) are not
+affected. Generics are monomorphized; interfaces are erased to the concrete agent address they
+bind; visibility governs names, not spine contents. The one runtime-visible point is that an
+event's `etype` is a fully-qualified name (§19.2).
+
+### 19.2 Modules, imports, and namespacing
+
+A **module** is one source file (`*.ag`). Its path is, by default, its location relative to its
+package's source root, `.`-separated, without extension; an explicit `module modpath;` header
+overrides this. A file with no `module` header and no `import` is the **implicit root module**.
+
+- `import m;` binds module `m`'s exported names under the prefix `m` (`m.Name`). `import m as x;`
+  rebinds the prefix to `x`. `import { A, B } from m;` binds the bare names `A`, `B`.
+- The **prelude** (§9) is the implicit module auto-imported unqualified into every module.
+- Imports are **acyclic**; a cycle, an import that resolves to no module, or a selective import of
+  a name the module does not export is a **`ModuleError`**.
+
+**Names are fully qualified.** Every top-level declaration's true name is `modpath . Ident`. From
+another module it is reached via its imported prefix/alias or a selective bare import; within its
+own module it is bare. An ambiguous bare reference (e.g. the same bare name selectively imported
+from two modules) is a **`ModuleError`**; resolve it by qualifying.
+
+**The spine `etype` is qualified (the one dynamic touch).** An event/action type on the spine
+(§7, §15.4) is identified by its fully-qualified name, so the same simple name declared in two
+modules denotes two *distinct* spine types (`a.Tick` ≠ `b.Tick`) and `when (a.Tick t)` binds only
+the qualified one. The built-in subtype hierarchy (§9) is cross-module: `when (Error e)` catches
+every `Error` subtype regardless of the module that appended it.
+
+#### 19.2a Re-export
+
+A plain `import` binds names for the importing module's *own* use; it does not republish them. A
+**`pub import`** does: `pub import { Case } from cognition.signals;` makes `Case` part of the
+importing module's public surface, so a library's entry module can present a single-import facade
+(`import cognition;` then gives the user `Case`) without leaking its internal submodule structure.
+`pub import m;` re-exports the whole imported prefix. Re-exported names obey visibility like any
+other `pub` name; a `pub import` of a non-`pub` name is a `VisibilityError`.
+
+### 19.3 Packages and the manifest
+
+A **package** is a directory with an `agape.toml` carrying a `[package]` table and a library
+entry. The current project is a package (§16/§17). adds two manifest keys:
+
+```toml
+[package]   name = "cognition"   version = "1.1.0"   lib = "src/lib.ag"   # importable root
+[dependencies]
+cognition = { path = "../cognition" }     # path dependency
+util      = { git = "…", rev = "…" }      # pinned git dependency (no registry yet)
+```
+
+`entry` (an app's entry, §17) and `lib` (a package's importable root) coexist. Dependency
+resolution is **pinned** (path or rev), so the resolved source set is fixed and version-controlled,
+exactly like the dependency backends; a run is still identified by `(I, manifest, recording)`
+(§17.3) and no new nondeterminism is introduced.
+
+### 19.4 Visibility
+
+A declaration is prefixed by an optional `pub`. The **default (absent) is module-private**: the
+name is reachable only within its module. `pub` exports it for import. A single-module program is
+one module, so private-by-default leaves every name mutually visible within it.
+
+Visibility governs **names, not the spine.** A private `event`/`action` still physically lands on
+the spine (§7) and is visible to audit and replay; visibility only controls what *source in
+another module may name*:
+
+- naming a non-`pub` declaration from another module (import, qualified reference, `spawn`,
+  `reach`, `extend`, `emit`, `perform`, `when`) is a **`VisibilityError`**;
+- `pub` is **shallow**: a `pub` declaration may not expose a private name in its signature — a
+  `pub struct`/`fn`/`agent` whose field/parameter/return type is private is a **`VisibilityError`**.
+
+Authority (`grants`, §13) composes on top: visibility gates the *name*, a grant gates the *power*.
+
+### 19.5 Generics, interfaces, and error subtyping
+
+**Generics.** Only `struct` and `fn` may carry type parameters (`typarams`, §15.2) — **plain type
+parameters, no kind bounds.** Type arguments instantiate them (`typeargs`). Generics are
+**monomorphized** at compile time — each instantiation is a distinct concrete type the runtime
+never sees as a variable. Enums stay monomorphic. **Agents and interfaces are not generic:** an
+agent is event-reactive, so its parameterization already lives in the *event types* its `when`
+handlers match — there is no meaning to "an agent over `E`" beyond the handlers it declares; a
+generic `agent` or `interface` is a **`ParseError`**. Generics serve data (`struct Box<T>`,
+`struct Pair<A, B>`) and pure helpers (`fn id<T>`).
+
+**Interfaces.** An `interface` names an agent's external surface: the events it handles and the
+outcome each produces, plus the powers it `requires`. A member is written **`when EVENT decide
+RESULT`** (reusing existing keywords — there is no `->`, which is a `LexError`, §2). An interface
+is a **type** (usable as a binding/parameter/`reach` target) but is **not instantiable** —
+`spawn` of an interface is a **`TypeError`**. Conformance is **nominal**: an agent declares the
+interfaces it implements (`agent Desk : Resolver`), and the compiler checks that for each `when A
+decide B` the agent has a `when (A …)` handler producing a `B` decision, and that each `requires
+cap` is in the agent's `grants`. A failure is an **`InterfaceError`**. Subtyping: an implementing
+agent is a subtype of the interface, so an interface-typed binding accepts any implementor and
+`reach Iface` authorizes sending to any agent satisfying `Iface`. Interfaces are erased after
+checking; a send to an interface-typed binding is the ordinary `E-Send` (§15.4) to its concrete
+address.
+
+**Error subtyping.** A user `event` may declare the single supertype `Error`
+(`event Foo(..) : Error;`), adding a *leaf* under the built-in root (§9) so `when (Error e)`
+catches it. The only permitted supertype is `Error` (no user intermediate supertypes); a
+non-`Error` supertype is a **`TypeError`**, and an `action` carrying a supertype is a
+**`ParseError`** (only `event` may extend). `when` matching (§15.4) already operates by subtype, so
+no new dynamic rule is needed.
+
+### 19.6 Static rules, error classes, and soundness
+
+The library layer is static (§15.3) and erases before §15.4. Conformance error classes:
+**`ModuleError`** (import resolution: unresolved, cyclic, or ambiguous names), **`VisibilityError`**
+(naming a non-`pub` declaration; a `pub` signature exposing a private type), and
+**`InterfaceError`** (an `agent : Iface` that fails the conformance check). A non-`Error` user
+supertype is a `TypeError`; an `action` supertype, a generic `agent`/`interface`, and other
+malformed syntax are a `ParseError`.
+
+Because the layer erases before the dynamic semantics, the soundness statements (§15.6, T1–T5)
+hold with names carried in qualified form: T1 (authority) is independent of visibility; T4
+(reproducibility) holds with the qualified `etype` in the canonical serialization; T2/T3/T5 are
+unaffected.
+
+---
+
+## 20. The readable gate — `decide`
+
+> A surface where the author states *intent + one fact about stakes*, and the decision theory is
+> **derived and enforced**. It is sugar over the gate engine (`endorse`/`attest`/`c by R`, §13) —
+> "every sugar desugars" (§14) — so it adds no dynamic semantics, and the engine forms remain
+> available directly for hand-calibration. The mathematics it rests on is §15.5.6.
+
+### 20.1 `reversible`, gate strictness, and the cold→warm phasing
+
+One stakes distinction, written on a **consequential sink** — an `action` or a `write tool`
+(`reversible action X` and `reversible write tool …` are identical). Unmarked = cautious
+(fail-closed, §13). `reversible` only ever *relaxes*. It does two things: (a) at the gate level it
+lets the gate skip conformal; (b) at a commit it waives the coverage guarantee and the margin floor
+`m` (→ 0) for that sink.
+
+**Gate strictness = the strictest arm.** A `decide` whose arms are **all** reversible is
+**argmax-forever** (no labels, no principal, no conformal). If **any** arm reaches a non-reversible
+sink the gate is **consequential** and warms over time:
+
+- **Cold** (labelled cases < readiness, §13): run **argmax**. A reversible outcome commits; a
+  non-reversible outcome **defers** to the principal (cannot certify yet). Those deferrals are the
+  first labels.
+- **Warm** (labels ≥ readiness): run **conformal** (§15.5.6) every time. Per-outcome reversibility
+  then *waives* (reversible → commit the argmax) or *requires* (non-reversible → commit iff the
+  prediction set is a singleton, else defer) the coverage guarantee.
+
+So "reversible never defers", "strictest arm decides the mode", and "conformal every time once
+warm" all hold together.
+
+### 20.2 `conformal α` — the one dial; calibration is the author's design
+
+`conformal α` is the only number, an **error guarantee** (§15.5.6), settable at three first-class
+scopes: file (`conformal 0.05;`), per gate (`decide c conformal 0.01 { … }`), and the manifest
+default (precedence as §17); absent, α defaults (0.05). Only the conformal path needs a
+distribution (provider logprobs, or the §16 sampling fallback).
+
+**Calibration scope is a design decision, not a language construct.** A gate calibrates from *its
+own* recorded decisions on the spine; the calibration pool is exactly the decisions made at that
+gate site (pooling across instances of the same site, which are exchangeable — keeping the §15.5.6
+coverage guarantee valid). Authors control scope by how they *factor* gates: a shared decision
+routed through one gate shares a pool; separate gates keep separate pools. There is deliberately no
+cross-site pooling construct.
+
+### 20.3 commit / default / defer (+ notify), and the static checks
+
+`decide` dispatches a `Credence<E>` over its arms:
+
+- **commit** — an arm fires (admitted per §20.1).
+- **default** — an optional `default:` arm, the autonomous safe fallback.
+- **defer** — a **principal** (the `subject decide …` form, or a trailing `defer to p`) decides the
+  cold/contested case (blocking); the ruling re-enters the arms and becomes a label.
+- **notify** is orthogonal — a plain `emit` (no dedicated form); the spine records it.
+
+**Tie / no-plurality** (a `reversible` gate with no clear top): the `default:` arm is the tiebreak;
+absent a `default:`, the gate **abstains** (no effect) and records an `Abstained` event — never a
+silent pick.
+
+**Static checks** (extending the consequential-action rule, §13/§15.3.3):
+- **Deference requirement.** A `decide` with a non-reversible arm and **no reachable principal**
+  (subject or `defer to`) is a **compile error** — autonomy is earned via human-label deferral, and
+  a `default:` arm does not substitute. An all-reversible `decide` needs no principal (one declared
+  but unused is a warning).
+- **Distribution-source check** (config-aware, §16). A consequential gate needs a distribution: a
+  provider with logprobs → ok; without, but with the sampling fallback configured → ok (warn on
+  cost); with neither → **warning**, conformal degrades to pure deferral. The fallback is
+  manifest-switchable (`[provider] sampling_fallback = false`).
+
+### 20.4 Inspecting a decision (`Decision` provenance)
+
+A `Decision<E>` is introspectable for how it was settled (the data is already recorded, §13):
+read-only `**.committed`** (the variant, or abstained), `**.basis`** (`Basis = Argmax | Conformal |
+Principal`), `**.margin`** (the gap `g`, §15.5.6). This is agape's reflection surface — provenance
+over the audit metadata — not general structural `typeof`.
+
+### 20.5 Desugaring
+
+`decide` lowers to the §13 engine:
+
+```
+reversible action/tool X         →  arm admitted by  c by confidence 0    // argmax; margin floor m → 0
+unmarked  action/tool X          →  arm admitted by  c by conformal α     // + readiness bootstrap
+p decide c { A: s  default: d }  →  endorse (c by <derived>) { A: s } abstain { d } by p { … };
+```
+
+Arbitrary `confidence θ margin δ`, explicit `conformal α`, `attest`, named `policy`, and the margin
+floor `m` remain available directly for hand-calibration; `decide` is the readable default over
+them.

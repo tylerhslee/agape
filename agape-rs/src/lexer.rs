@@ -90,6 +90,8 @@ pub const KEYWORDS: &[&str] = &[
     "true", "false",
     // somatic kernel (§15.2)
     "while", "break", "import",
+    // library layer + the readable gate (§19, §20)
+    "module", "pub", "interface", "requires", "reversible", "defer",
 ];
 
 /// Operators, longest-first so multi-char operators win over their prefixes.

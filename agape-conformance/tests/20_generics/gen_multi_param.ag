@@ -1,0 +1,9 @@
+//! id:        gen_multi_param
+//! section:   20_generics
+//! since:     1.1
+//! expect:    accept
+//! spec:      v1.1.0 design 5.1 (generics take multiple type parameters)
+//! ---
+struct Pair<A, B> { fst: A, snd: B }
+Pair<int, text> p = Pair<int, text> { fst: 1, snd: "a" };
+say(p.snd);

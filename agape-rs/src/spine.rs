@@ -69,6 +69,9 @@ pub struct Spine {
     next_corr: u64,
     /// The running hash-chain head (§16.2).
     head: [u8; 32],
+    /// User `event …: Error` leaf types (§19.5) — so a `when (Error e)` and the
+    /// conformance matcher recognize them as `Error` subtypes.
+    pub error_subtypes: std::collections::HashSet<String>,
 }
 
 impl Default for Spine {
@@ -79,7 +82,7 @@ impl Default for Spine {
 
 impl Spine {
     pub fn new() -> Self {
-        Spine { log: Vec::new(), next_corr: 0, head: sha256(b"agape/v1") }
+        Spine { log: Vec::new(), next_corr: 0, head: sha256(b"agape/v1"), error_subtypes: std::collections::HashSet::new() }
     }
 
     pub fn len(&self) -> usize {

@@ -1,0 +1,11 @@
+//! id:        gen_monomorphize_two_instances
+//! section:   20_generics
+//! since:     1.1
+//! expect:    accept
+//! spec:      v1.1.0 design 5.1 (distinct instantiations monomorphize to distinct concrete types)
+//! ---
+struct Box<T> { value: T }
+Box<int> a = Box<int> { value: 1 };
+Box<text> b = Box<text> { value: "x" };
+say(a.value);
+say(b.value);

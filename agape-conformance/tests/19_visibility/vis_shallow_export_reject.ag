@@ -1,0 +1,9 @@
+//! id:        vis_shallow_export_reject
+//! section:   19_visibility
+//! since:     1.1
+//! expect:    reject
+//! error:     VisibilityError
+//! spec:      v1.1.0 design 4.3 (pub is shallow: a pub type may not expose a private field type)
+//! ---
+struct Secret { n: int }
+pub struct Wrap { s: Secret }

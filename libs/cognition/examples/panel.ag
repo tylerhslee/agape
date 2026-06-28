@@ -1,0 +1,26 @@
+// examples/panel.ag — convene a 3-lens panel and watch the fused ruling.
+//
+// Se (literal facts), Ti (internal consistency), and Fe (stakeholder values) judge the SAME
+// proposition independently; the Consolidator fuses (2-of-3) and gates once. The Desk receives
+// only the SETTLED ruling — never the individual graded judgments. The fused ruling is more
+// stable than any single lens would have produced (SPEC §15.5.5).
+
+import { Appraise, Ruled, Case } from cognition;
+import { Faculty, Se, Ti, Fe } from cognition.faculty;
+import { Consolidator } from cognition.consolidator;
+
+agent Desk {
+  when (Ruled r) { say(r.ruling.rationale); }
+}
+
+spawn Faculty seF(Se());  awake seF;     // three diverse lenses, each its own agent + memory
+spawn Faculty tiF(Ti());  awake tiF;
+spawn Faculty feF(Fe());  awake feF;
+
+spawn Consolidator panel(seF, tiF, feF);  awake panel;   // the PFC, holding its panel
+spawn Desk desk;  awake desk;
+
+emit Appraise(Case {
+  proposition: "the refund request is policy-compliant",
+  context: "order 4821, $250, 40 days after purchase"
+});

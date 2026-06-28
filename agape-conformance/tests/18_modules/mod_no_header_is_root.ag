@@ -1,0 +1,11 @@
+//! id:        mod_no_header_is_root
+//! section:   18_modules
+//! since:     1.1
+//! expect:    accept
+//! spec:      v1.1.0 design 0,2 (no module/import = implicit root module; v1.0.0 backward compat)
+//! note:      an unmodified v1.0.0 program still compiles
+//! ---
+agent A {
+  on awake { say("hello"); }
+}
+spawn A a; awake a;

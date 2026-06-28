@@ -14,9 +14,10 @@ MANIFEST.* files. It also validates the headers (see check()).
 Header keys: id, section, expect (accept|reject|blocked), error (iff reject),
 spine|contains|absent|order (matchers; `; `-separated), question (iff blocked), spec, note.
 Run directives (the §16.5 harness contract): provider (empty|schema_violation|credence(...)),
-attest (grant|deny), manifest (key=value; `; `-separated), replay (chain_head_equal).
+attest (grant|deny), manifest (key=value; `; `-separated), replay (chain_head_equal),
+modules (companion module filenames; `; `-separated; live in a sibling <id>.d/ dir — v1.1.0).
 Error classes: LexError ParseError TypeError ColorViolation TaintViolation
-AuthorityViolation ExhaustivenessError.
+AuthorityViolation ExhaustivenessError ModuleError VisibilityError InterfaceError GateError.
 
 Run:  python3 build_manifests.py            # rebuild MANIFEST.toml + MANIFEST.md
       python3 build_manifests.py --check    # validate + verify manifests are up to date (CI)
@@ -29,10 +30,12 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 TESTS_DIR = os.path.join(ROOT, "tests")
 
 MATCHER_KEYS = ("spine", "contains", "absent", "order")
-DIRECTIVE_LIST_KEYS = ("manifest",)   # `;`-separated like matchers, but configure the run
+DIRECTIVE_LIST_KEYS = ("manifest", "modules")   # `;`-separated; configure the run / list companion modules (v1.1.0)
 EXPECTS = {"accept", "reject", "blocked"}
 ERROR_CLASSES = {"LexError", "ParseError", "TypeError", "ColorViolation",
-                 "TaintViolation", "AuthorityViolation", "ExhaustivenessError"}
+                 "TaintViolation", "AuthorityViolation", "ExhaustivenessError",
+                 # v1.1.0 library layer + gate:
+                 "ModuleError", "VisibilityError", "InterfaceError", "GateError"}
 # Harness directives — the §16.5 test-mode contract a conformant runtime must honor.
 PROVIDER_MODES = {"empty", "schema_violation"}   # plus a scripted `credence(...)` form
 ATTEST_MODES = {"grant", "deny"}
@@ -75,6 +78,13 @@ def load_tests():
         assert t["section"] == section, f"{path}: header section {t['section']!r} != dir {section!r}"
         assert t.get("expect") in EXPECTS, f"{path}: bad/missing expect {t.get('expect')!r}"
         assert t.get("spec"), f"{path}: missing spec clause"
+        # version gating (the suite "Versions" contract): `since`/`until` are
+        # `major.minor`; a build of version V runs a test iff since <= V <= until.
+        for vk in ("since", "until"):
+            if t.get(vk):
+                parts = t[vk].split(".")
+                assert len(parts) == 2 and all(p.isdigit() for p in parts), \
+                    f"{path}: bad {vk} {t[vk]!r} (want major.minor, e.g. 1.1)"
         if t["expect"] == "reject":
             assert t.get("error") in ERROR_CLASSES, f"{path}: reject needs a known error class, got {t.get('error')!r}"
         if t["expect"] == "blocked":
@@ -109,6 +119,9 @@ def render_toml(tests):
         L.append(f'id = "{t["id"]}"')
         L.append(f'section = "{t["section"]}"')
         L.append(f'path = "{t["_path"]}"')
+        for k in ("since", "until"):
+            if t.get(k):
+                L.append(f'{k} = "{t[k]}"')
         L.append(f'expect = "{t["expect"]}"')
         if t["expect"] == "reject":
             L.append(f'error = "{t["error"]}"')

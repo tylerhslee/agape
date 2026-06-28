@@ -1,0 +1,19 @@
+//! id:        gate_decision_introspection_accept
+//! section:   22_gate
+//! since:     1.1
+//! expect:    accept
+//! spec:      §20.4, §9 (Decision provenance: .basis over the Basis enum)
+//! ---
+enum R { Yes, No }
+event Ask(body: text);
+agent Desk {
+  when (Ask q) {
+    Credence<R> c = self <- q.body;
+    Decision<R> d = c by conformal 0.05;
+    case (d.basis) as b {
+      Conformal: { say("certified"); }
+      default:   { say("other"); }
+    }
+  }
+}
+spawn Desk d; awake d;

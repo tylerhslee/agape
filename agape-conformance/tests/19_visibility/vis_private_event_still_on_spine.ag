@@ -1,0 +1,13 @@
+//! id:        vis_private_event_still_on_spine
+//! section:   19_visibility
+//! since:     1.1
+//! expect:    accept
+//! contains:  Error
+//! modules:   m.ag
+//! spec:      v1.1.0 design 4.2, 5b (a private event still lands on the spine; caught cross-module by its Error supertype, not its private name)
+//! note:      visibility gates the NAME, not spine presence
+//! ---
+import m;
+agent Watcher { when (Error e) { say("caught"); } }
+spawn Watcher v; awake v;
+spawn m.Worker w; awake w;
