@@ -1,5 +1,6 @@
 //! id:        vis_private_agent_not_spawnable_reject
 //! section:   19_visibility
+//! since:     1.1
 //! expect:    reject
 //! error:     VisibilityError
 //! modules:   m.ag

@@ -1,5 +1,6 @@
 //! id:        iface_missing_handler_reject
 //! section:   21_interfaces
+//! since:     1.1
 //! expect:    reject
 //! error:     InterfaceError
 //! spec:      v1.1.0 design 5.2 (a declared interface with no matching handler is an InterfaceError)

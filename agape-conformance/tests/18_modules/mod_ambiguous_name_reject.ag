@@ -1,5 +1,6 @@
 //! id:        mod_ambiguous_name_reject
 //! section:   18_modules
+//! since:     1.1
 //! expect:    reject
 //! error:     ModuleError
 //! modules:   p.ag; q.ag

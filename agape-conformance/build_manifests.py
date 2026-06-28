@@ -78,6 +78,13 @@ def load_tests():
         assert t["section"] == section, f"{path}: header section {t['section']!r} != dir {section!r}"
         assert t.get("expect") in EXPECTS, f"{path}: bad/missing expect {t.get('expect')!r}"
         assert t.get("spec"), f"{path}: missing spec clause"
+        # version gating (the suite "Versions" contract): `since`/`until` are
+        # `major.minor`; a build of version V runs a test iff since <= V <= until.
+        for vk in ("since", "until"):
+            if t.get(vk):
+                parts = t[vk].split(".")
+                assert len(parts) == 2 and all(p.isdigit() for p in parts), \
+                    f"{path}: bad {vk} {t[vk]!r} (want major.minor, e.g. 1.1)"
         if t["expect"] == "reject":
             assert t.get("error") in ERROR_CLASSES, f"{path}: reject needs a known error class, got {t.get('error')!r}"
         if t["expect"] == "blocked":
@@ -112,6 +119,9 @@ def render_toml(tests):
         L.append(f'id = "{t["id"]}"')
         L.append(f'section = "{t["section"]}"')
         L.append(f'path = "{t["_path"]}"')
+        for k in ("since", "until"):
+            if t.get(k):
+                L.append(f'{k} = "{t[k]}"')
         L.append(f'expect = "{t["expect"]}"')
         if t["expect"] == "reject":
             L.append(f'error = "{t["error"]}"')

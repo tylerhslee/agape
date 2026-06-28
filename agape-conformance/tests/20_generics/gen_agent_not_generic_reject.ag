@@ -1,5 +1,6 @@
 //! id:        gen_agent_not_generic_reject
 //! section:   20_generics
+//! since:     1.1
 //! expect:    reject
 //! error:     ParseError
 //! spec:      v1.1.0 design 5.1 (agents are not generic; only struct/fn carry type params)

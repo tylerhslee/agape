@@ -1,5 +1,6 @@
 //! id:        prelude_error_supertype_must_be_error_reject
 //! section:   09_prelude
+//! since:     1.1
 //! expect:    reject
 //! error:     TypeError
 //! spec:      v1.1.0 design 5b (the only permitted user supertype is the built-in Error)

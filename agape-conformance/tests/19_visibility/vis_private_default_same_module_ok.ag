@@ -1,5 +1,6 @@
 //! id:        vis_private_default_same_module_ok
 //! section:   19_visibility
+//! since:     1.1
 //! expect:    accept
 //! spec:      v1.1.0 design 4.1 (default-private is module-internal, not decl-internal; siblings see each other)
 //! note:      a private helper is visible to another decl in the same module

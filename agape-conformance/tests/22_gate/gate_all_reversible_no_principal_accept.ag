@@ -1,5 +1,6 @@
 //! id:        gate_all_reversible_no_principal_accept
 //! section:   22_gate
+//! since:     1.1
 //! expect:    accept
 //! spec:      §20 (all arms reversible -> argmax-forever; no principal required)
 //! ---

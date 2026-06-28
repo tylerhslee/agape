@@ -1,5 +1,6 @@
 //! id:        iface_multi_implement
 //! section:   21_interfaces
+//! since:     1.1
 //! expect:    accept
 //! spec:      v1.1.0 design 5.2 (an agent may implement multiple interfaces)
 //! ---

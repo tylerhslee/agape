@@ -1,5 +1,6 @@
 //! id:        gate_decide_defer_clause_accept
 //! section:   22_gate
+//! since:     1.1
 //! expect:    accept
 //! spec:      §20 (decide with a trailing `defer to p` clause supplies the principal)
 //! ---

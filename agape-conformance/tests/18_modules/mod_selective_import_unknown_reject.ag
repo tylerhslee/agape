@@ -1,5 +1,6 @@
 //! id:        mod_selective_import_unknown_reject
 //! section:   18_modules
+//! since:     1.1
 //! expect:    reject
 //! error:     ModuleError
 //! modules:   util.ag

@@ -1,5 +1,6 @@
 //! id:        gate_nonreversible_no_principal_reject
 //! section:   22_gate
+//! since:     1.1
 //! expect:    reject
 //! error:     GateError
 //! spec:      §20 (a non-reversible arm with no reachable principal is a compile error)

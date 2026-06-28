@@ -1,5 +1,6 @@
 //! id:        vis_private_event_still_on_spine
 //! section:   19_visibility
+//! since:     1.1
 //! expect:    accept
 //! contains:  Error
 //! modules:   m.ag

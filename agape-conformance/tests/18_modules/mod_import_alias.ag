@@ -1,5 +1,6 @@
 //! id:        mod_import_alias
 //! section:   18_modules
+//! since:     1.1
 //! expect:    accept
 //! modules:   util.ag
 //! spec:      v1.1.0 design 2.3 (import ... as alias rebinds the prefix)

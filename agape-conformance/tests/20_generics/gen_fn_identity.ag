@@ -1,5 +1,6 @@
 //! id:        gen_fn_identity
 //! section:   20_generics
+//! since:     1.1
 //! expect:    accept
 //! spec:      v1.1.0 design 5.1 (user-generic function; monomorphized at the call site)
 //! ---

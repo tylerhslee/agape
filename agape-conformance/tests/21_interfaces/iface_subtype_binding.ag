@@ -1,5 +1,6 @@
 //! id:        iface_subtype_binding
 //! section:   21_interfaces
+//! since:     1.1
 //! expect:    accept
 //! spec:      v1.1.0 design 5.2 (agent <: interface; bind a concrete agent to an interface slot; reach over the interface)
 //! ---
