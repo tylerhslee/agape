@@ -199,6 +199,14 @@ fn json_str(s: &str) -> String {
 // ── init ─────────────────────────────────────────────────────────────────────
 
 fn cmd_init(args: &[String]) {
+    if matches!(args.first().map(String::as_str), Some("-h" | "--help" | "help")) {
+        eprintln!(
+            "usage: agape init [name]\n\n\
+             Scaffold an Agape project in ./[name], or in the current directory when name is omitted or '.'.\n\
+             Existing files are kept."
+        );
+        return;
+    }
     let name = args.first().map(String::as_str).unwrap_or("");
     let (root, label) = if name.is_empty() || name == "." {
         (std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")), "current directory".to_string())
@@ -243,6 +251,14 @@ fn write_new(path: &Path, contents: &str) {
 // ── studio ────────────────────────────────────────────────────────────────────
 
 fn cmd_studio(_args: &[String]) {
+    if matches!(_args.first().map(String::as_str), Some("-h" | "--help" | "help")) {
+        eprintln!(
+            "usage: agape studio\n\n\
+             Open Agape Studio for the nearest parent directory containing agape.toml.\n\
+             Set AGAPE_STUDIO_HOME to the repo's studio/ directory when running outside the Agape checkout."
+        );
+        return;
+    }
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let Some(manifest) = find_manifest(&cwd) else {
         eprintln!(
@@ -504,6 +520,14 @@ fn collect_ag(dir: &Path, out: &mut Vec<PathBuf>) {
 // ── configure ───────────────────────────────────────────────────────────────
 
 fn cmd_configure(args: &[String]) {
+    if matches!(args.first().map(String::as_str), Some("-h" | "--help" | "help")) {
+        eprintln!(
+            "usage: agape configure [key value]\n\n\
+             Without arguments, print project config from agape.toml.\n\
+             Keys: provider, model, samples, temperature, threshold."
+        );
+        return;
+    }
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let manifest = find_manifest(&cwd).unwrap_or_else(|| cwd.join("agape.toml"));
 
