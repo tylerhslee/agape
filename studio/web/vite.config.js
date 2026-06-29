@@ -44,6 +44,24 @@ export default defineConfig({
   build: {
     outDir: "dist",
     emptyOutDir: true,
+    // Monaco intentionally ships large language workers, especially the
+    // TypeScript worker. Keep those assets split from Studio application code
+    // and set the warning limit to match the editor footprint instead of
+    // treating the default 500 kB threshold as actionable noise.
+    chunkSizeWarningLimit: 8192,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes("node_modules")) return undefined;
+          if (id.includes("monaco-editor") || id.includes("@monaco-editor") || id.includes("monaco-vim")) {
+            return "editor";
+          }
+          if (id.includes("@agape-lang")) return "agape-syntax";
+          if (id.includes("react") || id.includes("react-dom")) return "react";
+          return "vendor";
+        },
+      },
+    },
   },
   // Vitest: component/unit tests live under src/. The Playwright E2E specs under
   // e2e/ are run by `playwright test`, not Vitest (both claim `*.spec`).
