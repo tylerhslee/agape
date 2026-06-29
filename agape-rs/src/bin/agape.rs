@@ -3,6 +3,7 @@
 //!     agape init [name]                         scaffold a new project
 //!     agape run   <file.ag> [--prompt k=v ...]  run a program to a ledger
 //!     agape check <file.ag>                     static checks only
+//!     agape --version                           print the CLI version
 //!     agape studio                              open Agape Studio for this project
 //!
 //! `run`/`check` are thin wrappers over `agape_rs::process`; `init` scaffolds a
@@ -24,6 +25,7 @@ fn main() {
         "init" => cmd_init(rest),
         "studio" => cmd_studio(rest),
         "configure" | "config" => cmd_configure(rest),
+        "version" | "-V" | "--version" => version(),
         "" | "-h" | "--help" | "help" => usage(),
         other => {
             eprintln!("agape: unknown command {other:?}\n");
@@ -42,10 +44,15 @@ fn usage() {
          agape check <file.ag>                     static checks only (no run)\n  \
          agape build                               check every .ag in the project; emit .agape/build.json\n  \
          agape configure [key value]               show or set project config (provider/model/samples/temperature)\n  \
+         agape version                             print the CLI version\n  \
          agape studio                              open Agape Studio for the current project\n\n\
          run flags:  --claude  --samples N  --temperature T  --provider host:port  --json\n\
          project defaults come from agape.toml ([provider] backend/model, [runtime] samples/temperature); flags override."
     );
+}
+
+fn version() {
+    println!("agape {}", env!("CARGO_PKG_VERSION"));
 }
 
 // ── run / check ─────────────────────────────────────────────────────────────
