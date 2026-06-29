@@ -3,14 +3,19 @@
 // API key and byte-stable spines. Requires a built `agape` binary.
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { spawn, execFileSync, type ChildProcess } from "node:child_process";
-import { mkdtempSync, existsSync } from "node:fs";
+import { mkdtempSync, existsSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
+const AGAPE_ROOT =
+  [
+    path.resolve(HERE, "..", ".."),
+    path.resolve(HERE, "..", "..", "agape"),
+  ].find((p) => existsSync(path.join(p, "agape-rs"))) || path.resolve(HERE, "..", "..");
 const BIN = ["target/release/agape", "target/debug/agape"]
-  .map((p) => path.resolve(HERE, "..", "..", "agape-rs", p))
+  .map((p) => path.resolve(AGAPE_ROOT, "agape-rs", p))
   .find((p) => existsSync(p));
 
 const PORT = 8910;
@@ -21,15 +26,18 @@ const post = (p: string, body: unknown) =>
 
 let srv: ChildProcess;
 let proj: string;
+let launchDir: string;
 
 beforeAll(async () => {
   if (!BIN) throw new Error("no agape binary — build it first (cargo build --bin agape)");
   proj = path.join(mkdtempSync(path.join(tmpdir(), "agape-it-")), "app");
   execFileSync(BIN, ["init", proj], { stdio: "ignore" });
+  launchDir = path.join(proj, "src", "nested");
+  mkdirSync(launchDir, { recursive: true });
 
   srv = spawn("npx", ["tsx", "server.ts"], {
     cwd: HERE,
-    env: { ...process.env, AGENT_PORT: String(PORT), AGAPE_PROJECT: proj, AGAPE_BIN: BIN },
+    env: { ...process.env, AGENT_PORT: String(PORT), AGAPE_PROJECT: launchDir, AGAPE_BIN: BIN },
     stdio: "ignore",
   });
   for (let i = 0; i < 60; i++) {
@@ -49,9 +57,30 @@ describe("studio backend — user journeys (integration)", () => {
   it("lists the scaffolded project's agents and sensors", async () => {
     const d = await (await get("/project/info")).json();
     expect(d.hasProject).toBe(true);
+    expect(path.resolve(d.root)).toBe(path.resolve(proj));
+    expect(d.runtime.mode).toBe("local");
+    expect(d.languageVersion).toBeTruthy();
     const main = d.files.find((f: any) => f.rel === "main.ag");
     expect(main.agents).toEqual(expect.arrayContaining(["Responder", "FactChecker"]));
     expect(main.prompts).toContain("question");
+  });
+
+  it("configures runtime deployment independently of the project", async () => {
+    const before = await (await get("/runtime/config")).json();
+    expect(before.mode).toBe("local");
+    const after = await (await post("/runtime/config", {
+      mode: "cloud",
+      label: "Soma staging",
+      endpoint: "https://soma.example/agape",
+      version: "2026.6",
+    })).json();
+    expect(after).toMatchObject({
+      mode: "cloud",
+      label: "Soma staging",
+      endpoint: "https://soma.example/agape",
+      version: "2026.6",
+      connected: true,
+    });
   });
 
   it("runs a program (mock) and delivers a verified answer", async () => {

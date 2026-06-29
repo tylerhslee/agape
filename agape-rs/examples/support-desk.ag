@@ -17,7 +17,7 @@ agent SupportDesk grants { perform Reply, perform IssueCredit } {
     emit Case(p);
 
     Credence<Outcome> outcome =
-      self <- f"classify this support request: {p}. choose Refund, Explain, or Escalate.";
+      self <- f"classify this support request: {p}";
 
     endorse (outcome by Support) {
       Refund: {

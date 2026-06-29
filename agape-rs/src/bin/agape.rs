@@ -243,11 +243,15 @@ fn write_new(path: &Path, contents: &str) {
 // ── studio ────────────────────────────────────────────────────────────────────
 
 fn cmd_studio(_args: &[String]) {
-    let project = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    if !project.join("agape.toml").exists() {
-        eprintln!("agape: no agape.toml here — run `agape init` first (cwd: {})", project.display());
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let Some(manifest) = find_manifest(&cwd) else {
+        eprintln!(
+            "agape: no agape.toml found in this directory or its parents — run `agape init` first (cwd: {})",
+            cwd.display()
+        );
         exit(1);
-    }
+    };
+    let project = manifest.parent().unwrap_or(cwd.as_path()).to_path_buf();
     let Some(home) = studio_home() else {
         eprintln!(
             "agape: could not locate Agape Studio.\n\

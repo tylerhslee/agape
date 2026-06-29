@@ -26,13 +26,19 @@ export interface JudgeOpts {
   temperature?: number; // sampling fallback only
 }
 
-// ── OpenAI — token logprobs (Chat Completions; top_logprobs ≤ 5) ──────────────
+export interface OpenAIGraderOpts {
+  topLogprobs?: number;
+}
+
+// ── OpenAI — token logprobs (Chat Completions; configurable top_logprobs) ─────
 export class OpenAIGrader implements Grader {
   readonly exposesLogprobs = true;
   readonly model: string;
   private client: OpenAI;
-  constructor(model = process.env.OPENAI_JUDGE_MODEL || "gpt-4o-mini") {
+  private topLogprobs: number;
+  constructor(model = process.env.OPENAI_JUDGE_MODEL || "gpt-4o-mini", opts: OpenAIGraderOpts = {}) {
     this.model = model;
+    this.topLogprobs = clampTopLogprobs(opts.topLogprobs ?? (Number(process.env.OPENAI_TOP_LOGPROBS) || 5));
     this.client = new OpenAI(); // reads OPENAI_API_KEY
   }
 
@@ -48,7 +54,7 @@ export class OpenAIGrader implements Grader {
       max_tokens: 1,
       temperature: 0,
       logprobs: true,
-      top_logprobs: 5, // Chat Completions hard cap; covers bool + small enums
+      top_logprobs: Math.min(20, Math.max(this.topLogprobs, variants.length)),
       messages: [
         { role: "system", content: system },
         { role: "user", content: prompt },
@@ -139,10 +145,10 @@ export class GeminiGrader implements Grader {
 }
 
 // ── backend selection: config picks the backend; the path follows the capability ──
-export function makeGrader(provider = process.env.AGENT_JUDGE_PROVIDER): Grader {
+export function makeGrader(provider = process.env.AGENT_JUDGE_PROVIDER, opts: { openaiTopLogprobs?: number } = {}): Grader {
   switch ((provider || "anthropic").toLowerCase()) {
     case "openai":
-      return new OpenAIGrader();
+      return new OpenAIGrader(undefined, { topLogprobs: opts.openaiTopLogprobs });
     case "gemini":
       return new GeminiGrader();
     default:
@@ -191,4 +197,8 @@ function anthropicText(res: Anthropic.Message): string {
     .map((b) => b.text)
     .join(" ")
     .trim();
+}
+
+function clampTopLogprobs(n: number): number {
+  return Math.max(1, Math.min(20, Math.floor(Number.isFinite(n) ? n : 5)));
 }

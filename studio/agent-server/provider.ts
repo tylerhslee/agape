@@ -5,6 +5,7 @@
 //   Embedder  — text → vector. HashingEmbedder (local, dependency-free) today.
 
 import Anthropic from "@anthropic-ai/sdk";
+import OpenAI from "openai";
 import type { ChatMessage } from "./agent.ts";
 
 export interface Triple {
@@ -67,6 +68,42 @@ export class AnthropicCognition implements Cognition {
       "triples are subject–predicate–object over Agape concepts (e.g. {\"s\":\"endorse\",\"p\":\"collapses\",\"o\":\"Credence\"}). " +
       "Use a small, consistent predicate set: is-a, has, collapses, requires, produces, gated-by, queried-with, taints. " +
       "5–12 of each at most. No prose, no code fences.";
+    const raw = await this.complete(system, [{ role: "user", content: text }], 1500);
+    return parseDecomposition(raw);
+  }
+}
+
+// ── OpenAI cognition ────────────────────────────────────────────────────────
+export class OpenAICognition implements Cognition {
+  readonly model: string;
+  private client: OpenAI;
+  constructor(model = process.env.OPENAI_AGENT_MODEL || "gpt-4o-mini") {
+    this.model = model;
+    this.client = new OpenAI();
+  }
+
+  async complete(system: string, messages: ChatMessage[], maxTokens = 1024, temperature?: number): Promise<string> {
+    const res = await this.client.chat.completions.create({
+      model: this.model,
+      max_tokens: maxTokens,
+      ...(temperature === undefined ? {} : { temperature }),
+      messages: [
+        { role: "system", content: system },
+        ...messages.map((m) => ({ role: m.role, content: m.content })),
+      ],
+    });
+    return (res.choices[0]?.message?.content || "").trim();
+  }
+
+  async decompose(text: string): Promise<Decomposition> {
+    const system =
+      "You internalize a chunk of the Agape language spec into structured memory. " +
+      "Return ONLY JSON of the form " +
+      '{"facts":[{"key":"...","value":"..."}],"triples":[{"s":"...","p":"...","o":"..."}]}. ' +
+      "facts are atomic, checkable statements about Agape (key is a short slug). " +
+      "triples are subject-predicate-object over Agape concepts (e.g. {\"s\":\"endorse\",\"p\":\"collapses\",\"o\":\"Credence\"}). " +
+      "Use a small, consistent predicate set: is-a, has, collapses, requires, produces, gated-by, queried-with, taints. " +
+      "5-12 of each at most. No prose, no code fences.";
     const raw = await this.complete(system, [{ role: "user", content: text }], 1500);
     return parseDecomposition(raw);
   }

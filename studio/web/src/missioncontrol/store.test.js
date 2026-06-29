@@ -4,18 +4,21 @@ import { reducer, initialState, itemsByStatus, counts, selectedItem, STATUSES } 
 const find = (s, id) => s.items.find((i) => i.id === id);
 
 describe("store — runtime scope (STUDIO.md §2)", () => {
-  it("is scoped to a selected app runtime", () => {
+  it("starts scoped to the active project", () => {
     expect(initialState.runtime).toBeDefined();
-    expect(initialState.runtime.kind).toBe("app");
-    expect(initialState.runtime.id).toBeTruthy();
+    expect(initialState.runtime.kind).toBe("project");
+    expect(initialState.runtime.id).toBe("active-project");
   });
 });
 
-describe("store — seed roadmap", () => {
-  it("ships a backlog so the roadmap isn't empty", () => {
-    expect(itemsByStatus(initialState, "backlog").length).toBeGreaterThan(0);
-    expect(itemsByStatus(initialState, "parked").length).toBeGreaterThan(0);
-    expect(itemsByStatus(initialState, "done").length).toBeGreaterThan(0);
+function stateWithWork(status = "parked") {
+  return reducer(initialState, { type: "CREATE_WORK", title: "ship login agent", status });
+}
+
+describe("store — first open", () => {
+  it("does not ship a canned roadmap or default project", () => {
+    expect(initialState.goal).toBe("");
+    expect(initialState.items).toEqual([]);
   });
   it("exposes counts across all statuses", () => {
     const c = counts(initialState);
@@ -38,22 +41,26 @@ describe("store — capture without delegating (the parking lot)", () => {
 
 describe("store — manual status & editing (no agents)", () => {
   it("SET_STATUS moves an item between columns", () => {
-    const id = itemsByStatus(initialState, "parked")[0].id;
-    const s = reducer(initialState, { type: "SET_STATUS", id, status: "backlog" });
+    const start = stateWithWork("parked");
+    const id = itemsByStatus(start, "parked")[0].id;
+    const s = reducer(start, { type: "SET_STATUS", id, status: "backlog" });
     expect(find(s, id).status).toBe("backlog");
   });
   it("rejects an unknown status", () => {
-    const id = initialState.items[0].id;
-    expect(reducer(initialState, { type: "SET_STATUS", id, status: "nonsense" })).toBe(initialState);
+    const start = stateWithWork();
+    const id = start.items[0].id;
+    expect(reducer(start, { type: "SET_STATUS", id, status: "nonsense" })).toBe(start);
   });
   it("EDIT_WORK patches fields", () => {
-    const id = initialState.items[0].id;
-    const s = reducer(initialState, { type: "EDIT_WORK", id, patch: { destination: "new aim" } });
+    const start = stateWithWork();
+    const id = start.items[0].id;
+    const s = reducer(start, { type: "EDIT_WORK", id, patch: { destination: "new aim" } });
     expect(find(s, id).destination).toBe("new aim");
   });
   it("DELETE_WORK removes an item and clears selection of it", () => {
-    const id = initialState.items[0].id;
-    const sel = reducer(initialState, { type: "SELECT", id });
+    const start = stateWithWork();
+    const id = start.items[0].id;
+    const sel = reducer(start, { type: "SELECT", id });
     const s = reducer(sel, { type: "DELETE_WORK", id });
     expect(find(s, id)).toBeUndefined();
     expect(s.selectedId).toBeNull();
@@ -62,8 +69,9 @@ describe("store — manual status & editing (no agents)", () => {
 
 describe("store — assignment", () => {
   it("DELEGATE makes an item active & delegated with an assignee", () => {
-    const id = itemsByStatus(initialState, "backlog")[0].id;
-    const s = reducer(initialState, { type: "DELEGATE", id, assignee: "Builder-1" });
+    const start = stateWithWork("backlog");
+    const id = itemsByStatus(start, "backlog")[0].id;
+    const s = reducer(start, { type: "DELEGATE", id, assignee: "Builder-1" });
     const it = find(s, id);
     expect(it.status).toBe("active");
     expect(it.mode).toBe("delegated");
@@ -71,8 +79,9 @@ describe("store — assignment", () => {
     expect(it.thread.at(-1).who).toBe("sys");
   });
   it("PAIR makes an item active & paired", () => {
-    const id = itemsByStatus(initialState, "backlog")[0].id;
-    const it = find(reducer(initialState, { type: "PAIR", id }), id);
+    const start = stateWithWork("backlog");
+    const id = itemsByStatus(start, "backlog")[0].id;
+    const it = find(reducer(start, { type: "PAIR", id }), id);
     expect(it.status).toBe("active");
     expect(it.mode).toBe("paired");
   });
@@ -80,21 +89,24 @@ describe("store — assignment", () => {
 
 describe("store — selection & thread", () => {
   it("SELECT / CLEAR_SELECT drive the detail spoke", () => {
-    const id = initialState.items[0].id;
-    const s = reducer(initialState, { type: "SELECT", id });
+    const start = stateWithWork();
+    const id = start.items[0].id;
+    const s = reducer(start, { type: "SELECT", id });
     expect(selectedItem(s).id).toBe(id);
     expect(selectedItem(reducer(s, { type: "CLEAR_SELECT" }))).toBeNull();
   });
   it("STEER appends a note; empty is a no-op", () => {
-    const id = initialState.items[0].id;
-    const s = reducer(initialState, { type: "STEER", id, text: "check edge cases" });
+    const start = stateWithWork();
+    const id = start.items[0].id;
+    const s = reducer(start, { type: "STEER", id, text: "check edge cases" });
     expect(find(s, id).thread.at(-1)).toEqual({ who: "you", text: "check edge cases" });
-    expect(reducer(initialState, { type: "STEER", id, text: "  " })).toBe(initialState);
+    expect(reducer(start, { type: "STEER", id, text: "  " })).toBe(start);
   });
 
   it("ADD_MESSAGE appends an agent reply from the seam", () => {
-    const id = initialState.items[0].id;
-    const s = reducer(initialState, { type: "ADD_MESSAGE", id, message: { who: "ai", text: "here's the plan" } });
+    const start = stateWithWork();
+    const id = start.items[0].id;
+    const s = reducer(start, { type: "ADD_MESSAGE", id, message: { who: "ai", text: "here's the plan" } });
     expect(find(s, id).thread.at(-1)).toEqual({ who: "ai", text: "here's the plan" });
   });
 });

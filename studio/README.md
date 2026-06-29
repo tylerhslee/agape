@@ -1,129 +1,135 @@
 # Agape Studio
 
-The IDLE/phpMyAdmin of Agape — a web console for **event-driven management**.
-PHP ships with phpMyAdmin; Python ships with IDLE; Agape ships with Studio: a
-browser IDE for driving a running Agape program and watching its **event spine**
-(SPEC §7) in real time.
+Agape Studio is the control surface for building and operating systems written
+in [Agape](https://github.com/tylerhslee/agape), a language for agentic programs
+whose model-derived judgments must be typed, gated, and recorded before they can
+act.
 
-The frontend is React. The backend is an **Agape program** — eventually. We get
-there in two phases (per the build plan):
+Studio is not just a code editor. It is meant for the agentic programming loop:
+prompt agents, inspect their work, run Agape programs, read the ledger, configure
+providers, review conformance, and decide when human judgment should take over.
 
-- **Phase 1 (here now): traditional tools.** The backend is Python wrapping the
-  existing reference interpreter (`../poc/`). This gives a working console today.
-- **Phase 2: translate the backend into Agape.** Rewrite the API server in Agape
-  on top of a new `listen` HTTP sensor — the socket sensor SPEC §5b already
-  promises ("`prompt` is the first of a general family of sensors (a socket, …)").
-  When that lands, "the backend is Agape" is literally true. **The React frontend
-  does not change.** Studio then doubles as the flagship example program for the
-  agentic layer, the way `compiler/lexer.ag` is for the somatic layer.
+## What Studio Does
 
-## The honesty boundary
+- Opens the current Agape project and shows its `.ag` source files.
+- Detects declared agents, prompts, and project structure.
+- Runs project files through the Agape runtime and displays the event ledger.
+- Provides Monaco-based Agape syntax highlighting and editor controls.
+- Configures cognition providers such as Mock, Claude, and OpenAI.
+- Shows how `Credence` is materialized by the selected provider: OpenAI logprobs
+  or Claude sampling fallback.
+- Exposes a runtime deployment panel for local runtimes today and cloud runtimes
+  such as Soma later.
+- Includes review and conformance surfaces for checking language behavior.
 
-This is the same somatic/agentic split the project already commits to (thesis
-#3, #8), mapped onto the phpMyAdmin analogy:
+## How It Relates To Agape
 
-| | runtime/plumbing | application |
-|---|---|---|
-| PHP | C | phpMyAdmin (PHP) |
-| Agape | the HTTP socket = a **somatic device** | the API server (**Agape**) |
+Agape is the language. Studio is the interface for working with Agape projects.
 
-The socket lives behind a seam, exactly like cognition lives behind
-`agape_provider.py`. Routing, agent lifecycle, spine queries, response shaping —
-all application logic, all Agape.
+The bundled command:
 
-The frontend is a **VS Code skin**: a Vite + React app wearing VS Code's shell
-(activity bar / explorer / editor groups / panel / status bar) with **Monaco**
-as the editor — themed Dark+, with Agape registered as a real Monaco language.
-But it is **event-cockpit first**: the Explorer is the live agent population, the
-bottom panel is the live spine, and the integrated terminal is an `agape>` query
-console. Cursor bolted AI onto a text editor; this is an IDE whose native object
-is the event stream.
-
-## Run it
-
-Two modes:
-
-```bash
-# ── dev (hot reload): two processes ──
-python3 studio/server/app.py                 # backend + API on :8765  (terminal 1)
-cd studio/web && npm install && npm run dev   # Vite on :5173, proxies /api → :8765 (terminal 2)
-# open http://127.0.0.1:5173
-
-# ── one-process (serves the built app) ──
-cd studio/web && npm install && npm run build
-python3 studio/server/app.py                 # serves studio/web/dist + API on :8765
-# open http://127.0.0.1:8765
+```sh
+agape studio
 ```
 
-The backend defaults to port 8765 and the mock provider. If you change `--port`,
-update the dev proxy target in `web/vite.config.js` to match (the one-process
-build mode needs no change). Provider / program / model flags:
+starts Studio from the directory you are currently in. Studio looks for
+`agape.toml` in that directory; if it does not find one, it walks upward through
+parent directories until it finds the nearest Agape project root. That project is
+then opened in Studio.
 
-```bash
-python3 studio/server/app.py --provider anthropic   # real cognition (needs ANTHROPIC_API_KEY)
-python3 studio/server/app.py --program path/to.ag --port 8765
-python3 studio/server/app.py --provider anthropic --model claude-opus-4-8   # override the default (haiku)
+This is why Studio ships with the Agape release package: the CLI knows what
+project you are standing in, and the Studio should follow that project instead of
+opening a canned demo.
+
+## Versioning
+
+Studio is versioned independently from the Agape language and runtime.
+
+- **Studio version** is the UI app release. This repository is `1.0.0`.
+- **Language version** comes from the active project metadata when declared.
+- **Runtime version** comes from the configured runtime deployment.
+
+That means the same Studio can attach to:
+
+- a local project opened with `agape studio`;
+- a standalone local Agape checkout during development;
+- a future hosted/cloud runtime such as Soma.
+
+## Run From An Agape Project
+
+Install or build the Agape CLI, then create or open a project:
+
+```sh
+agape init my-app
+cd my-app
+agape studio
 ```
 
-You get a live event-spine panel (the hero, auto-tailing), an agents explorer
-with awake/sleep/ask actions, a Monaco editor for the `.ag` program (Run loads +
-re-checks it), and the `agape>` query console. Everything a control does runs
-*as Agape source* against the live interpreter — the typed endpoints just build
-that source. That is what makes Phase 1 a faithful preview of Phase 2.
+You can also run `agape studio` from a subdirectory inside the project. Studio
+will climb to the nearest `agape.toml` and use that as the project root.
 
-## Layout
+## Run This Repository Directly
 
-```
-studio/
-  server/        backend (Python now → Agape in Phase 2)
-    session.py   wraps a live Interpreter+Spine; load / eval / project
-    app.py       dependency-free HTTP/JSON API + serves the built frontend
-    test_studio.py
-  web/           Vite + React + Monaco (the VS Code skin)
-    index.html   Vite entry
-    vite.config.js   dev proxy /api → :8765; build → dist/
-    src/
-      App.jsx            orchestrator (state, live tail, command handlers)
-      api.js             the one place the frontend calls the Agape backend
-      agapeLanguage.js   Agape registered as a Monaco language + Dark+ theme
-      theme.css          the VS Code "Dark+" shell
-      components/        ActivityBar, AgentsExplorer, EditorArea, SpinePanel,
-                         QueryConsole, StatusBar
-  programs/
-    console_demo.ag   a small always-live program for the console to drive
+This repository contains the Studio frontend and its local agent-server shim.
+For local development, keep an Agape checkout nearby and run:
+
+```sh
+cd agent-server
+npm install
+npm run dev
 ```
 
-## API
+In a second terminal:
 
-| Method | Path | Body | Does |
-|---|---|---|---|
-| GET | `/api/state` | — | full snapshot (events + agents + templates) |
-| GET | `/api/spine?since=N` | — | events with tick ≥ N (the live-tail poll) |
-| POST | `/api/load` | `{source\|path}` | reset + load a program |
-| POST | `/api/eval` | `{source}` | run Agape against the live world (the REPL) |
-| POST | `/api/spawn` | `{type,name,args}` | spawn an agent |
-| POST | `/api/awake` / `/api/sleep` | `{name}` | lifecycle |
-| POST | `/api/send` | `{dest,message,schema?}` | send a message (`<-`) |
-| POST | `/api/prompt` | `{source,value}` | inject one external input arrival (§5b) |
-
-## Test
-
-```bash
-python3 studio/server/test_studio.py   # 11 checks, mock provider, no API key
+```sh
+cd web
+npm install
+npm run dev
 ```
 
-## Known gaps / candidate next bites
+The Vite frontend proxies project/runtime calls to the local agent server on
+`127.0.0.1:8799`.
 
-1. **`find` is silent on the spine.** The interpreter only emits a `FindResult`
-   event for `find n, origin(n) …` (provenance form); a plain `find` binds its
-   variable but appends nothing, so the console shows "0 new events". `select`
-   and `match` already emit results. Decision to make: should a plain `find`
-   always emit a `FindResult`? (Spine-faithful, small interpreter change — a
-   semantics decision, not done unilaterally.)
-2. **~~Vite project~~ — done.** `web/` is now Vite + React + Monaco, VS Code
-   skinned. Next polish: a dedicated query-results view, provenance (`origin`)
-   hover, multi-tab editing, opening other `.ag` files.
-3. **Phase 2.** The `listen` HTTP sensor in `poc/` (lexer → parser → AST →
-   checker → interp), then rewrite this backend in Agape.
-4. **Playground panel** (the second product surface): paste-and-run Agape,
-   alongside the live console.
+Useful environment variables:
+
+```text
+AGAPE_PROJECT=/path/to/an/agape/project
+AGAPE_BIN=/path/to/agape
+ANTHROPIC_API_KEY=...
+OPENAI_API_KEY=...
+GEMINI_API_KEY=...
+```
+
+If `AGAPE_PROJECT` points inside a project, the server resolves upward to the
+nearest `agape.toml`.
+
+## Build And Test
+
+```sh
+cd web
+npm run build
+
+cd ../agent-server
+npm test
+```
+
+The current 1.0.0 release verifies the web build and the agent-server integration
+suite, including project-root discovery and runtime deployment configuration.
+
+## Repository Layout
+
+```text
+agent-server/  local Studio backend: project APIs, providers, memory, review
+web/           React + Vite + Monaco frontend
+programs/      small Studio/console examples
+server/        legacy lightweight API prototype
+STUDIO.md      product architecture notes
+TESTING.md     testing notes
+```
+
+## Status
+
+Agape Studio `1.0.0` is the first standalone Studio release. It is still designed
+to ship inside the Agape package for the smoothest local experience, but the
+frontend is intentionally detachable so it can later connect to any compatible
+Agape runtime.

@@ -1,5 +1,5 @@
 // Agape Studio — agent server. The somatic stand-in for the studio's agentic layer:
-//   /agent/* — pair/delegate with a builder agent (Claude today)
+//   /agent/* — pair/delegate with a builder agent (Claude/OpenAI today)
 //   /learn/* — the Agape-learning loop over the spine + three-modality memory (§10)
 // Replaced by the Agape + MCP backend behind the same seams. See RUNTIME.md.
 
@@ -7,7 +7,7 @@ import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
 import { buildMessages } from "./agent.ts";
-import { AnthropicCognition, HashingEmbedder } from "./provider.ts";
+import { AnthropicCognition, HashingEmbedder, OpenAICognition, type Cognition } from "./provider.ts";
 import { Memory } from "./memory.ts";
 import { makeRunner } from "./runner.ts";
 import { Learner } from "./learner.ts";
@@ -19,18 +19,40 @@ const pExecFile = promisify(execFile);
 
 const PORT = Number(process.env.AGENT_PORT) || 8799;
 
-// Find ANTHROPIC_API_KEY: env first, else walk up from cwd to the repo-root .env.
-function loadApiKey(): void {
-  if (process.env.ANTHROPIC_API_KEY) return;
+type CognitionProvider = "mock" | "anthropic" | "openai";
+type JudgeProvider = "anthropic" | "openai" | "gemini";
+interface ProviderConfig {
+  cognitionProvider: CognitionProvider;
+  judgeProvider: JudgeProvider;
+  samples: number;
+  temperature: number;
+  openaiTopLogprobs: number;
+}
+type RuntimeMode = "local" | "cloud";
+interface RuntimeConfig {
+  mode: RuntimeMode;
+  endpoint: string;
+  label: string;
+  version: string;
+}
+
+// Find provider API keys: env first, else walk up from cwd to the repo-root .env.
+function loadProviderEnv(): void {
+  const explicit = [
+    path.resolve(process.cwd(), "..", "..", "agape", ".env"),
+    path.resolve(process.cwd(), "..", "..", ".env"),
+  ];
+  for (const envPath of explicit) {
+    if (!fs.existsSync(envPath)) continue;
+    readEnvFile(envPath);
+    return;
+  }
   let dir = process.cwd();
   for (let i = 0; i < 10; i++) {
     const envPath = path.join(dir, ".env");
     if (fs.existsSync(envPath)) {
-      for (const line of fs.readFileSync(envPath, "utf8").split("\n")) {
-        const m = line.match(/^\s*([A-Z_][A-Z0-9_]*)\s*=\s*(.*?)\s*$/);
-        if (m && !process.env[m[1]]) process.env[m[1]] = m[2].replace(/^["']|["']$/g, "");
-      }
-      if (process.env.ANTHROPIC_API_KEY) return;
+      readEnvFile(envPath);
+      return;
     }
     const parent = path.dirname(dir);
     if (parent === dir) break;
@@ -38,39 +60,197 @@ function loadApiKey(): void {
   }
 }
 
-loadApiKey();
-const HAS_KEY = !!process.env.ANTHROPIC_API_KEY;
-if (!HAS_KEY) {
-  console.warn("agent-server: no ANTHROPIC_API_KEY — the deterministic mock + project studio work offline; live-model features (🧠 Claude) will error until a key is set.");
+function readEnvFile(envPath: string): void {
+  for (const line of fs.readFileSync(envPath, "utf8").split("\n")) {
+    const m = line.match(/^\s*([A-Z_][A-Z0-9_]*)\s*=\s*(.*?)\s*$/);
+    if (m && !process.env[m[1]]) process.env[m[1]] = m[2].replace(/^["']|["']$/g, "");
+  }
 }
+
+loadProviderEnv();
+if (!process.env.ANTHROPIC_API_KEY && !process.env.OPENAI_API_KEY) {
+  console.warn("agent-server: no ANTHROPIC_API_KEY or OPENAI_API_KEY — deterministic mock + project studio work offline; live-model features need a key.");
+}
+
+let providerConfig: ProviderConfig = {
+  cognitionProvider: normalizeCognitionProvider(process.env.AGENT_COGNITION_PROVIDER || process.env.AGENT_PROVIDER || "mock"),
+  judgeProvider: normalizeJudgeProvider(process.env.AGENT_JUDGE_PROVIDER || judgeProviderForCognition(process.env.AGENT_COGNITION_PROVIDER || process.env.AGENT_PROVIDER || "mock")),
+  samples: clampInt(process.env.AGENT_JUDGE_SAMPLES, 1, 50, 5),
+  temperature: clampFloat(process.env.AGENT_JUDGE_TEMPERATURE, 0, 1, 0),
+  openaiTopLogprobs: clampInt(process.env.OPENAI_TOP_LOGPROBS, 1, 20, 5),
+};
+let runtimeConfig: RuntimeConfig = {
+  mode: normalizeRuntimeMode(process.env.AGAPE_STUDIO_RUNTIME_MODE || "local"),
+  endpoint: String(process.env.AGAPE_RUNTIME_ENDPOINT || ""),
+  label: String(process.env.AGAPE_RUNTIME_LABEL || "Local runtime"),
+  version: String(process.env.AGAPE_RUNTIME_VERSION || ""),
+};
 
 // Cognition is constructed lazily, so the studio starts and serves the mock
 // provider + project with no API key; the live-model endpoints throw a friendly
 // error if called without one.
-let _cognition: AnthropicCognition | null = null;
-function cognition(): AnthropicCognition {
+let _cognition: Cognition | null = null;
+function cognition(): Cognition {
   if (!_cognition) {
-    if (!process.env.ANTHROPIC_API_KEY) throw new Error("ANTHROPIC_API_KEY not set — this feature needs a live model (or use the deterministic mock).");
-    _cognition = new AnthropicCognition();
+    if (providerConfig.cognitionProvider === "openai") {
+      if (!process.env.OPENAI_API_KEY) throw new Error("OPENAI_API_KEY not set — OpenAI cognition needs a live key.");
+      _cognition = new OpenAICognition();
+    } else if (providerConfig.cognitionProvider === "anthropic") {
+      if (!process.env.ANTHROPIC_API_KEY) throw new Error("ANTHROPIC_API_KEY not set — Claude cognition needs a live key.");
+      _cognition = new AnthropicCognition();
+    } else {
+      throw new Error("Live cognition is disabled — choose Claude or OpenAI in Studio settings.");
+    }
   }
   return _cognition;
 }
 
-// The GATE seam (§3) — separate from cognition: produces a `Credence` over the variant
-// set that the gate consumes. Backend = AGENT_JUDGE_PROVIDER (anthropic | openai); the
-// logprobs-vs-sampling path follows the backend's capability, not a knob. Lazy, like
-// cognition, so the server starts with no key.
+// Credence materialization (§3): produce a distribution over the variant set that the
+// gate consumes. Studio derives this from the active cognition provider; AGENT_JUDGE_PROVIDER
+// remains only as a low-level override for local experiments and compatibility.
 let _grader: Grader | null = null;
 function grader(): Grader {
-  if (!_grader) _grader = makeGrader();
+  if (!_grader) _grader = makeGrader(providerConfig.judgeProvider, { openaiTopLogprobs: providerConfig.openaiTopLogprobs });
   return _grader;
+}
+
+function providerSnapshot() {
+  return {
+    ...providerConfig,
+    keys: {
+      anthropic: !!process.env.ANTHROPIC_API_KEY,
+      openai: !!process.env.OPENAI_API_KEY,
+      gemini: !!process.env.GEMINI_API_KEY,
+    },
+    cognitionModel: providerConfig.cognitionProvider === "openai"
+      ? (process.env.OPENAI_AGENT_MODEL || "gpt-4o-mini")
+      : (process.env.AGENT_MODEL || "claude-haiku-4-5"),
+    judgeModel: providerConfig.judgeProvider === "openai"
+      ? (process.env.OPENAI_JUDGE_MODEL || "gpt-4o-mini")
+      : providerConfig.judgeProvider === "gemini"
+        ? (process.env.GEMINI_JUDGE_MODEL || "gemini-2.5-flash")
+        : (process.env.ANTHROPIC_JUDGE_MODEL || "claude-haiku-4-5"),
+  };
+}
+
+function runtimeSnapshot() {
+  const version = runtimeConfig.version || localRuntimeVersion();
+  return { ...runtimeConfig, version, connected: runtimeConfig.mode === "local" || !!runtimeConfig.endpoint };
+}
+
+function updateRuntimeConfig(input: Partial<RuntimeConfig>) {
+  runtimeConfig = {
+    mode: input.mode === undefined ? runtimeConfig.mode : normalizeRuntimeMode(input.mode),
+    endpoint: input.endpoint === undefined ? runtimeConfig.endpoint : String(input.endpoint || "").trim(),
+    label: input.label === undefined ? runtimeConfig.label : String(input.label || "").trim() || (normalizeRuntimeMode(input.mode || runtimeConfig.mode) === "cloud" ? "Cloud runtime" : "Local runtime"),
+    version: input.version === undefined ? runtimeConfig.version : String(input.version || "").trim(),
+  };
+}
+
+function updateProviderConfig(input: Partial<ProviderConfig>) {
+  const nextCognitionProvider = input.cognitionProvider === undefined ? providerConfig.cognitionProvider : normalizeCognitionProvider(input.cognitionProvider);
+  const nextJudgeProvider = input.judgeProvider === undefined
+    ? (input.cognitionProvider === undefined ? providerConfig.judgeProvider : judgeProviderForCognition(nextCognitionProvider))
+    : normalizeJudgeProvider(input.judgeProvider);
+  const next: ProviderConfig = {
+    cognitionProvider: nextCognitionProvider,
+    judgeProvider: nextJudgeProvider,
+    samples: input.samples === undefined ? providerConfig.samples : clampInt(input.samples, 1, 50, providerConfig.samples),
+    temperature: input.temperature === undefined ? providerConfig.temperature : clampFloat(input.temperature, 0, 1, providerConfig.temperature),
+    openaiTopLogprobs: input.openaiTopLogprobs === undefined ? providerConfig.openaiTopLogprobs : clampInt(input.openaiTopLogprobs, 1, 20, providerConfig.openaiTopLogprobs),
+  };
+  if (next.cognitionProvider !== providerConfig.cognitionProvider) _cognition = null;
+  if (next.judgeProvider !== providerConfig.judgeProvider || next.openaiTopLogprobs !== providerConfig.openaiTopLogprobs) _grader = null;
+  providerConfig = next;
+}
+
+function normalizeCognitionProvider(value: unknown): CognitionProvider {
+  const s = String(value || "").toLowerCase();
+  if (s === "openai") return "openai";
+  if (s === "anthropic" || s === "claude") return "anthropic";
+  return "mock";
+}
+
+function normalizeJudgeProvider(value: unknown): JudgeProvider {
+  const s = String(value || "").toLowerCase();
+  if (s === "openai") return "openai";
+  if (s === "gemini") return "gemini";
+  return "anthropic";
+}
+
+function normalizeRuntimeMode(value: unknown): RuntimeMode {
+  return String(value || "").toLowerCase() === "cloud" ? "cloud" : "local";
+}
+
+function judgeProviderForCognition(value: unknown): JudgeProvider {
+  const provider = normalizeCognitionProvider(value);
+  if (provider === "openai") return "openai";
+  return "anthropic";
+}
+
+function clampInt(value: unknown, min: number, max: number, fallback: number): number {
+  const n = Math.floor(Number(value));
+  return Number.isFinite(n) ? Math.max(min, Math.min(max, n)) : fallback;
+}
+
+function clampFloat(value: unknown, min: number, max: number, fallback: number): number {
+  const n = Number(value);
+  return Number.isFinite(n) ? Math.max(min, Math.min(max, n)) : fallback;
 }
 
 // The learning subsystem, lazily started (so /agent/* works even if better-sqlite3
 // hasn't been built). Memory persists to data/agape.db; the runner uses agape-rs.
 const HERE = process.cwd();
-const AGAPE_RS = path.resolve(HERE, "..", "..", "agape-rs");
-const SPEC_PATH = path.resolve(HERE, "..", "..", "SPEC.md");
+const AGAPE_ROOT =
+  [
+    path.resolve(HERE, "..", ".."),
+    path.resolve(HERE, "..", "..", "agape"),
+  ].find((p) => fs.existsSync(path.join(p, "agape-rs"))) || path.resolve(HERE, "..", "..");
+const AGAPE_RS = path.join(AGAPE_ROOT, "agape-rs");
+const SPEC_PATH = path.join(AGAPE_ROOT, "SPEC.md");
+function localRuntimeVersion(): string {
+  const cargo = path.join(AGAPE_RS, "Cargo.toml");
+  if (!fs.existsSync(cargo)) return "unknown";
+  return readTomlString(fs.readFileSync(cargo, "utf8"), "version") || "unknown";
+}
+
+function readTomlString(body: string, key: string, section?: string): string | null {
+  let current = "";
+  for (const raw of body.split(/\r?\n/)) {
+    const line = raw.replace(/#.*/, "").trim();
+    if (!line) continue;
+    const sectionMatch = line.match(/^\[([^\]]+)\]$/);
+    if (sectionMatch) {
+      current = sectionMatch[1].trim();
+      continue;
+    }
+    if (section && current !== section) continue;
+    const m = line.match(/^([A-Za-z_][A-Za-z0-9_-]*)\s*=\s*"([^"]*)"/);
+    if (m && m[1] === key) return m[2];
+  }
+  return null;
+}
+
+function projectLanguageVersion(): string {
+  if (!PROJECT) return "unknown";
+  const toml = path.join(PROJECT, "agape.toml");
+  if (!fs.existsSync(toml)) return "unknown";
+  const body = fs.readFileSync(toml, "utf8");
+  return (
+    readTomlString(body, "language", "project") ||
+    readTomlString(body, "language_version", "project") ||
+    readTomlString(body, "version", "language") ||
+    readTomlString(body, "agape", "language") ||
+    "unknown"
+  );
+}
+
+function projectManifest() {
+  if (!PROJECT) return null;
+  const toml = path.join(PROJECT, "agape.toml");
+  if (!fs.existsSync(toml)) return null;
+  return { rel: "agape.toml", languageVersion: projectLanguageVersion() };
+}
 let learner: Learner | null = null;
 function getLearner(): Learner {
   if (!learner) {
@@ -129,12 +309,12 @@ function readJson(req: http.IncomingMessage): Promise<any> {
 }
 
 // ── review: spec + conformance suite + live results (the Review studio) ──────
-const REPO = path.resolve(HERE, "..", "..");
+const REPO = AGAPE_ROOT;
 const TESTS_DIR = path.resolve(REPO, "agape-conformance", "tests");
 
 // ── project: the user's own Agape project, opened via `agape studio` ──────────
 // `AGAPE_PROJECT` is set by the CLI launcher; null ⇒ no project (Review only).
-const PROJECT = process.env.AGAPE_PROJECT ? path.resolve(process.env.AGAPE_PROJECT) : null;
+const PROJECT = process.env.AGAPE_PROJECT ? resolveProjectRoot(process.env.AGAPE_PROJECT) : null;
 // Resolve the `agape` binary across layouts: an explicit override, the packaged
 // bundle (studio/agent-server → ../../bin/agape), or a local release/dev build.
 const AGAPE_BIN =
@@ -170,6 +350,18 @@ function serveStatic(res: http.ServerResponse, url: string): boolean {
   return true;
 }
 
+function resolveProjectRoot(start: string): string {
+  let dir = path.resolve(start);
+  if (fs.existsSync(dir) && fs.statSync(dir).isFile()) dir = path.dirname(dir);
+  for (let i = 0; i < 16; i++) {
+    if (fs.existsSync(path.join(dir, "agape.toml"))) return dir;
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return path.resolve(start);
+}
+
 // List the project's .ag files with a shallow parse of the agents/sensors they
 // declare — enough for the studio to show the agent inventory at a glance.
 function projectFiles(): Array<{ rel: string; agents: string[]; prompts: string[] }> {
@@ -200,13 +392,14 @@ function safeProjectPath(rel: string): string | null {
 }
 
 // Run one project file through the `agape` CLI (--json), feeding prompt inputs.
-// `claude` routes the `<-` seam to the live provider (this same agent-server).
-async function runProjectFile(rel: string, prompts: Record<string, string>, claude?: boolean, samples?: number, temperature?: number) {
+// `live` routes the `<-` seam to the live provider (this same agent-server).
+// The runtime flag is still named `--claude`; this server can back it with Claude or OpenAI.
+async function runProjectFile(rel: string, prompts: Record<string, string>, live?: boolean, samples?: number, temperature?: number) {
   const full = safeProjectPath(rel);
   if (!full || !fs.existsSync(full)) return { ok: false, error: `no such file: ${rel}` };
   const args = ["run", full, "--json"];
   for (const [k, v] of Object.entries(prompts || {})) args.push("--prompt", `${k}=${v}`);
-  if (claude) {
+  if (live) {
     args.push("--claude");
     if (samples && samples > 0) args.push("--samples", String(samples));
     if (temperature && temperature > 0) args.push("--temperature", String(temperature));
@@ -219,7 +412,7 @@ async function runProjectFile(rel: string, prompts: Record<string, string>, clau
   const cwd = useCargo ? AGAPE_RS : (PROJECT || process.cwd());
   try {
     // Live model runs make several API calls (the sampling fallback), so allow longer.
-    const r = await pExecFile(bin, argv, { cwd, timeout: claude ? 180_000 : 60_000, maxBuffer: 20_000_000 });
+    const r = await pExecFile(bin, argv, { cwd, timeout: live ? 180_000 : 60_000, maxBuffer: 20_000_000 });
     return JSON.parse(r.stdout);
   } catch (e: any) {
     // A static-rejection exits non-zero but still prints the JSON error envelope.
@@ -319,7 +512,25 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "OPTIONS") return send(res, 204, {});
 
     if (req.method === "GET" && url === "/agent/health") {
-      return send(res, 200, { ok: true, model: process.env.AGENT_MODEL || "claude-haiku-4-5", live: HAS_KEY, judge: (process.env.AGENT_JUDGE_PROVIDER || "anthropic").toLowerCase() });
+      return send(res, 200, { ok: true, ...providerSnapshot() });
+    }
+
+    if (req.method === "GET" && url === "/agent/config") {
+      return send(res, 200, providerSnapshot());
+    }
+
+    if (req.method === "POST" && url === "/agent/config") {
+      updateProviderConfig((await readJson(req)) || {});
+      return send(res, 200, providerSnapshot());
+    }
+
+    if (req.method === "GET" && url === "/runtime/config") {
+      return send(res, 200, runtimeSnapshot());
+    }
+
+    if (req.method === "POST" && url === "/runtime/config") {
+      updateRuntimeConfig((await readJson(req)) || {});
+      return send(res, 200, runtimeSnapshot());
     }
 
     // ── pair / delegate ──
@@ -393,7 +604,7 @@ const server = http.createServer(async (req, res) => {
       fs.writeFileSync(SPEC_PATH, text, "utf8");
       return send(res, 200, { ok: true, bytes: text.length });
     }
-    // ── the live provider seam (a real Claude behind the runtime's `<-`) ──
+    // ── the live provider seam behind the runtime's `<-` ──
     // Plain text/line wire format so the zero-dep Rust runtime can call it.
     if (req.method === "POST" && url === "/provider/text") {
       const prompt = await readBody(req);
@@ -419,7 +630,15 @@ const server = http.createServer(async (req, res) => {
 
     // ── the project studio (opened via `agape studio`) ──
     if (req.method === "GET" && url === "/project/info") {
-      return send(res, 200, { hasProject: !!PROJECT, root: PROJECT || "", name: projectName(), files: projectFiles() });
+      return send(res, 200, {
+        hasProject: !!PROJECT,
+        root: PROJECT || "",
+        name: projectName(),
+        manifest: projectManifest(),
+        languageVersion: projectLanguageVersion(),
+        runtime: runtimeSnapshot(),
+        files: projectFiles(),
+      });
     }
     if (req.method === "GET" && url === "/project/file") {
       const rel = new URL(req.url || "", "http://x").searchParams.get("rel") || "";
@@ -435,9 +654,16 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, { ok: true });
     }
     if (req.method === "POST" && url === "/project/run") {
-      const { rel, prompts, claude, samples, temperature } = (await readJson(req)) || {};
+      const { rel, prompts, claude, live, cognitionProvider, judgeProvider, samples, temperature, openaiTopLogprobs } = (await readJson(req)) || {};
       if (!rel) return send(res, 400, { error: "rel (a project .ag file) is required" });
-      return send(res, 200, await runProjectFile(String(rel), prompts || {}, !!claude, Number(samples) || 0, Number(temperature) || 0));
+      updateProviderConfig({
+        ...(cognitionProvider === undefined ? {} : { cognitionProvider }),
+        ...(judgeProvider === undefined ? {} : { judgeProvider }),
+        samples,
+        temperature,
+        openaiTopLogprobs,
+      });
+      return send(res, 200, await runProjectFile(String(rel), prompts || {}, !!(live ?? claude), Number(samples) || 0, Number(temperature) || 0));
     }
 
     if (req.method === "POST" && url === "/review/test-save") {
@@ -459,5 +685,6 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, "127.0.0.1", () => {
-  console.log(`agent-server on http://127.0.0.1:${PORT} · ${HAS_KEY ? `model ${process.env.AGENT_MODEL || "claude-haiku-4-5"}` : "mock (no API key)"}${WEB_DIST ? " · serving web app" : ""}`);
+  const hasLiveKey = !!(process.env.ANTHROPIC_API_KEY || process.env.OPENAI_API_KEY || process.env.GEMINI_API_KEY);
+  console.log(`agent-server on http://127.0.0.1:${PORT} · ${hasLiveKey ? `${providerConfig.cognitionProvider}/${providerConfig.judgeProvider}` : "mock (no API key)"}${WEB_DIST ? " · serving web app" : ""}`);
 });

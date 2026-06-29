@@ -40,8 +40,15 @@ export default function ProjectView({ info, provider, editorPrefs, setEditorPref
   const [result, setResult] = useState(null);
   const [running, setRunning] = useState(false);
   const [msg, setMsg] = useState(null);
-  // The cognition provider is studio-level config (Studio -> Settings); consumed here.
-  const { claude, samples, temp } = provider;
+  // Provider config is studio-level (Studio -> Settings); consumed here.
+  const {
+    cognitionProvider = "mock",
+    samples = 5,
+    temp = 0,
+    openaiTopLogprobs = 5,
+  } = provider;
+  const judgeProvider = judgeProviderForCognition(cognitionProvider);
+  const liveProvider = cognitionProvider !== "mock";
   const vim = !!editorPrefs?.vim;
   const dirtyRef = useRef(false);
   const edRef = useRef(null);          // the Monaco editor instance
@@ -108,8 +115,15 @@ export default function ProjectView({ info, provider, editorPrefs, setEditorPref
     setRunning(true); setMsg(null);
     try {
       if (dirtyRef.current) await project.saveFile(sel, src); // run what you see
-      const r = await project.run(sel, prompts, { claude, samples, temperature: temp });
-      setResult({ ...r, claude, asked: { ...prompts } });
+      const r = await project.run(sel, prompts, {
+        live: liveProvider,
+        cognitionProvider,
+        judgeProvider,
+        samples,
+        temperature: temp,
+        openaiTopLogprobs,
+      });
+      setResult({ ...r, provider: { cognitionProvider, judgeProvider, samples, temp, openaiTopLogprobs }, asked: { ...prompts } });
       setDirty(false); dirtyRef.current = false;
     } catch (e) { setResult({ ok: false, error: e.message }); }
     setRunning(false);
@@ -225,7 +239,7 @@ export default function ProjectView({ info, provider, editorPrefs, setEditorPref
               <div className="pj-metric"><b>{run.tokOut}</b><span>tok out</span></div>
               <div className="pj-metric"><b>~${run.cost < 0.001 ? run.cost.toFixed(5) : run.cost.toFixed(3)}</b><span>est. cost</span></div>
             </div>
-            <div className="pj-metric-note">{result.claude ? "live Claude (haiku) · sampling fallback · tokens estimated from text" : "estimated · deterministic mock provider (no live connector)"}</div>
+            <div className="pj-metric-note">{providerRunLabel(result.provider)}</div>
 
             <div className="pj-section-h">llm calls</div>
             {run.calls.length === 0 && <div className="pj-dim" style={{ padding: "0 12px 8px" }}>no provider calls this run</div>}
@@ -281,7 +295,7 @@ export default function ProjectView({ info, provider, editorPrefs, setEditorPref
               <i className="ti ti-device-floppy" />{dirty ? "Save" : "Saved"}
             </button>
             <span className="pj-st-provider" onClick={onOpenSettings} title="Cognition provider — Studio → Settings">
-              <i className="ti ti-cpu" />{claude ? `Claude · ${samples}×${temp > 0 ? ` · ${temp}` : ""}` : "mock"}
+              <i className="ti ti-cpu" />{providerStatusLabel({ cognitionProvider, judgeProvider, samples, temp, openaiTopLogprobs })}
             </span>
             <span className="pj-st-grow" ref={vimStatusRef} />
             {msg && <span className={msg.ok ? "ok" : "bad"}>{msg.t}</span>}
@@ -311,6 +325,28 @@ export default function ProjectView({ info, provider, editorPrefs, setEditorPref
       <style>{STYLE}</style>
     </div>
   );
+}
+
+function providerStatusLabel({ cognitionProvider, samples, temp, openaiTopLogprobs }) {
+  const cognition = cognitionProvider === "openai" ? "OpenAI" : cognitionProvider === "anthropic" ? "Claude" : "mock";
+  if (cognition === "mock") return "mock";
+  const credence = cognitionProvider === "openai"
+    ? `Credence via logprobs ${openaiTopLogprobs || 5}`
+    : `Credence via sampling ${samples || 5}x${temp > 0 ? ` · ${temp}` : ""}`;
+  return `${cognition} · ${credence}`;
+}
+
+function providerRunLabel(provider) {
+  if (!provider || provider.cognitionProvider === "mock") return "estimated · deterministic mock provider (no live connector)";
+  const cognition = provider.cognitionProvider === "openai" ? "live OpenAI" : "live Claude";
+  const credence = provider.cognitionProvider === "openai"
+    ? `credence via token logprobs · top ${provider.openaiTopLogprobs || 5}`
+    : `credence via sampling fallback · ${provider.samples || 5} draws`;
+  return `${cognition} · ${credence} · tokens estimated from text`;
+}
+
+function judgeProviderForCognition(cognitionProvider) {
+  return cognitionProvider === "openai" ? "openai" : "anthropic";
 }
 
 // Color the spine by what each event means: decisions/deliveries are the points

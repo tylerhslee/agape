@@ -274,12 +274,24 @@ Credence<Ticket>        // graded over a user enum — a constrained classifier
 ```
 
 A `Credence<E>` is produced only by binding a send to a `Credence`-typed slot (§8);
-the slot's enum is the output schema, so the model is forced to answer inside `E`. It is
-consumed only by the gate (`c by R`, `endorse`/`attest`, §13) and by the graded combinators (`all`
-/ `any` / `quorum`, §12). It is not a probabilistic-programming distribution object:
-there is no inference, conditioning, or sampling combinator. Producing a `Credence<E>`
-any other way (e.g. from arithmetic) is a `TypeError`; consuming one anywhere but the gate
-or combinators is a `TypeError`.
+the slot's enum is the output schema, so the model is forced to answer inside `E` by the
+provider's structured-output / constrained-decoding API. Prompt wording is not the enforcement
+mechanism; the type annotation is. It is consumed only by the gate (`c by R`,
+`endorse`/`attest`, §13) and by the graded combinators (`all` / `any` / `quorum`, §12). It is not
+a probabilistic-programming distribution object: there is no inference, conditioning, or sampling
+combinator. Producing a `Credence<E>` any other way (e.g. from arithmetic) is a `TypeError`;
+consuming one anywhere but the gate or combinators is a `TypeError`.
+
+```agape
+enum Route { Handle, Escalate }
+
+Credence<Route> route =
+  self <- f"triage this request: {body}";
+```
+
+The provider receives the rendered prompt plus a schema whose only legal categorical outputs are
+`Handle` and `Escalate`. If the backend returns prose, an extra label, or a malformed structured
+object, the runtime raises `TypeMismatch` (§8, §16.6); it does not parse free text into a variant.
 
 **Why a distribution over an enum, and not a probability.** The value is categorical (a
 distribution over exhaustive, mutually-exclusive variants), not a scalar in `[0,1]`, and
@@ -668,7 +680,10 @@ part of the semantics so that replay is well-defined.
 
 ```agape
 Credence<bool> c = self <- f"is {name} 'John'?";
-endorse (c by confidence 0.9) { true: emit Logged("john"); false: ; }  // records the Decision (subject: c)
+endorse (c by confidence 0.9) {
+  true: emit Logged("john");
+  false: emit Logged("not-john");
+}                                                   // records the Decision (subject: c)
 when (Contradiction k about john) { ... }    // a Credence<Entailment> that committed to Contradicts at john
 when (Error e) { ... }                       // every error, any source (incl. Contradiction)
 ```
@@ -682,6 +697,21 @@ when (Error e) { ... }                       // every error, any source (incl. C
 Cognition enters only through the provider (`think` / `embed`). Agape source never
 names a concrete provider; semantic judgments and structured replies resolve through it;
 swapping it changes no source.
+
+For a typed reply, the provider call is a structured-output call. The runtime renders the
+prompt and compiles the destination type into a schema:
+
+```agape
+enum Triage { Auto, Human }
+struct Summary { title: text, urgent: bool }
+
+Credence<Triage> t = self <- f"triage: {body}";
+event<Summary> s = self <- f"summarize: {body}";
+```
+
+The first call constrains the backend to the closed enum `Triage` and records a distribution over
+its variants. The second constrains the backend to the exact `Summary` object shape. The words
+"triage" and "summarize" help the model, but only the schema is authoritative.
 
 ### Graded judgments → `Credence<E>`
 
@@ -1000,6 +1030,32 @@ origin: external data carries no un-endorsed cognition.
 
 Trust is contagious upward (a value is as `raw` as its least-settled input); only a gate
 settles. A `Principal` is `settled`.
+
+```agape
+enum Approval { Approve, Decline }
+event Reviewed(text note);
+action ReleaseFunds(int cents);
+
+agent Clerk grants { perform ReleaseFunds } {
+  on awake {
+    Credence<Approval> a = self <- "assess this request";
+
+    // Rejected: a bare collapse is settled but off-ledger, so it cannot license a perform.
+    case (a by confidence 0.95 margin 0.2) as verdict {
+      Approve: perform ReleaseFunds(10000);
+      Decline: emit Reviewed("declined");
+    }
+
+    // Accepted: the gate records endorsement before the consequential arm runs.
+    endorse (a by confidence 0.95 margin 0.2) {
+      Approve: perform ReleaseFunds(10000);
+      Decline: emit Reviewed("declined");
+    } abstain {
+      emit Reviewed("needs-review");
+    }
+  }
+}
+```
 
 ### The gate — `endorse`, `attest`, `abstain`
 
@@ -1888,6 +1944,12 @@ is a directory with an `agape.toml` manifest; configuration is baked into the pr
 passed ad hoc. The declared dependencies and the default decision parameters resolve from the
 manifest.
 
+Configuration is Agape's ecosystem integration surface. Source declares *what* it depends on
+(`provider`, `principal`, `tool`, `prompt`); configuration binds those names to existing model
+APIs, identity systems, MCP/tool servers, prompt sources, memory policy, and deployment
+endpoints. A feature that needs provider-specific credentials, URLs, transports, or model names
+belongs in configuration, not in `.ag` source.
+
 ### 17.1 The manifest
 
 Configuration is the binding of declared dependencies (§3) to concrete resources, plus the default
@@ -1921,6 +1983,31 @@ transfer = { mcp = "https://payments.internal/mcp" }
 # floor, conformal α, and readiness all live in source `policy` declarations (§13),
 # e.g. `policy RuleFloor { threshold 0.9  margin 0.2  floor 0.1 }`, applied at a gate.
 ```
+
+The manifest is an integration contract, not a second programming language. A deployment that
+uses OpenAI for logprob-backed judgments, a local keyring for principal attestations, and an MCP
+tool server for payments still runs the same `.ag` source:
+
+```toml
+[provider]
+backend = "openai"
+model = "gpt-4.1-mini"
+temperature = 0
+
+[identity]
+backend = "local-keyring"
+
+[tools]
+payments = { mcp = "https://payments.internal/mcp" }
+
+[prompts]
+request = { source = "http", path = "/requests" }
+```
+
+Connector-specific keys may vary by backend, but the stable Agape-level interface is fixed:
+provider, identity, tools, prompts, memory policy, and package dependencies. If source declares
+one of these dependencies and config does not bind it, the result is a `ConfigError`, not a late
+runtime lookup.
 
 - `**exposes_logprobs**` is a **capability of the chosen backend — derived, not a knob to
 hand-set**: `anthropic` ⇒ `false` (the Messages API exposes no token logprobs), `openai`/`gemini` ⇒

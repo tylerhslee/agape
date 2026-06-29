@@ -4,9 +4,9 @@ import { inspect, recall, ingest, step, context as getContext } from "./learnApi
 const DEFAULT_TASK =
   "Build a support agent that classifies requests, replies for reversible outcomes, and defers consequential refunds to a principal.";
 
-export default function Learning() {
+export default function Learning({ initialTab = "context", focus = "builder" }) {
   const [snap, setSnap] = useState(null);
-  const [tab, setTab] = useState("context");
+  const [tab, setTab] = useState(initialTab);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(null);
   const [task, setTask] = useState(DEFAULT_TASK);
@@ -28,6 +28,10 @@ export default function Learning() {
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  useEffect(() => {
+    setTab(initialTab);
+  }, [initialTab]);
 
   const runIngest = async () => {
     setBusy("ingest");
@@ -85,24 +89,26 @@ export default function Learning() {
 
   return (
     <div className="builder-page">
-      <header className="builder-hero">
-        <div>
-          <div className="builder-kicker"><i className="ti ti-sparkles" /> Agape Builder</div>
-          <h1>Agentic coding memory</h1>
-          <p>
-            Retrieve the right Agape rules, draft source, run the checker, and fold useful failures back into memory.
-          </p>
-        </div>
-        <div className="builder-loop" aria-label="builder loop">
-          <span>Recall</span>
-          <i className="ti ti-arrow-right" />
-          <span>Write</span>
-          <i className="ti ti-arrow-right" />
-          <span>Check</span>
-          <i className="ti ti-arrow-right" />
-          <span>Learn</span>
-        </div>
-      </header>
+      {focus !== "memory" && (
+        <header className="builder-hero">
+          <div>
+            <div className="builder-kicker"><i className="ti ti-sparkles" /> Agape Builder</div>
+            <h1>Agentic coding memory</h1>
+            <p>
+              Retrieve the right Agape rules, draft source, run the checker, and fold useful failures back into memory.
+            </p>
+          </div>
+          <div className="builder-loop" aria-label="builder loop">
+            <span>Recall</span>
+            <i className="ti ti-arrow-right" />
+            <span>Write</span>
+            <i className="ti ti-arrow-right" />
+            <span>Check</span>
+            <i className="ti ti-arrow-right" />
+            <span>Learn</span>
+          </div>
+        </header>
+      )}
 
       {error && (
         <div className="builder-alert">
@@ -110,7 +116,7 @@ export default function Learning() {
         </div>
       )}
 
-      <section className="builder-grid">
+      {focus !== "memory" && <section className="builder-grid">
         <div className="builder-command">
           <div className="builder-card-head">
             <div>
@@ -153,7 +159,7 @@ export default function Learning() {
             </div>
           </div>
         </div>
-      </section>
+      </section>}
 
       <nav className="builder-tabs">
         {[

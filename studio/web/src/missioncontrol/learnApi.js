@@ -1,5 +1,5 @@
 // The studio's window into the builder agent's runtime. Reads (inspect/recall) are
-// FREE — they hit only the spine + local memory, no Claude. ingest/step cost API
+// FREE — they hit only the spine + local memory, no live provider. ingest/step cost API
 // calls. See studio/agent-server/RUNTIME.md.
 
 async function get(path) {
@@ -20,7 +20,7 @@ async function post(path, body) {
 export const inspect = () => get("/learn/inspect");
 export const recall = (q) => get(`/learn/recall?q=${encodeURIComponent(q)}`);
 
-// cost Claude API calls
+// cost live provider calls
 export const ingest = (maxChunks) => post("/learn/ingest", { maxChunks });
 export const step = (task) => post("/learn/step", { task });
 

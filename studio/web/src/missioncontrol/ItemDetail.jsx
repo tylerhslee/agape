@@ -5,7 +5,7 @@ import { agentRespond } from "./agentApi.js";
 
 // The detail spoke (STUDIO.md hub-and-spoke): open one work item to edit it, change
 // its status, assign it, and pair with its agent. Sending a note or delegating calls
-// the agentic seam (agentApi → the Claude-backed agent server today). All edits and
+// the agentic seam (agentApi → the provider-backed agent server today). All edits and
 // status changes remain manual and need no backend.
 export default function ItemDetail({ item, dispatch, onClose }) {
   const [assignee, setAssignee] = useState("Builder-1");
@@ -113,7 +113,7 @@ export default function ItemDetail({ item, dispatch, onClose }) {
         </div>
         {error && <div className="mc-muted-sm mc-thread-note" style={{ color: "var(--vsc-error)" }}><i className="ti ti-alert-triangle" /> {error}</div>}
         <div className="mc-muted-sm mc-thread-note">
-          <i className="ti ti-info-circle" /> replies come from the Claude-backed agent server (studio/agent-server) — the Agape backend slots in behind the same seam.
+          <i className="ti ti-info-circle" /> replies come from the provider-backed agent server (studio/agent-server) — the Agape backend slots in behind the same seam.
         </div>
       </div>
     </div>

@@ -54,13 +54,33 @@ pipeline lives *inside the binary*, and the stdlib is **embedded** into it (Rust
 ## 3. Configuration — owned by the release, managed via the CLI
 
 Config is **project state the toolchain manages**, not user-hand-wired wiring.
-Two scopes, mirroring cargo:
+It is also Agape's ecosystem integration surface: `.ag` source declares
+dependencies, and config binds those declarations to existing model APIs,
+identity systems, MCP/tool servers, prompt sources, memory policy, and deployment
+endpoints. Two scopes, mirroring cargo:
 
 ```toml
 # agape.toml  —  PROJECT scope (committed; pins behavior for reproducibility)
 [project]   name = "my-app"   entry = "main.ag"
-[provider]  backend = "mock"  model = "claude-haiku-4-5"   # default ships as mock
-[runtime]   threshold = 0.8                                # θ for ~ similarity
+
+[provider]
+backend = "mock"                 # default ships in-box and runs offline
+model = "mock-deterministic"
+temperature = 0
+fallback_samples = 10
+fallback_temperature = 0.7
+
+[identity]
+backend = "local-keyring"
+
+[memory]
+internalize_on_receive = false
+
+[tools]
+payments = { mcp = "https://payments.internal/mcp" }
+
+[prompts]
+request = { source = "http", path = "/requests" }
 ```
 ```toml
 # ~/.agape/config.toml  —  GLOBAL/user scope (NOT committed)
@@ -70,14 +90,17 @@ default_provider = "anthropic"
 Three principles to lock in:
 
 1. **Provider is swappable by config, never by source.** The same `.ag` runs on
-   mock or Anthropic by flipping the manifest — thesis #8 ("swap the config")
-   realized at the toolchain level.
+   mock, Anthropic, OpenAI, Gemini, or a local connector by flipping the manifest
+   — thesis #8 ("swap the config") realized at the toolchain level.
 2. **Secrets stay out of the manifest.** `agape.toml` *references* a provider; the
    API key comes from env / OS keychain. The manifest is safe to commit.
 3. **The project pins provider + model; the key is global.** Reproducibility
    (SPEC §15.5) only holds up to `≈` if the model is pinned, so pinning belongs in
    the *project* manifest. Mock-in-box means a fresh clone runs offline with zero
    setup.
+4. **Decision policy lives in source.** Thresholds, margins, floors, conformal
+   `α`, and readiness are `policy` declarations or inline gate rules, not hidden
+   manifest knobs. Config binds dependencies; source declares the decision theory.
 
 ---
 

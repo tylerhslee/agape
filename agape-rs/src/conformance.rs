@@ -563,3 +563,43 @@ pub fn run(dir: &Path, v: Version) -> Report {
         .collect();
     Report { version: v, outcomes }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn spec(id: &str, expect: Expect, body: &str) -> TestSpec {
+        TestSpec {
+            id: id.to_string(),
+            section: "selfcheck".to_string(),
+            path: PathBuf::from(format!("{id}.ag")),
+            since: (1, 0),
+            until: None,
+            expect,
+            error: None,
+            body: body.to_string(),
+            ledger: None,
+            contains: None,
+            absent: None,
+            order: None,
+            provider: None,
+            attest: None,
+            manifest: None,
+            replay: None,
+            modules: Vec::new(),
+            packages: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn accept_body_declared_reject_fails() {
+        let status = score(&spec("false_reject", Expect::Reject, "say(\"ok\");"), (1, 0));
+        assert!(matches!(status, Status::Fail(ref msg) if msg == "expected reject, but accepted"));
+    }
+
+    #[test]
+    fn reject_body_declared_accept_fails() {
+        let status = score(&spec("false_accept", Expect::Accept, "int a = 1\nint b = 2;"), (1, 0));
+        assert!(matches!(status, Status::Fail(ref msg) if msg.contains("expected accept, got reject")));
+    }
+}

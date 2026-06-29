@@ -14,6 +14,10 @@ async function post(path, body) {
 }
 
 export const info = () => get("/project/info");
+export const agentConfig = () => get("/agent/config");
+export const saveAgentConfig = (config) => post("/agent/config", config);
+export const runtimeConfig = () => get("/runtime/config");
+export const saveRuntimeConfig = (config) => post("/runtime/config", config);
 export const file = (rel) => get("/project/file?rel=" + encodeURIComponent(rel));
 export const saveFile = (rel, body) => post("/project/file", { rel, body });
 export const run = (rel, prompts, opts) => post("/project/run", { rel, prompts, ...(opts || {}) });

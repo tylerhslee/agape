@@ -13,6 +13,38 @@ as they preserve that kernel. The core chain is always the same:
 testimony -> Credence<E> -> Decision<E> -> endorsed action -> ledger
 ```
 
+The smallest useful Agape program is a guarded action. The text prompt asks the
+model for help, but the `Credence<Approval>` slot is what enforces the output
+shape: the provider receives a structured-output schema for the closed enum
+`Approval`, not permission to answer with arbitrary prose.
+
+```agape
+prompt text request;
+
+enum Approval { Approve, Decline }
+action ReleaseFunds(int cents);
+reversible action Notify(text message);
+
+policy Payments { threshold 0.95  floor 0.20 }
+
+agent Clerk grants { perform ReleaseFunds, perform Notify } {
+  when (Prompt p about request) {
+    Credence<Approval> decision =
+      self <- f"assess this payment request: {p}";
+
+    endorse (decision by Payments) {
+      Approve: perform ReleaseFunds(10000);
+      Decline: perform Notify("declined; no funds released");
+    } abstain {
+      perform Notify("needs human review");
+    }
+  }
+}
+
+spawn Clerk clerk;
+awake clerk;
+```
+
 > Most agent systems don't survive production. Across the seven frameworks in the [MAST taxonomy](https://arxiv.org/abs/2503.13657) — 1,642 annotated execution traces — multi-agent systems fail **41–87% of the time**, almost never because the model wasn't capable enough. They fail for *structural* reasons: agents coordinate through unstructured text and misread each other, act on testimony they had no grounds to trust, exceed the authority they were meant to hold, and leave no record to replay when something breaks. Those aren't model problems. They're the missing guarantees every other class of critical software takes for granted — types, contracts, access control, an audit log. Agape makes them properties of the *program*, checked before it runs.
 
 ## Quickstart
@@ -46,11 +78,72 @@ agape check main.ag      # static guarantees only — authority, endorsement, ty
 agape studio             # open the project in Agape Studio (live ledger, eval, lifecycle)
 ```
 
-By default everything runs on the in-box mock provider. To run against a real model, name a backend in the manifest and bind its key from the environment — `anthropic` (sampling fallback), `openai`, or `gemini` (token-logprob credences). See **[DISTRIBUTION.md](DISTRIBUTION.md)**.
+By default everything runs on the in-box mock provider. To run against a real model, name a backend in the manifest and bind its key from the environment — `anthropic` (sampling fallback), `openai`, or `gemini` (token-logprob credences). Configuration is Agape's ecosystem seam: providers, tools, prompts, identity, memory policy, and deployment endpoints are bound outside `.ag` source. See **[DISTRIBUTION.md](DISTRIBUTION.md)** and SPEC §17.
 
-## The shape of a program
+## Studio deployments
 
-Here is the kind of workflow Agape is built for: a support agent may send safe replies, but refunding money is a consequential action. The model can classify the case; it cannot spend on its own. The typed `Credence<Outcome>` has to pass a recorded gate first.
+Agape ships with Studio because the language is easiest to understand when you can
+drive agents, inspect the ledger, and watch gates resolve in one place:
+
+```sh
+agape studio
+```
+
+That bundled path is the default local developer experience. It should always work
+offline with the deterministic mock provider, and it can use live providers when
+`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or `GEMINI_API_KEY` are present in the
+environment or the repo `.env`.
+
+Studio is also developed as a detachable frontend in `../agape-studio/`. That
+standalone package can attach to different Agape deployments without being tied to
+this repo layout:
+
+- **Embedded/local** — `agape studio` launches the Studio bundled with the Agape
+  toolchain and attaches to the current project.
+- **Standalone/local** — `../agape-studio` runs as its own Vite app and agent
+  server, attaching to the sibling `agape` runtime during development.
+- **Remote/cloud** — the same Studio frontend can point at a hosted Agape runtime
+  or a product-specific deployment, such as Soma, through the stable API seams for
+  project files, runs, provider config, memory, review, and ledger inspection.
+
+The intended rule is: **the Agape package includes a Studio, but Studio does not
+require living inside the Agape package.** Core language releases should not depend
+on frontend churn, and Studio should be free to grow into a cloud/runtime control
+plane for agentic work.
+
+Studio is versioned separately from both the language and runtime. The active
+project determines the language version Studio displays, and the configured
+runtime deployment determines the runtime endpoint/version. This keeps the same
+Studio usable against a local folder, a packaged runtime, or a future Soma/cloud
+deployment.
+
+## What Agape guarantees
+
+- **Cognition is typed.** A model's testimony returns as a schema-constrained `Credence<E>` — a calibrated distribution over a closed set of outcomes, enforced by the provider's structured-output API and read from token probabilities or sampling fallback — not a string to parse and pray over.
+- **Authority is bounded at compile time.** An agent may `perform` only what its `grants` permit, and nothing it computes at runtime can widen that set.
+- **Endorsement is unavoidable.** A value derived from cognition is untrusted until a gate endorses it. The type checker rejects any program that lets an unendorsed `Credence` drive an action — a missing endorsement is a compile error, not a latent incident.
+- **The kernel is fail-closed.** At a consequential boundary, unknown type, trust, endorsement, tool effect, grant, or replay source is a rejection, not a guessed permission.
+- **Behavior is versioned, not mutable.** An agent's system prompt is an `instruction` in source — settled, reviewable, append-only under inheritance. No recalled fact or injected memory can rewrite it; changing behavior means shipping a new version.
+- **Memory cannot launder trust.** Private memory stores anything, but every recall comes out **tainted** — taint-equivalent to a fresh model reply — so a remembered "fact" must be re-gated before it can drive an action, just like a new one.
+- **Every run replays.** Execution is an append-only, hash-chained ledger; state is a function of that ledger. A recorded run replays exactly, and any prefix can be replayed under altered facts to test a counterfactual.
+
+## How a decision is made
+
+Work moves through four stages, each typed and each recorded — and because each value's standing (untrusted testimony → graded credence → endorsed decision) is part of its **type**, nothing slips from testimony to action without passing the gate. It's one path the compiler checks end to end, not a sequence the program is trusted to follow.
+
+1. **Testimony** — a model assertion, solicited with the cognition operator `self <- "…"`. Never trusted as a string; bound as a `Credence`.
+2. **Credence** — a graded judgment over a closed set of outcomes. Carries no authority on its own.
+3. **Decision** — the `endorse` gate collapses a credence to a `Decision` *only* when it meets a stated standard of confidence; short of that, it **abstains** and may defer to a `principal`.
+4. **Action** — an endorsed decision may license an `action`, performed only within the agent's granted authority. Every stage is appended to the ledger.
+
+## Complete workflow example
+
+The compact example shows the kernel. A fuller program can include safe replies,
+ledger records, and a realistic abstain path. The checked-in example models a
+support workflow: the agent may reply safely, but issuing credit is consequential.
+The model can classify the case; it cannot spend on its own. The typed
+`Credence<Outcome>` compiles to a structured-output schema over `Outcome`, and
+the resulting judgment has to pass a recorded gate first.
 
 ```agape
 prompt text request;
@@ -67,7 +160,7 @@ agent SupportDesk grants { perform Reply, perform IssueCredit } {
     emit Case(p);
 
     Credence<Outcome> outcome =
-      self <- f"classify this support request: {p}. choose Refund, Explain, or Escalate.";
+      self <- f"classify this support request: {p}";
 
     endorse (outcome by Support) {
       Refund: {
@@ -105,26 +198,12 @@ With the deterministic mock provider, the ledger shows the whole chain:
 [ 10] Reply        desk     I've issued a $25 credit and recorded the decision.
 ```
 
-The model's answer is a `Credence` — **untrusted**. Calling `perform IssueCredit` straight from it *does not compile*: an action may consume only an **endorsed** value, and a `Credence` is endorsed only by passing the `endorse` gate. `Support` is the bar the judgment must clear; below it the gate **abstains** and only the safe reply path runs. The model can be wrong — but what it's allowed to *do* when it's wrong is fixed in advance, and on the record.
-
-## What Agape guarantees
-
-- **Cognition is typed.** A model's testimony returns as a schema-constrained `Credence<E>` — a calibrated distribution over a closed set of outcomes, read from the model's own token probabilities — not a string to parse and pray over.
-- **Authority is bounded at compile time.** An agent may `perform` only what its `grants` permit, and nothing it computes at runtime can widen that set.
-- **Endorsement is unavoidable.** A value derived from cognition is untrusted until a gate endorses it. The type checker rejects any program that lets an unendorsed `Credence` drive an action — a missing endorsement is a compile error, not a latent incident.
-- **The kernel is fail-closed.** At a consequential boundary, unknown type, trust, endorsement, tool effect, grant, or replay source is a rejection, not a guessed permission.
-- **Behavior is versioned, not mutable.** An agent's system prompt is an `instruction` in source — settled, reviewable, append-only under inheritance. No recalled fact or injected memory can rewrite it; changing behavior means shipping a new version.
-- **Memory cannot launder trust.** Private memory stores anything, but every recall comes out **tainted** — taint-equivalent to a fresh model reply — so a remembered "fact" must be re-gated before it can drive an action, just like a new one.
-- **Every run replays.** Execution is an append-only, hash-chained ledger; state is a function of that ledger. A recorded run replays exactly, and any prefix can be replayed under altered facts to test a counterfactual.
-
-## How a decision is made
-
-Work moves through four stages, each typed and each recorded — and because each value's standing (untrusted testimony → graded credence → endorsed decision) is part of its **type**, nothing slips from testimony to action without passing the gate. It's one path the compiler checks end to end, not a sequence the program is trusted to follow.
-
-1. **Testimony** — a model assertion, solicited with the cognition operator `self <- "…"`. Never trusted as a string; bound as a `Credence`.
-2. **Credence** — a graded judgment over a closed set of outcomes. Carries no authority on its own.
-3. **Decision** — the `endorse` gate collapses a credence to a `Decision` *only* when it meets a stated standard of confidence; short of that, it **abstains** and may defer to a `principal`.
-4. **Action** — an endorsed decision may license an `action`, performed only within the agent's granted authority. Every stage is appended to the ledger.
+The model's answer is a `Credence` — **untrusted**. Calling `perform IssueCredit`
+straight from it *does not compile*: an action may consume only an **endorsed**
+value, and a `Credence` is endorsed only by passing the `endorse` gate. `Support`
+is the bar the judgment must clear; below it the gate **abstains** and only the
+safe reply path runs. The model can be wrong — but what it is allowed to *do*
+when it is wrong is fixed in advance, and on the record.
 
 ## The v1.0.2 surface
 
@@ -134,7 +213,7 @@ Agape is a real language, not a toy DSL. Beyond the four-stage core:
 - **The readable gate — `decide`.** State *intent + one fact about stakes* and the compiler derives the decision theory. Mark a sink `reversible` and the gate just acts (argmax); leave it unmarked and it runs **conformal** every time, certified to a single dial, `conformal α`. A non-reversible arm with no reachable `principal` is a *compile error* — autonomy is earned from labelled cases, never assumed.
 - **`instruction` — procedural memory in source.** The compile-time system prompt. Global or agent-scoped, append-only under `extend`; an agent's behavioral spec cannot drift without a reviewable release.
 - **Private memory — `mem` handles.** `mem m <- v` writes, `m -> "query"` recalls, `forget m` tombstones (audit-preserving). Recall is **always tainted**: re-gate it before any sink. The **ledger** is its dual — the objective, deterministic, untainted record of *what happened*, queried with `select … from ledger` and traversed by causal lineage.
-- **Pluggable gate providers.** The gate's calibrated mass comes from a backend you select in the manifest: `openai` / `gemini` read it from token logprobs; `anthropic` derives it from a sampling fallback. Capabilities are intrinsic to the backend (never hand-set knobs); secrets bind from the environment, never source.
+- **Provider-backed Credence.** The cognition backend produces the calibrated mass the gate consumes: providers with token probabilities read it from logprobs; text-only providers derive it through a sampling fallback. Capabilities are intrinsic to the backend (never hand-set knobs); secrets bind from the environment, never source.
 
 The long-term deployment target is not merely "an Agape app server." The same kernel can be
 the infrastructure boundary: a cloud control plane, service fabric, or OS/runtime layer where
@@ -157,5 +236,6 @@ Agape is assembled from established ideas, not invented from nothing: treating m
 - [`design/v1.0.0-showcase.ag`](design/v1.0.0-showcase.ag) — one annotated program over the whole v1.0.2 surface.
 - [`agape-conformance/`](agape-conformance) — the black-box conformance suite an implementation must satisfy.
 - [`agape-rs/`](agape-rs) — the reference implementation (the `agape` toolchain).
+- `../agape-language-pack/` — editor support and syntax highlighting for Studio, VS Code, Cursor, and docs renderers.
 
 The specification and conformance suite define the language; the reference implementation passes the suite in full.

@@ -7,7 +7,7 @@
 // does not change this surface. Kept a pure reducer so it is trivially testable and
 // later swappable for calls across the API seam.
 
-import { useReducer } from "react";
+import { useEffect, useReducer } from "react";
 
 // The work-item lifecycle (STUDIO.md §5.1). Order here is the board's column order.
 export const STATUSES = ["parked", "backlog", "active", "waiting", "done"];
@@ -37,26 +37,53 @@ function makeItem(title, destination, status, extra = {}) {
   };
 }
 
-// A small seeded help-desk roadmap so the board and roadmap aren't empty on load.
-function seedItems() {
-  _seq = 1;
-  return [
-    makeItem("refund policy agent", "endorse refunds within policy, abstain otherwise", "backlog"),
-    makeItem("triage routing", "route incoming tickets to the right queue", "backlog"),
-    makeItem("audit log export", "export the spine for compliance review", "backlog"),
-    makeItem("escalation flow", "decide when a ticket needs a human", "parked"),
-    makeItem("memory schema", "how agents recall prior tickets", "parked"),
-    makeItem("ledger tool seam", "typed boundary to the payments ledger", "done"),
-  ];
-}
-
 export const initialState = {
   // The selected app runtime this studio surface is scoped to (STUDIO.md §2).
-  runtime: { id: "app-helpdesk", name: "help-desk", kind: "app" },
-  goal: "ship v1 help-desk — triage → policy → refund",
-  items: seedItems(),
+  runtime: { id: "active-project", name: "active project", kind: "project" },
+  goal: "",
+  items: [],
   selectedId: null,
 };
+
+function isRetiredSeedState(state) {
+  return state?.runtime?.id === "app-factcheck" ||
+    state?.goal === "build v1 fact-checker — claim → criteria → verdict";
+}
+
+function readStoredState() {
+  try {
+    const raw = localStorage.getItem("agape.studioState");
+    if (!raw) return initialState;
+    const parsed = JSON.parse(raw);
+    if (isRetiredSeedState(parsed)) return initialState;
+    if (!parsed || !Array.isArray(parsed.items)) return initialState;
+    let maxId = 0;
+    for (const item of parsed.items) {
+      const n = Number(String(item.id || "").replace(/^w/, ""));
+      if (Number.isFinite(n)) maxId = Math.max(maxId, n);
+    }
+    _seq = Math.max(_seq, maxId + 1);
+    return {
+      ...initialState,
+      ...parsed,
+      selectedId: null,
+      runtime: parsed.runtime || initialState.runtime,
+      items: parsed.items,
+    };
+  } catch {
+    return initialState;
+  }
+}
+
+function persistState(state) {
+  try {
+    localStorage.setItem("agape.studioState", JSON.stringify({
+      runtime: state.runtime,
+      goal: state.goal,
+      items: state.items,
+    }));
+  } catch {}
+}
 
 function patchItem(state, id, fn) {
   return { ...state, items: state.items.map((it) => (it.id === id ? fn(it) : it)) };
@@ -68,7 +95,8 @@ export function reducer(state, action) {
     case "CREATE_WORK": {
       const title = (action.title || "").trim();
       if (!title) return state;
-      const it = makeItem(title, action.destination || "", "parked");
+      const status = STATUSES.includes(action.status) ? action.status : "parked";
+      const it = makeItem(title, action.destination || "", status);
       return { ...state, items: [...state.items, it] };
     }
 
@@ -122,7 +150,10 @@ export function reducer(state, action) {
 }
 
 export function useStudio() {
-  return useReducer(reducer, initialState);
+  const pair = useReducer(reducer, undefined, readStoredState);
+  const [state] = pair;
+  useEffect(() => persistState(state), [state]);
+  return pair;
 }
 
 // ── selectors ──

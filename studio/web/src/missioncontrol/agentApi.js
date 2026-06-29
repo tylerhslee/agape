@@ -1,5 +1,5 @@
 // The one place the frontend calls the studio's agentic seam. Today it reaches the
-// Claude-backed agent server (studio/agent-server) over the Vite proxy; when the
+// provider-backed agent server (studio/agent-server) over the Vite proxy; when the
 // Agape + MCP backend lands it answers the same call. See STUDIO.md §2.
 
 export async function agentRespond(item, thread, intent = "respond") {
