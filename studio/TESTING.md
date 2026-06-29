@@ -15,10 +15,10 @@ value, map each to a test, and push combinatorial edge cases down to fast tests.
 | **Language** | Rust | every gate/seam/runtime rule (102 cases) | `agape-conformance` |
 
 The studio's surface is **thin on purpose**: most journeys bottom out in `agape
-run` → a spine, which the **conformance suite already covers exhaustively**. So
+run` → a ledger, which the **conformance suite already covers exhaustively**. So
 the studio tests the plumbing (parse, serve, run, render), not the language.
 
-A run is **deterministic on the mock provider** — byte-identical spine, no API
+A run is **deterministic on the mock provider** — byte-identical ledger, no API
 key — so integration/E2E tests assert *exact* outputs without flakiness.
 
 ## Journey inventory (every entry maps to a test)
@@ -43,7 +43,7 @@ key — so integration/E2E tests assert *exact* outputs without flakiness.
 - **Coverage is a gap-finder, not a trophy** — it shows untested *code*, never proves all *journeys*.
 - **Combinatorics go to unit tests** (every input shape), E2E stays a handful.
 - **Property/fuzz** for un-enumerable input: the conformance suite fuzzes the language; feed-random-`.ag` is the natural extension.
-- **Prod closes the loop** — the spine is an audit log; a real-world failure becomes a new row + a regression test.
+- **Prod closes the loop** — the ledger is an audit log; a real-world failure becomes a new row + a regression test.
 
 ## Run it
 

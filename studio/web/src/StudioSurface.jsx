@@ -6,16 +6,18 @@ import { registerAgape, AGAPE_LANG_ID } from "./agapeLanguage.js";
 import * as project from "./project/projectApi.js";
 
 const SECTIONS = [
-  { id: "builder", label: "Builder", icon: "ti-sparkles" },
+  { id: "settings", label: "Settings", icon: "ti-adjustments" },
   { id: "syntax", label: "Syntax", icon: "ti-braces" },
   { id: "conformance", label: "Conformance", icon: "ti-list-check" },
-  { id: "settings", label: "Settings", icon: "ti-adjustments" },
 ];
 
 export default function StudioSurface({ provider, setProvider, runtime, setRuntime, info, studioVersion, editorPrefs, setEditorPrefs, onExit }) {
   const [section, setSection] = useState(() => {
-    try { return localStorage.getItem("agape.studioSection") || "builder"; }
-    catch { return "builder"; }
+    try {
+      const saved = localStorage.getItem("agape.studioSection");
+      return SECTIONS.some((s) => s.id === saved) ? saved : "settings";
+    }
+    catch { return "settings"; }
   });
 
   useEffect(() => {
@@ -26,7 +28,7 @@ export default function StudioSurface({ provider, setProvider, runtime, setRunti
     <div className="studio">
       <aside className="studio-nav">
         <div className="studio-nav-head"><i className="ti ti-settings" /> Studio</div>
-        <div className="studio-nav-sub">builder memory, conformance, and project-wide settings</div>
+        <div className="studio-nav-sub">providers, runtime, editor, syntax, and conformance</div>
         {SECTIONS.map((s) => (
           <div
             key={s.id}
@@ -47,9 +49,7 @@ export default function StudioSurface({ provider, setProvider, runtime, setRunti
           <Review />
         ) : (
           <div className="app-scroll">
-            {section === "builder" ? (
-              <StudioBuilder />
-            ) : section === "syntax" ? (
+            {section === "syntax" ? (
               <SyntaxInspector />
             ) : (
               <Settings
@@ -435,20 +435,20 @@ function calibrationFor(cognitionProvider, provider) {
   };
 }
 
-function StudioBuilder() {
+export function StudioBuilder() {
   return (
     <>
       <div className="mc-col" style={{ paddingBottom: 0 }}>
         <h2 className="studio-h" style={{ marginBottom: 10 }}>Builder</h2>
         <div className="studio-card-sub" style={{ marginBottom: 14 }}>
-          The studio's Agape coding agent: recall grounded language knowledge, draft programs, run conformance feedback, and store lessons.
+          Project coding agent: recall grounded language knowledge, draft programs, run conformance feedback, and store lessons for this workspace.
         </div>
         <div className="mc-fleet-empty ready">
           <i className="ti ti-route" />
           <div>
             <div>Memory and conformance loop connected.</div>
             <div className="mc-muted-sm">
-              The live agent uses the current spec, local memory, and the Agape runner behind the same seam the future Agape backend will own.
+              The live agent uses the current project, spec, local memory, and the Agape runner behind the same seam the future Agape backend will own.
             </div>
           </div>
         </div>

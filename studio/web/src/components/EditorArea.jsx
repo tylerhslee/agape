@@ -1,6 +1,6 @@
 // The editor — Monaco, speaking real Agape. Edit the .ag program and hit Run to
 // load it into the backend (which re-checks the three guarantees and resets the
-// spine). The editor is present but not the star: in an event cockpit the spine
+// ledger). The editor is present but not the star: in an event cockpit the ledger
 // and agents below carry top billing.
 import Editor from "@monaco-editor/react";
 import { registerAgape, AGAPE_LANG_ID } from "../agapeLanguage.js";
@@ -15,7 +15,7 @@ export default function EditorArea({ source, onChange, onRun, programPath, msg }
         </div>
       </div>
       <div className="editor-toolbar">
-        <button onClick={onRun} title="Load this source into the backend (resets the spine)">
+        <button onClick={onRun} title="Load this source into the backend (resets the ledger)">
           <i className="ti ti-player-play" style={{ fontSize: 13, verticalAlign: -2 }} /> Run
         </button>
         {msg && <span className={"msg " + (msg.ok ? "ok" : "err")}>{msg.text}</span>}

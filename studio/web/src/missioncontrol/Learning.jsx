@@ -144,7 +144,7 @@ export default function Learning({ initialTab = "context", focus = "builder" }) 
         <div className="builder-memory">
           <div className="builder-card-title">Memory State</div>
           <div className="builder-memory-grid">
-            <Metric label="spine" value={c.spine} />
+            <Metric label="ledger" value={c.spine} />
             <Metric label="facts" value={c.facts} />
             <Metric label="graphs" value={c.triples} />
             <Metric label="vectors" value={c.embeddings} />
@@ -243,13 +243,13 @@ function MemoryPanel({ snap }) {
   return (
     <section className="builder-panel">
       <div className="builder-subtabs">
-        {["facts", "relationships", "spine"].map((t) => (
+        {["facts", "relationships", "ledger"].map((t) => (
           <button key={t} className={sub === t ? "active" : ""} onClick={() => setSub(t)}>{t}</button>
         ))}
       </div>
       {sub === "facts" && <Rows rows={snap?.facts || []} kind="fact" />}
       {sub === "relationships" && <Rows rows={snap?.triples || []} kind="triple" />}
-      {sub === "spine" && <Rows rows={snap?.spine || []} kind="spine" />}
+      {sub === "ledger" && <Rows rows={snap?.spine || []} kind="ledger" />}
     </section>
   );
 }
@@ -280,7 +280,7 @@ function Rows({ rows, kind }) {
       {rows.map((r, i) => {
         if (kind === "fact") return <div key={i} className="builder-row"><b>{r.key}</b><span>{trunc(r.value, 150)}</span><em>#{r.origin_tick} · {r.taint}</em></div>;
         if (kind === "triple") return <div key={i} className="builder-row"><b>{r.s}</b><span>{r.p} {"->"} {r.o}</span><em>#{r.origin_tick}</em></div>;
-        if (kind === "spine") return <div key={i} className="builder-row"><b>#{r.tick}</b><span>{r.etype} · {r.subject}</span><em>{trunc(r.payload, 80)}</em></div>;
+        if (kind === "ledger") return <div key={i} className="builder-row"><b>#{r.tick}</b><span>{r.etype} · {r.subject}</span><em>{trunc(r.payload, 80)}</em></div>;
         if (kind === "hit") return <div key={i} className="builder-row"><b>{r.score.toFixed(2)}</b><span>{trunc(r.text, 180)}</span><em>#{r.origin_tick}</em></div>;
         return <div key={i} className="builder-row"><span>{trunc(r.text, 180)}</span><em>#{r.origin_tick}</em></div>;
       })}

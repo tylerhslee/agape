@@ -25,8 +25,10 @@ function versionsModule() {
   };
 }
 
-// In dev, the Vite server (5173) proxies the Agape backend's JSON API to the
-// Python process on 8765, so the frontend always calls same-origin "/api/...".
+const AGENT_ORIGIN = `http://127.0.0.1:${process.env.AGENT_PORT || "8799"}`;
+
+// In dev, the Vite server proxies the Agape backend's JSON API, so the frontend
+// always calls same-origin "/project/...", "/agent/...", etc.
 // In production, `npm run build` emits dist/, which the Python backend serves.
 export default defineConfig({
   plugins: [react(), versionsModule()],
@@ -35,10 +37,10 @@ export default defineConfig({
     proxy: {
       "/api": "http://127.0.0.1:8765",
       // The somatic agent server (Claude/OpenAI operators today; Agape + MCP later).
-      "/agent": "http://127.0.0.1:8799",
-      "/learn": "http://127.0.0.1:8799",
-      "/review": "http://127.0.0.1:8799",
-      "/project": "http://127.0.0.1:8799",
+      "/agent": AGENT_ORIGIN,
+      "/learn": AGENT_ORIGIN,
+      "/review": AGENT_ORIGIN,
+      "/project": AGENT_ORIGIN,
     },
   },
   build: {

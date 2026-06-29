@@ -10,10 +10,19 @@ describe("systemPrompt", () => {
     expect(s).toContain("endorse refunds within policy");
     expect(s).toMatch(/Credence/);
     expect(s).toMatch(/grants/);
+    expect(s).toMatch(/ledger/);
+  });
+
+  it("includes project and memory context when supplied", () => {
+    const s = systemPrompt(item, { project: "Project: x", memory: "Rules:\n- gate before perform" });
+    expect(s).toContain("Project context:");
+    expect(s).toContain("Project: x");
+    expect(s).toContain("Builder memory context:");
+    expect(s).toContain("gate before perform");
   });
 });
 
-describe("buildMessages — respond", () => {
+describe("buildMessages - respond", () => {
   it("maps thread roles and ends on a user turn", () => {
     const thread = [
       { who: "you" as const, text: "Draft the gate." },
@@ -48,11 +57,20 @@ describe("buildMessages — respond", () => {
   });
 });
 
-describe("buildMessages — kickoff", () => {
-  it("appends a plan-and-first-step instruction as the final user turn", () => {
+describe("buildMessages - kickoff", () => {
+  it("appends a start-now instruction as the final user turn", () => {
     const { messages } = buildMessages(item, [{ who: "sys", text: "Delegated to Builder-1." }], "kickoff");
     expect(messages.at(-1)!.role).toBe("user");
-    expect(messages.at(-1)!.content).toMatch(/plan/i);
-    expect(messages.at(-1)!.content).toMatch(/first/i);
+    expect(messages.at(-1)!.content).toMatch(/delegated/i);
+    expect(messages.at(-1)!.content).toMatch(/Start it now/i);
+  });
+});
+
+describe("buildMessages - intent turns", () => {
+  it("turns inspect into a concrete findings instruction", () => {
+    const { messages } = buildMessages(item, [{ who: "you", text: "tell me what this project is about" }], "inspect");
+    expect(messages.at(-1)!.role).toBe("user");
+    expect(messages.at(-1)!.content).toMatch(/concrete findings/i);
+    expect(messages.at(-1)!.content).toMatch(/Do not merely promise/i);
   });
 });

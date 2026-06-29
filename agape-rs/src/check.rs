@@ -45,8 +45,8 @@ enum Taint {
 struct VarInfo {
     ty: Type,
     taint: Taint,
-    /// `true` iff the value's untainting was recorded by a gate (`verify`), which
-    /// is what authorizes it for a consequential `emit` (§13).
+    /// `true` iff the value's untainting was recorded by a gate (`verify`/`endorse`),
+    /// which is what authorizes it for a consequential sink (§13).
     authorized: bool,
 }
 
@@ -115,7 +115,10 @@ pub struct Checker {
 
 /// Lex + parse already done; run the static pass over the AST.
 pub fn check(stmts: &[Stmt]) -> Result<(), AgapeError> {
-    let root = Module { path: String::new(), stmts: stmts.to_vec() };
+    let root = Module {
+        path: String::new(),
+        stmts: stmts.to_vec(),
+    };
     check_program(&[root])
 }
 
@@ -156,7 +159,14 @@ pub fn check_program(modules: &[Module]) -> Result<(), AgapeError> {
         // param — e.g. an injected agent handle — is checked against this binding).
         for p in &info.params {
             let taint = c.param_taint(&p.ty);
-            ascope.env.insert(p.name.clone(), VarInfo { ty: p.ty.clone(), taint, authorized: false });
+            ascope.env.insert(
+                p.name.clone(),
+                VarInfo {
+                    ty: p.ty.clone(),
+                    taint,
+                    authorized: false,
+                },
+            );
         }
         c.walk_block(&info.body, &mut ascope, Some(&name))?;
     }
@@ -223,7 +233,9 @@ impl<'a> ModuleTable<'a> {
             // Track bare-name imports to detect ambiguity (§19.2).
             let mut bare: HashMap<String, String> = HashMap::new(); // name → module
             for s in &m.stmts {
-                let Stmt::Import { module, names, .. } = unwrap_pub(s) else { continue };
+                let Stmt::Import { module, names, .. } = unwrap_pub(s) else {
+                    continue;
+                };
                 if !self.module_exists(module) {
                     return Err(AgapeError::new(
                         ErrorClass::Module,
@@ -299,7 +311,13 @@ impl<'a> ModuleTable<'a> {
         // prefix (alias or module bare name) → module path.
         let mut prefix: HashMap<String, String> = HashMap::new();
         for s in &m.stmts {
-            if let Stmt::Import { module, alias, names, .. } = unwrap_pub(s) {
+            if let Stmt::Import {
+                module,
+                alias,
+                names,
+                ..
+            } = unwrap_pub(s)
+            {
                 if names.is_empty() {
                     let p = alias.clone().unwrap_or_else(|| module.clone());
                     prefix.insert(p, module.clone());
@@ -326,7 +344,9 @@ impl<'a> ModuleTable<'a> {
         if let Some((modpath, name)) = bad {
             return Err(AgapeError::new(
                 ErrorClass::Visibility,
-                format!("`{modpath}.{name}` names a non-pub declaration from another module (§19.4)"),
+                format!(
+                    "`{modpath}.{name}` names a non-pub declaration from another module (§19.4)"
+                ),
             ));
         }
         Ok(())
@@ -337,7 +357,11 @@ impl<'a> ModuleTable<'a> {
     fn check_error_supertypes(&self) -> Result<(), AgapeError> {
         for m in self.modules {
             for s in &m.stmts {
-                if let Stmt::EventDecl { super_name: Some(sup), .. } = unwrap_pub(s) {
+                if let Stmt::EventDecl {
+                    super_name: Some(sup),
+                    ..
+                } = unwrap_pub(s)
+                {
                     if sup != "Error" {
                         return Err(AgapeError::new(
                             ErrorClass::Type,
@@ -473,7 +497,12 @@ fn walk_qualified_names(s: &Stmt, f: &mut impl FnMut(&str)) {
                 f(parent);
             }
         }
-        Stmt::AgentDecl { body, ifaces, grants, .. } => {
+        Stmt::AgentDecl {
+            body,
+            ifaces,
+            grants,
+            ..
+        } => {
             for i in ifaces {
                 if i.contains('.') {
                     f(i);
@@ -493,7 +522,11 @@ fn walk_qualified_names(s: &Stmt, f: &mut impl FnMut(&str)) {
                 walk_qualified_names(b, f);
             }
         }
-        Stmt::If { then_body, else_body, .. } => {
+        Stmt::If {
+            then_body,
+            else_body,
+            ..
+        } => {
             for b in then_body.iter().chain(else_body) {
                 walk_qualified_names(b, f);
             }
@@ -510,10 +543,16 @@ impl Checker {
         for (aname, info) in &self.agents {
             for iface_name in &info.ifaces {
                 let bare = iface_name.rsplit('.').next().unwrap_or(iface_name);
-                let Some(members) = self.interfaces.get(bare).or_else(|| self.interfaces.get(iface_name)) else {
+                let Some(members) = self
+                    .interfaces
+                    .get(bare)
+                    .or_else(|| self.interfaces.get(iface_name))
+                else {
                     return Err(AgapeError::new(
                         ErrorClass::Interface,
-                        format!("agent `{aname}` declares unknown interface `{iface_name}` (§19.5)"),
+                        format!(
+                            "agent `{aname}` declares unknown interface `{iface_name}` (§19.5)"
+                        ),
                     ));
                 };
                 // The events this agent handles via `when (E …)`.
@@ -539,7 +578,11 @@ impl Checker {
                             }
                         }
                         IfaceMember::Requires(cap) => {
-                            if !info.unconstrained && !info.grants.iter().any(|c| c.kind == cap.kind && cap_target_matches(&c.target, &cap.target)) {
+                            if !info.unconstrained
+                                && !info.grants.iter().any(|c| {
+                                    c.kind == cap.kind && cap_target_matches(&c.target, &cap.target)
+                                })
+                            {
                                 return Err(AgapeError::new(
                                     ErrorClass::Interface,
                                     format!("agent `{aname}` lacks the capability `{:?} {}` required by interface `{iface_name}` (§19.5)", cap.kind, cap.target),
@@ -572,7 +615,13 @@ impl Checker {
 
     fn check_gates_stmt(&self, s: &Stmt) -> Result<(), AgapeError> {
         match unwrap_pub(s) {
-            Stmt::Decide { subject, arms, default, defer_to, .. } => {
+            Stmt::Decide {
+                subject,
+                arms,
+                default,
+                defer_to,
+                ..
+            } => {
                 let has_principal = subject.is_some() || defer_to.is_some();
                 if !has_principal {
                     // Any arm reaching a non-reversible sink requires a principal.
@@ -580,7 +629,9 @@ impl Checker {
                     if let Some(d) = default {
                         bodies.push(d);
                     }
-                    let non_reversible = bodies.iter().any(|b| self.body_reaches_nonreversible_sink(b));
+                    let non_reversible = bodies
+                        .iter()
+                        .any(|b| self.body_reaches_nonreversible_sink(b));
                     if non_reversible {
                         return Err(AgapeError::new(
                             ErrorClass::Gate,
@@ -604,10 +655,17 @@ impl Checker {
                     ));
                 }
             }
-            Stmt::AgentDecl { body, .. } | Stmt::On { body, .. } | Stmt::Block(body) | Stmt::When { body, .. } => {
+            Stmt::AgentDecl { body, .. }
+            | Stmt::On { body, .. }
+            | Stmt::Block(body)
+            | Stmt::When { body, .. } => {
                 self.check_gates_block(body)?;
             }
-            Stmt::If { then_body, else_body, .. } => {
+            Stmt::If {
+                then_body,
+                else_body,
+                ..
+            } => {
                 self.check_gates_block(then_body)?;
                 self.check_gates_block(else_body)?;
             }
@@ -634,13 +692,28 @@ impl Checker {
         match s {
             Stmt::Perform { action_type, .. } => {
                 let bare = action_type.rsplit('.').next().unwrap_or(action_type);
-                !self.reversible_sinks.contains(action_type) && !self.reversible_sinks.contains(bare)
+                !self.reversible_sinks.contains(action_type)
+                    && !self.reversible_sinks.contains(bare)
             }
-            Stmt::ExprStmt(e) | Stmt::Say(e) | Stmt::Return(Some(e)) => self.expr_reaches_nonreversible_sink(e),
+            Stmt::ExprStmt(e) | Stmt::Say(e) | Stmt::Return(Some(e)) => {
+                self.expr_reaches_nonreversible_sink(e)
+            }
             Stmt::VarDecl { expr: Some(e), .. } => self.expr_reaches_nonreversible_sink(e),
             Stmt::Block(b) => self.body_reaches_nonreversible_sink(b),
-            Stmt::If { then_body, else_body, .. } => {
-                self.body_reaches_nonreversible_sink(then_body) || self.body_reaches_nonreversible_sink(else_body)
+            Stmt::If {
+                then_body,
+                else_body,
+                ..
+            } => {
+                self.body_reaches_nonreversible_sink(then_body)
+                    || self.body_reaches_nonreversible_sink(else_body)
+            }
+            Stmt::Certify { arms, abstain, .. } => {
+                arms.iter()
+                    .any(|(_, b)| self.body_reaches_nonreversible_sink(b))
+                    || abstain
+                        .as_deref()
+                        .is_some_and(|b| self.body_reaches_nonreversible_sink(b))
             }
             _ => false,
         }
@@ -649,7 +722,9 @@ impl Checker {
     fn expr_reaches_nonreversible_sink(&self, e: &Expr) -> bool {
         if let Expr::Call { func, args } = e {
             if let Expr::Name(n) = &**func {
-                if matches!(self.tool_effects.get(n), Some(ToolEffect::Write)) && !self.reversible_sinks.contains(n) {
+                if matches!(self.tool_effects.get(n), Some(ToolEffect::Write))
+                    && !self.reversible_sinks.contains(n)
+                {
                     return true;
                 }
             }
@@ -673,14 +748,21 @@ impl Checker {
 
     fn handler_decision_result(&self, body: &[Stmt], event: &str) -> Option<String> {
         for s in body {
-            let Stmt::When { ty, body, .. } = s else { continue };
+            let Stmt::When { ty, body, .. } = s else {
+                continue;
+            };
             let Some(n) = type_nominal(ty) else { continue };
             if n.rsplit('.').next().unwrap_or(&n) != event && n != event {
                 continue;
             }
             let mut credence_bindings: HashMap<String, String> = HashMap::new();
             for stmt in body {
-                if let Stmt::VarDecl { ty: Type::Credence(inner), name, .. } = stmt {
+                if let Stmt::VarDecl {
+                    ty: Type::Credence(inner),
+                    name,
+                    ..
+                } = stmt
+                {
                     if let Some(en) = self.enum_of(inner) {
                         credence_bindings.insert(name.clone(), en);
                     }
@@ -688,7 +770,13 @@ impl Checker {
             }
             for stmt in body {
                 match stmt {
-                    Stmt::Endorse { arg: Expr::Name(c), .. } | Stmt::Decide { expr: Expr::Name(c), .. } => {
+                    Stmt::Endorse {
+                        arg: Expr::Name(c), ..
+                    }
+                    | Stmt::Decide {
+                        expr: Expr::Name(c),
+                        ..
+                    } => {
                         if let Some(en) = credence_bindings.get(c) {
                             return Some(en.clone());
                         }
@@ -732,10 +820,15 @@ impl Checker {
                 other => other,
             };
             match s {
-                Stmt::StructDecl { name, typarams, fields } => {
+                Stmt::StructDecl {
+                    name,
+                    typarams,
+                    fields,
+                } => {
                     self.structs.insert(name.clone(), fields.clone());
                     if !module_path.is_empty() {
-                        self.structs.insert(format!("{module_path}.{name}"), fields.clone());
+                        self.structs
+                            .insert(format!("{module_path}.{name}"), fields.clone());
                     }
                     if !typarams.is_empty() {
                         self.generic_structs.insert(name.clone());
@@ -754,13 +847,23 @@ impl Checker {
                     self.events.insert(name.clone());
                     self.event_fields.insert(name.clone(), fields.clone());
                 }
-                Stmt::ActionDecl { name, fields, reversible } => {
+                Stmt::ActionDecl {
+                    name,
+                    fields,
+                    reversible,
+                } => {
                     self.actions.insert(name.clone(), fields.clone());
                     if *reversible {
                         self.reversible_sinks.insert(name.clone());
                     }
                 }
-                Stmt::ToolDecl { name, ret, effect, reversible, .. } => {
+                Stmt::ToolDecl {
+                    name,
+                    ret,
+                    effect,
+                    reversible,
+                    ..
+                } => {
                     self.tools.insert(name.clone(), ret.clone());
                     self.tool_effects.insert(name.clone(), *effect);
                     if *reversible {
@@ -782,16 +885,36 @@ impl Checker {
                 Stmt::Principal(name) => {
                     self.principals.insert(name.clone());
                 }
-                Stmt::FnDecl { is_sync, name, typarams, params, body, .. } => {
+                Stmt::FnDecl {
+                    is_sync,
+                    name,
+                    typarams,
+                    params,
+                    body,
+                    ..
+                } => {
                     self.fns.insert(
                         name.clone(),
-                        FnInfo { is_sync: *is_sync, params: params.clone(), body: body.clone() },
+                        FnInfo {
+                            is_sync: *is_sync,
+                            params: params.clone(),
+                            body: body.clone(),
+                        },
                     );
                     for tp in typarams {
                         self.typarams.insert(tp.clone());
                     }
                 }
-                Stmt::AgentDecl { name, params, ifaces, grants, has_grants, unconstrained, body, .. } => {
+                Stmt::AgentDecl {
+                    name,
+                    params,
+                    ifaces,
+                    grants,
+                    has_grants,
+                    unconstrained,
+                    body,
+                    ..
+                } => {
                     let parent = body.iter().find_map(|b| match b {
                         Stmt::Extend { parent, .. } => Some(parent.clone()),
                         _ => None,
@@ -825,9 +948,18 @@ impl Checker {
         self.enums
             .entry("Basis".into())
             .or_insert_with(|| vec!["Argmax".into(), "Conformal".into(), "Principal".into()]);
-        self.structs
-            .entry("Rule".into())
-            .or_insert_with(|| vec![Field { name: "threshold".into(), ty: Type::Float }, Field { name: "margin".into(), ty: Type::Float }]);
+        self.structs.entry("Rule".into()).or_insert_with(|| {
+            vec![
+                Field {
+                    name: "threshold".into(),
+                    ty: Type::Float,
+                },
+                Field {
+                    name: "margin".into(),
+                    ty: Type::Float,
+                },
+            ]
+        });
         // The built-in ledger-event channels, always emittable (§9).
         self.events.insert("Event".into());
         self.events.insert("Error".into());
@@ -857,7 +989,10 @@ impl Checker {
                     continue;
                 }
                 let calls = collect_calls(&self.fns[n].body);
-                if calls.iter().any(|c| self.fn_async.get(c).copied().unwrap_or(false)) {
+                if calls
+                    .iter()
+                    .any(|c| self.fn_async.get(c).copied().unwrap_or(false))
+                {
                     self.fn_async.insert(n.clone(), true);
                     changed = true;
                 }
@@ -883,24 +1018,55 @@ impl Checker {
             Stmt::Attest { .. } => true,
             Stmt::Emit { args, .. } => args.iter().any(e),
             Stmt::Perform { args, .. } => args.iter().any(e),
-            Stmt::Endorse { arg, arms, abstain, .. } => {
+            Stmt::Certify {
+                artifact,
+                certifier,
+                arms,
+                abstain,
+                ..
+            } => {
+                e(artifact)
+                    || match certifier {
+                        Certifier::Gate { arg, .. } => e(arg),
+                        Certifier::Endorsement(endorsement) => e(endorsement),
+                    }
+                    || arms.iter().any(|(_, body)| b(body))
+                    || abstain.as_deref().is_some_and(b)
+            }
+            Stmt::Endorse {
+                arg, arms, abstain, ..
+            } => {
                 e(arg) || arms.iter().any(|(_, body)| b(body)) || abstain.as_deref().is_some_and(b)
             }
             Stmt::Say(x) | Stmt::Return(Some(x)) | Stmt::ExprStmt(x) => e(x),
-            Stmt::If { cond, then_body, else_body } => e(cond) || b(then_body) || b(else_body),
+            Stmt::If {
+                cond,
+                then_body,
+                else_body,
+            } => e(cond) || b(then_body) || b(else_body),
             Stmt::While { cond, body } => e(cond) || b(body),
             Stmt::On { body, .. } | Stmt::Catch { body, .. } | Stmt::Block(body) => b(body),
-            Stmt::When { about, guard, body, .. } => {
-                about.as_ref().is_some_and(e) || guard.as_ref().is_some_and(e) || b(body)
-            }
-            Stmt::Case { expr, arms, default, .. } => {
+            Stmt::When {
+                about, guard, body, ..
+            } => about.as_ref().is_some_and(e) || guard.as_ref().is_some_and(e) || b(body),
+            Stmt::Case {
+                expr,
+                arms,
+                default,
+                ..
+            } => {
                 e(expr) || arms.iter().any(|(_, body)| b(body)) || default.as_deref().is_some_and(b)
             }
             Stmt::Retry(tail) => match tail {
                 RetryTail::Bounded { body, .. } => b(body),
                 RetryTail::Predicate { pred, body, .. } => e(pred) || b(body),
             },
-            Stmt::Decide { expr, arms, default, .. } => {
+            Stmt::Decide {
+                expr,
+                arms,
+                default,
+                ..
+            } => {
                 e(expr) || arms.iter().any(|(_, body)| b(body)) || default.as_deref().is_some_and(b)
             }
             Stmt::Pub(inner) => self.stmt_reaches_seam(inner, pr),
@@ -915,7 +1081,8 @@ impl Checker {
             Expr::Recall { .. } => true, // the memory seam (§10) — agentic, async
             Expr::Call { func, args } => {
                 let is_tool = matches!(&**func, Expr::Name(n) if self.tools.contains_key(n));
-                let is_memory_seam = matches!(&**func, Expr::Name(n) if n == "store" || n == "embed");
+                let is_memory_seam =
+                    matches!(&**func, Expr::Name(n) if n == "store" || n == "embed");
                 is_tool || is_memory_seam || r(func) || args.iter().any(r)
             }
             Expr::Verify { arg, by } => r(arg) || self.gate_is_identity_seam(by, pr),
@@ -962,7 +1129,9 @@ impl Checker {
     fn check_extends(&self) -> Result<(), AgapeError> {
         for (name, info) in &self.agents {
             let Some(parent) = &info.parent else { continue };
-            let Some(pinfo) = self.agents.get(parent) else { continue };
+            let Some(pinfo) = self.agents.get(parent) else {
+                continue;
+            };
             if pinfo.unconstrained {
                 continue; // parent grants everything; any child subset is fine
             }
@@ -986,14 +1155,24 @@ impl Checker {
 
     // ── the value walk: type / taint / authority / exhaustiveness ────────────
 
-    fn walk_block(&self, stmts: &[Stmt], scope: &mut Scope, agent: Option<&str>) -> Result<(), AgapeError> {
+    fn walk_block(
+        &self,
+        stmts: &[Stmt],
+        scope: &mut Scope,
+        agent: Option<&str>,
+    ) -> Result<(), AgapeError> {
         for s in stmts {
             self.walk_stmt(s, scope, agent)?;
         }
         Ok(())
     }
 
-    fn walk_stmt(&self, s: &Stmt, scope: &mut Scope, agent: Option<&str>) -> Result<(), AgapeError> {
+    fn walk_stmt(
+        &self,
+        s: &Stmt,
+        scope: &mut Scope,
+        agent: Option<&str>,
+    ) -> Result<(), AgapeError> {
         match s {
             Stmt::VarDecl { ty, name, expr } => {
                 self.check_type_instantiation(ty)?;
@@ -1002,17 +1181,35 @@ impl Checker {
                     // A `Credence<E>` is produced ONLY by a provider judgment (a send,
                     // a fusion/quorum) — never constructed from a settled scalar (§3, §8).
                     if matches!(ty, Type::Credence(_))
-                        && matches!(self.expr_type(init, scope), Type::Bool | Type::Int | Type::Float | Type::Text | Type::Null)
+                        && matches!(
+                            self.expr_type(init, scope),
+                            Type::Bool | Type::Int | Type::Float | Type::Text | Type::Null
+                        )
                     {
                         return Err(AgapeError::new(
                             ErrorClass::Type,
                             "a `Credence<E>` is produced only by a provider judgment (a `<-` send, `quorum`/`all`/`any`); it cannot be constructed from a settled value",
                         ));
                     }
+                    self.check_gate_decl_initializer(ty, init, scope)?;
                     let (taint, authorized) = self.value_taint(Some(ty), init, scope);
-                    scope.env.insert(name.clone(), VarInfo { ty: ty.clone(), taint, authorized });
+                    scope.env.insert(
+                        name.clone(),
+                        VarInfo {
+                            ty: ty.clone(),
+                            taint,
+                            authorized,
+                        },
+                    );
                 } else {
-                    scope.env.insert(name.clone(), VarInfo { ty: ty.clone(), taint: Taint::U, authorized: false });
+                    scope.env.insert(
+                        name.clone(),
+                        VarInfo {
+                            ty: ty.clone(),
+                            taint: Taint::U,
+                            authorized: false,
+                        },
+                    );
                 }
             }
             Stmt::MemDecl { name, init } => {
@@ -1020,16 +1217,26 @@ impl Checker {
                     self.walk_expr(e, scope, agent)?;
                 }
                 // The handle itself is settled; values RECALLED through it are tainted (§10).
-                scope.env.insert(name.clone(), VarInfo { ty: Type::Mem, taint: Taint::U, authorized: false });
+                scope.env.insert(
+                    name.clone(),
+                    VarInfo {
+                        ty: Type::Mem,
+                        taint: Taint::U,
+                        authorized: false,
+                    },
+                );
             }
             Stmt::Assign { target, expr } => {
                 if let Expr::Member { obj, prop } = target {
                     if matches!(prop.as_str(), "committed" | "basis" | "margin")
-                        && matches!(self.expr_type(obj, scope), Type::Decision(_))
+                        && matches!(
+                            self.expr_type(obj, scope),
+                            Type::Decision(_) | Type::Endorsement(_)
+                        )
                     {
                         return Err(AgapeError::new(
                             ErrorClass::Type,
-                            "Decision provenance fields are read-only (§20.4)",
+                            "Decision/Endorsement provenance fields are read-only (§20.4)",
                         ));
                     }
                 }
@@ -1055,11 +1262,81 @@ impl Checker {
             }
             // `endorse` records the gate — its arms are the licensed (endorsed)
             // context where a `perform` may run; clear any inherited block.
-            Stmt::Endorse { arg, arms, abstain, .. } => {
+            Stmt::Endorse {
+                arg, arms, abstain, ..
+            } => {
                 self.walk_expr(arg, scope, agent)?;
                 for (_, body) in arms {
                     let mut s = scope.child();
                     s.consequential_blocked = false;
+                    self.walk_block(body, &mut s, agent)?;
+                }
+                if let Some(b) = abstain {
+                    let mut s = scope.child();
+                    s.consequential_blocked = false;
+                    self.walk_block(b, &mut s, agent)?;
+                }
+            }
+            Stmt::Certify {
+                artifact,
+                certifier,
+                arms,
+                abstain,
+            } => {
+                self.walk_expr(artifact, scope, agent)?;
+                let artifact_name = match artifact {
+                    Expr::Name(n) => n,
+                    _ => {
+                        return Err(AgapeError::new(
+                            ErrorClass::Type,
+                            "`certify` can settle only an exact named artifact binding in the legacy gate surface",
+                        ));
+                    }
+                };
+                let success = match certifier {
+                    Certifier::Gate { arg, rule } => {
+                        self.walk_expr(arg, scope, agent)?;
+                        self.check_gate_by(&Some(rule.clone()))?;
+                        self.certifying_variant_from_credence(arg, scope).ok_or_else(|| {
+                            AgapeError::new(
+                                ErrorClass::Type,
+                                "`certify` inline verifier must be a `Credence<bool>`, `Credence<Verification>`, `Credence<Entailment>`, or a `Credence<Enum>`",
+                            )
+                        })?
+                    }
+                    Certifier::Endorsement(endorsement) => {
+                        self.walk_expr(endorsement, scope, agent)?;
+                        let success = self.certifying_variant_from_endorsement(endorsement, scope).ok_or_else(|| {
+                            AgapeError::new(
+                                ErrorClass::Type,
+                                "`certify` by Endorsement requires an `Endorsement<bool>`, `Endorsement<Verification>`, `Endorsement<Entailment>`, or `Endorsement<Enum>`",
+                            )
+                        })?;
+                        let (taint, authorized) = self.value_taint(None, endorsement, scope);
+                        if !(taint == Taint::U && authorized) {
+                            return Err(AgapeError::new(
+                                ErrorClass::Taint,
+                                format!("`certify` by Endorsement requires a recorded gate value (taint {taint:?}, authorized {authorized})"),
+                            ));
+                        }
+                        success
+                    }
+                };
+                for (label, body) in arms {
+                    let mut s = scope.child();
+                    s.consequential_blocked = false;
+                    if label == &success {
+                        if let Some(info) = scope.lookup(artifact_name).cloned() {
+                            s.env.insert(
+                                artifact_name.clone(),
+                                VarInfo {
+                                    ty: info.ty,
+                                    taint: Taint::U,
+                                    authorized: true,
+                                },
+                            );
+                        }
+                    }
                     self.walk_block(body, &mut s, agent)?;
                 }
                 if let Some(b) = abstain {
@@ -1081,8 +1358,14 @@ impl Checker {
                 let mut s = scope.child();
                 self.walk_block(body, &mut s, agent)?;
             }
-            Stmt::Say(x) | Stmt::Return(Some(x)) | Stmt::ExprStmt(x) => self.walk_expr(x, scope, agent)?,
-            Stmt::If { cond, then_body, else_body } => {
+            Stmt::Say(x) | Stmt::Return(Some(x)) | Stmt::ExprStmt(x) => {
+                self.walk_expr(x, scope, agent)?
+            }
+            Stmt::If {
+                cond,
+                then_body,
+                else_body,
+            } => {
                 self.walk_expr(cond, scope, agent)?;
                 self.check_bool_cond(cond, scope)?;
                 let mut s1 = scope.child();
@@ -1099,7 +1382,13 @@ impl Checker {
                 let mut s1 = scope.child();
                 self.walk_block(body, &mut s1, agent)?;
             }
-            Stmt::When { ty, binder, about, guard, body } => {
+            Stmt::When {
+                ty,
+                binder,
+                about,
+                guard,
+                body,
+            } => {
                 if let Some(a) = about {
                     self.walk_expr(a, scope, agent)?;
                 }
@@ -1108,7 +1397,14 @@ impl Checker {
                 // external `Prompt`, settled by origin §5b) is a settled fact.
                 if let Some(b) = binder {
                     let bty = self.when_binder_type(ty, about.as_ref(), scope);
-                    s1.env.insert(b.clone(), VarInfo { ty: bty, taint: Taint::U, authorized: false });
+                    s1.env.insert(
+                        b.clone(),
+                        VarInfo {
+                            ty: bty,
+                            taint: Taint::U,
+                            authorized: false,
+                        },
+                    );
                 }
                 if let Some(g) = guard {
                     self.walk_expr(g, &mut s1, agent)?;
@@ -1117,10 +1413,22 @@ impl Checker {
             }
             Stmt::Catch { binding, body, .. } => {
                 let mut s1 = scope.child();
-                s1.env.insert(binding.clone(), VarInfo { ty: Type::Named("Event".into()), taint: Taint::P, authorized: false });
+                s1.env.insert(
+                    binding.clone(),
+                    VarInfo {
+                        ty: Type::Named("Event".into()),
+                        taint: Taint::P,
+                        authorized: false,
+                    },
+                );
                 self.walk_block(body, &mut s1, agent)?;
             }
-            Stmt::Case { expr, binding, arms, default } => {
+            Stmt::Case {
+                expr,
+                binding,
+                arms,
+                default,
+            } => {
                 self.walk_expr(expr, scope, agent)?;
                 // A `case` consumes a Decision, never a bare `Credence` — gate it first.
                 if matches!(self.expr_type(expr, scope), Type::Credence(_)) {
@@ -1137,7 +1445,14 @@ impl Checker {
                 for (_, body) in arms {
                     let mut s1 = scope.child();
                     s1.consequential_blocked = blocked;
-                    s1.env.insert(binding.clone(), VarInfo { ty: variant_ty.clone(), taint: Taint::U, authorized: false });
+                    s1.env.insert(
+                        binding.clone(),
+                        VarInfo {
+                            ty: variant_ty.clone(),
+                            taint: Taint::U,
+                            authorized: false,
+                        },
+                    );
                     self.walk_block(body, &mut s1, agent)?;
                 }
                 if let Some(d) = default {
@@ -1151,9 +1466,21 @@ impl Checker {
                     let mut s1 = scope.child();
                     self.walk_block(body, &mut s1, agent)?;
                 }
-                RetryTail::Predicate { bind, ty, pred, body } => {
+                RetryTail::Predicate {
+                    bind,
+                    ty,
+                    pred,
+                    body,
+                } => {
                     let mut s1 = scope.child();
-                    s1.env.insert(bind.clone(), VarInfo { ty: ty.clone(), taint: Taint::T, authorized: false });
+                    s1.env.insert(
+                        bind.clone(),
+                        VarInfo {
+                            ty: ty.clone(),
+                            taint: Taint::T,
+                            authorized: false,
+                        },
+                    );
                     self.walk_expr(pred, &mut s1, agent)?;
                     self.walk_block(body, &mut s1, agent)?;
                 }
@@ -1161,15 +1488,33 @@ impl Checker {
             Stmt::DepDecl { kind, names } => {
                 scope.deps.push((*kind, names.clone()));
             }
-            Stmt::Spawn { name, agent_type, args } => {
+            Stmt::Spawn {
+                name,
+                agent_type,
+                args,
+            } => {
                 for a in args {
                     self.walk_expr(a, scope, agent)?;
                 }
-                scope.env.insert(name.clone(), VarInfo { ty: Type::Named(agent_type.clone()), taint: Taint::U, authorized: false });
+                scope.env.insert(
+                    name.clone(),
+                    VarInfo {
+                        ty: Type::Named(agent_type.clone()),
+                        taint: Taint::U,
+                        authorized: false,
+                    },
+                );
             }
             Stmt::Prompt { ty, name } => {
                 // External, untrusted input → T-tainted (§5b).
-                scope.env.insert(name.clone(), VarInfo { ty: ty.clone(), taint: Taint::T, authorized: false });
+                scope.env.insert(
+                    name.clone(),
+                    VarInfo {
+                        ty: ty.clone(),
+                        taint: Taint::T,
+                        authorized: false,
+                    },
+                );
             }
             Stmt::QueryStmt(q) => {
                 if let Query::Match { query, .. } = q {
@@ -1177,12 +1522,24 @@ impl Checker {
                 }
             }
             Stmt::Principal(name) => {
-                scope.env.insert(name.clone(), VarInfo { ty: Type::Named("Principal".into()), taint: Taint::U, authorized: false });
+                scope.env.insert(
+                    name.clone(),
+                    VarInfo {
+                        ty: Type::Named("Principal".into()),
+                        taint: Taint::U,
+                        authorized: false,
+                    },
+                );
             }
             // The readable gate (§20): desugars to the engine; walk the arms as the
             // licensed (recorded-gate) context — like `endorse` — so a `perform` in an
             // arm is treated as endorsed.
-            Stmt::Decide { expr, arms, default, .. } => {
+            Stmt::Decide {
+                expr,
+                arms,
+                default,
+                ..
+            } => {
                 self.walk_expr(expr, scope, agent)?;
                 for (_, body) in arms {
                     let mut s = scope.child();
@@ -1200,7 +1557,24 @@ impl Checker {
             Stmt::Forget(name) => {
                 scope.env.remove(name);
             }
-            Stmt::AgentDecl { .. } | Stmt::FnDecl { .. } | Stmt::StructDecl { .. } | Stmt::EnumDecl { .. } | Stmt::EventDecl { .. } | Stmt::ToolDecl { .. } | Stmt::InterfaceDecl { .. } | Stmt::ConformalDecl(_) | Stmt::Authority(_) | Stmt::Extend { .. } | Stmt::Import { .. } | Stmt::ModuleDecl { .. } | Stmt::ModuleAttr { .. } | Stmt::Awake { .. } | Stmt::Sleep(_) | Stmt::Break | Stmt::Return(None) | Stmt::Instruction(_) => {}
+            Stmt::AgentDecl { .. }
+            | Stmt::FnDecl { .. }
+            | Stmt::StructDecl { .. }
+            | Stmt::EnumDecl { .. }
+            | Stmt::EventDecl { .. }
+            | Stmt::ToolDecl { .. }
+            | Stmt::InterfaceDecl { .. }
+            | Stmt::ConformalDecl(_)
+            | Stmt::Authority(_)
+            | Stmt::Extend { .. }
+            | Stmt::Import { .. }
+            | Stmt::ModuleDecl { .. }
+            | Stmt::ModuleAttr { .. }
+            | Stmt::Awake { .. }
+            | Stmt::Sleep(_)
+            | Stmt::Break
+            | Stmt::Return(None)
+            | Stmt::Instruction(_) => {}
         }
         Ok(())
     }
@@ -1212,7 +1586,9 @@ impl Checker {
                 self.check_gate_by(by)?;
             }
             Expr::Decide { expr, .. } => self.walk_expr(expr, scope, agent)?,
-            Expr::Collapse { expr, .. } | Expr::EndorseExpr { arg: expr, .. } => self.walk_expr(expr, scope, agent)?,
+            Expr::Collapse { expr, .. } | Expr::EndorseExpr { arg: expr, .. } => {
+                self.walk_expr(expr, scope, agent)?
+            }
             Expr::Quorum { judges, .. } => {
                 for j in judges {
                     self.walk_expr(j, scope, agent)?;
@@ -1259,12 +1635,18 @@ impl Checker {
                     self.walk_expr(v, scope, agent)?;
                 }
             }
-            Expr::Send { dest, payload, retry, .. } => {
+            Expr::Send {
+                dest,
+                payload,
+                retry,
+                ..
+            } => {
                 self.check_reach(dest, scope, agent)?;
                 self.walk_expr(dest, scope, agent)?;
                 self.walk_expr(payload, scope, agent)?;
                 if let Some(tail) = retry {
-                    let (RetryTail::Bounded { body, .. } | RetryTail::Predicate { body, .. }) = &**tail;
+                    let (RetryTail::Bounded { body, .. } | RetryTail::Predicate { body, .. }) =
+                        &**tail;
                     let mut s1 = scope.child();
                     self.walk_block(body, &mut s1, agent)?;
                 }
@@ -1314,7 +1696,13 @@ impl Checker {
     /// `emit E(args...)`: the event must be declared (Type); in an agent, a
     /// non-built-in event needs an `emit` grant (Authority); a consequential
     /// (`authority`) event consumes only a `U`-and-authorized value (Taint).
-    fn check_emit(&self, event: &str, args: &[Expr], scope: &Scope, _agent: Option<&str>) -> Result<(), AgapeError> {
+    fn check_emit(
+        &self,
+        event: &str,
+        args: &[Expr],
+        scope: &Scope,
+        _agent: Option<&str>,
+    ) -> Result<(), AgapeError> {
         let bare = event.rsplit('.').next().unwrap_or(event);
         if !self.events.contains(event) && !self.events.contains(bare) {
             return Err(AgapeError::new(
@@ -1322,10 +1710,17 @@ impl Checker {
                 format!("`emit {event}` names an undeclared event type (events are not self-declaring; declare `event {event}(...)`)"),
             ));
         }
-        if let Some(fields) = self.event_fields.get(event).or_else(|| self.event_fields.get(bare)) {
+        if let Some(fields) = self
+            .event_fields
+            .get(event)
+            .or_else(|| self.event_fields.get(bare))
+        {
             self.check_positional_payload("emit", event, fields, args, scope)?;
         } else if matches!(bare, "Event" | "Error") {
-            let fields = [Field { name: "message".into(), ty: Type::Text }];
+            let fields = [Field {
+                name: "message".into(),
+                ty: Type::Text,
+            }];
             self.check_positional_payload("emit", event, &fields, args, scope)?;
         }
         // A plain `emit` needs no power (§13, W-Auth): only `perform`/`reach`/`use`
@@ -1343,7 +1738,12 @@ impl Checker {
     }
 
     /// A `<-` into another agent (not `self`) needs a `reach` grant (§13).
-    fn check_reach(&self, dest: &Expr, scope: &Scope, agent: Option<&str>) -> Result<(), AgapeError> {
+    fn check_reach(
+        &self,
+        dest: &Expr,
+        scope: &Scope,
+        agent: Option<&str>,
+    ) -> Result<(), AgapeError> {
         let Some(a) = agent else { return Ok(()) };
         if matches!(dest, Expr::SelfRef) {
             return Ok(()); // self-send is cognition; needs no reach
@@ -1351,7 +1751,9 @@ impl Checker {
         if let Expr::Name(n) = dest {
             if let Some(info) = scope.lookup(n) {
                 if let Type::Named(agent_ty) = &info.ty {
-                    if self.agents.contains_key(agent_ty) && !self.agent_allows(a, CapKind::Reach, agent_ty) {
+                    if self.agents.contains_key(agent_ty)
+                        && !self.agent_allows(a, CapKind::Reach, agent_ty)
+                    {
                         return Err(AgapeError::new(
                             ErrorClass::Authority,
                             format!("agent `{a}` may not reach into `{agent_ty}` — add `grants {{ reach {agent_ty} }}`"),
@@ -1378,7 +1780,13 @@ impl Checker {
     /// `perform A(args...)` (§13): default-deny `perform` grant (Authority); settled
     /// payload (Taint, W-Consequential-static); and a *recorded* licensing gate —
     /// a `perform` inside a bare-collapse `case` branch is unendorsed (Taint).
-    fn check_perform(&self, action: &str, args: &[Expr], scope: &Scope, agent: Option<&str>) -> Result<(), AgapeError> {
+    fn check_perform(
+        &self,
+        action: &str,
+        args: &[Expr],
+        scope: &Scope,
+        agent: Option<&str>,
+    ) -> Result<(), AgapeError> {
         let bare = action.rsplit('.').next().unwrap_or(action);
         let fields = self.actions.get(action).or_else(|| self.actions.get(bare)).ok_or_else(|| {
             AgapeError::new(
@@ -1492,15 +1900,90 @@ impl Checker {
         }
     }
 
+    /// The verifier variant whose committed gate certifies an artifact (§13).
+    /// `bool` uses `true`; the prelude enums use their positive variants; a custom
+    /// verifier enum certifies on its first declared variant.
+    fn certifying_variant_from_credence(&self, arg: &Expr, scope: &Scope) -> Option<String> {
+        match self.expr_type(arg, scope) {
+            Type::Credence(inner) => self.certifying_variant_from_inner(&inner),
+            _ => None,
+        }
+    }
+
+    fn certifying_variant_from_endorsement(
+        &self,
+        endorsement: &Expr,
+        scope: &Scope,
+    ) -> Option<String> {
+        match self.expr_type(endorsement, scope) {
+            Type::Endorsement(inner) => self.certifying_variant_from_inner(&inner),
+            _ => None,
+        }
+    }
+
+    fn certifying_variant_from_inner(&self, inner: &Type) -> Option<String> {
+        match inner {
+            Type::Bool => Some("true".into()),
+            Type::Named(n) if n == "Verification" => Some("Pass".into()),
+            Type::Named(n) if n == "Entailment" => Some("Entails".into()),
+            Type::Named(n) => self.enums.get(n).and_then(|vs| vs.first().cloned()),
+            _ => None,
+        }
+    }
+
+    fn check_gate_decl_initializer(
+        &self,
+        declared: &Type,
+        init: &Expr,
+        scope: &Scope,
+    ) -> Result<(), AgapeError> {
+        let actual = self.expr_type(init, scope);
+        match (declared, &actual) {
+            (Type::Decision(want), Type::Decision(got))
+            | (Type::Endorsement(want), Type::Endorsement(got))
+                if want.as_ref() == got.as_ref() =>
+            {
+                Ok(())
+            }
+            (Type::Decision(_), Type::Endorsement(_)) => Err(AgapeError::new(
+                ErrorClass::Type,
+                "`endorse(c by R)` returns `Endorsement<E>`, not `Decision<E>`",
+            )),
+            (Type::Endorsement(_), Type::Decision(_)) => Err(AgapeError::new(
+                ErrorClass::Type,
+                "`c by R` returns off-ledger `Decision<E>`, not `Endorsement<E>`; use `endorse(c by R)`",
+            )),
+            (Type::Decision(want), _) => Err(AgapeError::new(
+                ErrorClass::Type,
+                format!(
+                    "`Decision<{:?}>` initializer must be a `Decision`, got `{actual:?}`",
+                    want
+                ),
+            )),
+            (Type::Endorsement(want), _) => Err(AgapeError::new(
+                ErrorClass::Type,
+                format!(
+                    "`Endorsement<{:?}>` initializer must be an `Endorsement`, got `{actual:?}`",
+                    want
+                ),
+            )),
+            _ => Ok(()),
+        }
+    }
+
     fn agent_allows(&self, agent: &str, kind: CapKind, target: &str) -> bool {
-        let Some(info) = self.agents.get(agent) else { return true };
+        let Some(info) = self.agents.get(agent) else {
+            return true;
+        };
         if info.unconstrained {
             return true;
         }
         if !info.has_grants {
             return false;
         }
-        info.grants.iter().any(|c| c.kind == kind && c.target == target)
+        info.grants
+            .iter()
+            .any(|c| c.kind == kind && c.target == target)
     }
 
     /// No `text → Principal` coercion: `verify … by "alice"` is a `TypeError`.
@@ -1591,7 +2074,11 @@ impl Checker {
                     self.check_type_instantiation(a)?;
                 }
             }
-            Type::Event(inner) | Type::Array(inner) | Type::Credence(inner) | Type::Decision(inner) => {
+            Type::Event(inner)
+            | Type::Array(inner)
+            | Type::Credence(inner)
+            | Type::Decision(inner)
+            | Type::Endorsement(inner) => {
                 self.check_type_instantiation(inner)?;
             }
             _ => {}
@@ -1613,19 +2100,23 @@ impl Checker {
     /// Fusing two or more `Credence` judgments requires a total
     /// `independent`/`dependent` declaration covering every pair (§12).
     fn check_fusion(&self, judges: &[Expr], scope: &Scope) -> Result<(), AgapeError> {
-        let names: Vec<&str> = judges.iter().filter_map(|j| match j {
-            Expr::Name(n) => Some(n.as_str()),
-            _ => None,
-        }).collect();
+        let names: Vec<&str> = judges
+            .iter()
+            .filter_map(|j| match j {
+                Expr::Name(n) => Some(n.as_str()),
+                _ => None,
+            })
+            .collect();
         if names.len() < 2 {
             return Ok(());
         }
         for i in 0..names.len() {
             for k in (i + 1)..names.len() {
                 let (a, b) = (names[i], names[k]);
-                let covered = scope.deps.iter().any(|(_, group)| {
-                    group.iter().any(|g| g == a) && group.iter().any(|g| g == b)
-                });
+                let covered = scope
+                    .deps
+                    .iter()
+                    .any(|(_, group)| group.iter().any(|g| g == a) && group.iter().any(|g| g == b));
                 if !covered {
                     return Err(AgapeError::new(
                         ErrorClass::Type,
@@ -1654,12 +2145,22 @@ impl Checker {
     }
 
     /// A `case` over an enum covers every variant or has a `default` (§11).
-    fn check_exhaustive(&self, scrutinee: &Expr, arms: &[(String, Vec<Stmt>)], default: &Option<Vec<Stmt>>, scope: &Scope) -> Result<(), AgapeError> {
+    fn check_exhaustive(
+        &self,
+        scrutinee: &Expr,
+        arms: &[(String, Vec<Stmt>)],
+        default: &Option<Vec<Stmt>>,
+        scope: &Scope,
+    ) -> Result<(), AgapeError> {
         if default.is_some() {
             return Ok(());
         }
-        let Some(en) = self.enum_of(&self.expr_type(scrutinee, scope)) else { return Ok(()) };
-        let Some(variants) = self.enums.get(&en) else { return Ok(()) };
+        let Some(en) = self.enum_of(&self.expr_type(scrutinee, scope)) else {
+            return Ok(());
+        };
+        let Some(variants) = self.enums.get(&en) else {
+            return Ok(());
+        };
         let covered: HashSet<&str> = arms.iter().map(|(v, _)| v.as_str()).collect();
         for v in variants {
             if !covered.contains(v.as_str()) {
@@ -1674,7 +2175,9 @@ impl Checker {
 
     fn enum_of(&self, ty: &Type) -> Option<String> {
         match ty {
-            Type::Credence(inner) => self.enum_of(inner),
+            Type::Credence(inner) | Type::Decision(inner) | Type::Endorsement(inner) => {
+                self.enum_of(inner)
+            }
             Type::Named(n) if self.enums.contains_key(n) => Some(n.clone()),
             _ => None,
         }
@@ -1726,14 +2229,19 @@ impl Checker {
                 if matches!(&**func, Expr::Name(n) if self.tools.contains_key(n)) {
                     // A tool result carries the JOIN of its inputs' trust (§6b, T-Tool-Read):
                     // settled inputs → a settled result (external data settled by origin).
-                    let join = args.iter().fold(Taint::U, |acc, a| acc.max(self.value_taint(None, a, scope).0));
+                    let join = args.iter().fold(Taint::U, |acc, a| {
+                        acc.max(self.value_taint(None, a, scope).0)
+                    });
                     (join, false)
                 } else {
                     (Taint::U, false) // pure/somatic call (interprocedural taint: §15.7 open)
                 }
             }
             Expr::FStr(raw) => (self.fstring_taint(raw, scope), false),
-            Expr::Name(n) => scope.lookup(n).map(|v| (v.taint, v.authorized)).unwrap_or((Taint::U, false)),
+            Expr::Name(n) => scope
+                .lookup(n)
+                .map(|v| (v.taint, v.authorized))
+                .unwrap_or((Taint::U, false)),
             Expr::Member { obj, .. } => self.value_taint(None, obj, scope),
             Expr::Index { obj, .. } => self.value_taint(None, obj, scope),
             _ => (Taint::U, false),
@@ -1782,31 +2290,46 @@ impl Checker {
             Expr::Bool(_) | Expr::Not(_) => Type::Bool,
             Expr::Str(_) | Expr::FStr(_) => Type::Text,
             Expr::Null => Type::Null,
-            Expr::Name(n) => scope.lookup(n).map(|v| v.ty.clone()).unwrap_or_else(|| Type::Named(n.clone())),
+            Expr::Name(n) => scope
+                .lookup(n)
+                .map(|v| v.ty.clone())
+                .unwrap_or_else(|| Type::Named(n.clone())),
             Expr::Decide { expr, .. } => match self.expr_type(expr, scope) {
                 Type::Credence(inner) => *inner,
                 _ => Type::Named("?".into()),
             },
-            // `c by R` / `endorse(c by R)` collapse a `Credence<E>` to a Decision over E.
-            Expr::Collapse { expr, .. } | Expr::EndorseExpr { arg: expr, .. } => match self.expr_type(expr, scope) {
-                Type::Credence(inner) => *inner,
-                other => other,
+            // `c by R` collapses a `Credence<E>` to an off-ledger Decision over E.
+            Expr::Collapse { expr, .. } => match self.expr_type(expr, scope) {
+                Type::Credence(inner) => Type::Decision(inner),
+                Type::Decision(inner) => Type::Decision(inner),
+                Type::Endorsement(inner) => Type::Decision(inner),
+                other => Type::Decision(Box::new(other)),
+            },
+            // `endorse(c by R)` records the gate and yields Endorsement<E>.
+            Expr::EndorseExpr { arg: expr, .. } => match self.expr_type(expr, scope) {
+                Type::Credence(inner) => Type::Endorsement(inner),
+                Type::Decision(inner) | Type::Endorsement(inner) => Type::Endorsement(inner),
+                other => Type::Endorsement(Box::new(other)),
             },
             Expr::Quorum { .. } => Type::Credence(Box::new(Type::Bool)),
             // A recall yields text by default; bind it to a typed slot to shape it (§10).
             Expr::Recall { .. } => Type::Text,
             Expr::Binary { op, .. } => {
-                if matches!(op, BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge) {
+                if matches!(
+                    op,
+                    BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge
+                ) {
                     Type::Bool
                 } else {
                     Type::Named("?".into())
                 }
             }
             Expr::StructLit { name, .. } => Type::Named(name.clone()),
-            // Decision introspection (§20.4): `.committed` (E), `.basis` (Basis enum),
-            // `.margin` (float).
+            // Decision/Endorsement introspection (§20.4): `.committed` (E),
+            // `.basis` (Basis enum), `.margin` (float).
             Expr::Member { obj, prop } => {
-                if let Type::Decision(inner) = self.expr_type(obj, scope) {
+                if let Type::Decision(inner) | Type::Endorsement(inner) = self.expr_type(obj, scope)
+                {
                     match prop.as_str() {
                         "basis" => Type::Named("Basis".into()),
                         "margin" => Type::Float,
@@ -1874,18 +2397,44 @@ fn calls_in_stmt(s: &Stmt, out: &mut Vec<String>) {
         }
         Stmt::Attest { arg, arms, .. } => {
             e(arg, out);
-            arms.iter().for_each(|(_, b)| b.iter().for_each(|s| calls_in_stmt(s, out)));
+            arms.iter()
+                .for_each(|(_, b)| b.iter().for_each(|s| calls_in_stmt(s, out)));
         }
-        Stmt::Endorse { arg, arms, abstain, .. } => {
+        Stmt::Endorse {
+            arg, arms, abstain, ..
+        } => {
             e(arg, out);
-            arms.iter().for_each(|(_, b)| b.iter().for_each(|s| calls_in_stmt(s, out)));
+            arms.iter()
+                .for_each(|(_, b)| b.iter().for_each(|s| calls_in_stmt(s, out)));
+            if let Some(d) = abstain {
+                d.iter().for_each(|s| calls_in_stmt(s, out));
+            }
+        }
+        Stmt::Certify {
+            artifact,
+            certifier,
+            arms,
+            abstain,
+            ..
+        } => {
+            e(artifact, out);
+            match certifier {
+                Certifier::Gate { arg, .. } => e(arg, out),
+                Certifier::Endorsement(endorsement) => e(endorsement, out),
+            }
+            arms.iter()
+                .for_each(|(_, b)| b.iter().for_each(|s| calls_in_stmt(s, out)));
             if let Some(d) = abstain {
                 d.iter().for_each(|s| calls_in_stmt(s, out));
             }
         }
         Stmt::Block(body) => body.iter().for_each(|s| calls_in_stmt(s, out)),
         Stmt::Say(x) | Stmt::Return(Some(x)) | Stmt::ExprStmt(x) => e(x, out),
-        Stmt::If { cond, then_body, else_body } => {
+        Stmt::If {
+            cond,
+            then_body,
+            else_body,
+        } => {
             e(cond, out);
             then_body.iter().for_each(|s| calls_in_stmt(s, out));
             else_body.iter().for_each(|s| calls_in_stmt(s, out));
@@ -1897,9 +2446,15 @@ fn calls_in_stmt(s: &Stmt, out: &mut Vec<String>) {
         Stmt::On { body, .. } | Stmt::When { body, .. } | Stmt::Catch { body, .. } => {
             body.iter().for_each(|s| calls_in_stmt(s, out));
         }
-        Stmt::Case { expr, arms, default, .. } => {
+        Stmt::Case {
+            expr,
+            arms,
+            default,
+            ..
+        } => {
             e(expr, out);
-            arms.iter().for_each(|(_, b)| b.iter().for_each(|s| calls_in_stmt(s, out)));
+            arms.iter()
+                .for_each(|(_, b)| b.iter().for_each(|s| calls_in_stmt(s, out)));
             if let Some(d) = default {
                 d.iter().for_each(|s| calls_in_stmt(s, out));
             }
@@ -1911,9 +2466,15 @@ fn calls_in_stmt(s: &Stmt, out: &mut Vec<String>) {
                 body.iter().for_each(|s| calls_in_stmt(s, out));
             }
         },
-        Stmt::Decide { expr, arms, default, .. } => {
+        Stmt::Decide {
+            expr,
+            arms,
+            default,
+            ..
+        } => {
             calls_in_expr(expr, out);
-            arms.iter().for_each(|(_, b)| b.iter().for_each(|s| calls_in_stmt(s, out)));
+            arms.iter()
+                .for_each(|(_, b)| b.iter().for_each(|s| calls_in_stmt(s, out)));
             if let Some(d) = default {
                 d.iter().for_each(|s| calls_in_stmt(s, out));
             }
@@ -1938,7 +2499,9 @@ fn calls_in_expr(x: &Expr, out: &mut Vec<String>) {
         }
         Expr::Verify { arg, .. } => calls_in_expr(arg, out),
         Expr::Decide { expr, .. } => calls_in_expr(expr, out),
-        Expr::Collapse { expr, .. } | Expr::EndorseExpr { arg: expr, .. } => calls_in_expr(expr, out),
+        Expr::Collapse { expr, .. } | Expr::EndorseExpr { arg: expr, .. } => {
+            calls_in_expr(expr, out)
+        }
         Expr::Quorum { judges, .. } => judges.iter().for_each(|j| calls_in_expr(j, out)),
         Expr::Pipe { source, func } => {
             calls_in_expr(source, out);
@@ -1985,17 +2548,32 @@ mod tests {
         ok("sync int double(int x) { return x * 2; }");
         ok("event Note(text m); sync null log(text m) { emit Note(m); return null; }");
         ok("sync bool over(Credence<bool> c) { verify c; return decide(c, > 0.9); }");
-        rej("agent A {} sync text ask(A a) { return a <- \"hi\"; }", ErrorClass::Color);
-        rej("read tool text search(text q); sync text find(text q) { return search(q); }", ErrorClass::Color);
-        rej("principal alice; sync null ok(text m) { verify m by alice; return null; }", ErrorClass::Color);
+        rej(
+            "agent A {} sync text ask(A a) { return a <- \"hi\"; }",
+            ErrorClass::Color,
+        );
+        rej(
+            "read tool text search(text q); sync text find(text q) { return search(q); }",
+            ErrorClass::Color,
+        );
+        rej(
+            "principal alice; sync null ok(text m) { verify m by alice; return null; }",
+            ErrorClass::Color,
+        );
     }
 
     #[test]
     fn types() {
         ok("struct Memo { amount: int, to: text } Memo m = Memo { amount: 1, to: \"b\" };");
-        rej("struct Memo { amount: int, to: text } Memo m = Memo { amount: 1 };", ErrorClass::Type);
+        rej(
+            "struct Memo { amount: int, to: text } Memo m = Memo { amount: 1 };",
+            ErrorClass::Type,
+        );
         rej("emit Transfer(\"x\");", ErrorClass::Type);
-        rej("agent A {} spawn A a; awake a; event<text> m = a <- \"d\"; verify m by \"alice\";", ErrorClass::Type);
+        rej(
+            "agent A {} spawn A a; awake a; event<text> m = a <- \"d\"; verify m by \"alice\";",
+            ErrorClass::Type,
+        );
         ok("principal alice; agent A {} spawn A a; awake a; event<text> m = a <- \"d\"; verify m by alice;");
     }
 
@@ -2016,7 +2594,10 @@ mod tests {
         // built-in Event is emittable without a grant
         ok("agent A { on awake { emit Event(\"hi\"); } } spawn A a; awake a;");
         ok("read tool text s(text q); agent R grants { use s } { text h = s(\"q\"); } spawn R r; awake r;");
-        rej("read tool text s(text q); agent R { text h = s(\"q\"); } spawn R r; awake r;", ErrorClass::Authority);
+        rej(
+            "read tool text s(text q); agent R { text h = s(\"q\"); } spawn R r; awake r;",
+            ErrorClass::Authority,
+        );
         rej("read tool text s(text q); agent B grants { } {} agent C grants { use s } { extend B(); } spawn C c; awake c;", ErrorClass::Authority);
     }
 

@@ -1,5 +1,5 @@
-// The bottom panel in "Spine" mode — the hero of the event cockpit. A live,
-// auto-tailing view of the append-only event spine (SPEC §7). Color encodes kind:
+// The bottom panel in ledger mode — the hero of the event cockpit. A live,
+// auto-tailing view of the append-only event ledger (SPEC §7). Color encodes kind:
 // errors red, Think pairs blue, emits/internalize teal, verifications amber.
 import { useEffect, useRef } from "react";
 
@@ -32,7 +32,7 @@ export default function SpinePanel({ events }) {
 
   return (
     <div className="panel-body" ref={ref} onScroll={onScroll}>
-      {events.length === 0 && <div className="empty">the spine is empty — Run a program</div>}
+      {events.length === 0 && <div className="empty">the ledger is empty - Run a program</div>}
       {events.map((e) => (
         <div className={"ev " + evClass(e)} key={e.tick} title={e.corr ? "corr " + e.corr : ""}>
           <span className="tick">{e.tick}</span>

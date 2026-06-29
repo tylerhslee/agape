@@ -1,0 +1,18 @@
+//! id:        gate_endorsement_not_decision_reject
+//! section:   22_gate
+//! expect:    reject
+//! error:     TypeError
+//! spec:      §13 (`endorse(c by R)` returns Endorsement<E>, not Decision<E>)
+//! ---
+enum R { Yes, No }
+agent Desk {
+  on awake {
+    Credence<R> c = self <- "yes?";
+    Decision<R> d = endorse(c by confidence 0.8);
+    case (d) as r {
+      Yes: { say("yes"); }
+      No:  { say("no"); }
+    }
+  }
+}
+spawn Desk d; awake d;

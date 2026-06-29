@@ -1,7 +1,7 @@
 # Simulating the Agape runtime — memory + the learning loop
 
 This is a working simulation of the part of the Agape runtime that matters most for
-a builder agent that must **learn Agape and get good at it**: the **spine** (§7) and
+a builder agent that must **learn Agape and get good at it**: the **ledger** (§7) and
 the **three-modality memory** (§10). On top of it runs a learning loop — read the
 spec, internalize it, write Agape, run it, learn from failures, repeat.
 
@@ -12,7 +12,7 @@ here sits behind two seams (`Cognition`, `Embedder`) and a portable schema.
 ## The memory architecture (faithful to SPEC §10, §7)
 
 One unit, three modalities — every cell carries a provenance backpointer to the
-spine event (§7) that produced it, exactly as §10 requires.
+ledger event (§7) that produced it, exactly as §10 requires.
 
 | Modality | SPEC | Store (SQLite) | Query |
 |---|---|---|---|
@@ -20,7 +20,8 @@ spine event (§7) that produced it, exactly as §10 requires.
 | **RELATIONSHIPS** | SPO graph over a typed predicate set | `triples(agent, s, p, o, origin_tick, taint)` | `find … where` |
 | **SEMANTICS** | vector store | `embeddings(agent, text, vec, origin_tick)` | `match … > θ` |
 
-The **spine** is the source of truth and everything else folds from it:
+The **ledger** is the source of truth and everything else folds from it. The
+current TypeScript prototype keeps the legacy SQLite table name `spine`:
 
 ```
 spine(tick PK monotonic, etype, subject, payload, corr, agent, ts)
@@ -32,10 +33,10 @@ spine(tick PK monotonic, etype, subject, payload, corr, agent, ts)
   shape (typed facts; SPO triples).
 - **Provenance (§10).** `origin_tick` is the immutable backpointer; `find n,
   origin(n)` returns a relationship and its originating event.
-- **Taint (§10).** A queried fact inherits the taint of the spine event it traces
+- **Taint (§10).** A queried fact inherits the taint of the ledger event it traces
   to — default `P` (graded: structured but not gate-committed). `match` is a gate:
-  hits clear θ and are `U` but off-spine.
-- **Replay.** State is a fold of the spine; a query reads the log and appends
+  hits clear θ and are `U` but off-ledger.
+- **Replay.** State is a fold of the ledger; a query reads the log and appends
   nothing.
 
 ## The two seams (swap points for Rust + OpenAI)
@@ -50,9 +51,9 @@ spine(tick PK monotonic, etype, subject, payload, corr, agent, ts)
 
 ## The learning loop
 
-A builder agent learns Agape by living on the spine:
+A builder agent learns Agape by living on the ledger:
 
-1. **Ingest** — chunk `SPEC.md`, append each as a spine event, **internalize** it
+1. **Ingest** — chunk `SPEC.md`, append each as a ledger event, **internalize** it
    (facts + triples + embedding, with provenance). This *is* the §10 mechanism.
 2. **Retrieve** — for a coding task: `match` (vector) the task against the spec,
    `find/where` related concepts, `select` prior lessons. Assemble grounded context.
@@ -63,7 +64,7 @@ A builder agent learns Agape by living on the spine:
    triples / embeddings with provenance). On success, record the working pattern.
 6. **Repeat** — retry the task with the new lessons, or advance the curriculum.
 
-Every step appends to the spine, so the whole run is replayable and the agent's
+Every step appends to the ledger, so the whole run is replayable and the agent's
 competence is literally the fold of its memory.
 
 ## The runner
@@ -80,7 +81,7 @@ writes — it just can't get execution feedback, and says so. Building agape-rs 
 |---|---|---|
 | POST | `/learn/ingest` | chunk + internalize `SPEC.md` into a fresh agent memory |
 | POST | `/learn/step` | run one task through retrieve → write → run → reflect |
-| GET | `/learn/state` | spine size + per-store counts + recent lessons |
+| GET | `/learn/state` | ledger size + per-store counts + recent lessons |
 | GET | `/learn/recall?q=` | `match` the query and return grounded hits (debug the vector store) |
 
 ## Run / test

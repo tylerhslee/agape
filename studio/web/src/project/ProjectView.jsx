@@ -212,7 +212,7 @@ export default function ProjectView({ info, provider, editorPrefs, setEditorPref
 
       <div className="pj-spine">
         {!result ? (
-          <div className="pj-dim" style={{ padding: 12 }}>▶ Run to see the LLM calls, cost, and the spine — the append-only log of everything the agents do.</div>
+          <div className="pj-dim" style={{ padding: 12 }}>▶ Run to see the LLM calls, cost, and the ledger - the append-only log of everything the agents do.</div>
         ) : result.ok ? (
           <>
             <div className="pj-qa">
@@ -250,7 +250,7 @@ export default function ProjectView({ info, provider, editorPrefs, setEditorPref
               </div>
             ))}
 
-            <div className="pj-section-h">spine</div>
+            <div className="pj-section-h">ledger</div>
             {result.events.map((e, i) => <SpineRow key={i} e={e} />)}
             <div className="pj-dim" style={{ padding: "8px 12px" }}>{result.events.length} events · {result.head?.slice(0, 16)}</div>
           </>
@@ -349,7 +349,7 @@ function judgeProviderForCognition(cognitionProvider) {
   return cognitionProvider === "openai" ? "openai" : "anthropic";
 }
 
-// Color the spine by what each event means: decisions/deliveries are the points
+// Color the ledger by what each event means: decisions/deliveries are the points
 // that matter; the send chain is dim scaffolding.
 function SpineRow({ e }) {
   const k = e.etype;

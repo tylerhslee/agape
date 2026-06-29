@@ -1,0 +1,18 @@
+//! id:        gate_endorsement_expr_type_accept
+//! section:   22_gate
+//! expect:    accept
+//! contains:  Decided(c)
+//! spec:      §13 (`endorse(c by R)` yields Endorsement<E>, the recorded form of a gate decision)
+//! ---
+enum R { Yes, No }
+agent Desk {
+  on awake {
+    Credence<R> c = self <- "yes?";
+    Endorsement<R> e = endorse(c by confidence 0.8);
+    case (e) as r {
+      Yes: { say("yes"); }
+      No:  { say("no"); }
+    }
+  }
+}
+spawn Desk d; awake d;

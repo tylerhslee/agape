@@ -31,6 +31,7 @@ BINEXT=""; [ "${TARGET}" != "${TARGET%windows*}" ] && BINEXT=".exe"
 cp "agape-rs/target/release/agape${BINEXT}" "$STAGE/bin/agape${BINEXT}"
 
 # 2. a runnable example, a default manifest, and a bundle README
+cp SPEC.md "$STAGE/SPEC.md"
 cp agape-rs/examples/*.ag "$STAGE/examples/" 2>/dev/null || true
 cat > "$STAGE/examples/hello.ag" <<'AG'
 // hello.ag — the smallest Agape program: an agent thinks, gates, and records.
@@ -66,7 +67,7 @@ cat > "$STAGE/README.md" <<MD
 The \`agape\` CLI: the language, compiler, runtime, and studio in one bundle.
 
 \`\`\`
-bin/agape run examples/hello.ag      # run a program → its event spine
+bin/agape run examples/hello.ag      # run a program -> its event ledger
 bin/agape check examples/hello.ag    # static guarantees only
 bin/agape init my-app                # scaffold a new project
 bin/agape build                      # check every .ag, emit .agape/build.json

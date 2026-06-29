@@ -69,31 +69,84 @@ impl Token {
 /// (`entail`, `calibrate`).
 pub const KEYWORDS: &[&str] = &[
     // types + ledger wrapper + somatic aggregate
-    "int", "float", "bool", "text", "null", "event", "array",
+    "int",
+    "float",
+    "bool",
+    "text",
+    "null",
+    "event",
+    "array",
     // declarations + marked color
-    "agent", "extend", "sync", "struct", "enum",
+    "agent",
+    "extend",
+    "sync",
+    "struct",
+    "enum",
     // capability typing (§13) + tool declaration + effect class (§6b)
-    "grants", "authority", "tool", "read", "write",
+    "grants",
+    "authority",
+    "tool",
+    "read",
+    "write",
     // lifecycle + external input sensor (§5, §5b)
-    "spawn", "awake", "sleep", "self", "on", "prompt", "instruction",
+    "spawn",
+    "awake",
+    "sleep",
+    "self",
+    "on",
+    "prompt",
+    "instruction",
     // identity seam (§13)
     "principal",
     // control / reactive
-    "when", "catch", "case", "if", "else", "return", "retry", "default",
+    "when",
+    "catch",
+    "case",
+    "if",
+    "else",
+    "return",
+    "retry",
+    "default",
     // gate / ledger emit / action perform (v1.0); verify/decide are legacy
-    "verify", "decide", "emit", "endorse", "attest", "perform", "abstain", "action", "policy",
+    "verify",
+    "decide",
+    "emit",
+    "endorse",
+    "attest",
+    "certify",
+    "perform",
+    "abstain",
+    "action",
+    "policy",
     // queries (§10)
-    "find", "where", "select", "from", "match",
+    "find",
+    "where",
+    "select",
+    "from",
+    "match",
     // private-memory handles + seams (§10): mem m <- v / m += v / m -> q / forget m
-    "mem", "forget",
+    "mem",
+    "forget",
     // aggregation + dependence declaration + quorum (§12)
-    "all", "any", "quorum", "independent", "dependent",
+    "all",
+    "any",
+    "quorum",
+    "independent",
+    "dependent",
     // bool literals
-    "true", "false",
+    "true",
+    "false",
     // somatic kernel (§15.2)
-    "while", "break", "import",
+    "while",
+    "break",
+    "import",
     // library layer + the readable gate (§19, §20)
-    "module", "pub", "interface", "requires", "reversible", "defer",
+    "module",
+    "pub",
+    "interface",
+    "requires",
+    "reversible",
+    "defer",
 ];
 
 /// Operators, longest-first so multi-char operators win over their prefixes.
@@ -166,7 +219,13 @@ pub fn lex(src: &str) -> Result<Vec<Token>, AgapeError> {
                 name.push(chars[i]);
                 bump!();
             }
-            toks.push(Token { kind: TokenKind::Pragma, value: name, span: Span::new(start_byte, byte), line, col: start_col });
+            toks.push(Token {
+                kind: TokenKind::Pragma,
+                value: name,
+                span: Span::new(start_byte, byte),
+                line,
+                col: start_col,
+            });
             continue;
         }
 
@@ -179,27 +238,49 @@ pub fn lex(src: &str) -> Result<Vec<Token>, AgapeError> {
             let mut depth = 0i32;
             while i < n && chars[i] != '"' {
                 if chars[i] == '\n' {
-                    return Err(AgapeError::at(ErrorClass::Lex, Span::new(start_byte, byte), format!("unterminated f-string at line {start_line}")));
+                    return Err(AgapeError::at(
+                        ErrorClass::Lex,
+                        Span::new(start_byte, byte),
+                        format!("unterminated f-string at line {start_line}"),
+                    ));
                 }
                 if chars[i] == '{' {
                     depth += 1;
                 } else if chars[i] == '}' {
                     depth -= 1;
                     if depth < 0 {
-                        return Err(AgapeError::at(ErrorClass::Parse, Span::new(start_byte, byte), "malformed f-string interpolation"));
+                        return Err(AgapeError::at(
+                            ErrorClass::Parse,
+                            Span::new(start_byte, byte),
+                            "malformed f-string interpolation",
+                        ));
                     }
                 }
                 buf.push(chars[i]);
                 bump!();
             }
             if i >= n {
-                return Err(AgapeError::at(ErrorClass::Lex, Span::new(start_byte, byte), format!("unterminated f-string at line {start_line}")));
+                return Err(AgapeError::at(
+                    ErrorClass::Lex,
+                    Span::new(start_byte, byte),
+                    format!("unterminated f-string at line {start_line}"),
+                ));
             }
             if depth != 0 {
-                return Err(AgapeError::at(ErrorClass::Parse, Span::new(start_byte, byte), "malformed f-string interpolation"));
+                return Err(AgapeError::at(
+                    ErrorClass::Parse,
+                    Span::new(start_byte, byte),
+                    "malformed f-string interpolation",
+                ));
             }
             bump!(); // closing quote
-            toks.push(Token { kind: TokenKind::FStr, value: buf, span: Span::new(start_byte, byte), line: start_line, col: start_col });
+            toks.push(Token {
+                kind: TokenKind::FStr,
+                value: buf,
+                span: Span::new(start_byte, byte),
+                line: start_line,
+                col: start_col,
+            });
             continue;
         }
 
@@ -223,16 +304,30 @@ pub fn lex(src: &str) -> Result<Vec<Token>, AgapeError> {
                     continue;
                 }
                 if chars[i] == '\n' {
-                    return Err(AgapeError::at(ErrorClass::Lex, Span::new(start_byte, byte), format!("unterminated string at line {start_line}")));
+                    return Err(AgapeError::at(
+                        ErrorClass::Lex,
+                        Span::new(start_byte, byte),
+                        format!("unterminated string at line {start_line}"),
+                    ));
                 }
                 buf.push(chars[i]);
                 bump!();
             }
             if i >= n {
-                return Err(AgapeError::at(ErrorClass::Lex, Span::new(start_byte, byte), format!("unterminated string at line {start_line}")));
+                return Err(AgapeError::at(
+                    ErrorClass::Lex,
+                    Span::new(start_byte, byte),
+                    format!("unterminated string at line {start_line}"),
+                ));
             }
             bump!(); // closing quote
-            toks.push(Token { kind: TokenKind::Str, value: buf, span: Span::new(start_byte, byte), line: start_line, col: start_col });
+            toks.push(Token {
+                kind: TokenKind::Str,
+                value: buf,
+                span: Span::new(start_byte, byte),
+                line: start_line,
+                col: start_col,
+            });
             continue;
         }
 
@@ -252,8 +347,18 @@ pub fn lex(src: &str) -> Result<Vec<Token>, AgapeError> {
                 buf.push(chars[i]);
                 bump!();
             }
-            let kind = if is_float { TokenKind::Float } else { TokenKind::Int };
-            toks.push(Token { kind, value: buf, span: Span::new(start_byte, byte), line: start_line, col: start_col });
+            let kind = if is_float {
+                TokenKind::Float
+            } else {
+                TokenKind::Int
+            };
+            toks.push(Token {
+                kind,
+                value: buf,
+                span: Span::new(start_byte, byte),
+                line: start_line,
+                col: start_col,
+            });
             continue;
         }
 
@@ -265,8 +370,18 @@ pub fn lex(src: &str) -> Result<Vec<Token>, AgapeError> {
                 buf.push(chars[i]);
                 bump!();
             }
-            let kind = if is_keyword(&buf) { TokenKind::Keyword } else { TokenKind::Ident };
-            toks.push(Token { kind, value: buf, span: Span::new(start_byte, byte), line: start_line, col: start_col });
+            let kind = if is_keyword(&buf) {
+                TokenKind::Keyword
+            } else {
+                TokenKind::Ident
+            };
+            toks.push(Token {
+                kind,
+                value: buf,
+                span: Span::new(start_byte, byte),
+                line: start_line,
+                col: start_col,
+            });
             continue;
         }
 
@@ -282,7 +397,13 @@ pub fn lex(src: &str) -> Result<Vec<Token>, AgapeError> {
                 for _ in 0..len {
                     bump!();
                 }
-                toks.push(Token { kind: TokenKind::Op, value: (*op).to_string(), span: Span::new(start_byte, byte), line, col: start_col });
+                toks.push(Token {
+                    kind: TokenKind::Op,
+                    value: (*op).to_string(),
+                    span: Span::new(start_byte, byte),
+                    line,
+                    col: start_col,
+                });
                 matched = true;
                 break;
             }
@@ -298,7 +419,13 @@ pub fn lex(src: &str) -> Result<Vec<Token>, AgapeError> {
         ));
     }
 
-    toks.push(Token { kind: TokenKind::Eof, value: String::new(), span: Span::new(byte, byte), line, col });
+    toks.push(Token {
+        kind: TokenKind::Eof,
+        value: String::new(),
+        span: Span::new(byte, byte),
+        line,
+        col,
+    });
     Ok(toks)
 }
 
@@ -319,7 +446,11 @@ mod tests {
     use super::*;
 
     fn kinds(src: &str) -> Vec<(TokenKind, String)> {
-        lex(src).unwrap().into_iter().map(|t| (t.kind, t.value)).collect()
+        lex(src)
+            .unwrap()
+            .into_iter()
+            .map(|t| (t.kind, t.value))
+            .collect()
     }
 
     #[test]
@@ -364,7 +495,16 @@ mod tests {
 
     #[test]
     fn v1_keywords() {
-        for kw in ["struct", "enum", "tool", "principal", "decide", "quorum", "independent", "dependent"] {
+        for kw in [
+            "struct",
+            "enum",
+            "tool",
+            "principal",
+            "decide",
+            "quorum",
+            "independent",
+            "dependent",
+        ] {
             let toks = lex(kw).unwrap();
             assert!(toks[0].is_kw(kw), "{kw} should be a keyword");
         }
@@ -374,7 +514,11 @@ mod tests {
     fn contextual_words_are_idents() {
         for w in ["as", "by", "reach", "use", "origin", "of", "margin"] {
             let toks = lex(w).unwrap();
-            assert_eq!(toks[0].kind, TokenKind::Ident, "{w} should lex as an identifier");
+            assert_eq!(
+                toks[0].kind,
+                TokenKind::Ident,
+                "{w} should lex as an identifier"
+            );
         }
     }
 

@@ -6,7 +6,77 @@ All notable changes to Agape are recorded here. The format follows
 suite, and the studio move in lockstep — a release is the whole bundle at one
 version.
 
-## [1.0.2] — 2026-06-28
+## [1.0.0-alpha.2026.6.29.0] — 2026-06-29
+
+This release resets Agape's public version line to an explicit alpha. Earlier
+`v1.0.x` tags were prototype tags and are superseded by this canonical alpha
+series.
+
+This release dogfoods Agape Studio against the Agape trust model and sharpens the
+gate surface that Studio needs for natural agent conversations. The big language
+change is making the trust path smaller and more explicit: `decide` creates sealed
+decisions, and `endorse` applies those decisions to exact subject values.
+
+### Language & runtime
+- Made `decide c by basis` the only source-level constructor for sealed
+  `Decision<E>` values. The old bare collapse form `c by R` is no longer the
+  canonical gate surface.
+- Reworked `endorse` into subject-scoped arm syntax:
+  `endorse subject by d { Variant as e { ... } }`. The arm binder `e` is an
+  `Endorsement<T>` about the exact subject value, and only that subject is settled
+  inside the matching arm.
+- Removed `certify` as a separate source form. Artifact certification is ordinary
+  endorsement of an artifact subject by a `Decision<Verification>`.
+- Removed `attest` as a separate source form. Human/accountable review is expressed
+  as `Decision<E> d = decide c by principal;`, with principal signature recorded in
+  `PrincipalDecision` provenance.
+- Added subject/dependency-scope checking for endorsement: a decision can endorse
+  only values inside the `Credence` provenance scope it decided. This catches
+  mechanically irrelevant endorsements such as using a decision about `other_response`
+  to endorse `response`.
+- Clarified the spec's trust path as
+  `Credence<E> -> Decision<E> -> Endorsement<T> -> granted sink -> ledger`.
+- Reframed `Credence<E>` as a scored structured judgment rather than an inherently
+  calibrated probability, and moved empirical autonomy into ledgered GateProfiles:
+  cold gates defer, warm gates use conformal singleton commitment, and mature
+  gates may use calibrated expected-loss decisions.
+- Added spec semantics for versioned projections and stale-state management:
+  materialized facts/views carry `basisHead`, `validThrough`, provenance, and
+  dependency scope so unrelated ledger events do not globally invalidate state.
+- Added a generic conflict model over declared invariants and active settled
+  facts, keeping domain-specific and natural-language contradiction detection as
+  Agape programs/libraries rather than hidden kernel magic.
+
+### Conformance
+- Marked the older `certify`, `attest`, `c by R`, and `endorse(c by R)` fixtures as
+  obsolete for the next conformance pass.
+- The next conformance target is coverage for sealed `decide`, subject-scoped
+  `endorse`, principal-driven decisions, branch-scoped `Endorsement<T>`, and
+  rejection of endorsements whose subject is outside the decision dependency scope.
+
+### Studio
+- Reworked the Studio agent response path so badge selection, especially
+  `Inspect`, is orchestration input rather than cosmetic UI state.
+- Auto-delegated the initial dashboard prompt to a builder instead of forcing the
+  user to open the work item and delegate manually.
+- Added response routing that decomposes a prompt, gathers project and memory
+  context, rejects placeholder planning text, and returns a user-facing answer
+  rather than a raw first-step thought.
+- Added provider/agent-server tests around conversational response quality and
+  project inspection behavior.
+- Renamed visible Studio “spine” language to “ledger” to match the language spec.
+
+### Packaging
+- Updated the alpha bundle pipeline so the packaged archive includes the updated
+  spec, Rust runtime, conformance suite, Studio server, and built Studio web app
+  together.
+
+## Pre-alpha Prototype History
+
+The entries below describe the superseded `v1.0.0` through `v1.0.2` prototype
+tags. They remain here as engineering history, not as the canonical release line.
+
+### Prototype 1.0.2 — 2026-06-28
 
 This release hardens Agape's trusted kernel contract. It keeps the v1 surface
 intact, but makes the core safety boundary explicit: model testimony may affect
@@ -41,10 +111,10 @@ sink -> ledger`.
   mediating process, storage, network, and tool effects through grants, gates,
   and ledger replay.
 
-## [1.0.1] — 2026-06-28
+### Prototype 1.0.1 — 2026-06-28
 
-This release tightens Agape's spec/runtime/conformance lockstep and re-tags
-`v1.0.1` as the current mainline patch release. It keeps the v1 surface intact
+This prototype tightened Agape's spec/runtime/conformance lockstep and re-tagged
+`v1.0.1` as the then-current mainline patch release. It kept the v1 surface intact
 while making the conformance suite much harder to accidentally drift from the
 spec.
 
@@ -58,7 +128,7 @@ spec.
 - Fixed event handler binding so declared event fields can be accessed
   consistently in handlers, including the scaffolded Q&A example's `Draft.answer`
   path.
-- Bumped the reference implementation and spec labels to `v1.0.1`.
+- Bumped the reference implementation and spec labels to the then-current prototype tag.
 
 ### Conformance
 - Expanded the conformance suite from **144** tests in `v1.0.0` to **197** tests.
@@ -90,9 +160,9 @@ spec.
   fallback, so CI exercises the shipped path more reliably.
 - Restored the Studio CI path to green: language build/test/conformance,
   manifest drift, Studio backend, Studio web, bundle smoke, and Playwright E2E
-  all pass for the `v1.0.1` commit.
+  all pass for the prototype commit.
 
-## [1.0.0] — 2026-06-27
+### Prototype 1.0.0 — 2026-06-27
 
 The first canonical release: the Agape language, compiler, runtime, and studio,
 packaged as one self-contained `agape` CLI. Agape governs multi-agent systems —
@@ -103,7 +173,7 @@ and every effect is recorded on an append-only **ledger**.
 - A clean-room Rust implementation (lexer → parser → checker → interpreter + the
   event **ledger**) passing the full conformance suite — **144/144**, a hard CI gate.
 - **The decision surface** — testimony → `Credence<E>` (a graded judgment over a
-  closed enum, read from the provider's token probabilities) → a gate (`endorse` /
+  closed enum, read from provider score/logprob data or sampling fallback) → a gate (`endorse` /
   `attest` / the readable `decide`, by `c by R` / `conformal α`) → a settled
   `Decision` that alone may drive a `perform` action. Static checks reject
   unauthorized authority, un-endorsed (tainted) values at consequential sinks, and
@@ -170,6 +240,4 @@ and every effect is recorded on an append-only **ledger**.
   manifest drift; `release.yml` builds the bundle for Linux, macOS, and Windows on a
   `v1.0.0` tag and publishes a GitHub Release.
 
-[1.0.2]: https://github.com/tylerhslee/agape/releases/tag/v1.0.2
-[1.0.1]: https://github.com/tylerhslee/agape/releases/tag/v1.0.1
-[1.0.0]: https://github.com/tylerhslee/agape/releases/tag/v1.0.0
+[1.0.0-alpha.2026.6.29.0]: https://github.com/tylerhslee/agape/releases/tag/v1.0.0-alpha.2026.6.29.0

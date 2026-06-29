@@ -65,6 +65,26 @@ describe("studio backend — user journeys (integration)", () => {
     expect(main.prompts).toContain("question");
   });
 
+  it("routes a project-overview prompt to inspect even when the Build badge is selected", async () => {
+    const d = await (await post("/agent/respond", {
+      item: {
+        title: "can you tell me what is in this project so far?",
+        destination: "Build · next best work",
+        status: "active",
+      },
+      thread: [{ who: "you", text: "can you tell me what is in this project so far?" }],
+      intent: "build",
+    })).json();
+
+    expect(d.intent).toBe("inspect");
+    expect(d.source).toBe("project-context");
+    expect(d.text).toContain("Here is what is in");
+    expect(d.text).toContain("main.ag");
+    expect(d.text).toContain("Responder");
+    expect(d.text).toContain("FactChecker");
+    expect(d.text).not.toMatch(/retriev|please hold|one moment/i);
+  });
+
   it("configures runtime deployment independently of the project", async () => {
     const before = await (await get("/runtime/config")).json();
     expect(before.mode).toBe("local");

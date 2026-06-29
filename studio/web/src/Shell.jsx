@@ -5,7 +5,7 @@ import WorkBoard from "./missioncontrol/WorkBoard.jsx";
 import ItemDetail from "./missioncontrol/ItemDetail.jsx";
 import { itemsByStatus } from "./missioncontrol/store.js";
 import ProjectView from "./project/ProjectView.jsx";
-import StudioSurface from "./StudioSurface.jsx";
+import StudioSurface, { StudioBuilder } from "./StudioSurface.jsx";
 import * as project from "./project/projectApi.js";
 import { STUDIO } from "virtual:agape-versions";
 import "./missioncontrol/missioncontrol.css";
@@ -78,7 +78,7 @@ function providerApiConfig(provider) {
   };
 }
 
-export default function Shell({ info }) {
+export default function Shell({ info, infoError }) {
   const [state, dispatch] = useStudio();
   const [view, setView] = useState(() => storageGet("agape.view") || "overview");
   const selected = selectedItem(state);
@@ -173,14 +173,37 @@ export default function Shell({ info }) {
             editorPrefs={editorPrefs} setEditorPrefs={setEditorPrefs}
             onExit={() => setView("overview")}
           />
+        ) : view === "builder" ? (
+          hasProject ? (
+            <>
+              <ContextBar
+                title="Builder"
+                info={info}
+                active="builder"
+                onHome={() => goProject("overview")}
+                onWork={() => goProject("work")}
+                onBuilder={() => goProject("builder")}
+                onCode={() => goProject("explorer")}
+                onRun={() => goProject("run")}
+                onStudio={() => setView("studio")}
+              />
+              <div className="app-stage">
+                <div className="app-scroll">
+                  <StudioBuilder />
+                </div>
+              </div>
+            </>
+          ) : <NoProject infoError={infoError} />
         ) : view === "explorer" || view === "run" ? (
           hasProject ? (
             <>
               <ContextBar
                 title={view === "run" ? "Run and inspect" : "Code surface"}
                 info={info}
+                active={view}
                 onHome={() => goProject("overview")}
                 onWork={() => goProject("work")}
+                onBuilder={() => goProject("builder")}
                 onCode={() => goProject("explorer")}
                 onRun={() => goProject("run")}
                 onStudio={() => setView("studio")}
@@ -195,14 +218,16 @@ export default function Shell({ info }) {
                 />
               </div>
             </>
-          ) : <NoProject />
+          ) : <NoProject infoError={infoError} />
         ) : view === "work" ? (
           <>
             <ContextBar
               title="Work command"
               info={info}
+              active="work"
               onHome={() => goProject("overview")}
               onWork={() => goProject("work")}
+              onBuilder={() => goProject("builder")}
               onCode={() => goProject("explorer")}
               onRun={() => goProject("run")}
               onStudio={() => setView("studio")}
@@ -229,6 +254,7 @@ export default function Shell({ info }) {
                   dispatch={dispatch}
                   onOpen={open}
                   goWork={() => goProject("work")}
+                  goBuilder={() => goProject("builder")}
                   goRun={() => goProject("run")}
                   goFiles={() => goProject("explorer")}
                   goStudio={() => setView("studio")}
@@ -242,7 +268,7 @@ export default function Shell({ info }) {
   );
 }
 
-function ContextBar({ title, info, onHome, onWork, onCode, onRun, onStudio }) {
+function ContextBar({ title, info, active, onHome, onWork, onBuilder, onCode, onRun, onStudio }) {
   return (
     <header className="context-bar">
       <button className="context-home" onClick={onHome}>
@@ -253,9 +279,10 @@ function ContextBar({ title, info, onHome, onWork, onCode, onRun, onStudio }) {
         {info?.root && <span>{info.name || info.root}</span>}
       </div>
       <div className="context-actions">
-        <button onClick={onWork}><i className="ti ti-checklist" /> Work</button>
-        <button onClick={onCode}><i className="ti ti-code" /> Code</button>
-        <button onClick={onRun}><i className="ti ti-player-play" /> Run</button>
+        <button className={active === "work" ? "active" : ""} onClick={onWork}><i className="ti ti-checklist" /> Work</button>
+        <button className={active === "builder" ? "active" : ""} onClick={onBuilder}><i className="ti ti-sparkles" /> Builder</button>
+        <button className={active === "explorer" ? "active" : ""} onClick={onCode}><i className="ti ti-code" /> Code</button>
+        <button className={active === "run" ? "active" : ""} onClick={onRun}><i className="ti ti-player-play" /> Run</button>
         <button onClick={onStudio}><i className="ti ti-settings" /> Studio</button>
       </div>
     </header>
@@ -438,12 +465,17 @@ function RunWorkspace({ subview, info, provider, onOpenSettings }) {
   );
 }
 
-function NoProject() {
+function NoProject({ infoError }) {
+  const offline = !!infoError;
   return (
     <div className="app-empty">
-      <i className="ti ti-folder-off" />
-      <div><b>No project open.</b></div>
-      <div>Launch the studio on an Agape project with <code>agape studio</code> to edit and run its agents here.</div>
+      <i className={"ti " + (offline ? "ti-plug-off" : "ti-folder-off")} />
+      <div><b>{offline ? "Studio backend unavailable." : "No project open."}</b></div>
+      <div>
+        {offline
+          ? "The web app opened, but the project backend did not answer /project/info. Restart the studio from the project directory."
+          : <>Launch the studio on an Agape project with <code>agape studio</code> to edit and run its agents here.</>}
+      </div>
     </div>
   );
 }

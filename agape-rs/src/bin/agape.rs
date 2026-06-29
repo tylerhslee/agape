@@ -9,6 +9,7 @@
 //! `run`/`check` are thin wrappers over `agape_rs::process`; `init` scaffolds a
 //! two-agent starter; `studio` launches the project-scoped studio.
 
+use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{exit, Command};
 
@@ -70,7 +71,10 @@ fn cmd_check(args: &[String]) {
         exit(2);
     });
     match agape_rs::process(&read_or_die(file)) {
-        Ok(ledger) => println!("ok — checks pass ({} ledger events on a dry run)", ledger.len()),
+        Ok(ledger) => println!(
+            "ok — checks pass ({} ledger events on a dry run)",
+            ledger.len()
+        ),
         Err(e) => {
             eprintln!("{e}");
             exit(1);
@@ -109,10 +113,11 @@ fn cmd_run(args: &[String]) {
             }
             "--temperature" => {
                 i += 1;
-                config.temperature = args.get(i).and_then(|s| s.parse().ok()).unwrap_or_else(|| {
-                    eprintln!("agape: --temperature needs a number (0.0–1.0)");
-                    exit(2);
-                });
+                config.temperature =
+                    args.get(i).and_then(|s| s.parse().ok()).unwrap_or_else(|| {
+                        eprintln!("agape: --temperature needs a number (0.0–1.0)");
+                        exit(2);
+                    });
             }
             "--prompt" | "-p" => {
                 i += 1;
@@ -121,7 +126,9 @@ fn cmd_run(args: &[String]) {
                     exit(2);
                 });
                 match kv.split_once('=') {
-                    Some((k, v)) => config.prompt_inputs.push((k.trim().to_string(), v.to_string())),
+                    Some((k, v)) => config
+                        .prompt_inputs
+                        .push((k.trim().to_string(), v.to_string())),
                     None => {
                         eprintln!("agape: --prompt expects name=value, got {kv:?}");
                         exit(2);
@@ -144,18 +151,31 @@ fn cmd_run(args: &[String]) {
         Ok(ledger) if json => print!("{}", ledger_json(&ledger)),
         Ok(ledger) => {
             for ev in &ledger.log {
-                let subj = ev.subject.as_deref().map(|s| format!(" {s}")).unwrap_or_default();
-                let payload = if ev.payload.is_empty() || ev.payload == "sent" || ev.payload == "delivered" {
-                    String::new()
-                } else {
-                    format!("  {}", ev.payload)
-                };
+                let subj = ev
+                    .subject
+                    .as_deref()
+                    .map(|s| format!(" {s}"))
+                    .unwrap_or_default();
+                let payload =
+                    if ev.payload.is_empty() || ev.payload == "sent" || ev.payload == "delivered" {
+                        String::new()
+                    } else {
+                        format!("  {}", ev.payload)
+                    };
                 println!("  [{:>3}] {:<20}{subj}{payload}", ev.tick, ev.etype);
             }
-            println!("\n{} events · chain-head {}", ledger.len(), &ledger.chain_head_hex()[..16]);
+            println!(
+                "\n{} events · chain-head {}",
+                ledger.len(),
+                &ledger.chain_head_hex()[..16]
+            );
         }
         Err(e) if json => {
-            print!("{{\"ok\":false,\"error\":{},\"class\":{}}}", json_str(&e.message), json_str(&e.class.to_string()));
+            print!(
+                "{{\"ok\":false,\"error\":{},\"class\":{}}}",
+                json_str(&e.message),
+                json_str(&e.class.to_string())
+            );
             exit(1);
         }
         Err(e) => {
@@ -175,13 +195,22 @@ fn ledger_json(ledger: &agape_rs::ledger::Ledger) -> String {
                 "{{\"tick\":{},\"etype\":{},\"subject\":{},\"payload\":{},\"corr\":{}}}",
                 e.tick,
                 json_str(&e.etype),
-                e.subject.as_deref().map(json_str).unwrap_or_else(|| "null".into()),
+                e.subject
+                    .as_deref()
+                    .map(json_str)
+                    .unwrap_or_else(|| "null".into()),
                 json_str(&e.payload),
-                e.corr.map(|c| c.to_string()).unwrap_or_else(|| "null".into())
+                e.corr
+                    .map(|c| c.to_string())
+                    .unwrap_or_else(|| "null".into())
             )
         })
         .collect();
-    format!("{{\"ok\":true,\"head\":{},\"events\":[{}]}}", json_str(&ledger.chain_head_hex()), events.join(","))
+    format!(
+        "{{\"ok\":true,\"head\":{},\"events\":[{}]}}",
+        json_str(&ledger.chain_head_hex()),
+        events.join(",")
+    )
 }
 
 /// Minimal JSON string escaping (no serde — agape-rs has zero deps).
@@ -206,7 +235,10 @@ fn json_str(s: &str) -> String {
 // ── init ─────────────────────────────────────────────────────────────────────
 
 fn cmd_init(args: &[String]) {
-    if matches!(args.first().map(String::as_str), Some("-h" | "--help" | "help")) {
+    if matches!(
+        args.first().map(String::as_str),
+        Some("-h" | "--help" | "help")
+    ) {
         eprintln!(
             "usage: agape init [name]\n\n\
              Scaffold an Agape project in ./[name], or in the current directory when name is omitted or '.'.\n\
@@ -216,12 +248,17 @@ fn cmd_init(args: &[String]) {
     }
     let name = args.first().map(String::as_str).unwrap_or("");
     let (root, label) = if name.is_empty() || name == "." {
-        (std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")), "current directory".to_string())
+        (
+            std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+            "current directory".to_string(),
+        )
     } else {
         (PathBuf::from(name), format!("./{name}"))
     };
     let proj = if name.is_empty() || name == "." {
-        root.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "agape-project".into())
+        root.file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| "agape-project".into())
     } else {
         name.to_string()
     };
@@ -258,7 +295,10 @@ fn write_new(path: &Path, contents: &str) {
 // ── studio ────────────────────────────────────────────────────────────────────
 
 fn cmd_studio(_args: &[String]) {
-    if matches!(_args.first().map(String::as_str), Some("-h" | "--help" | "help")) {
+    if matches!(
+        _args.first().map(String::as_str),
+        Some("-h" | "--help" | "help")
+    ) {
         eprintln!(
             "usage: agape studio\n\n\
              Open Agape Studio for the nearest parent directory containing agape.toml.\n\
@@ -306,14 +346,23 @@ fn cmd_studio(_args: &[String]) {
         }
     }
 
+    let agent_port = std::env::var("AGENT_PORT")
+        .ok()
+        .filter(|p| !p.trim().is_empty())
+        .unwrap_or_else(free_loopback_port);
+    let web_port = std::env::var("AGAPE_STUDIO_WEB_PORT")
+        .ok()
+        .filter(|p| !p.trim().is_empty())
+        .unwrap_or_else(free_loopback_port);
+
     let web_dist = home.join("web-dist");
     if web_dist.is_dir() {
         // Bundle mode: the agent-server serves the prebuilt web app — one process.
-        let port = std::env::var("AGENT_PORT").ok().filter(|p| !p.trim().is_empty()).unwrap_or_else(|| "8799".to_string());
-        let url = format!("http://localhost:{port}");
+        let url = format!("http://localhost:{agent_port}");
         let agent = Command::new("npx")
             .args(["tsx", "server.ts"])
             .current_dir(home.join("agent-server"))
+            .env("AGENT_PORT", &agent_port)
             .env("AGAPE_PROJECT", &project)
             .env("AGAPE_WEB_DIST", &web_dist)
             .env("AGAPE_BIN", &self_bin)
@@ -327,7 +376,9 @@ fn cmd_studio(_args: &[String]) {
             Err(_) => eprintln!(
                 "agape: could not start the studio — is Node installed?\n  \
                  (cd {h}/agent-server && AGAPE_PROJECT={p} AGAPE_WEB_DIST={d} npx tsx server.ts)",
-                h = home.display(), p = project.display(), d = web_dist.display()
+                h = home.display(),
+                p = project.display(),
+                d = web_dist.display()
             ),
         }
         return;
@@ -337,19 +388,32 @@ fn cmd_studio(_args: &[String]) {
     let agent = Command::new("npx")
         .args(["tsx", "server.ts"])
         .current_dir(home.join("agent-server"))
+        .env("AGENT_PORT", &agent_port)
         .env("AGAPE_PROJECT", &project)
         .env("AGAPE_BIN", &self_bin)
         .spawn();
     let web = Command::new("npm")
-        .args(["run", "dev"])
+        .args([
+            "run",
+            "dev",
+            "--",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            &web_port,
+            "--strictPort",
+        ])
         .current_dir(home.join("web"))
+        .env("AGENT_PORT", &agent_port)
         .env("AGAPE_PROJECT", &project)
         .spawn();
 
     match (agent, web) {
         (Ok(_), Ok(_)) => {
-            println!("  serving at http://localhost:5173  (Ctrl-C to stop)");
-            open_browser("http://localhost:5173");
+            let url = format!("http://localhost:{web_port}");
+            println!("  agent server: http://127.0.0.1:{agent_port}");
+            println!("  serving at {url}  (Ctrl-C to stop)");
+            open_browser(&url);
             let _ = std::io::Read::read(&mut std::io::stdin(), &mut [0u8; 1]);
         }
         _ => eprintln!(
@@ -360,6 +424,13 @@ fn cmd_studio(_args: &[String]) {
             p = project.display()
         ),
     }
+}
+
+fn free_loopback_port() -> String {
+    TcpListener::bind("127.0.0.1:0")
+        .and_then(|s| s.local_addr())
+        .map(|a| a.port().to_string())
+        .unwrap_or_else(|_| "0".to_string())
 }
 
 /// Locate the studio source: `$AGAPE_STUDIO_HOME`, else walk up from cwd looking
@@ -390,7 +461,11 @@ fn is_studio(p: &Path) -> bool {
 
 fn open_browser(url: &str) {
     // Best-effort across WSL/Linux/macOS/Windows; ignore failures.
-    for (bin, args) in [("explorer.exe", vec![url]), ("xdg-open", vec![url]), ("open", vec![url])] {
+    for (bin, args) in [
+        ("explorer.exe", vec![url]),
+        ("xdg-open", vec![url]),
+        ("open", vec![url]),
+    ] {
         if Command::new(bin).args(&args).spawn().is_ok() {
             return;
         }
@@ -424,8 +499,12 @@ fn find_manifest(start: &Path) -> Option<PathBuf> {
 /// [runtime] samples/temperature). A deliberately minimal reader, not a TOML lib.
 fn load_project_config(start: &Path) -> ProjectConfig {
     let mut c = ProjectConfig::default();
-    let Some(path) = find_manifest(start) else { return c };
-    let Ok(text) = std::fs::read_to_string(&path) else { return c };
+    let Some(path) = find_manifest(start) else {
+        return c;
+    };
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return c;
+    };
     let mut section = String::new();
     for line in text.lines() {
         let l = line.trim();
@@ -436,7 +515,9 @@ fn load_project_config(start: &Path) -> ProjectConfig {
             section = s.trim().to_string();
             continue;
         }
-        let Some((k, v)) = l.split_once('=') else { continue };
+        let Some((k, v)) = l.split_once('=') else {
+            continue;
+        };
         let (k, v) = (k.trim(), v.trim().trim_matches('"').trim());
         match (section.as_str(), k) {
             ("provider", "backend") => c.provider = Some(v.to_string()),
@@ -471,7 +552,9 @@ fn apply_project_config(cfg: &mut HarnessConfig, pc: &ProjectConfig) {
 
 fn cmd_build(_args: &[String]) {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let root = find_manifest(&cwd).and_then(|p| p.parent().map(Path::to_path_buf)).unwrap_or(cwd);
+    let root = find_manifest(&cwd)
+        .and_then(|p| p.parent().map(Path::to_path_buf))
+        .unwrap_or(cwd);
     let mut files = Vec::new();
     collect_ag(&root, &mut files);
     files.sort();
@@ -479,11 +562,20 @@ fn cmd_build(_args: &[String]) {
         eprintln!("agape build: no .ag files under {}", root.display());
         exit(1);
     }
-    println!("building {} ({} file{})", root.display(), files.len(), if files.len() == 1 { "" } else { "s" });
+    println!(
+        "building {} ({} file{})",
+        root.display(),
+        files.len(),
+        if files.len() == 1 { "" } else { "s" }
+    );
     let mut entries = Vec::new();
     let mut ok = 0;
     for f in &files {
-        let rel = f.strip_prefix(&root).unwrap_or(f).to_string_lossy().replace('\\', "/");
+        let rel = f
+            .strip_prefix(&root)
+            .unwrap_or(f)
+            .to_string_lossy()
+            .replace('\\', "/");
         match agape_rs::process(&read_or_die(&f.to_string_lossy())) {
             Ok(_) => {
                 ok += 1;
@@ -492,16 +584,30 @@ fn cmd_build(_args: &[String]) {
             }
             Err(e) => {
                 println!("  ✗ {rel} — {e}");
-                entries.push(format!("{{\"file\":{},\"ok\":false,\"error\":{},\"class\":{}}}", json_str(&rel), json_str(&e.message), json_str(&e.class.to_string())));
+                entries.push(format!(
+                    "{{\"file\":{},\"ok\":false,\"error\":{},\"class\":{}}}",
+                    json_str(&rel),
+                    json_str(&e.message),
+                    json_str(&e.class.to_string())
+                ));
             }
         }
     }
     let all_ok = ok == files.len();
     let out_dir = root.join(".agape");
     let _ = std::fs::create_dir_all(&out_dir);
-    let manifest = format!("{{\"ok\":{all_ok},\"passed\":{ok},\"total\":{},\"files\":[{}]}}", files.len(), entries.join(","));
+    let manifest = format!(
+        "{{\"ok\":{all_ok},\"passed\":{ok},\"total\":{},\"files\":[{}]}}",
+        files.len(),
+        entries.join(",")
+    );
     let _ = std::fs::write(out_dir.join("build.json"), &manifest);
-    println!("\n{}/{} ok · wrote {}", ok, files.len(), out_dir.join("build.json").display());
+    println!(
+        "\n{}/{} ok · wrote {}",
+        ok,
+        files.len(),
+        out_dir.join("build.json").display()
+    );
     if !all_ok {
         exit(1);
     }
@@ -509,7 +615,9 @@ fn cmd_build(_args: &[String]) {
 
 /// Collect `.ag` files under `dir`, skipping build/dep output directories.
 fn collect_ag(dir: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
     for e in entries.flatten() {
         let p = e.path();
         if p.is_dir() {
@@ -527,7 +635,10 @@ fn collect_ag(dir: &Path, out: &mut Vec<PathBuf>) {
 // ── configure ───────────────────────────────────────────────────────────────
 
 fn cmd_configure(args: &[String]) {
-    if matches!(args.first().map(String::as_str), Some("-h" | "--help" | "help")) {
+    if matches!(
+        args.first().map(String::as_str),
+        Some("-h" | "--help" | "help")
+    ) {
         eprintln!(
             "usage: agape configure [key value]\n\n\
              Without arguments, print project config from agape.toml.\n\
@@ -541,15 +652,33 @@ fn cmd_configure(args: &[String]) {
     if args.is_empty() {
         let pc = load_project_config(&cwd);
         println!("config ({}):", manifest.display());
-        println!("  provider     = {}", pc.provider.as_deref().unwrap_or("mock"));
-        println!("  model        = {}", pc.model.as_deref().unwrap_or("(provider default)"));
-        println!("  samples      = {}", pc.samples.map(|s| s.to_string()).unwrap_or_else(|| "5 (default)".into()));
-        println!("  temperature  = {}", pc.temperature.map(|t| t.to_string()).unwrap_or_else(|| "(provider default)".into()));
+        println!(
+            "  provider     = {}",
+            pc.provider.as_deref().unwrap_or("mock")
+        );
+        println!(
+            "  model        = {}",
+            pc.model.as_deref().unwrap_or("(provider default)")
+        );
+        println!(
+            "  samples      = {}",
+            pc.samples
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| "5 (default)".into())
+        );
+        println!(
+            "  temperature  = {}",
+            pc.temperature
+                .map(|t| t.to_string())
+                .unwrap_or_else(|| "(provider default)".into())
+        );
         println!("\nset with:  agape configure <provider|model|samples|temperature> <value>");
         return;
     }
     if args.len() < 2 {
-        eprintln!("usage: agape configure <key> <value>   (keys: provider model samples temperature)");
+        eprintln!(
+            "usage: agape configure <key> <value>   (keys: provider model samples temperature)"
+        );
         exit(2);
     }
     let (key, value) = (args[0].as_str(), args[1].as_str());
@@ -571,7 +700,11 @@ fn cmd_configure(args: &[String]) {
 /// Set `key = value` under `[section]` in a TOML file, creating the section/key
 /// if absent. Minimal, line-based — fine for the flat manifest we own.
 fn set_toml_value(path: &Path, section: &str, key: &str, value: &str, quote: bool) {
-    let rendered = if quote { format!("{key} = \"{value}\"") } else { format!("{key} = {value}") };
+    let rendered = if quote {
+        format!("{key} = \"{value}\"")
+    } else {
+        format!("{key} = {value}")
+    };
     let text = std::fs::read_to_string(path).unwrap_or_default();
     let mut lines: Vec<String> = text.lines().map(String::from).collect();
 
@@ -586,7 +719,10 @@ fn set_toml_value(path: &Path, section: &str, key: &str, value: &str, quote: boo
                 .map(|off| s + 1 + off)
                 .unwrap_or(lines.len());
             // Replace an existing `key =` line within the section, else insert.
-            let existing = lines[s + 1..end].iter().position(|l| l.trim_start().starts_with(&format!("{key} ")) || l.trim_start().starts_with(&format!("{key}=")));
+            let existing = lines[s + 1..end].iter().position(|l| {
+                l.trim_start().starts_with(&format!("{key} "))
+                    || l.trim_start().starts_with(&format!("{key}="))
+            });
             match existing {
                 Some(off) => lines[s + 1 + off] = rendered,
                 None => lines.insert(end, rendered),

@@ -17,9 +17,9 @@ pub mod conformance;
 pub mod diag;
 pub mod hash; // SHA-256 for the ledger hash-chain (§16.2)
 pub mod interp; // M4
+pub mod ledger;
 pub mod lexer; // M1
 pub mod parser; // M2
-pub mod ledger;
 
 use ast::Stmt;
 use diag::AgapeError;

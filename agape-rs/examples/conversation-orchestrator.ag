@@ -1,0 +1,94 @@
+// Agentic conversation orchestration in Agape.
+//
+// This mirrors the Studio repair: route the user's turn, assemble an observable
+// context packet, draft internally, certify the draft, then perform the exact
+// certified Reply. Raw model text is useful evidence; `certify` is the trust bridge.
+//
+// Run:
+//   cargo run --manifest-path agape-rs/Cargo.toml --bin agape -- run agape-rs/examples/conversation-orchestrator.ag --prompt turn="what is in this project so far?" --json
+
+prompt text turn;
+
+enum Route { Inspect, Plan, Build, Run, Review, Chat }
+enum AnswerQuality { Ready, NeedsRewrite }
+
+event UserTurn(text body);
+event Routed(text route);
+event ContextPacket(text route, text summary);
+event Drafted(text route, text answer);
+event ResponseReady(text route);
+
+reversible action Reply(text message);
+
+policy RouteGate { threshold 0.80  floor 0.10 }
+policy QualityGate { threshold 0.80  floor 0.10 }
+
+agent ConversationOperator grants { perform Reply } {
+  when (Prompt p about turn) {
+    emit UserTurn(p);
+
+    Credence<Route> route =
+      self <- f"Route this user turn as exactly one of Inspect, Plan, Build, Run, Review, or Chat. Prefer Inspect for project-summary questions. User turn: {p}";
+
+    endorse (route by RouteGate) {
+      Inspect: {
+        emit Routed("Inspect");
+        emit ContextPacket("Inspect", "Read manifest, README, Agape sources, declared agents, prompt sensors, memory rules, and available ledger evidence before answering.");
+
+        text draft =
+          self <- f"Draft a concise project-inspection answer from this context packet. Do not say you will retrieve anything; answer with findings now. User turn: {p}";
+        emit Drafted("Inspect", draft);
+
+        Credence<AnswerQuality> quality =
+          self <- f"Is this draft ready for the user? It must answer from supplied context and avoid placeholder progress language: {draft}";
+
+        certify draft by (quality by QualityGate) {
+          Ready: {
+            emit ResponseReady("Inspect");
+            perform Reply(draft);
+          }
+          NeedsRewrite: {
+            perform Reply("The inspection draft was not ready to show. I would rewrite it as concrete findings from manifest, source, memory, and ledger observations instead of progress narration.");
+          }
+        } abstain {
+          perform Reply("I need stronger evidence before presenting an inspection answer.");
+        }
+      }
+
+      Plan: {
+        emit Routed("Plan");
+        emit ContextPacket("Plan", "Collect goal, current files, relevant ledger evidence, and memory rules; return a short executable sequence.");
+        perform Reply("I routed this as Plan. I would answer with a short sequence of concrete steps, the first action, and any human decision that blocks progress.");
+      }
+
+      Build: {
+        emit Routed("Build");
+        emit ContextPacket("Build", "Find the smallest safe change, likely files, required tests, and whether this turn actually edited code.");
+        perform Reply("I routed this as Build. I would name the smallest safe code change, the files likely involved, and the test that should prove it, without claiming an edit happened unless it did.");
+      }
+
+      Run: {
+        emit Routed("Run");
+        emit ContextPacket("Run", "Select the source file and prompt values, execute it, then inspect the ledger for Prompt, Credence, Decided, and Reply events.");
+        perform Reply("I routed this as Run. I would execute the relevant Agape program and report the ledger events that confirm or refute the behavior.");
+      }
+
+      Review: {
+        emit Routed("Review");
+        emit ContextPacket("Review", "Check authority grants, endorse gates, tainted model outputs, memory use, provider configuration, and missing tests.");
+        perform Reply("I routed this as Review. I would lead with bugs or risks, especially places where raw model text could be mistaken for verified work.");
+      }
+
+      Chat: {
+        emit Routed("Chat");
+        emit ContextPacket("Chat", "Use thread history and project context, then answer naturally without pretending to do unavailable tool work.");
+        perform Reply("I routed this as Chat. I would answer directly from the current thread context and ask only for genuinely missing information.");
+      }
+    } abstain {
+      perform Reply("I could not route this turn confidently, so I need one clarification before choosing Inspect, Plan, Build, Run, Review, or Chat.");
+    }
+  }
+}
+
+spawn ConversationOperator bot;
+awake bot;

@@ -99,7 +99,10 @@ pub fn parse_test(path: &Path) -> Option<TestSpec> {
     }
 
     let get = |key: &str| -> Option<String> {
-        header.iter().find(|(k, _)| k == key).map(|(_, v)| v.clone())
+        header
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.clone())
     };
 
     let expect = match get("expect")?.as_str() {
@@ -131,7 +134,12 @@ pub fn parse_test(path: &Path) -> Option<TestSpec> {
         manifest: get("manifest"),
         replay: get("replay"),
         modules: get("modules")
-            .map(|s| s.split(';').map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect())
+            .map(|s| {
+                s.split(';')
+                    .map(|x| x.trim().to_string())
+                    .filter(|x| !x.is_empty())
+                    .collect()
+            })
             .unwrap_or_default(),
         packages: get("packages")
             .map(|s| {
@@ -155,7 +163,9 @@ pub fn collect_tests(dir: &Path) -> Vec<TestSpec> {
 }
 
 fn collect_into(dir: &Path, out: &mut Vec<TestSpec>) {
-    let Ok(entries) = fs::read_dir(dir) else { return };
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
     for entry in entries.flatten() {
         let p = entry.path();
         if p.is_dir() {
@@ -208,7 +218,10 @@ fn harness_config(test: &TestSpec) -> Result<HarnessConfig, crate::diag::AgapeEr
             c.provider = ProviderMode::Empty;
         } else if p == "schema_violation" {
             c.provider = ProviderMode::SchemaViolation;
-        } else if let Some(inner) = p.strip_prefix("credence(").and_then(|x| x.strip_suffix(')')) {
+        } else if let Some(inner) = p
+            .strip_prefix("credence(")
+            .and_then(|x| x.strip_suffix(')'))
+        {
             // `credence(true=0.55, false=0.45)` — a scripted distribution.
             let dist = inner
                 .split(',')
@@ -240,13 +253,18 @@ fn harness_config(test: &TestSpec) -> Result<HarnessConfig, crate::diag::AgapeEr
                 let key = k.trim();
                 let val = val.trim();
                 match key {
-                    "memory.internalize_on_receive" if val == "true" => c.internalize_on_receive = true,
+                    "memory.internalize_on_receive" if val == "true" => {
+                        c.internalize_on_receive = true
+                    }
                     "provider.exposes_logprobs" => provider_exposes_logprobs = Some(val == "true"),
                     "provider.temperature" => provider_temperature = val.parse().ok(),
-                    "provider.fallback_temperature" => provider_fallback_temperature = val.parse().ok(),
+                    "provider.fallback_temperature" => {
+                        provider_fallback_temperature = val.parse().ok()
+                    }
                     "config.require_bindings" if val == "true" => strict_bindings = true,
                     _ if key.starts_with("identity.") => {
-                        configured_principals.insert(key.trim_start_matches("identity.").to_string());
+                        configured_principals
+                            .insert(key.trim_start_matches("identity.").to_string());
                     }
                     _ if key.starts_with("tools.") => {
                         configured_tools.insert(key.trim_start_matches("tools.").to_string());
@@ -268,7 +286,12 @@ fn harness_config(test: &TestSpec) -> Result<HarnessConfig, crate::diag::AgapeEr
             ));
         }
         if strict_bindings {
-            check_config_bindings(test, &configured_principals, &configured_tools, &configured_prompts)?;
+            check_config_bindings(
+                test,
+                &configured_principals,
+                &configured_tools,
+                &configured_prompts,
+            )?;
         }
     }
     Ok(c)
@@ -286,7 +309,10 @@ fn check_config_bindings(
             if let Some(rest) = line.strip_prefix("principal ") {
                 let name = rest.trim_end_matches(';').trim();
                 if !principals.contains(name) {
-                    return Err(crate::diag::AgapeError::new(ErrorClass::Config, format!("principal `{name}` has no identity binding (§17)")));
+                    return Err(crate::diag::AgapeError::new(
+                        ErrorClass::Config,
+                        format!("principal `{name}` has no identity binding (§17)"),
+                    ));
                 }
             }
             if let Some(rest) = line.strip_prefix("prompt ") {
@@ -294,7 +320,10 @@ fn check_config_bindings(
                 let _ty = parts.next();
                 if let Some(name) = parts.next() {
                     if !prompts.contains(name) {
-                        return Err(crate::diag::AgapeError::new(ErrorClass::Config, format!("prompt `{name}` has no manifest binding (§17)")));
+                        return Err(crate::diag::AgapeError::new(
+                            ErrorClass::Config,
+                            format!("prompt `{name}` has no manifest binding (§17)"),
+                        ));
                     }
                 }
             }
@@ -303,7 +332,10 @@ fn check_config_bindings(
                 if let Some(before_params) = decl.split('(').next() {
                     let name = before_params.split_whitespace().last().unwrap_or("");
                     if !tools.contains(name) {
-                        return Err(crate::diag::AgapeError::new(ErrorClass::Config, format!("tool `{name}` has no manifest binding (§17)")));
+                        return Err(crate::diag::AgapeError::new(
+                            ErrorClass::Config,
+                            format!("tool `{name}` has no manifest binding (§17)"),
+                        ));
                     }
                 }
             }
@@ -314,7 +346,10 @@ fn check_config_bindings(
 
 /// Run a test through the pipeline: the body is the root module; any `modules:`
 /// companions in the sibling `<id>.d/` directory are compiled together (§19).
-fn run_test(test: &TestSpec, config: &crate::HarnessConfig) -> Result<Ledger, crate::diag::AgapeError> {
+fn run_test(
+    test: &TestSpec,
+    config: &crate::HarnessConfig,
+) -> Result<Ledger, crate::diag::AgapeError> {
     if test.modules.is_empty() && test.packages.is_empty() {
         return crate::process_with_config(&test.body, config);
     }
@@ -324,15 +359,24 @@ fn run_test(test: &TestSpec, config: &crate::HarnessConfig) -> Result<Ledger, cr
     for fname in &test.modules {
         let p = dir.join(fname);
         let src = fs::read_to_string(&p).map_err(|_| {
-            crate::diag::AgapeError::new(ErrorClass::Module, format!("companion module not found: {}", p.display()))
+            crate::diag::AgapeError::new(
+                ErrorClass::Module,
+                format!("companion module not found: {}", p.display()),
+            )
         })?;
-        let stem = p.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+        let stem = p
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_default();
         modules.push(crate::parse_module(&src, &stem)?);
     }
     for (name, rel) in &test.packages {
         let p = dir.join(rel);
         let src = fs::read_to_string(&p).map_err(|_| {
-            crate::diag::AgapeError::new(ErrorClass::Module, format!("package root not found: {}", p.display()))
+            crate::diag::AgapeError::new(
+                ErrorClass::Module,
+                format!("package root not found: {}", p.display()),
+            )
         })?;
         modules.push(crate::parse_module(&src, name)?);
     }
@@ -355,7 +399,10 @@ pub fn score(test: &TestSpec, v: Version) -> Status {
             return match test.expect {
                 Expect::Reject => match test.error {
                     Some(want) if want == e.class => Status::Pass,
-                    Some(want) => Status::Fail(format!("rejected with wrong class: got {}, want {}", e.class, want)),
+                    Some(want) => Status::Fail(format!(
+                        "rejected with wrong class: got {}, want {}",
+                        e.class, want
+                    )),
                     None => Status::Fail("reject test missing an `error:` class".into()),
                 },
                 _ => Status::Fail(format!("configuration failed ({})", e.class)),
@@ -369,7 +416,13 @@ pub fn score(test: &TestSpec, v: Version) -> Status {
                 if test.replay.as_deref() == Some("chain_head_equal") {
                     match run_test(test, &config) {
                         Ok(replayed) if replayed.chain_head_hex() == ledger.chain_head_hex() => {}
-                        Ok(replayed) => return Status::Fail(format!("replay chain-head mismatch: {} != {}", replayed.chain_head_hex(), ledger.chain_head_hex())),
+                        Ok(replayed) => {
+                            return Status::Fail(format!(
+                                "replay chain-head mismatch: {} != {}",
+                                replayed.chain_head_hex(),
+                                ledger.chain_head_hex()
+                            ))
+                        }
                         Err(e) => return Status::Fail(format!("replay rejected ({})", e.class)),
                     }
                 }
@@ -440,33 +493,51 @@ fn parse_token(s: &str) -> Option<Token> {
     }
     if let Some(inner) = s.strip_prefix("pair(").and_then(|x| x.strip_suffix(')')) {
         let (op, subj) = inner.split_once('@')?;
-        return Some(Token::Pair { op: op.trim().to_string(), subj: subj.trim().to_string() });
+        return Some(Token::Pair {
+            op: op.trim().to_string(),
+            subj: subj.trim().to_string(),
+        });
     }
     if let Some(inner) = s.strip_prefix("single(").and_then(|x| x.strip_suffix(')')) {
         // `single(op@subj)` — one synchronous event of `op` on `subj`.
         let (op, subj) = inner.split_once('@')?;
-        return Some(Token::Single { etype: op.trim().to_string(), subj: Some(subj.trim().to_string()) });
+        return Some(Token::Single {
+            etype: op.trim().to_string(),
+            subj: Some(subj.trim().to_string()),
+        });
     }
     if let Some(idx) = s.find('(') {
         let etype = s[..idx].trim().to_string();
         let subj = s[idx + 1..].trim_end_matches(')').trim().to_string();
-        return Some(Token::Single { etype, subj: Some(subj) });
+        return Some(Token::Single {
+            etype,
+            subj: Some(subj),
+        });
     }
-    Some(Token::Single { etype: s.to_string(), subj: None })
+    Some(Token::Single {
+        etype: s.to_string(),
+        subj: None,
+    })
 }
 
 fn parse_tokens(s: &str) -> Vec<Token> {
     s.split(';').filter_map(parse_token).collect()
 }
 
-fn event_matches(ev: &crate::ledger::Event, etype: &str, subj: &Option<String>, ledger: &Ledger) -> bool {
+fn event_matches(
+    ev: &crate::ledger::Event,
+    etype: &str,
+    subj: &Option<String>,
+    ledger: &Ledger,
+) -> bool {
     let subtype = is_subtype(&ev.etype, etype)
         // A user `event …: Error` leaf (§19.5) matches the `Error` root.
         || (etype == "Error" && ledger.error_subtypes.contains(&ev.etype));
-    subtype && match subj {
-        Some(want) => ev.subject.as_deref() == Some(want.as_str()),
-        None => true,
-    }
+    subtype
+        && match subj {
+            Some(want) => ev.subject.as_deref() == Some(want.as_str()),
+            None => true,
+        }
 }
 
 /// The (started, resolved) event etypes for a `pair(op@…)` op.
@@ -480,12 +551,21 @@ fn pair_etypes(op: &str) -> (String, String) {
 
 fn token_present(ledger: &Ledger, t: &Token) -> bool {
     match t {
-        Token::Single { etype, subj } => ledger.log.iter().any(|ev| event_matches(ev, etype, subj, ledger)),
+        Token::Single { etype, subj } => ledger
+            .log
+            .iter()
+            .any(|ev| event_matches(ev, etype, subj, ledger)),
         Token::Pair { op, subj } => {
             let (started, resolved) = pair_etypes(op);
             let s = Some(subj.clone());
-            ledger.log.iter().any(|ev| event_matches(ev, &started, &s, ledger))
-                && ledger.log.iter().any(|ev| event_matches(ev, &resolved, &s, ledger))
+            ledger
+                .log
+                .iter()
+                .any(|ev| event_matches(ev, &started, &s, ledger))
+                && ledger
+                    .log
+                    .iter()
+                    .any(|ev| event_matches(ev, &resolved, &s, ledger))
         }
     }
 }
@@ -501,7 +581,10 @@ fn matches_ordered(ledger: &Ledger, tokens: &[Token]) -> bool {
             }
             continue;
         };
-        match ledger.log[cursor..].iter().position(|ev| event_matches(ev, etype, subj, ledger)) {
+        match ledger.log[cursor..]
+            .iter()
+            .position(|ev| event_matches(ev, etype, subj, ledger))
+        {
             Some(off) => cursor += off + 1,
             None => return false,
         }
@@ -524,27 +607,39 @@ fn check_assertions(test: &TestSpec, ledger: &Ledger) -> Result<(), String> {
     if let Some(s) = &test.ledger {
         let toks = parse_tokens(s);
         if !matches_exact(ledger, &toks) {
-            return Err(format!("ledger assertion failed: expected exact [{s}], got [{}]", ledger.dump().replace('\n', ", ")));
+            return Err(format!(
+                "ledger assertion failed: expected exact [{s}], got [{}]",
+                ledger.dump().replace('\n', ", ")
+            ));
         }
     }
     // `order:` — the listed events must appear in this relative order (a subsequence).
     if let Some(s) = &test.order {
         let toks = parse_tokens(s);
         if !matches_ordered(ledger, &toks) {
-            return Err(format!("order assertion failed: expected [{s}], got [{}]", ledger.dump().replace('\n', ", ")));
+            return Err(format!(
+                "order assertion failed: expected [{s}], got [{}]",
+                ledger.dump().replace('\n', ", ")
+            ));
         }
     }
     if let Some(s) = &test.contains {
         for t in parse_tokens(s) {
             if !token_present(ledger, &t) {
-                return Err(format!("contains assertion failed: missing {t:?} in [{}]", ledger.dump().replace('\n', ", ")));
+                return Err(format!(
+                    "contains assertion failed: missing {t:?} in [{}]",
+                    ledger.dump().replace('\n', ", ")
+                ));
             }
         }
     }
     if let Some(s) = &test.absent {
         for t in parse_tokens(s) {
             if token_present(ledger, &t) {
-                return Err(format!("absent assertion failed: present {t:?} in [{}]", ledger.dump().replace('\n', ", ")));
+                return Err(format!(
+                    "absent assertion failed: present {t:?} in [{}]",
+                    ledger.dump().replace('\n', ", ")
+                ));
             }
         }
     }
@@ -561,7 +656,10 @@ pub fn run(dir: &Path, v: Version) -> Report {
             section: t.section,
         })
         .collect();
-    Report { version: v, outcomes }
+    Report {
+        version: v,
+        outcomes,
+    }
 }
 
 #[cfg(test)]
@@ -593,13 +691,21 @@ mod tests {
 
     #[test]
     fn accept_body_declared_reject_fails() {
-        let status = score(&spec("false_reject", Expect::Reject, "say(\"ok\");"), (1, 0));
+        let status = score(
+            &spec("false_reject", Expect::Reject, "say(\"ok\");"),
+            (1, 0),
+        );
         assert!(matches!(status, Status::Fail(ref msg) if msg == "expected reject, but accepted"));
     }
 
     #[test]
     fn reject_body_declared_accept_fails() {
-        let status = score(&spec("false_accept", Expect::Accept, "int a = 1\nint b = 2;"), (1, 0));
-        assert!(matches!(status, Status::Fail(ref msg) if msg.contains("expected accept, got reject")));
+        let status = score(
+            &spec("false_accept", Expect::Accept, "int a = 1\nint b = 2;"),
+            (1, 0),
+        );
+        assert!(
+            matches!(status, Status::Fail(ref msg) if msg.contains("expected accept, got reject"))
+        );
     }
 }

@@ -2,9 +2,9 @@
 //!
 //! The shape the parser produces. It covers the whole v1.0 surface, while the
 //! trusted kernel remains small: declared seams (cognition `<-`, tool calls,
-//! identity `verify … by p` / `attest`), `Credence<E>`, `Decision<E>`, recorded
-//! gates, taint-bearing memory/query values, grants, consequential sinks, and
-//! ledgered events. Higher-level constructs (`decide`, modules, interfaces,
+//! identity `verify … by p` / `attest`), `Credence<E>`, `Decision<E>`,
+//! `Endorsement<E>`, recorded gates, taint-bearing memory/query values, grants,
+//! consequential sinks, and ledgered events. Higher-level constructs (`decide`, modules, interfaces,
 //! generics, query sugar) must either erase statically or reduce to this kernel.
 
 /// A type annotation. `event<T>` marks ledger presence; `Credence<E>` is a graded
@@ -30,6 +30,8 @@ pub enum Type {
     Credence(Box<Type>),
     /// `Decision<E>` — a gate's committed outcome over enum `E` (§3, settled).
     Decision(Box<Type>),
+    /// `Endorsement<E>` — a ledger-recorded `Decision<E>` (§13, settled + authorized).
+    Endorsement(Box<Type>),
     /// `mem` — a handle into the agent's private memory substrate (§10). Agentic:
     /// values recalled through it are tainted, like a send reply.
     Mem,
@@ -98,16 +100,32 @@ pub enum Expr {
     Name(String),
     /// `self` — an agent's reference to itself.
     SelfRef,
-    Binary { op: BinOp, left: Box<Expr>, right: Box<Expr> },
+    Binary {
+        op: BinOp,
+        left: Box<Expr>,
+        right: Box<Expr>,
+    },
     /// Logical negation `!e`.
     Not(Box<Expr>),
-    Call { func: Box<Expr>, args: Vec<Expr> },
-    Member { obj: Box<Expr>, prop: String },
-    Index { obj: Box<Expr>, index: Box<Expr> },
+    Call {
+        func: Box<Expr>,
+        args: Vec<Expr>,
+    },
+    Member {
+        obj: Box<Expr>,
+        prop: String,
+    },
+    Index {
+        obj: Box<Expr>,
+        index: Box<Expr>,
+    },
     /// `[a, b, c]` — array literal.
     Array(Vec<Expr>),
     /// `Name { field: v, ... }` — a struct literal (all fields required, §3).
-    StructLit { name: String, fields: Vec<(String, Expr)> },
+    StructLit {
+        name: String,
+        fields: Vec<(String, Expr)>,
+    },
     /// `dest <- payload [expires N] [retry…]` — the one send operator (§6).
     Send {
         dest: Box<Expr>,
@@ -117,22 +135,43 @@ pub enum Expr {
     },
     /// `mem -> query` — recall from a private-memory handle (§10). Agentic: the result
     /// is tainted like a send reply; re-gate before a consequential sink.
-    Recall { mem: Box<Expr>, query: Box<Expr> },
+    Recall {
+        mem: Box<Expr>,
+        query: Box<Expr>,
+    },
     /// `source |> func` — concurrent fan-out over a collection (§12).
-    Pipe { source: Box<Expr>, func: Box<Expr> },
+    Pipe {
+        source: Box<Expr>,
+        func: Box<Expr>,
+    },
     /// `decide(e, rule)` — the somatic gate-collapse `P → U` (§13). Rule mandatory.
-    Decide { expr: Box<Expr>, rule: GateBasis },
+    Decide {
+        expr: Box<Expr>,
+        rule: GateBasis,
+    },
     /// `e by rule` — collapse a `Credence<E>` to a `Decision<E>` (§13): settled,
     /// off-ledger, in hand, *unendorsed* (not recorded). Rule mandatory.
-    Collapse { expr: Box<Expr>, rule: GateBasis },
+    Collapse {
+        expr: Box<Expr>,
+        rule: GateBasis,
+    },
     /// `endorse(e by rule)` — the recorded gate in expression position (§13):
-    /// collapse + record, yielding an *endorsed* `Decision<E>`.
-    EndorseExpr { arg: Box<Expr>, rule: GateBasis },
+    /// collapse + record, yielding an `Endorsement<E>`.
+    EndorseExpr {
+        arg: Box<Expr>,
+        rule: GateBasis,
+    },
     /// `verify gatearg [by basis]` — the recorded gate (§13): `decide` + emit.
     /// `by` absent ⇒ default `Rule`; `by` a `Principal` ⇒ identity-seam attest.
-    Verify { arg: Box<Expr>, by: Option<GateBasis> },
+    Verify {
+        arg: Box<Expr>,
+        by: Option<GateBasis>,
+    },
     /// `quorum(k of c1, …, cn)` — graded "at least k of n commit" (§12).
-    Quorum { k: i64, judges: Vec<Expr> },
+    Quorum {
+        k: i64,
+        judges: Vec<Expr>,
+    },
     /// A query used in expression position (yields its result set; lands nothing).
     Query(Box<Query>),
 }
@@ -141,11 +180,24 @@ pub enum Expr {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Query {
     /// `find BINDING [, origin(BINDING)] where { S P O; ... }` — graph query.
-    Find { binding: String, origin: Option<String>, pattern: Vec<(String, String, String)> },
+    Find {
+        binding: String,
+        origin: Option<String>,
+        pattern: Vec<(String, String, String)>,
+    },
     /// `select COLS from SOURCE where { col op value, ... }` — fact/ledger scan.
-    Select { cols: Vec<String>, source: String, star: bool, conds: Vec<Cond> },
+    Select {
+        cols: Vec<String>,
+        source: String,
+        star: bool,
+        conds: Vec<Cond>,
+    },
     /// `match { BINDING: QUERY } > THRESHOLD` — vector store; a gate (§10).
-    Match { binding: String, query: Box<Expr>, threshold: f64 },
+    Match {
+        binding: String,
+        query: Box<Expr>,
+        threshold: f64,
+    },
 }
 
 /// A `where`-clause condition: `col op value` or `col : value` (op == ":").
@@ -208,7 +260,20 @@ pub enum RetryTail {
     /// `retry(N) { body }` — bounded; a handler runs before each re-attempt.
     Bounded { count: i64, body: Vec<Stmt> },
     /// `retry(TYPE x: PRED) { body }` — unbounded predicate form (Turing complete).
-    Predicate { ty: Type, bind: String, pred: Expr, body: Vec<Stmt> },
+    Predicate {
+        ty: Type,
+        bind: String,
+        pred: Expr,
+        body: Vec<Stmt>,
+    },
+}
+
+/// The verifier accepted by `certify`: either an inline recorded gate
+/// (`artifact by (c by R)`) or an `Endorsement<E>` value.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Certifier {
+    Gate { arg: Expr, rule: GateBasis },
+    Endorsement(Expr),
 }
 
 /// A tool's effect class (§6b): `read` observes the world (its result carries its
@@ -224,9 +289,20 @@ pub enum ToolEffect {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Stmt {
     /// `TYPE NAME [= EXPR];`
-    VarDecl { ty: Type, name: String, expr: Option<Expr> },
+    VarDecl {
+        ty: Type,
+        name: String,
+        expr: Option<Expr>,
+    },
     /// `[sync] RET NAME[<typarams>](params) { body }`.
-    FnDecl { is_sync: bool, ret: Type, name: String, typarams: Vec<String>, params: Vec<Param>, body: Vec<Stmt> },
+    FnDecl {
+        is_sync: bool,
+        ret: Type,
+        name: String,
+        typarams: Vec<String>,
+        params: Vec<Param>,
+        body: Vec<Stmt>,
+    },
     /// `[pub] agent NAME [(params)] [: Iface, ...] [grants {...}] { body }`.
     AgentDecl {
         name: String,
@@ -240,23 +316,45 @@ pub enum Stmt {
         body: Vec<Stmt>,
     },
     /// `[pub] struct NAME[<typarams>] { field, ... }`.
-    StructDecl { name: String, typarams: Vec<String>, fields: Vec<Field> },
+    StructDecl {
+        name: String,
+        typarams: Vec<String>,
+        fields: Vec<Field>,
+    },
     /// `enum NAME { A, B, ... }` — a closed variant set (no payloads in v1.0).
     EnumDecl { name: String, variants: Vec<String> },
     /// `event NAME(field, ...) [: Super];` — a custom ledger-event type with typed
     /// payload; `error_super` ⇒ a leaf under the built-in `Error` root (§19.5).
     /// `super_name` carries any declared supertype spelling (for the non-`Error`
     /// rejection); `None` if no supertype.
-    EventDecl { name: String, fields: Vec<Field>, error_super: bool, super_name: Option<String> },
+    EventDecl {
+        name: String,
+        fields: Vec<Field>,
+        error_super: bool,
+        super_name: Option<String>,
+    },
     /// `interface NAME { (when EVENT decide RESULT | requires CAP);* }` (§19.5).
-    InterfaceDecl { name: String, members: Vec<IfaceMember> },
+    InterfaceDecl {
+        name: String,
+        members: Vec<IfaceMember>,
+    },
     /// `[reversible] action NAME(field, ...);` — a performative event type (§3, §13);
     /// `perform`ing it is a consequential act needing the `perform NAME` power and a
     /// settled value. `reversible` marks a low-stakes sink (§20).
-    ActionDecl { name: String, fields: Vec<Field>, reversible: bool },
+    ActionDecl {
+        name: String,
+        fields: Vec<Field>,
+        reversible: bool,
+    },
     /// `[reversible] read|write tool RET NAME(params);` — a tool-seam capability (§6b).
     /// The effect class is mandatory; `reversible` marks a low-stakes write sink (§20).
-    ToolDecl { name: String, params: Vec<Param>, ret: Option<Type>, effect: ToolEffect, reversible: bool },
+    ToolDecl {
+        name: String,
+        params: Vec<Param>,
+        ret: Option<Type>,
+        effect: ToolEffect,
+        reversible: bool,
+    },
     /// `conformal α;` — a file-level default conformal guarantee (§20).
     ConformalDecl(f64),
     /// `instruction STRING;` — a compile-time system prompt: global at the top level, or
@@ -273,7 +371,11 @@ pub enum Stmt {
     /// `extend PARENT(args);` — composition/inheritance (first stmt of an agent).
     Extend { parent: String, args: Vec<Expr> },
     /// `spawn TYPE name (args)?;` — allocate + construct (args bound here, §5).
-    Spawn { agent_type: String, name: String, args: Vec<Expr> },
+    Spawn {
+        agent_type: String,
+        name: String,
+        args: Vec<Expr>,
+    },
     /// `awake NAME [(args)];`
     Awake { name: String, args: Vec<Expr> },
     /// `sleep NAME;`
@@ -286,13 +388,34 @@ pub enum Stmt {
     Emit { event_type: String, args: Vec<Expr> },
     /// `endorse (arg by rule) { arms } [abstain { ... }]` — the recorded gate (§13):
     /// collapse the `Credence`, append `Decided`/`Abstained`, dispatch the arms.
-    Endorse { arg: Expr, rule: GateBasis, arms: Vec<(String, Vec<Stmt>)>, abstain: Option<Vec<Stmt>> },
+    Endorse {
+        arg: Expr,
+        rule: GateBasis,
+        arms: Vec<(String, Vec<Stmt>)>,
+        abstain: Option<Vec<Stmt>>,
+    },
+    /// `certify artifact by (arg by rule)` or `certify artifact by endorsement` —
+    /// artifact endorsement: a recorded gate/endorsement whose positive arm settles
+    /// the exact artifact.
+    Certify {
+        artifact: Expr,
+        certifier: Certifier,
+        arms: Vec<(String, Vec<Stmt>)>,
+        abstain: Option<Vec<Stmt>>,
+    },
     /// `perform ActionType(arg, ...);` — a consequential act (§13).
-    Perform { action_type: String, args: Vec<Expr> },
+    Perform {
+        action_type: String,
+        args: Vec<Expr>,
+    },
     /// `attest e by PRINCIPAL (arms | ;)` — the recorded identity-seam gate (§13):
     /// reach the principal, record an `Attestation`/`FailedAttestation`. `by` is an
     /// expression so `by "alice"` parses (the checker rejects text→Principal, §3).
-    Attest { arg: Expr, by: Expr, arms: Vec<(String, Vec<Stmt>)> },
+    Attest {
+        arg: Expr,
+        by: Expr,
+        arms: Vec<(String, Vec<Stmt>)>,
+    },
     /// `policy NAME { threshold θ  margin δ  floor m  conformal α  readiness N  fallback p }`
     /// — a named decision-policy bundle (§13), source-level, not config.
     PolicyDecl {
@@ -312,18 +435,38 @@ pub enum Stmt {
     /// `return [EXPR];`
     Return(Option<Expr>),
     /// `if (cond) { then } [else { else }]`
-    If { cond: Expr, then_body: Vec<Stmt>, else_body: Vec<Stmt> },
+    If {
+        cond: Expr,
+        then_body: Vec<Stmt>,
+        else_body: Vec<Stmt>,
+    },
     /// `TARGET = EXPR;`
     Assign { target: Expr, expr: Expr },
     /// `on awake { ... }` / `on sleep { ... }` / `on crash { ... }`
     On { event: String, body: Vec<Stmt> },
     /// `when (Type binder? [about subj]) [if (guard)] { ... }` — a prospective,
     /// typed subscription (§7). `binder` evaluates to the matched event's payload.
-    When { ty: Type, binder: Option<String>, about: Option<Expr>, guard: Option<Expr>, body: Vec<Stmt> },
+    When {
+        ty: Type,
+        binder: Option<String>,
+        about: Option<Expr>,
+        guard: Option<Expr>,
+        body: Vec<Stmt>,
+    },
     /// `catch [EventType][(SUBJECT)] as BINDING { ... }`
-    Catch { event_type: Option<String>, subject: Option<Expr>, binding: String, body: Vec<Stmt> },
+    Catch {
+        event_type: Option<String>,
+        subject: Option<Expr>,
+        binding: String,
+        body: Vec<Stmt>,
+    },
     /// `case (EXPR) as BINDING { Variant: {..} ... [default: {..}] }`.
-    Case { expr: Expr, binding: String, arms: Vec<(String, Vec<Stmt>)>, default: Option<Vec<Stmt>> },
+    Case {
+        expr: Expr,
+        binding: String,
+        arms: Vec<(String, Vec<Stmt>)>,
+        default: Option<Vec<Stmt>>,
+    },
     /// `retry(N) { ... }` / `retry(TYPE x: PRED) { ... }` — standalone block form.
     Retry(RetryTail),
     /// `independent a, b, c;` / `dependent a, b;` — fusion dependence (§12).

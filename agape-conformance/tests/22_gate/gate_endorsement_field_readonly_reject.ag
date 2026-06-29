@@ -1,0 +1,15 @@
+//! id:        gate_endorsement_field_readonly_reject
+//! section:   22_gate
+//! expect:    reject
+//! error:     TypeError
+//! spec:      §20.4 (Endorsement provenance fields are read-only)
+//! ---
+enum R { Yes, No }
+agent Desk {
+  on awake {
+    Credence<R> c = self <- "yes?";
+    Endorsement<R> e = endorse(c by confidence 0.8);
+    e.margin = 0.0;
+  }
+}
+spawn Desk d; awake d;

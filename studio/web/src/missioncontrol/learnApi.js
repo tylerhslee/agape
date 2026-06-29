@@ -1,5 +1,5 @@
 // The studio's window into the builder agent's runtime. Reads (inspect/recall) are
-// FREE — they hit only the spine + local memory, no live provider. ingest/step cost API
+// FREE — they hit only the ledger + local memory, no live provider. ingest/step cost API
 // calls. See studio/agent-server/RUNTIME.md.
 
 async function get(path) {

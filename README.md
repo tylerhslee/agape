@@ -192,7 +192,7 @@ With the deterministic mock provider, the ledger shows the whole chain:
 [  3] Prompt       request  my card was charged twice and I need help before rent is due
 [  5] Sent         outcome  classify this support request: ...
 [  7] Resolved     outcome  Refund 0.90      ← typed model testimony
-[  8] Decided      outcome  Refund           ← endorsed by the Support policy
+[  8] Endorsed     outcome  Refund           ← endorsed by the Support policy
 [  9] IssueCredit  desk     {amount: 25, reason: duplicate charge}
                                               ← money moves only after the gate
 [ 10] Reply        desk     I've issued a $25 credit and recorded the decision.
@@ -205,7 +205,7 @@ is the bar the judgment must clear; below it the gate **abstains** and only the
 safe reply path runs. The model can be wrong — but what it is allowed to *do*
 when it is wrong is fixed in advance, and on the record.
 
-## The v1.0.2 surface
+## The Alpha Surface
 
 Agape is a real language, not a toy DSL. Beyond the four-stage core:
 
@@ -220,7 +220,7 @@ the infrastructure boundary: a cloud control plane, service fabric, or OS/runtim
 process, network, storage, and tool effects are mediated by Agape grants, gates, and ledger
 replay.
 
-A single self-contained program touching all of this is **[`design/v1.0.0-showcase.ag`](design/v1.0.0-showcase.ag)**; the full reference is **[`SPEC.md`](SPEC.md)**.
+A single self-contained program touching all of this is **[`design/v1.0.0-showcase.ag`](design/v1.0.0-showcase.ag)**; the full alpha reference is **[`SPEC.md`](SPEC.md)**.
 
 ## Who it's for
 
@@ -233,7 +233,7 @@ Agape is assembled from established ideas, not invented from nothing: treating m
 ## Project
 
 - [`SPEC.md`](SPEC.md) — the language specification (the authoritative reference).
-- [`design/v1.0.0-showcase.ag`](design/v1.0.0-showcase.ag) — one annotated program over the whole v1.0.2 surface.
+- [`design/v1.0.0-showcase.ag`](design/v1.0.0-showcase.ag) — one annotated program over the alpha surface.
 - [`agape-conformance/`](agape-conformance) — the black-box conformance suite an implementation must satisfy.
 - [`agape-rs/`](agape-rs) — the reference implementation (the `agape` toolchain).
 - `../agape-language-pack/` — editor support and syntax highlighting for Studio, VS Code, Cursor, and docs renderers.

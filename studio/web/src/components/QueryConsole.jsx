@@ -1,7 +1,7 @@
 // The bottom panel in "Query" mode — the agape> console. VS Code's integrated
 // terminal, reimagined: instead of a shell, you run Agape source against the live
 // program. Sends, lifecycle, and the three query modalities (find/select/match)
-// all work here; each command's new spine events are summarized back.
+// all work here; each command's new ledger events are summarized back.
 import { useState, useRef, useEffect } from "react";
 
 export default function QueryConsole({ log, onRun }) {

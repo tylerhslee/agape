@@ -220,6 +220,11 @@ input:focus, textarea:focus, select:focus { outline: none; border-color: rgba(23
   border-radius: 4px;
   background: transparent;
 }
+.context-actions button.active {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
 .app-topbar {
   flex: none; display: flex; align-items: center; gap: 11px; height: 46px; padding: 0 20px;
   background: rgba(11, 13, 17, 0.74); border-bottom: 1px solid var(--border-soft);

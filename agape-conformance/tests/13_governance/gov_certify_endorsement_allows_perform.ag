@@ -1,0 +1,29 @@
+//! id:        gov_certify_endorsed_decision_allows_perform
+//! section:   13_governance
+//! expect:    accept
+//! contains:  Decided(verdict)
+//! contains:  Certified(draft)
+//! contains:  Reply(ok)
+//! spec:      §13 (`certify artifact by e` accepts an Endorsement and certifies the exact artifact in the success arm)
+//! ---
+enum Verdict { Faithful, Unsupported, NeedsRewrite }
+reversible action Reply(text message);
+policy Quality { threshold 0.80 floor 0.10 }
+
+agent Writer grants { perform Reply } {
+  on awake {
+    text draft = self <- "write a concise answer";
+    Credence<Verdict> verdict = self <- f"is this draft faithful? {draft}";
+    Endorsement<Verdict> ok = endorse(verdict by Quality);
+    certify draft by ok {
+      Faithful: perform Reply(draft);
+      Unsupported: perform Reply("not verified");
+      NeedsRewrite: perform Reply("rewrite needed");
+    } abstain {
+      perform Reply("verification abstained");
+    }
+  }
+}
+
+spawn Writer w;
+awake w;

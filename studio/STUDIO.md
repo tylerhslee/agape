@@ -67,7 +67,7 @@ own section.
 ## 2. Two runtimes — the control plane and the app
 
 Studio and the systems it builds **do not share a runtime**. Each runs as its own
-Agape runtime, with its own spine, its own agent population, its own grants and
+Agape runtime, with its own ledger, its own agent population, its own grants and
 config. Studio is a **control plane**; an app you build is a **separate runtime**
 that the control plane drives across an isolation boundary — not a folder it
 contains.
@@ -78,18 +78,18 @@ contains.
   in studio settings, when configuring Studio.
 - **An app runtime** is a system you build and manage. Its agents are *product
   agents* — the refund agent, the triage agent — each with authority over its own
-  domain. It has its own spine and is, to Studio, an external thing it connects to
+  domain. It has its own ledger and is, to Studio, an external thing it connects to
   and drives.
 
 Studio holds **many** app runtimes and drives each across the boundary: spawn,
-awake, read its spine, open PRs against its source, deploy it.
+awake, read its ledger, open PRs against its source, deploy it.
 
 Two consequences shape the whole product:
 
-1. **The spine is per-runtime; "whose spine?" is always answered.** Almost every
-   surface is scoped to a *selected app runtime* — its spine, its agents, its
-   config. The studio runtime's own spine is operational; you open it only to
-   debug Studio itself. The UI never shows an ambiguous "the spine." A **runtime
+1. **The ledger is per-runtime; "whose ledger?" is always answered.** Almost every
+   surface is scoped to a *selected app runtime* — its ledger, its agents, its
+   config. The studio runtime's own ledger is operational; you open it only to
+   debug Studio itself. The UI never shows an ambiguous "the ledger." A **runtime
    selector** in the shell sets the active context.
 2. **Isolation is structural, not a convention.** Two runtimes means two audit
    logs and no shared state: Studio cannot entangle its state with an app's,
@@ -111,7 +111,7 @@ not touch the frontend.
 
 **Work management itself stays fully manual and agent-free.** Capturing,
 organizing, statusing, editing, and assigning work is *somatic*: it needs no agents. So is editing code and querying a
-spine. Only autonomous *routing, delegation, and execution* require the agentic
+ledger. Only autonomous *routing, delegation, and execution* require the agentic
 backend. Everything else is the surface you can exercise today, by hand, with zero
 agents running. Slotting in the Agape operators adds the autonomy on top; it does
 not change the somatic surface beneath it.
@@ -136,7 +136,7 @@ app runtime** (§2). **Configure** spans two scopes — the app, and Studio itse
 |---|---|---|---|
 | **Operate** | Mission control | The dashboard home: what needs you, fleet health, work at a glance | — |
 | | Escalations | Your decision / review inbox — the 24/7 heartbeat | the prompt boundary, §5b |
-| | Event log | The selected app runtime's spine, queryable | the spine, §7 / §15.4.2a |
+| | Event log | The selected app runtime's ledger, queryable | the ledger, §7 / §15.4.2a |
 | **Build** | Work streams | The full board of every unit of work | — |
 | | Threads | Pairing conversations with agents | cognition, `<-` §6 |
 | | Code | The app's `.ag` source, diffs, review | the program |
@@ -154,8 +154,8 @@ app runtime** (§2). **Configure** spans two scopes — the app, and Studio itse
   arrive from **both runtimes**: *build-time* (an operator needs a decision while
   constructing the app) and *run-time* (the managed app's own agents hit something
   needing a person). One inbox, two sources. See the escalation model in §5.3.
-- **Event log** — the **selected app runtime's** spine, live and queryable. The
-  studio runtime's own spine is reachable only from studio settings.
+- **Event log** — the **selected app runtime's** ledger, live and queryable. The
+  studio runtime's own ledger is reachable only from studio settings.
 
 ### Build
 
@@ -176,7 +176,7 @@ app runtime** (§2). **Configure** spans two scopes — the app, and Studio itse
 
 - **Agents** — the **product agents** of the active app runtime: identity (their
   `principal`), grants, lifecycle (spawned / awake / asleep), health, current
-  assignment, and per-agent slice of the app spine. (The studio's *operators* are
+  assignment, and per-agent slice of the app ledger. (The studio's *operators* are
   not here; they live in studio settings — §2, §6.)
 - **Context & memory** — what each product agent knows (§10): per-agent and shared
   stores, provenance backpointers, and the context assembled for a cognition call.
@@ -297,7 +297,7 @@ escalations from the managed app's own product agents.
 
 - *what* — a one-line summary of the ask.
 - *why* — the reason it needs a human, in the agent's words.
-- *evidence* — the relevant events, diff, or behavior, one click away on the spine.
+- *evidence* — the relevant events, diff, or behavior, one click away on the ledger.
 - *options* — the concrete choices, where applicable.
 - *default-if-ignored* — what happens if you never answer (often: the stream waits;
   for some, a safe default after a window). Made explicit, never implicit.
@@ -306,7 +306,7 @@ escalations from the managed app's own product agents.
 **Lifecycle:** `raised` → `queued` (appears in the inbox and the dashboard's *needs
 you* zone) → `resolved` (decided / reviewed / approved / unblocked) → the originating
 stream **resumes** automatically. Resolution is recorded on the originating
-runtime's spine, so *why a human decided what they did* is part of that runtime's
+runtime's ledger, so *why a human decided what they did* is part of that runtime's
 audit trail.
 
 This is also the natural Phase-2 binding: an escalation is an external input
@@ -321,8 +321,8 @@ Studio is not a generic agent dashboard with Agape underneath; it is the **nativ
 console for Agape's primitives**. Each section is a lens onto something the language
 already has:
 
-- **Two runtimes / two spines** ↔ runtime isolation: each runtime is a distinct
-  append-only, hash-chained spine (§7, §15.4.2a). The studio runtime is the control
+- **Two runtimes / two ledgers** ↔ runtime isolation: each runtime is a distinct
+  append-only, hash-chained ledger (§7, §15.4.2a). The studio runtime is the control
   plane; app runtimes are the managed tenants. This is the tenant isolation no
   framework has.
 - **Operators vs product agents** ↔ the same agent model (§5) with different
@@ -330,7 +330,7 @@ already has:
   PRs, route escalations); product agents hold authority over their own domain
   (`perform Refund`). Plane is just program-membership + authority — not a new
   concept.
-- **Event log** ↔ the spine (§7). Append-only, queryable, replayable (§15.4.2a),
+- **Event log** ↔ the ledger (§7). Append-only, queryable, replayable (§15.4.2a),
   one per runtime.
 - **Context & memory** ↔ the three memory modalities and provenance (§10).
 - **Tools & seams** ↔ the typed tool boundary (§6b) and the somatic/agentic split.
@@ -351,7 +351,7 @@ its product agents. So there are two precedence chains — one for the control p
 one per app — never entangled, matching the runtime isolation of §2.
 
 This is the **honesty boundary**, now per-runtime: in each runtime the socket/HTTP
-layer is a somatic device, while routing, lifecycle, spine queries, and response
+layer is a somatic device, while routing, lifecycle, ledger queries, and response
 shaping are application logic, written in Agape (see `[README.md](README.md)`). In
 Phase 2, "the backend is Agape" becomes literally true for the studio runtime, and
 Studio doubles as the flagship example program.
@@ -375,7 +375,7 @@ implement** at every step.
    real; it is the second-most-important surface after the dashboard.
 3. **Agents + Event log** — both are largely *read-side* over events a runtime
    already emits, so they are closer than they look. Reuse the existing
-   `SpinePanel` → Event log and `AgentsExplorer` → Agents/fleet, now runtime-scoped.
+   the legacy `SpinePanel` component → Event log and `AgentsExplorer` → Agents/fleet, now runtime-scoped.
 4. **Context, Code/review spoke, Configure (incl. studio settings)** — the
    management and configuration depth, including the operators surface and the
    app/studio config layering, layered on once the operating core is solid.
@@ -391,7 +391,7 @@ Genuine decisions deferred until the core is built:
 
 1. **Runtime connection.** How does Studio attach to an app runtime — local process,
    remote endpoint, both? How does the control plane authenticate to drive it?
-2. **Studio's own spine.** Is the studio runtime's spine ever surfaced beyond
+2. **Studio's own ledger.** Is the studio runtime's ledger ever surfaced beyond
    debugging — e.g., an audit of what the operators did on your behalf?
 3. **Work-item granularity.** Is a "stream" a feature, a task, or a freely nestable
    tree? Leaning: nestable, but the dashboard only ever shows the top level.
@@ -399,5 +399,5 @@ Genuine decisions deferred until the core is built:
    after a window, and which wait forever? A safety question, decided per kind.
 5. **Fleet scaling.** At what point does the flat fleet list need grouping (by app,
    by role, by health)? Defer until there are enough agents to hurt.
-6. **Thread ↔ spine relationship.** A pairing thread is itself a sequence of events;
-   is it a distinct view, or a filtered lens on the app spine? Leaning: a lens.
+6. **Thread ↔ ledger relationship.** A pairing thread is itself a sequence of events;
+   is it a distinct view, or a filtered lens on the app ledger? Leaning: a lens.

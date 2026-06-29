@@ -91,18 +91,30 @@ pub struct AgapeError {
 
 impl AgapeError {
     pub fn new(class: ErrorClass, message: impl Into<String>) -> Self {
-        AgapeError { class, message: message.into(), span: None }
+        AgapeError {
+            class,
+            message: message.into(),
+            span: None,
+        }
     }
 
     pub fn at(class: ErrorClass, span: Span, message: impl Into<String>) -> Self {
-        AgapeError { class, message: message.into(), span: Some(span) }
+        AgapeError {
+            class,
+            message: message.into(),
+            span: Some(span),
+        }
     }
 }
 
 impl fmt::Display for AgapeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.span {
-            Some(s) => write!(f, "{} at {}..{}: {}", self.class, s.start, s.end, self.message),
+            Some(s) => write!(
+                f,
+                "{} at {}..{}: {}",
+                self.class, s.start, s.end, self.message
+            ),
             None => write!(f, "{}: {}", self.class, self.message),
         }
     }

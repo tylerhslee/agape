@@ -6,7 +6,7 @@
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
-import { buildMessages } from "./agent.ts";
+import { buildMessages, type AgentContext, type Intent } from "./agent.ts";
 import { AnthropicCognition, HashingEmbedder, OpenAICognition, type Cognition } from "./provider.ts";
 import { Memory } from "./memory.ts";
 import { makeRunner } from "./runner.ts";
@@ -385,6 +385,260 @@ function projectName(): string {
   return path.basename(PROJECT);
 }
 
+function safeProjectRead(rel: string, maxBytes = 12_000): string | null {
+  if (!PROJECT) return null;
+  const full = path.resolve(PROJECT, rel);
+  const base = path.resolve(PROJECT);
+  if (full !== base && !full.startsWith(base + path.sep)) return null;
+  if (!/\.(ag|md|toml|json)$/i.test(full)) return null;
+  if (!fs.existsSync(full) || fs.statSync(full).isDirectory()) return null;
+  const text = fs.readFileSync(full, "utf8");
+  return text.length > maxBytes ? text.slice(0, maxBytes) + "\n...[truncated]" : text;
+}
+
+function agentTask(item: any, thread: any[], intent: Intent): string {
+  const lastUser = [...(Array.isArray(thread) ? thread : [])].reverse().find((m) => m?.who === "you")?.text || "";
+  return [intent, item?.title, item?.destination, lastUser].filter(Boolean).join("\n");
+}
+
+function wantsProjectOverview(text: string): boolean {
+  const t = text.toLowerCase();
+  return (
+    /\bwhat\b.*\b(project|repo|repository|app|application)\b.*\b(about|contain|contains|inside|in|so far)\b/.test(t) ||
+    /\bwhat\b.*\bin this project\b/.test(t) ||
+    /\b(tell|show|summarize|explain)\b.*\b(project|repo|repository|app|application)\b/.test(t) ||
+    /\bwhat do we have\b.*\bso far\b/.test(t)
+  );
+}
+
+function directAgentAnswer(item: any, thread: any[], intent: Intent): string | null {
+  const task = agentTask(item, thread, intent);
+  if (wantsProjectOverview(task)) return projectOverviewAnswer();
+  return null;
+}
+
+function operationGuidance(intent: Intent): string {
+  const shared =
+    "The server has already gathered project files, manifest metadata, and builder memory where available. " +
+    "Use that evidence directly; do not promise to fetch it later.";
+  switch (intent) {
+    case "inspect":
+      return `${shared} This is an Inspect turn: answer with concrete findings, cite the observed files/agents/prompts/ledger state when useful, and close with the smallest next inspection or run that would reduce uncertainty.`;
+    case "plan":
+      return `${shared} This is a Plan turn: produce a short executable plan, state the first action, and name any user decision that blocks progress.`;
+    case "build":
+      return `${shared} This is a Build turn: identify the smallest safe change, the likely files involved, and whether code was actually changed in this turn. Do not imply an edit happened unless this server turn performed it.`;
+    case "run":
+      return `${shared} This is a Run turn: explain the command or Studio run that should be executed, the ledger events that would confirm success, and what result would count as failure.`;
+    case "review":
+      return `${shared} This is a Review turn: lead with bugs, authority/gate risks, misleading conversation risks, and missing tests. Keep summaries secondary.`;
+    case "kickoff":
+      return `${shared} This is a delegated work turn: start from the available context and give the first useful result or first concrete move.`;
+    default:
+      return `${shared} This is a conversational turn: answer naturally, directly, and from the current thread context.`;
+  }
+}
+
+function projectContextForAgent(task: string): string {
+  if (!PROJECT) return "No Agape project is currently attached to Studio.";
+  const files = projectFiles();
+  const sections: string[] = [
+    `Project: ${projectName() || path.basename(PROJECT)}`,
+    `Root: ${PROJECT}`,
+    `Language version: ${projectLanguageVersion()}`,
+    `Sources: ${files.length ? files.map((f) => `${f.rel} (${f.agents.length} agents, ${f.prompts.length} prompts)`).join("; ") : "none"}`,
+  ];
+
+  for (const rel of ["agape.toml", "README.md", "DESIGN.md"]) {
+    const text = safeProjectRead(rel, rel.endsWith(".md") ? 8_000 : 4_000);
+    if (text) sections.push(`--- ${rel} ---\n${text}`);
+  }
+
+  const terms = new Set((task.toLowerCase().match(/[a-z0-9_.\/-]+/g) || []).filter((t) => t.length > 2));
+  const chosen = files
+    .filter((f) => terms.has(f.rel.toLowerCase()) || f.agents.some((a) => terms.has(a.toLowerCase())) || f.prompts.some((p) => terms.has(p.toLowerCase())))
+    .concat(files)
+    .filter((f, i, arr) => arr.findIndex((x) => x.rel === f.rel) === i)
+    .slice(0, 5);
+  for (const f of chosen) {
+    const text = safeProjectRead(f.rel, 10_000);
+    if (text) sections.push(`--- ${f.rel} ---\n${text}`);
+  }
+
+  sections.push("Ledger evidence: no live run ledger is attached to this agent turn. Use the Run view to produce concrete runtime events when behavior, gates, or actions must be verified.");
+  return limitText(sections.join("\n\n"), 26_000);
+}
+
+function builderMemoryForAgent(task: string): string {
+  try {
+    const ctx = getLearner().codingContext(task);
+    const parts = [
+      `Runner: ${ctx.runner}`,
+      `Memory counts: ledger=${ctx.counts?.spine ?? 0}, facts=${ctx.counts?.facts ?? 0}, triples=${ctx.counts?.triples ?? 0}, embeddings=${ctx.counts?.embeddings ?? 0}`,
+      ctx.rules?.length ? "Rules:\n" + ctx.rules.map((r: string) => `- ${r}`).join("\n") : "",
+      ctx.context ? "Retrieved context:\n" + ctx.context : "Retrieved context: memory is empty or no entries matched.",
+    ].filter(Boolean);
+    return limitText(parts.join("\n\n"), 10_000);
+  } catch (e: any) {
+    return `Builder memory unavailable for this turn: ${e?.message || "unknown error"}.`;
+  }
+}
+
+function agentContext(item: any, thread: any[], intent: Intent): AgentContext {
+  const task = agentTask(item, thread, intent);
+  return {
+    operation: operationGuidance(intent),
+    project: projectContextForAgent(task),
+    memory: builderMemoryForAgent(task),
+  };
+}
+
+function normalizeAgentIntent(value: unknown): Intent {
+  const s = String(value || "").toLowerCase();
+  if (["kickoff", "plan", "build", "inspect", "run", "review"].includes(s)) return s as Intent;
+  return "respond";
+}
+
+function routeAgentIntent(value: unknown, item: any, thread: any[]): Intent {
+  const requested = normalizeAgentIntent(value);
+  const task = agentTask(item, thread, requested);
+  if (wantsProjectOverview(task)) return "inspect";
+  return requested;
+}
+
+function placeholderProgress(text: string): boolean {
+  const t = String(text || "").toLowerCase();
+  if (!t.trim()) return true;
+  const markers = [
+    "i will retrieve",
+    "i'll retrieve",
+    "i will inspect",
+    "i'll inspect",
+    "i will analyze",
+    "i'll analyze",
+    "please hold",
+    "one moment",
+    "retrieving project",
+    "fetching the project",
+    "now i will present",
+  ];
+  return markers.some((m) => t.includes(m));
+}
+
+function fallbackAgentAnswer(item: any, thread: any[], intent: Intent, reason?: string): string | null {
+  const direct = directAgentAnswer(item, thread, intent);
+  if (direct) return direct;
+  if (!PROJECT) return "I do not have an Agape project attached to this Studio session yet.";
+
+  const files = projectFiles();
+  const fileList = files.length ? files.map((f) => f.rel).join(", ") : "no .ag files found";
+  const agents = files.flatMap((f) => f.agents.map((name) => `${name} (${f.rel})`));
+  const prompts = files.flatMap((f) => f.prompts.map((name) => `${name} (${f.rel})`));
+  const prefix = reason ? `The live model response was not usable (${reason}), so I am answering from the server's project observations.\n\n` : "";
+
+  if (intent === "plan" || intent === "kickoff") {
+    return prefix + [
+      `Plan for ${projectName() || path.basename(PROJECT)}:`,
+      "",
+      `1. Inspect the declared Agape surface: ${fileList}.`,
+      `2. Confirm the active agents${agents.length ? ` (${agents.join(", ")})` : ""} and prompt inputs${prompts.length ? ` (${prompts.join(", ")})` : ""}.`,
+      "3. Run the relevant .ag file from Studio's Run view so the ledger shows actual Prompt, Credence, Decision, and action events.",
+      "4. Use that ledger evidence to decide whether the agent needs a prompt, gate, memory, or authority change.",
+    ].join("\n");
+  }
+
+  if (intent === "build") {
+    return prefix + [
+      "Build turn routed from the current project context:",
+      "",
+      `- Files to inspect first: ${fileList}.`,
+      `- Declared agents: ${agents.length ? agents.join(", ") : "none found yet"}.`,
+      `- Prompt inputs: ${prompts.length ? prompts.join(", ") : "none found yet"}.`,
+      "- Smallest safe change: make the selected badge choose an operation, gather project and memory context before the model call, then reject placeholder progress before showing a response.",
+      "- I have not edited the opened project from this Studio turn; this is the concrete next implementation direction.",
+    ].join("\n");
+  }
+
+  if (intent === "run") {
+    return prefix + [
+      "Run turn from the available project context:",
+      "",
+      `- Candidate source files: ${fileList}.`,
+      "- Execute the relevant file through the Run view or `/project/run`.",
+      "- Confirm success in the ledger by looking for Prompt, Spawned/AgentAwake, model output or Credence, Decided, and the final action event.",
+      "- If those events are missing, the issue is orchestration/runtime wiring rather than natural-language quality.",
+    ].join("\n");
+  }
+
+  if (intent === "review") {
+    return prefix + [
+      "Review findings from the current project context:",
+      "",
+      "- The conversation is unsafe if it forwards raw placeholder model text like \"I will retrieve\" to the user.",
+      "- Each badge should route to an operation with explicit context gathering and a response contract.",
+      "- Any consequential action should remain behind Agape grants and endorse gates; conversational summaries should cite ledger evidence when available.",
+      "- Add tests for route override, project-context injection, and placeholder-response repair.",
+    ].join("\n");
+  }
+
+  if (intent === "inspect") return prefix + projectOverviewAnswer();
+  return null;
+}
+
+function limitText(text: string, max: number): string {
+  return text.length > max ? text.slice(0, max) + "\n...[truncated]" : text;
+}
+
+function projectOverviewAnswer(): string {
+  if (!PROJECT) return "I do not have an Agape project attached to this Studio session yet.";
+  const files = projectFiles();
+  const agents = files.flatMap((f) => f.agents.map((name) => `${name} (${f.rel})`));
+  const prompts = files.flatMap((f) => f.prompts.map((name) => `${name} (${f.rel})`));
+  const readme = firstUsefulParagraph(safeProjectRead("README.md", 4_000) || "");
+  const design = firstUsefulParagraph(sectionText(safeProjectRead("DESIGN.md", 8_000) || "", "Purpose"));
+  const manifest = projectManifest();
+
+  const lines = [
+    `Here is what is in ${projectName() || path.basename(PROJECT)} so far:`,
+    "",
+    `- Manifest: ${manifest ? `${manifest.rel}${manifest.languageVersion && manifest.languageVersion !== "unknown" ? `, language ${manifest.languageVersion}` : ""}` : "no agape.toml found"}.`,
+    `- Source files: ${files.length ? files.map((f) => f.rel).join(", ") : "no .ag source files found"}.`,
+    `- Agents: ${agents.length ? agents.join(", ") : "none declared yet"}.`,
+    `- Prompt inputs: ${prompts.length ? prompts.join(", ") : "none declared yet"}.`,
+  ];
+  if (readme) lines.push(`- README: ${readme}`);
+  if (design) lines.push(`- Design intent: ${design}`);
+  lines.push("- Ledger: no run ledger is attached to this thread yet; run a source file from the Run view to inspect concrete events, gates, and actions.");
+  return lines.join("\n");
+}
+
+function firstUsefulParagraph(text: string): string {
+  return text
+    .split(/\n\s*\n/)
+    .map((p) => p.replace(/^#+\s+.*/gm, "").replace(/\s+/g, " ").trim())
+    .find((p) => p.length > 20 && !p.startsWith("```")) || "";
+}
+
+function sectionText(markdown: string, heading: string): string {
+  if (!markdown) return "";
+  const lines = markdown.split(/\r?\n/);
+  const headingRe = new RegExp(`^##\\s+${escapeRegExp(heading)}\\s*$`, "i");
+  const start = lines.findIndex((line) => headingRe.test(line.trim()));
+  if (start < 0) return markdown;
+  let end = lines.length;
+  for (let i = start + 1; i < lines.length; i++) {
+    if (/^##\s+/.test(lines[i].trim())) {
+      end = i;
+      break;
+    }
+  }
+  return lines.slice(start + 1, end).join("\n");
+}
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 // Resolve a project-relative path, refusing anything that escapes the root (the
 // guard itself lives in lib.ts so it can be unit-tested).
 function safeProjectPath(rel: string): string | null {
@@ -537,9 +791,24 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "POST" && url === "/agent/respond") {
       const { item, thread, intent } = (await readJson(req)) || {};
       if (!item || !item.title) return send(res, 400, { error: "item.title is required" });
-      const { system, messages } = buildMessages(item, Array.isArray(thread) ? thread : [], intent === "kickoff" ? "kickoff" : "respond");
-      const text = await cognition().complete(system, messages, 1024);
-      return send(res, 200, { text: text || "(the agent had nothing to add)" });
+      const safeThread = Array.isArray(thread) ? thread : [];
+      const turnIntent = routeAgentIntent(intent, item, safeThread);
+      const direct = directAgentAnswer(item, safeThread, turnIntent);
+      if (direct) return send(res, 200, { text: direct, intent: turnIntent, source: "project-context" });
+      const context = agentContext(item, safeThread, turnIntent);
+      const { system, messages } = buildMessages(item, safeThread, turnIntent, context);
+      try {
+        const text = await cognition().complete(system, messages, 1024);
+        if (placeholderProgress(text)) {
+          const repaired = fallbackAgentAnswer(item, safeThread, turnIntent, "placeholder progress");
+          if (repaired) return send(res, 200, { text: repaired, intent: turnIntent, source: "repair" });
+        }
+        return send(res, 200, { text: text || "(the agent had nothing to add)", intent: turnIntent, source: "model" });
+      } catch (e: any) {
+        const fallback = fallbackAgentAnswer(item, safeThread, turnIntent, e?.message || "provider unavailable");
+        if (fallback) return send(res, 200, { text: fallback, intent: turnIntent, source: "fallback" });
+        throw e;
+      }
     }
 
     // ── the learning loop ──

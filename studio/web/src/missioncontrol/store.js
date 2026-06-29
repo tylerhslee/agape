@@ -22,18 +22,28 @@ export const STATUS_META = {
 
 let _seq = 1;
 const nextId = () => `w${_seq++}`;
+export const createWorkId = () => nextId();
+
+function reserveId(id) {
+  const n = Number(String(id || "").replace(/^w/, ""));
+  if (Number.isFinite(n)) _seq = Math.max(_seq, n + 1);
+}
 
 function makeItem(title, destination, status, extra = {}) {
+  const id = extra.id || nextId();
+  if (extra.id) reserveId(extra.id);
+  const n = Number(String(id || "").replace(/^w/, ""));
+  const { id: _id, ...rest } = extra;
   return {
-    id: nextId(),
+    id,
     title,
     destination,
     status,
     assignee: null,
     mode: "paired", // meaningful once active: "paired" | "delegated"
     thread: [],
-    order: _seq, // creation order; the board sorts on this
-    ...extra,
+    order: Number.isFinite(n) ? n : _seq, // creation order; the board sorts on this
+    ...rest,
   };
 }
 
@@ -96,8 +106,13 @@ export function reducer(state, action) {
       const title = (action.title || "").trim();
       if (!title) return state;
       const status = STATUSES.includes(action.status) ? action.status : "parked";
-      const it = makeItem(title, action.destination || "", status);
-      return { ...state, items: [...state.items, it] };
+      const it = makeItem(title, action.destination || "", status, {
+        id: action.id,
+        assignee: action.assignee === undefined ? null : action.assignee,
+        mode: action.mode || "paired",
+        thread: Array.isArray(action.thread) ? action.thread : [],
+      });
+      return { ...state, items: [...state.items, it], selectedId: action.select ? it.id : state.selectedId };
     }
 
     case "SET_STATUS":

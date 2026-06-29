@@ -1,6 +1,6 @@
 // The side bar in "Agents" view — the event-cockpit's answer to the file
 // Explorer. Instead of files, it lists the live agent population (each a
-// projection of the spine), the declared templates, and the authority-bearing
+// projection of the ledger), the declared templates, and the authority-bearing
 // event types (Guarantee 1). Hovering an agent reveals lifecycle actions.
 
 export default function AgentsExplorer({ state, onAct }) {

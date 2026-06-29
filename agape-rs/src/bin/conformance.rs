@@ -1,6 +1,6 @@
 //! The conformance scoreboard.
 //!
-//!     cargo run --bin conformance                      # default: ../agape-conformance/tests at v1.0
+//!     cargo run --bin conformance                      # default: ../agape-conformance/tests at the package version
 //!     cargo run --bin conformance -- <tests_dir> <ver> # e.g. ... ../agape-conformance/tests 0.3
 //!     cargo run --bin conformance -- --fails           # only list failing tests
 //!
@@ -24,6 +24,10 @@ fn main() {
         .get(1)
         .map(|s| conformance::parse_version(s))
         .unwrap_or((1, 0));
+    let version_label = positional
+        .get(1)
+        .map(|s| format!("v{s}"))
+        .unwrap_or_else(|| format!("v{}", env!("CARGO_PKG_VERSION")));
 
     if !dir.exists() {
         eprintln!("conformance: tests dir not found: {}", dir.display());
@@ -45,14 +49,16 @@ fn main() {
     }
 
     println!(
-        "\nAgape conformance @ v{}.{}   ({} tests total)\n",
-        version.0,
-        version.1,
+        "\nAgape conformance @ {}   ({} tests total)\n",
+        version_label,
         report.outcomes.len()
     );
 
     if !only_fails {
-        println!("  {:<22} {:>4} {:>4} {:>4} {:>5}", "section", "pass", "fail", "blk", "skip");
+        println!(
+            "  {:<22} {:>4} {:>4} {:>4} {:>5}",
+            "section", "pass", "fail", "blk", "skip"
+        );
         println!("  {}", "-".repeat(44));
         for (sec, (p, f, b, s)) in &by_section {
             println!("  {:<22} {:>4} {:>4} {:>4} {:>5}", sec, p, f, b, s);
@@ -70,7 +76,11 @@ fn main() {
         })
         .collect();
     if !fails.is_empty() {
-        let show = if only_fails { fails.len() } else { fails.len().min(25) };
+        let show = if only_fails {
+            fails.len()
+        } else {
+            fails.len().min(25)
+        };
         println!("\n  failing ({} shown of {}):", show, fails.len());
         for (id, sec, why) in fails.iter().take(show) {
             println!("    ✗ {:<14} {:<40} {}", sec, id, why);

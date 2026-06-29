@@ -37,6 +37,26 @@ describe("store — capture without delegating (the parking lot)", () => {
   it("ignores an empty capture", () => {
     expect(reducer(initialState, { type: "CREATE_WORK", title: "   " }).items.length).toBe(initialState.items.length);
   });
+  it("can create an already delegated item with an initial thread", () => {
+    const s = reducer(initialState, {
+      type: "CREATE_WORK",
+      id: "w-dashboard",
+      title: "inspect project",
+      destination: "Inspect - current project",
+      status: "active",
+      mode: "delegated",
+      assignee: "Builder-1",
+      thread: [{ who: "you", text: "tell me what this project is about" }],
+      select: true,
+    });
+    const added = s.items.at(-1);
+    expect(added.id).toBe("w-dashboard");
+    expect(added.status).toBe("active");
+    expect(added.mode).toBe("delegated");
+    expect(added.assignee).toBe("Builder-1");
+    expect(added.thread.at(-1).text).toMatch(/project/);
+    expect(s.selectedId).toBe("w-dashboard");
+  });
 });
 
 describe("store — manual status & editing (no agents)", () => {

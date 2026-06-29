@@ -17,7 +17,10 @@ type PResult<T> = Result<T, AgapeError>;
 const TYPE_KEYWORDS: &[&str] = &["int", "float", "bool", "text", "null", "array"];
 
 fn is_lvalue(e: &Expr) -> bool {
-    matches!(e, Expr::Name(_) | Expr::Member { .. } | Expr::Index { .. } | Expr::SelfRef)
+    matches!(
+        e,
+        Expr::Name(_) | Expr::Member { .. } | Expr::Index { .. } | Expr::SelfRef
+    )
 }
 
 pub struct Parser {
@@ -45,7 +48,11 @@ pub fn parse_expr(toks: Vec<Token>) -> PResult<Expr> {
 
 impl Parser {
     pub fn new(toks: Vec<Token>) -> Self {
-        Parser { toks, pos: 0, no_struct_lit: false }
+        Parser {
+            toks,
+            pos: 0,
+            no_struct_lit: false,
+        }
     }
 
     // ── cursor helpers ─────────────────────────────────────────────────────────
@@ -104,7 +111,8 @@ impl Parser {
     fn eat_binder(&mut self) -> PResult<String> {
         let t = self.cur();
         if t.kind == TokenKind::Ident
-            || (t.kind == TokenKind::Keyword && matches!(t.value.as_str(), "find" | "select" | "match"))
+            || (t.kind == TokenKind::Keyword
+                && matches!(t.value.as_str(), "find" | "select" | "match"))
         {
             Ok(self.advance().value)
         } else {
@@ -122,8 +130,16 @@ impl Parser {
     }
     fn err(&self, what: &str) -> AgapeError {
         let t = self.cur();
-        let span = if t.kind == TokenKind::Eof { Span::new(t.span.start, t.span.end) } else { t.span };
-        AgapeError::at(ErrorClass::Parse, span, format!("{what}, got {} ({:?})", t.value, t.kind))
+        let span = if t.kind == TokenKind::Eof {
+            Span::new(t.span.start, t.span.end)
+        } else {
+            t.span
+        };
+        AgapeError::at(
+            ErrorClass::Parse,
+            span,
+            format!("{what}, got {} ({:?})", t.value, t.kind),
+        )
     }
 
     // ── program / statements ───────────────────────────────────────────────────
@@ -163,7 +179,8 @@ impl Parser {
         }
         // File-level `conformal α;` declaration (§20). `conformal` is a contextual
         // identifier, so only treat it as the declaration when followed by a number.
-        if t.is_ident("conformal") && matches!(self.peek(1).kind, TokenKind::Int | TokenKind::Float) {
+        if t.is_ident("conformal") && matches!(self.peek(1).kind, TokenKind::Int | TokenKind::Float)
+        {
             self.advance();
             let alpha = self.parse_number()?;
             self.eat_op(";")?;
@@ -221,14 +238,26 @@ impl Parser {
             let name = self.eat_ident()?;
             // Constructor args may be bound here (`spawn TYPE name(args)`) or deferred
             // to `awake name(args)`; both forms are accepted (§5, §15.2).
-            let args = if self.check_op("(") { self.parse_args()? } else { Vec::new() };
+            let args = if self.check_op("(") {
+                self.parse_args()?
+            } else {
+                Vec::new()
+            };
             self.eat_op(";")?;
-            return Ok(Stmt::Spawn { agent_type, name, args });
+            return Ok(Stmt::Spawn {
+                agent_type,
+                name,
+                args,
+            });
         }
         if t.is_kw("awake") {
             self.advance();
             let name = self.eat_ident()?;
-            let args = if self.check_op("(") { self.parse_args()? } else { Vec::new() };
+            let args = if self.check_op("(") {
+                self.parse_args()?
+            } else {
+                Vec::new()
+            };
             self.eat_op(";")?;
             return Ok(Stmt::Awake { name, args });
         }
@@ -250,7 +279,8 @@ impl Parser {
             self.advance();
             let tok = self.cur().clone();
             if tok.kind != TokenKind::Str {
-                return Err(self.err("`instruction` takes a string literal — the agent's system prompt (§5)"));
+                return Err(self
+                    .err("`instruction` takes a string literal — the agent's system prompt (§5)"));
             }
             self.advance();
             self.eat_op(";")?;
@@ -307,6 +337,9 @@ impl Parser {
         if t.is_kw("attest") {
             return self.attest_stmt();
         }
+        if t.is_kw("certify") {
+            return self.certify_stmt();
+        }
         if t.is_kw("policy") {
             return self.policy_decl();
         }
@@ -359,7 +392,11 @@ impl Parser {
             return Ok(Stmt::QueryStmt(q));
         }
         if t.is_kw("independent") || t.is_kw("dependent") {
-            let kind = if t.is_kw("independent") { Dep::Independent } else { Dep::Dependent };
+            let kind = if t.is_kw("independent") {
+                Dep::Independent
+            } else {
+                Dep::Dependent
+            };
             self.advance();
             let mut names = vec![self.eat_ident()?];
             while self.check_op(",") {
@@ -402,9 +439,13 @@ impl Parser {
             let rhs = self.expr()?;
             self.eat_op(";")?;
             if !is_lvalue(&e) {
-                return Err(self.err("invalid assignment target (assign to a name, a field, or an element)"));
+                return Err(self
+                    .err("invalid assignment target (assign to a name, a field, or an element)"));
             }
-            return Ok(Stmt::Assign { target: e, expr: rhs });
+            return Ok(Stmt::Assign {
+                target: e,
+                expr: rhs,
+            });
         }
         self.eat_op(";")?;
         Ok(Stmt::ExprStmt(e))
@@ -419,8 +460,10 @@ impl Parser {
         if t.kind == TokenKind::Keyword && TYPE_KEYWORDS.contains(&t.value.as_str()) {
             return true;
         }
-        // `Credence<…>` / `Decision<…>` (prelude types spelled as identifiers).
-        if (t.is_ident("Credence") || t.is_ident("Decision")) && self.peek(1).is_op("<") {
+        // `Credence<…>` / `Decision<…>` / `Endorsement<…>` (prelude types spelled as identifiers).
+        if (t.is_ident("Credence") || t.is_ident("Decision") || t.is_ident("Endorsement"))
+            && self.peek(1).is_op("<")
+        {
             return true;
         }
         // `NamedType name …` — a user/prelude nominal type followed by a binder.
@@ -465,7 +508,11 @@ impl Parser {
         }
         let mut i = start + 1;
         while self.toks.get(i).map(|x| x.is_op(".")).unwrap_or(false)
-            && self.toks.get(i + 1).map(|x| x.kind == TokenKind::Ident).unwrap_or(false)
+            && self
+                .toks
+                .get(i + 1)
+                .map(|x| x.kind == TokenKind::Ident)
+                .unwrap_or(false)
         {
             i += 2;
         }
@@ -490,8 +537,12 @@ impl Parser {
                 if depth == 0 {
                     return Some(i + 1);
                 }
-            } else if tok.is_op(";") || tok.is_op("{") || tok.is_op("}") || tok.is_op("(")
-                || tok.is_op(")") || tok.kind == TokenKind::Eof
+            } else if tok.is_op(";")
+                || tok.is_op("{")
+                || tok.is_op("}")
+                || tok.is_op("(")
+                || tok.is_op(")")
+                || tok.kind == TokenKind::Eof
             {
                 return None; // a comparison, not a type-arg list
             }
@@ -511,12 +562,23 @@ impl Parser {
         let ty = self.parse_type()?;
         let name = self.eat_binder()?;
         // Optional generic type parameters on a function (`fn id<T>(…)`, §19.5).
-        let typarams = if self.check_op("<") { self.parse_typarams()? } else { Vec::new() };
+        let typarams = if self.check_op("<") {
+            self.parse_typarams()?
+        } else {
+            Vec::new()
+        };
 
         if self.check_op("(") {
             let params = self.parse_params()?;
             let body = self.block()?;
-            return Ok(Stmt::FnDecl { is_sync, ret: ty, name, typarams, params, body });
+            return Ok(Stmt::FnDecl {
+                is_sync,
+                ret: ty,
+                name,
+                typarams,
+                params,
+                body,
+            });
         }
         if !typarams.is_empty() {
             return Err(self.err("type parameters are only valid on a function declaration"));
@@ -526,12 +588,20 @@ impl Parser {
         }
         if self.check_op(";") {
             self.advance();
-            return Ok(Stmt::VarDecl { ty, name, expr: None });
+            return Ok(Stmt::VarDecl {
+                ty,
+                name,
+                expr: None,
+            });
         }
         self.eat_op("=")?;
         let e = self.expr()?;
         self.eat_op(";")?;
-        Ok(Stmt::VarDecl { ty, name, expr: Some(e) })
+        Ok(Stmt::VarDecl {
+            ty,
+            name,
+            expr: Some(e),
+        })
     }
 
     fn struct_decl(&mut self) -> PResult<Stmt> {
@@ -541,7 +611,11 @@ impl Parser {
         self.eat_op("{")?;
         let fields = self.parse_fields("}")?;
         self.eat_op("}")?;
-        Ok(Stmt::StructDecl { name, typarams, fields })
+        Ok(Stmt::StructDecl {
+            name,
+            typarams,
+            fields,
+        })
     }
 
     /// `<A, B, ...>` type parameters on a `struct`/`fn` (§19.5). Empty if absent.
@@ -601,7 +675,12 @@ impl Parser {
             self.eat_kw("from")?;
             let module = self.parse_modpath()?;
             self.eat_op(";")?;
-            return Ok(Stmt::Import { module, alias: None, names, is_pub });
+            return Ok(Stmt::Import {
+                module,
+                alias: None,
+                names,
+                is_pub,
+            });
         }
         let module = self.parse_modpath()?;
         let alias = if self.cur().is_ident("as") {
@@ -611,7 +690,12 @@ impl Parser {
             None
         };
         self.eat_op(";")?;
-        Ok(Stmt::Import { module, alias, names: Vec::new(), is_pub })
+        Ok(Stmt::Import {
+            module,
+            alias,
+            names: Vec::new(),
+            is_pub,
+        })
     }
 
     /// A `pub`-prefixed top-level declaration / re-export (§19.4, §19.2a).
@@ -624,9 +708,14 @@ impl Parser {
             self.interface_decl()?
         } else if self.check_kw("reversible") {
             self.reversible_decl()?
-        } else if self.check_kw("struct") || self.check_kw("enum") || self.check_kw("event")
-            || self.check_kw("action") || self.check_kw("agent") || self.check_kw("read")
-            || self.check_kw("write") || self.check_kw("sync")
+        } else if self.check_kw("struct")
+            || self.check_kw("enum")
+            || self.check_kw("event")
+            || self.check_kw("action")
+            || self.check_kw("agent")
+            || self.check_kw("read")
+            || self.check_kw("write")
+            || self.check_kw("sync")
             || self.starts_type_decl()
         {
             self.stmt()?
@@ -659,7 +748,8 @@ impl Parser {
                 let cap = self.parse_cap()?;
                 members.push(IfaceMember::Requires(cap));
             } else {
-                return Err(self.err("expected `when EVENT decide RESULT` or `requires CAP` in an interface"));
+                return Err(self
+                    .err("expected `when EVENT decide RESULT` or `requires CAP` in an interface"));
             }
             if self.check_op(";") {
                 self.advance();
@@ -736,7 +826,14 @@ impl Parser {
         if self.check_op(";") {
             self.advance();
         }
-        Ok(Stmt::Decide { expr, subject, conformal, arms, default, defer_to })
+        Ok(Stmt::Decide {
+            expr,
+            subject,
+            conformal,
+            arms,
+            default,
+            defer_to,
+        })
     }
 
     /// A `decide` arm body: a `{ block }` or a single statement (§20 grammar).
@@ -781,7 +878,12 @@ impl Parser {
             super_name = Some(s);
         }
         self.eat_op(";")?;
-        Ok(Stmt::EventDecl { name, fields, error_super, super_name })
+        Ok(Stmt::EventDecl {
+            name,
+            fields,
+            error_super,
+            super_name,
+        })
     }
 
     /// `action NAME(field, ...);` — a performative event type (§3, §13). An `action`
@@ -793,13 +895,19 @@ impl Parser {
         let fields = self.parse_fields(")")?;
         self.eat_op(")")?;
         if self.check_op(":") {
-            return Err(self.err("an `action` may not declare a supertype — only `event` may extend `Error` (§19.5)"));
+            return Err(self.err(
+                "an `action` may not declare a supertype — only `event` may extend `Error` (§19.5)",
+            ));
         }
         // The trailing `;` is optional on a sink declaration (§15.2, §20).
         if self.check_op(";") {
             self.advance();
         }
-        Ok(Stmt::ActionDecl { name, fields, reversible })
+        Ok(Stmt::ActionDecl {
+            name,
+            fields,
+            reversible,
+        })
     }
 
     /// `endorse (arg by rule) { variant: stmts ... } [abstain { ... }]` (§13).
@@ -815,7 +923,12 @@ impl Parser {
         } else {
             None
         };
-        Ok(Stmt::Endorse { arg, rule, arms, abstain })
+        Ok(Stmt::Endorse {
+            arg,
+            rule,
+            arms,
+            abstain,
+        })
     }
 
     /// `attest e by p (arms | ;)` — the recorded identity-seam gate (§13). The
@@ -825,12 +938,51 @@ impl Parser {
         self.eat_kw("attest")?;
         let arg = self.send()?;
         self.eat_ctx("by")?;
+        self.no_struct_lit = true;
         let by = self.compare()?;
-        let arms = if self.check_op("{") { self.gate_arms()? } else {
+        self.no_struct_lit = false;
+        let arms = if self.check_op("{") {
+            self.gate_arms()?
+        } else {
             self.eat_op(";")?;
             Vec::new()
         };
         Ok(Stmt::Attest { arg, by, arms })
+    }
+
+    /// `certify ARTIFACT by (JUDGMENT by RULE) { arms } [abstain { ... }]`
+    /// or `certify ARTIFACT by ENDORSEMENT { arms } ...` (§13).
+    /// The positive verifier arm treats ARTIFACT as settled + endorsed.
+    fn certify_stmt(&mut self) -> PResult<Stmt> {
+        self.eat_kw("certify")?;
+        self.no_struct_lit = true;
+        let artifact = self.compare()?;
+        self.no_struct_lit = false;
+        self.eat_ctx("by")?;
+        let certifier = if self.check_op("(") {
+            self.eat_op("(")?;
+            let (arg, rule) = self.collapse_inner()?;
+            self.eat_op(")")?;
+            Certifier::Gate { arg, rule }
+        } else {
+            self.no_struct_lit = true;
+            let decision = self.compare()?;
+            self.no_struct_lit = false;
+            Certifier::Endorsement(decision)
+        };
+        let arms = self.gate_arms()?;
+        let abstain = if self.check_kw("abstain") {
+            self.advance();
+            Some(self.block()?)
+        } else {
+            None
+        };
+        Ok(Stmt::Certify {
+            artifact,
+            certifier,
+            arms,
+            abstain,
+        })
     }
 
     /// `policy NAME { directive* }` — a named decision-policy bundle (§13). Each
@@ -848,7 +1000,16 @@ impl Parser {
             readiness: None,
             fallback: None,
         };
-        let Stmt::PolicyDecl { threshold, margin, floor, conformal, readiness, fallback, .. } = &mut p else {
+        let Stmt::PolicyDecl {
+            threshold,
+            margin,
+            floor,
+            conformal,
+            readiness,
+            fallback,
+            ..
+        } = &mut p
+        else {
             unreachable!()
         };
         while !self.check_op("}") && !self.at_eof() {
@@ -862,7 +1023,10 @@ impl Parser {
                 "fallback" => *fallback = Some(self.eat_ident()?),
                 _ => {
                     // unknown directive: consume a single literal/ident operand if present.
-                    if matches!(self.cur().kind, TokenKind::Int | TokenKind::Float | TokenKind::Str | TokenKind::Ident) {
+                    if matches!(
+                        self.cur().kind,
+                        TokenKind::Int | TokenKind::Float | TokenKind::Str | TokenKind::Ident
+                    ) {
                         self.advance();
                     }
                 }
@@ -930,7 +1094,11 @@ impl Parser {
             } else {
                 0.0
             };
-            Ok(GateBasis::Threshold { op: BinOp::from_str(">").unwrap(), value, margin })
+            Ok(GateBasis::Threshold {
+                op: BinOp::from_str(">").unwrap(),
+                value,
+                margin,
+            })
         } else if self.cur().is_ident("conformal") {
             self.advance();
             let alpha = self.parse_number()?;
@@ -962,7 +1130,13 @@ impl Parser {
         if self.check_op(";") {
             self.advance();
         }
-        Ok(Stmt::ToolDecl { name, params, ret, effect, reversible })
+        Ok(Stmt::ToolDecl {
+            name,
+            params,
+            ret,
+            effect,
+            reversible,
+        })
     }
 
     /// `reversible action …` / `reversible (read|write) tool …` (§20). A
@@ -985,7 +1159,11 @@ impl Parser {
         if self.check_op("<") {
             return Err(self.err("an agent may not be generic (§19.5) — its parameterization lives in its `when`-handlers' event types"));
         }
-        let params = if self.check_op("(") { self.parse_params()? } else { Vec::new() };
+        let params = if self.check_op("(") {
+            self.parse_params()?
+        } else {
+            Vec::new()
+        };
         // Optional implemented interfaces (`: I, J`), nominal conformance (§19.5).
         let mut ifaces = Vec::new();
         if self.check_op(":") {
@@ -998,7 +1176,15 @@ impl Parser {
         }
         let (grants, has_grants, unconstrained) = self.grants_clause()?;
         let body = self.block()?;
-        Ok(Stmt::AgentDecl { name, params, ifaces, grants, has_grants, unconstrained, body })
+        Ok(Stmt::AgentDecl {
+            name,
+            params,
+            ifaces,
+            grants,
+            has_grants,
+            unconstrained,
+            body,
+        })
     }
 
     /// Optional `grants { emit X, reach Y, use Z }` / `grants { * }`. No clause ⇒
@@ -1029,7 +1215,9 @@ impl Parser {
                 self.advance();
                 CapKind::Use
             } else {
-                return Err(self.err("expected 'perform', 'emit', 'reach', 'use', or '*' in grants"));
+                return Err(
+                    self.err("expected 'perform', 'emit', 'reach', 'use', or '*' in grants")
+                );
             };
             let target = self.parse_modpath()?;
             caps.push(Capability { kind, target });
@@ -1060,7 +1248,11 @@ impl Parser {
             self.advance();
             else_body = self.block()?;
         }
-        Ok(Stmt::If { cond, then_body, else_body })
+        Ok(Stmt::If {
+            cond,
+            then_body,
+            else_body,
+        })
     }
 
     fn on_stmt(&mut self) -> PResult<Stmt> {
@@ -1098,7 +1290,13 @@ impl Parser {
             None
         };
         let body = self.block()?;
-        Ok(Stmt::When { ty, binder, about, guard, body })
+        Ok(Stmt::When {
+            ty,
+            binder,
+            about,
+            guard,
+            body,
+        })
     }
 
     fn catch_stmt(&mut self) -> PResult<Stmt> {
@@ -1120,7 +1318,12 @@ impl Parser {
         self.eat_ctx("as")?;
         let binding = self.eat_ident()?;
         let body = self.block()?;
-        Ok(Stmt::Catch { event_type, subject, binding, body })
+        Ok(Stmt::Catch {
+            event_type,
+            subject,
+            binding,
+            body,
+        })
     }
 
     fn case_stmt(&mut self) -> PResult<Stmt> {
@@ -1155,7 +1358,12 @@ impl Parser {
             }
         }
         self.eat_op("}")?;
-        Ok(Stmt::Case { expr, binding, arms, default })
+        Ok(Stmt::Case {
+            expr,
+            binding,
+            arms,
+            default,
+        })
     }
 
     /// `retry(N) { body }` or `retry(TYPE x: PRED) { body }`.
@@ -1173,8 +1381,17 @@ impl Parser {
             self.eat_op(":")?;
             let pred = self.expr()?;
             self.eat_op(")")?;
-            let body = if self.check_op("{") { self.block()? } else { Vec::new() };
-            Ok(RetryTail::Predicate { ty, bind, pred, body })
+            let body = if self.check_op("{") {
+                self.block()?
+            } else {
+                Vec::new()
+            };
+            Ok(RetryTail::Predicate {
+                ty,
+                bind,
+                pred,
+                body,
+            })
         }
     }
 
@@ -1219,6 +1436,13 @@ impl Parser {
             let inner = self.parse_type()?;
             self.eat_op(">")?;
             return Ok(Type::Decision(Box::new(inner)));
+        }
+        if t.is_ident("Endorsement") {
+            self.advance();
+            self.eat_op("<")?;
+            let inner = self.parse_type()?;
+            self.eat_op(">")?;
+            return Ok(Type::Endorsement(Box::new(inner)));
         }
         if t.kind == TokenKind::Keyword {
             let ty = match t.value.as_str() {
@@ -1310,7 +1534,10 @@ impl Parser {
 
     fn parse_int(&mut self) -> PResult<i64> {
         if self.cur().kind == TokenKind::Int {
-            self.advance().value.parse::<i64>().map_err(|_| self.err("bad integer literal"))
+            self.advance()
+                .value
+                .parse::<i64>()
+                .map_err(|_| self.err("bad integer literal"))
         } else {
             Err(self.err("expected an integer"))
         }
@@ -1318,9 +1545,11 @@ impl Parser {
 
     fn parse_number(&mut self) -> PResult<f64> {
         match self.cur().kind {
-            TokenKind::Int | TokenKind::Float => {
-                self.advance().value.parse::<f64>().map_err(|_| self.err("bad number"))
-            }
+            TokenKind::Int | TokenKind::Float => self
+                .advance()
+                .value
+                .parse::<f64>()
+                .map_err(|_| self.err("bad number")),
             _ => Err(self.err("expected a number")),
         }
     }
@@ -1329,7 +1558,9 @@ impl Parser {
     /// (`String`/`Int`/`Float`). Returns its surface spelling.
     fn eat_operand(&mut self) -> PResult<String> {
         match self.cur().kind {
-            TokenKind::Ident | TokenKind::Str | TokenKind::Int | TokenKind::Float => Ok(self.advance().value),
+            TokenKind::Ident | TokenKind::Str | TokenKind::Int | TokenKind::Float => {
+                Ok(self.advance().value)
+            }
             _ => Err(self.err("expected a triple operand (a name or a literal)")),
         }
     }
@@ -1350,7 +1581,10 @@ impl Parser {
         if self.check_kw("verify") {
             self.advance();
             let (arg, by) = self.verify_core()?;
-            return Ok(Expr::Verify { arg: Box::new(arg), by });
+            return Ok(Expr::Verify {
+                arg: Box::new(arg),
+                by,
+            });
         }
         if self.check_kw("endorse") {
             return self.endorse_expr();
@@ -1358,13 +1592,16 @@ impl Parser {
         self.collapse()
     }
 
-    /// `endorse(e by rule)` in expression position → an endorsed `Decision` (§13).
+    /// `endorse(e by rule)` in expression position → an `Endorsement` (§13).
     fn endorse_expr(&mut self) -> PResult<Expr> {
         self.eat_kw("endorse")?;
         self.eat_op("(")?;
         let (arg, rule) = self.collapse_inner()?;
         self.eat_op(")")?;
-        Ok(Expr::EndorseExpr { arg: Box::new(arg), rule })
+        Ok(Expr::EndorseExpr {
+            arg: Box::new(arg),
+            rule,
+        })
     }
 
     /// `send by rule` — collapse a `Credence` to a `Decision` (§13). The lowest
@@ -1374,7 +1611,10 @@ impl Parser {
         if self.cur().is_ident("by") {
             self.advance();
             let rule = self.parse_rule()?;
-            return Ok(Expr::Collapse { expr: Box::new(left), rule });
+            return Ok(Expr::Collapse {
+                expr: Box::new(left),
+                rule,
+            });
         }
         Ok(left)
     }
@@ -1427,13 +1667,21 @@ impl Parser {
             } else {
                 None
             };
-            return Ok(Expr::Send { dest: Box::new(left), payload: Box::new(payload), expires, retry });
+            return Ok(Expr::Send {
+                dest: Box::new(left),
+                payload: Box::new(payload),
+                expires,
+                retry,
+            });
         }
         if self.check_op("->") {
             // `mem -> query` — memory recall (§10); the checker rejects a non-`mem` LHS.
             self.advance();
             let query = self.pipe()?;
-            return Ok(Expr::Recall { mem: Box::new(left), query: Box::new(query) });
+            return Ok(Expr::Recall {
+                mem: Box::new(left),
+                query: Box::new(query),
+            });
         }
         Ok(left)
     }
@@ -1444,7 +1692,10 @@ impl Parser {
         while self.check_op("|>") {
             self.advance();
             let func = self.compare()?;
-            left = Expr::Pipe { source: Box::new(left), func: Box::new(func) };
+            left = Expr::Pipe {
+                source: Box::new(left),
+                func: Box::new(func),
+            };
         }
         Ok(left)
     }
@@ -1454,7 +1705,11 @@ impl Parser {
         while self.cur().kind == TokenKind::Op && BinOp::is_comparison(&self.cur().value) {
             let op = BinOp::from_str(&self.advance().value).unwrap();
             let right = self.addsub()?;
-            left = Expr::Binary { op, left: Box::new(left), right: Box::new(right) };
+            left = Expr::Binary {
+                op,
+                left: Box::new(left),
+                right: Box::new(right),
+            };
         }
         Ok(left)
     }
@@ -1464,7 +1719,11 @@ impl Parser {
         while self.check_op("+") || self.check_op("-") {
             let op = BinOp::from_str(&self.advance().value).unwrap();
             let right = self.muldiv()?;
-            left = Expr::Binary { op, left: Box::new(left), right: Box::new(right) };
+            left = Expr::Binary {
+                op,
+                left: Box::new(left),
+                right: Box::new(right),
+            };
         }
         Ok(left)
     }
@@ -1474,7 +1733,11 @@ impl Parser {
         while self.check_op("*") || self.check_op("/") {
             let op = BinOp::from_str(&self.advance().value).unwrap();
             let right = self.unary()?;
-            left = Expr::Binary { op, left: Box::new(left), right: Box::new(right) };
+            left = Expr::Binary {
+                op,
+                left: Box::new(left),
+                right: Box::new(right),
+            };
         }
         Ok(left)
     }
@@ -1498,23 +1761,35 @@ impl Parser {
                     if self.toks.get(close).map(|x| x.is_op("(")).unwrap_or(false) {
                         self.skip_typeargs()?;
                         let args = self.parse_args()?;
-                        e = Expr::Call { func: Box::new(e), args };
+                        e = Expr::Call {
+                            func: Box::new(e),
+                            args,
+                        };
                         continue;
                     }
                 }
             }
             if self.check_op("(") {
                 let args = self.parse_args()?;
-                e = Expr::Call { func: Box::new(e), args };
+                e = Expr::Call {
+                    func: Box::new(e),
+                    args,
+                };
             } else if self.check_op(".") {
                 self.advance();
                 let prop = self.eat_ident()?;
-                e = Expr::Member { obj: Box::new(e), prop };
+                e = Expr::Member {
+                    obj: Box::new(e),
+                    prop,
+                };
             } else if self.check_op("[") {
                 self.advance();
                 let index = self.expr()?;
                 self.eat_op("]")?;
-                e = Expr::Index { obj: Box::new(e), index: Box::new(index) };
+                e = Expr::Index {
+                    obj: Box::new(e),
+                    index: Box::new(index),
+                };
             } else {
                 break;
             }
@@ -1527,11 +1802,17 @@ impl Parser {
         match t.kind {
             TokenKind::Int => {
                 self.advance();
-                t.value.parse::<i64>().map(Expr::Int).map_err(|_| self.err("bad int literal"))
+                t.value
+                    .parse::<i64>()
+                    .map(Expr::Int)
+                    .map_err(|_| self.err("bad int literal"))
             }
             TokenKind::Float => {
                 self.advance();
-                t.value.parse::<f64>().map(Expr::Float).map_err(|_| self.err("bad float literal"))
+                t.value
+                    .parse::<f64>()
+                    .map(Expr::Float)
+                    .map_err(|_| self.err("bad float literal"))
             }
             TokenKind::Str => {
                 self.advance();
@@ -1610,7 +1891,10 @@ impl Parser {
                 "verify" => {
                     self.advance();
                     let (arg, by) = self.verify_core()?;
-                    Ok(Expr::Verify { arg: Box::new(arg), by })
+                    Ok(Expr::Verify {
+                        arg: Box::new(arg),
+                        by,
+                    })
                 }
                 _ => Err(self.err("unexpected keyword in expression")),
             },
@@ -1672,7 +1956,10 @@ impl Parser {
         self.advance();
         let rule = self.gate_basis()?;
         self.eat_op(")")?;
-        Ok(Expr::Decide { expr: Box::new(e), rule })
+        Ok(Expr::Decide {
+            expr: Box::new(e),
+            rule,
+        })
     }
 
     /// `quorum(k, [c1, …, cn])` — fuse an `array<Credence<bool>>` (§12, §15.2).
@@ -1717,7 +2004,11 @@ impl Parser {
                 }
             }
             self.eat_op("}")?;
-            return Ok(Query::Find { binding, origin, pattern });
+            return Ok(Query::Find {
+                binding,
+                origin,
+                pattern,
+            });
         }
         if self.check_kw("select") {
             self.advance();
@@ -1742,7 +2033,9 @@ impl Parser {
                 let op = if self.check_op(":") {
                     self.advance();
                     ":".to_string()
-                } else if self.cur().kind == TokenKind::Op && BinOp::is_comparison(&self.cur().value) {
+                } else if self.cur().kind == TokenKind::Op
+                    && BinOp::is_comparison(&self.cur().value)
+                {
                     self.advance().value
                 } else {
                     return Err(self.err("expected a comparison op or ':' in where-clause"));
@@ -1754,7 +2047,12 @@ impl Parser {
                 }
             }
             self.eat_op("}")?;
-            return Ok(Query::Select { cols, source, star, conds });
+            return Ok(Query::Select {
+                cols,
+                source,
+                star,
+                conds,
+            });
         }
         if self.check_kw("match") {
             self.advance();
@@ -1765,7 +2063,11 @@ impl Parser {
             self.eat_op("}")?;
             self.eat_op(">")?;
             let threshold = self.parse_number()?;
-            return Ok(Query::Match { binding, query: Box::new(query), threshold });
+            return Ok(Query::Match {
+                binding,
+                query: Box::new(query),
+                threshold,
+            });
         }
         Err(self.err("expected a query (find/select/match)"))
     }
@@ -1785,9 +2087,22 @@ mod tests {
 
     #[test]
     fn credence_decl_and_decide() {
-        let s = p("Credence<bool> c = self <- \"is this an approval?\"; bool b = decide(c, > 0.9);");
-        assert!(matches!(&s[0], Stmt::VarDecl { ty: Type::Credence(_), .. }));
-        assert!(matches!(&s[1], Stmt::VarDecl { expr: Some(Expr::Decide { .. }), .. }));
+        let s =
+            p("Credence<bool> c = self <- \"is this an approval?\"; bool b = decide(c, > 0.9);");
+        assert!(matches!(
+            &s[0],
+            Stmt::VarDecl {
+                ty: Type::Credence(_),
+                ..
+            }
+        ));
+        assert!(matches!(
+            &s[1],
+            Stmt::VarDecl {
+                expr: Some(Expr::Decide { .. }),
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -1802,14 +2117,24 @@ mod tests {
 
     #[test]
     fn calibrate_is_parse_error() {
-        assert_eq!(perr("principal alice; calibrate memo by alice;").class, ErrorClass::Parse);
+        assert_eq!(
+            perr("principal alice; calibrate memo by alice;").class,
+            ErrorClass::Parse
+        );
     }
 
     #[test]
     fn struct_decl_and_literal() {
-        let s = p("struct Memo { amount: int, to: text } Memo m = Memo { amount: 100, to: \"bob\" };");
+        let s =
+            p("struct Memo { amount: int, to: text } Memo m = Memo { amount: 100, to: \"bob\" };");
         assert!(matches!(&s[0], Stmt::StructDecl { fields, .. } if fields.len() == 2));
-        assert!(matches!(&s[1], Stmt::VarDecl { expr: Some(Expr::StructLit { .. }), .. }));
+        assert!(matches!(
+            &s[1],
+            Stmt::VarDecl {
+                expr: Some(Expr::StructLit { .. }),
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -1843,26 +2168,65 @@ mod tests {
     #[test]
     fn quorum_and_dep_decl() {
         let s = p("independent j1, j2, j3; Credence<bool> a = quorum(2, [j1, j2, j3]);");
-        assert!(matches!(&s[0], Stmt::DepDecl { kind: Dep::Independent, .. }));
-        assert!(matches!(&s[1], Stmt::VarDecl { expr: Some(Expr::Quorum { k: 2, .. }), .. }));
+        assert!(matches!(
+            &s[0],
+            Stmt::DepDecl {
+                kind: Dep::Independent,
+                ..
+            }
+        ));
+        assert!(matches!(
+            &s[1],
+            Stmt::VarDecl {
+                expr: Some(Expr::Quorum { k: 2, .. }),
+                ..
+            }
+        ));
     }
 
     #[test]
     fn verify_by_principal_and_threshold() {
         let s = p("verify memo by alice; verify c by > 0.9 margin 0.2; verify c;");
-        assert!(matches!(&s[0], Stmt::Verify { by: Some(GateBasis::Value(_)), .. }));
-        assert!(matches!(&s[1], Stmt::Verify { by: Some(GateBasis::Threshold { .. }), .. }));
+        assert!(matches!(
+            &s[0],
+            Stmt::Verify {
+                by: Some(GateBasis::Value(_)),
+                ..
+            }
+        ));
+        assert!(matches!(
+            &s[1],
+            Stmt::Verify {
+                by: Some(GateBasis::Threshold { .. }),
+                ..
+            }
+        ));
         assert!(matches!(&s[2], Stmt::Verify { by: None, .. }));
     }
 
     #[test]
     fn query_stmt_and_expr_forms() {
         let s = p("select * from ledger where { etype: \"Spawned\" };");
-        assert!(matches!(&s[0], Stmt::QueryStmt(Query::Select { star: true, .. })));
+        assert!(matches!(
+            &s[0],
+            Stmt::QueryStmt(Query::Select { star: true, .. })
+        ));
         let s = p("Memo m = select amount, to from self where { kind: \"pending\" };");
-        assert!(matches!(&s[0], Stmt::VarDecl { expr: Some(Expr::Query(_)), .. }));
+        assert!(matches!(
+            &s[0],
+            Stmt::VarDecl {
+                expr: Some(Expr::Query(_)),
+                ..
+            }
+        ));
         let s = p("find n, origin(n) where { Coach is_named n };");
-        assert!(matches!(&s[0], Stmt::QueryStmt(Query::Find { origin: Some(_), .. })));
+        assert!(matches!(
+            &s[0],
+            Stmt::QueryStmt(Query::Find {
+                origin: Some(_),
+                ..
+            })
+        ));
     }
 
     #[test]
@@ -1880,7 +2244,13 @@ mod tests {
     #[test]
     fn send_retry_form() {
         let s = p("event<text> r = a <- q retry(3) { q = q + \"!\"; };");
-        assert!(matches!(&s[0], Stmt::VarDecl { expr: Some(Expr::Send { retry: Some(_), .. }), .. }));
+        assert!(matches!(
+            &s[0],
+            Stmt::VarDecl {
+                expr: Some(Expr::Send { retry: Some(_), .. }),
+                ..
+            }
+        ));
     }
 
     #[test]

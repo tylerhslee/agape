@@ -111,7 +111,7 @@ frontend must not reimplement the runtime — it attaches to a stable interface 
 `<cli> serve` exposes. That interface is the contract between the toolchain and any
 frontend, and it should be pinned **before** the two efforts drift:
 
-- **spine stream** — events out: the live append-only log the frontend renders.
+- **ledger stream** — events out: the live append-only log the frontend renders.
 - **eval** — run a snippet in the project's accumulated context (guarantees
   re-checked incrementally), returning the resulting events.
 - **lifecycle control** — load a program; `spawn`/`awake`/`sleep`; quiesce.
@@ -127,10 +127,10 @@ implement the same contract.
 ## 5. Execution model (the honest part)
 
 Agape can't compile to a fully-static native binary the way C does — **cognition
-can't be inlined.** A `<-` send is always a runtime call to a provider; the spine,
+can't be inlined.** A `<-` send is always a runtime call to a provider; the ledger,
 mailboxes, and agent lifecycle are runtime services. So *every* Agape artifact
-links against a **runtime** that owns the spine + the seam — exactly Go's model
-(compiled code + a linked runtime), with the spine and provider added.
+links against a **runtime** that owns the ledger + the seam — exactly Go's model
+(compiled code + a linked runtime), with the ledger and provider added.
 
 Consequence: **ship interpreted-first.** A single binary that tree-walks, with the
 runtime + mock provider inside, is a legitimate release (Python, Ruby, Node all
@@ -149,7 +149,7 @@ single static binary with the stdlib embedded. Path to shippable:
    not the shipped artifact — it distributes badly).
 2. **Wrap it in the CLI surface** (§2), e.g. with `clap`.
 3. **Manifest + two-scope config + provider selection** (§3).
-4. **`serve`** exposing the spine stream + eval + control (§4).
+4. **`serve`** exposing the ledger stream + eval + control (§4).
 
 Native codegen stays deferred. The Python POC remains the cross-validation oracle.
 
@@ -191,7 +191,7 @@ public release.
 - **CLI name — decided: unified `agape`** (one binary, the go/deno model). The
   name `agora` is reserved for the package *registry* if/when one lands.
 - **`serve` transport** — HTTP+SSE / WebSocket / something else; the exact event
-  schema for the spine stream.
+  schema for the ledger stream.
 - **Package registry & dependency resolution** — out of scope for v0.2; the
   manifest leaves room (`[dependencies]`) for it.
 - **Local-model provider** — the third backend behind the seam, after mock and

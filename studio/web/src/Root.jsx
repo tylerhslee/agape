@@ -8,13 +8,38 @@ import * as project from "./project/projectApi.js";
 export default function Root() {
   const [info, setInfo] = useState(null);
   const [ready, setReady] = useState(false);
+  const [error, setError] = useState(null);
 
   useEffect(() => {
-    project.info()
-      .then((d) => { setInfo(d); setReady(true); })
-      .catch(() => setReady(true)); // no project / backend — shell still opens
+    let cancelled = false;
+    let timer = null;
+    let attempts = 0;
+    const load = () => {
+      project.info()
+        .then((d) => {
+          if (cancelled) return;
+          setInfo(d);
+          setError(null);
+          setReady(true);
+        })
+        .catch((e) => {
+          if (cancelled) return;
+          attempts += 1;
+          setError(e);
+          if (attempts < 30) {
+            timer = setTimeout(load, 500);
+          } else {
+            setReady(true);
+          }
+        });
+    };
+    load();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
   }, []);
 
-  if (!ready) return <div className="app-loading">opening studio…</div>;
-  return <Shell info={info} />;
+  if (!ready) return <div className="app-loading">opening studio…{error ? " waiting for backend" : ""}</div>;
+  return <Shell info={info} infoError={error} />;
 }

@@ -58,7 +58,7 @@ export class Learner {
       .slice(0, 12);
     const lessons = this.mem.select(this.agent, { key: "lesson" });
     const context = [
-      hits.length ? "Relevant spec passages:\n" + hits.map((h) => `- ${trunc(h.text, 380)} (spine #${h.origin_tick})`).join("\n") : "",
+      hits.length ? "Relevant spec passages:\n" + hits.map((h) => `- ${trunc(h.text, 380)} (ledger #${h.origin_tick})`).join("\n") : "",
       triples.length ? "Known relationships:\n" + triples.map((t) => `- ${t.s} —${t.p}→ ${t.o}`).join("\n") : "",
       lessons.length ? "Lessons learned:\n" + lessons.map((l) => `- ${l.value}`).join("\n") : "",
     ]

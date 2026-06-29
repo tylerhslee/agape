@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { itemsByStatus, counts } from "./store.js";
+import { itemsByStatus, counts, createWorkId } from "./store.js";
+import { agentRespond } from "./agentApi.js";
 
 function Metric({ label, value, tone, onClick }) {
   return (
@@ -18,11 +19,13 @@ const INTENTS = [
   ["review", "Review", "ti-shield-check", "check gates, authority, and risk"],
 ];
 
-export default function MissionControl({ state, info, dispatch, onOpen, goWork, goRun, goFiles, goStudio }) {
+export default function MissionControl({ state, info, dispatch, onOpen, goWork, goBuilder, goRun, goFiles, goStudio }) {
   const [intent, setIntent] = useState("build");
   const [target, setTarget] = useState("next");
   const [line, setLine] = useState("");
   const [prompt, setPrompt] = useState("");
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState(null);
   const [selectedSignalId, setSelectedSignalId] = useState(null);
   const c = counts(state);
   const waiting = itemsByStatus(state, "waiting");
@@ -71,21 +74,55 @@ export default function MissionControl({ state, info, dispatch, onOpen, goWork, 
     setPrompt(nextPrompt);
   };
 
-  const submit = () => {
+  const submit = async () => {
     const text = prompt.trim();
-    if (!text) return;
+    if (!text || pending) return;
     const context = [
       selectedIntent?.[1],
       target && target !== "next" ? target : "next best work",
       line ? `line ${line}` : null,
     ].filter(Boolean).join(" · ");
+    const id = createWorkId();
+    const title = text.length > 70 ? text.slice(0, 67) + "..." : text;
+    const assignee = "Builder-1";
+    const thread = [
+      { who: "you", text },
+      { who: "sys", text: `Assigned to ${assignee} - asking now.` },
+    ];
+    const item = {
+      id,
+      title,
+      destination: context,
+      status: "active",
+      mode: "delegated",
+      assignee,
+      thread,
+    };
     dispatch?.({
       type: "CREATE_WORK",
-      title: text.length > 70 ? text.slice(0, 67) + "..." : text,
+      id,
+      title,
       destination: context,
+      status: "active",
+      mode: "delegated",
+      assignee,
+      thread,
+      select: true,
     });
     setPrompt("");
-    goWork?.();
+    setPending(true);
+    setError(null);
+    onOpen?.(id);
+    try {
+      const reply = await agentRespond(item, thread, intent);
+      dispatch?.({ type: "ADD_MESSAGE", id, message: { who: "ai", text: reply } });
+    } catch (e) {
+      const msg = e.message || "agent unavailable";
+      setError(msg);
+      dispatch?.({ type: "ADD_MESSAGE", id, message: { who: "sys", text: `agent unavailable - ${msg}` } });
+    } finally {
+      setPending(false);
+    }
   };
 
   return (
@@ -125,8 +162,9 @@ export default function MissionControl({ state, info, dispatch, onOpen, goWork, 
                 {files.map((f) => <option key={f.rel} value={f.rel}>{f.rel}</option>)}
               </select>
               <input value={line} onChange={(e) => setLine(e.target.value)} placeholder="line" />
-              <button className="accent" onClick={submit}><i className="ti ti-send" /> Assign</button>
+              <button className="accent" onClick={submit} disabled={pending}><i className="ti ti-send" /> {pending ? "Asking..." : "Ask agent"}</button>
             </div>
+            {error && <div className="mc-muted-sm" style={{ color: "var(--vsc-error)", padding: "0 12px 10px" }}>{error}</div>}
           </div>
         </div>
         <div className="agent-response-rail">
@@ -140,9 +178,11 @@ export default function MissionControl({ state, info, dispatch, onOpen, goWork, 
             <div className="agent-response-empty">No agent is blocked on you right now.</div>
           )}
           <div className="agent-quick">
-            <button onClick={goStudio}><i className="ti ti-sparkles" /> Builder</button>
+            <button onClick={goWork}><i className="ti ti-checklist" /> Work</button>
+            <button onClick={goBuilder}><i className="ti ti-sparkles" /> Builder</button>
             <button onClick={goRun}><i className="ti ti-player-play" /> Run</button>
             <button onClick={goFiles}><i className="ti ti-code" /> Code</button>
+            <button onClick={goStudio}><i className="ti ti-settings" /> Settings</button>
           </div>
         </div>
       </section>
@@ -193,7 +233,7 @@ export default function MissionControl({ state, info, dispatch, onOpen, goWork, 
 
         <div className="ledger-panel">
           <div className="canvas-head">
-            <span>Ledger Spine</span>
+            <span>Ledger</span>
             <em>preview</em>
           </div>
           <div className="ledger-list">

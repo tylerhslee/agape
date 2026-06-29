@@ -21,7 +21,7 @@ export default function App({ onHome }) {
   const [connected, setConnected] = useState(true);
   const lastTick = useRef(-1);
 
-  // Refresh the full projection from the spine. `syncEditor` seeds the editor with
+  // Refresh the full projection from the ledger. `syncEditor` seeds the editor with
   // the loaded program source — only on first load / explicit reload, never after,
   // so we don't clobber edits in progress.
   const refresh = useCallback(async (syncEditor = false) => {
@@ -61,7 +61,7 @@ export default function App({ onHome }) {
   const onRun = async () => {
     try {
       await api.load(editorSrc);
-      setEditorMsg({ ok: true, text: "loaded — spine reset" });
+      setEditorMsg({ ok: true, text: "loaded - ledger reset" });
       await refresh(false);
     } catch (e) {
       setEditorMsg({ ok: false, text: `${e.kind || "error"}: ${e.message}` });
@@ -138,7 +138,7 @@ export default function App({ onHome }) {
           <div className="panel">
             <div className="panel-tabs">
               <span className={"panel-tab" + (panelTab === "spine" ? " active" : "")} onClick={() => setPanelTab("spine")}>
-                Spine
+                Ledger
               </span>
               <span className={"panel-tab" + (panelTab === "query" ? " active" : "")} onClick={() => setPanelTab("query")}>
                 Query

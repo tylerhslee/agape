@@ -47,9 +47,20 @@ impl Event {
     /// insignificant whitespace, JSON-escaped strings, `null` for absent options.
     /// Byte-identical for equal events — the basis of the chain-head.
     pub fn canonical(&self) -> String {
-        let subject = self.subject.as_deref().map(json_str).unwrap_or_else(|| "null".into());
-        let corr = self.corr.map(|c| c.to_string()).unwrap_or_else(|| "null".into());
-        let agent = self.agent.as_deref().map(json_str).unwrap_or_else(|| "null".into());
+        let subject = self
+            .subject
+            .as_deref()
+            .map(json_str)
+            .unwrap_or_else(|| "null".into());
+        let corr = self
+            .corr
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| "null".into());
+        let agent = self
+            .agent
+            .as_deref()
+            .map(json_str)
+            .unwrap_or_else(|| "null".into());
         format!(
             "{{\"tick\":{},\"etype\":{},\"subject\":{},\"payload\":{},\"corr\":{},\"agent\":{}}}",
             self.tick,
@@ -82,7 +93,12 @@ impl Default for Ledger {
 
 impl Ledger {
     pub fn new() -> Self {
-        Ledger { log: Vec::new(), next_corr: 0, head: sha256(b"agape/v1"), error_subtypes: std::collections::HashSet::new() }
+        Ledger {
+            log: Vec::new(),
+            next_corr: 0,
+            head: sha256(b"agape/v1"),
+            error_subtypes: std::collections::HashSet::new(),
+        }
     }
 
     pub fn len(&self) -> usize {
@@ -110,7 +126,14 @@ impl Ledger {
         agent: Option<String>,
     ) -> u64 {
         let tick = self.log.len() as u64;
-        let ev = Event { tick, etype: etype.into(), subject, payload: payload.into(), corr, agent };
+        let ev = Event {
+            tick,
+            etype: etype.into(),
+            subject,
+            payload: payload.into(),
+            corr,
+            agent,
+        };
         let mut buf = self.head.to_vec();
         buf.extend_from_slice(ev.canonical().as_bytes());
         self.head = sha256(&buf);
@@ -165,8 +188,16 @@ mod tests {
     #[test]
     fn identical_sequences_share_a_chain_head() {
         // T4: identical journals ⇒ identical head.
-        let s1 = build(&[("Spawned", Some("a")), ("AgentAwake", Some("a")), ("Decided", Some("c"))]);
-        let s2 = build(&[("Spawned", Some("a")), ("AgentAwake", Some("a")), ("Decided", Some("c"))]);
+        let s1 = build(&[
+            ("Spawned", Some("a")),
+            ("AgentAwake", Some("a")),
+            ("Decided", Some("c")),
+        ]);
+        let s2 = build(&[
+            ("Spawned", Some("a")),
+            ("AgentAwake", Some("a")),
+            ("Decided", Some("c")),
+        ]);
         assert_eq!(s1.chain_head_hex(), s2.chain_head_hex());
     }
 
@@ -182,7 +213,14 @@ mod tests {
 
     #[test]
     fn canonical_is_stable_and_escaped() {
-        let e = Event { tick: 7, etype: "Event".into(), subject: Some("a".into()), payload: "he\"llo\n".into(), corr: Some(3), agent: None };
+        let e = Event {
+            tick: 7,
+            etype: "Event".into(),
+            subject: Some("a".into()),
+            payload: "he\"llo\n".into(),
+            corr: Some(3),
+            agent: None,
+        };
         assert_eq!(
             e.canonical(),
             "{\"tick\":7,\"etype\":\"Event\",\"subject\":\"a\",\"payload\":\"he\\\"llo\\n\",\"corr\":3,\"agent\":null}"

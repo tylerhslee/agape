@@ -1,5 +1,5 @@
 // The signature blue status bar. Shows the live connection to the Agape backend,
-// the cognition provider behind the seam, and the spine/agent counts.
+// the cognition provider behind the seam, and the ledger/agent counts.
 export default function StatusBar({ state, eventCount, live, onToggleLive }) {
   return (
     <div className="statusbar">

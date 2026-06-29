@@ -1,7 +1,7 @@
 {
   "name": "agape-studio-web",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.0.0-alpha.2026.6.29.0",
   "type": "module",
   "description": "Agape Studio — the VS Code-skinned React frontend for event-driven management.",
   "scripts": {

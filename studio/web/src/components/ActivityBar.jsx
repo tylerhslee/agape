@@ -1,9 +1,9 @@
 // The far-left activity bar — VS Code's primary navigation. Event-cockpit first:
-// the views are Agents (the population), Spine (the live event log), and Query
+// the views are Agents (the population), Ledger (the live event log), and Query
 // (the agape> console), not Explorer/Search/Git.
 const ITEMS = [
   { id: "agents", icon: "ti-users-group", label: "Agents" },
-  { id: "spine", icon: "ti-timeline-event", label: "Event spine" },
+  { id: "spine", icon: "ti-timeline-event", label: "Event ledger" },
   { id: "query", icon: "ti-database-search", label: "Query console" },
 ];
 

@@ -1,0 +1,18 @@
+//! id:        gate_endorsement_introspection_accept
+//! section:   22_gate
+//! expect:    accept
+//! spec:      §20.4 (Endorsement exposes the same read-only provenance fields as Decision)
+//! ---
+enum R { Yes, No }
+agent Desk {
+  on awake {
+    Credence<R> c = self <- "yes?";
+    Endorsement<R> e = endorse(c by confidence 0.8);
+    case (e.committed) as r {
+      Yes: { say("yes"); }
+      No:  { say("no"); }
+    }
+    if (e.margin > 0.1) { say("clear"); } else { say("close"); }
+  }
+}
+spawn Desk d; awake d;
