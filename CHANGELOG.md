@@ -8,10 +8,12 @@ version.
 
 ## [1.0.0-alpha.2026.6.30.0] — 2026-06-30
 
-A spec-only release that finalizes the decision-gate model and folds the runtime
-contract into the language specification. The `SPEC.md` document is the deliverable;
-the conformance suite and the `agape-rs` runtime are **not yet re-aligned** to this
-spec (tracked as follow-up work) and remain at the previous alpha for now.
+A spec-led release that finalizes the decision-gate model and folds the runtime
+contract into the language specification. The whole bundle is version-tagged at
+`1.0.0-alpha.2026.6.30.0` per the lockstep convention, but the deliverable is the
+`SPEC.md` document: the conformance suite and the `agape-rs` runtime carry the new
+version yet are **not yet conformance-aligned** to the finalized gate model
+(tracked as follow-up work in `agape-conformance/AUDIT.md`).
 
 ### Language — the decision gate, redesigned
 
