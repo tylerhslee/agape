@@ -78,7 +78,7 @@ agape check main.ag      # static guarantees only — authority, endorsement, ty
 agape studio             # open the project in Agape Studio (live ledger, eval, lifecycle)
 ```
 
-By default everything runs on the in-box mock provider. To run against a real model, name a backend in the manifest and bind its key from the environment — `anthropic` (sampling fallback), `openai`, or `gemini` (token-logprob credences). Configuration is Agape's ecosystem seam: providers, tools, prompts, identity, memory policy, and deployment endpoints are bound outside `.ag` source. See **[DISTRIBUTION.md](DISTRIBUTION.md)**, **[RUNTIME_SPEC.md](RUNTIME_SPEC.md)**, and SPEC §17.
+By default everything runs on the in-box mock provider. To run against a real model, name a backend in the manifest and bind its key from the environment — `anthropic` (sampling fallback), `openai`, or `gemini` (token-logprob credences). Configuration is Agape's ecosystem seam: providers, tools, prompts, identity, memory policy, and deployment endpoints are bound outside `.ag` source. See **[DISTRIBUTION.md](DISTRIBUTION.md)** and the runtime contract in **[SPEC.md](SPEC.md) §16–§17**.
 
 ## Studio deployments
 
@@ -126,7 +126,7 @@ deployment.
 - **Behavior is versioned, not mutable.** An agent's system prompt is an `instruction` in source — settled, reviewable, append-only under inheritance. No recalled fact or injected memory can rewrite it; changing behavior means shipping a new version.
 - **Memory cannot launder trust.** Private memory stores anything, but every recall comes out **tainted** — taint-equivalent to a fresh model reply — so a remembered "fact" must be re-gated before it can drive an action, just like a new one.
 - **Every run replays.** Execution is an append-only, hash-chained ledger; state is a function of that ledger. A recorded run replays exactly, and any prefix can be replayed under altered facts to test a counterfactual.
-- **Every agent learns.** Every runtime must run each agent turn through the mandatory private-memory envelope in [RUNTIME_SPEC.md](RUNTIME_SPEC.md): consult memory, act, record the result, and internalize the experience.
+- **Every agent learns.** Every runtime must run each agent turn through the mandatory private-memory envelope in [SPEC.md](SPEC.md) §16.7: consult memory, act, record the result, and internalize the experience.
 
 ## How a decision is made
 

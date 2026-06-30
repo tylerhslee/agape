@@ -2,8 +2,9 @@
 //! section:   22_gate
 //! expect:    accept
 //! provider:  credence(Approve=0.9, Reject=0.1)
-//! contains:  Attestation(c); Commit(d)
-//! spec:      §20.1, §20.3 (cold non-reversible decide defers to a reachable principal before the action arm commits)
+//! principal: grant
+//! contains:  PrincipalDecision; Endorsed
+//! spec:      §20.1, §20.3 (cold non-reversible path reaches a principal before the action arm commits)
 //! ---
 enum R { Approve, Reject }
 action Commit(text body);
@@ -11,9 +12,10 @@ principal boss;
 agent Desk grants { perform Commit } {
   on awake {
     Credence<R> c = self <- "approve?";
-    boss decide c {
-      Approve: perform Commit("approved");
-      Reject: say("rejected");
+    Decision<R> d = decide c by boss;
+    endorse c by d {
+      Approve as e { perform Commit("approved"); }
+      Reject as e { say("rejected"); }
     }
   }
 }

@@ -1,0 +1,21 @@
+//! id:        gov_principal_decision_records
+//! section:   13_governance
+//! expect:    accept
+//! principal: grant
+//! contains:  PrincipalDecision; Endorsed
+//! spec:      §13, §16.4 (a granted `decide c by p` records a PrincipalDecision event for the gated credence)
+//! ---
+enum Approval { Approve, Decline }
+action ReleaseFunds(int cents);
+principal alice;
+agent Drafter grants { perform ReleaseFunds } {
+  on awake {
+    Credence<Approval> c = self <- "draft the refund memo: approve?";
+    Decision<Approval> d = decide c by alice;
+    endorse c by d {
+      Approve as e { perform ReleaseFunds(5000); }
+      Decline as e { say("declined"); }
+    }
+  }
+}
+spawn Drafter d; awake d;

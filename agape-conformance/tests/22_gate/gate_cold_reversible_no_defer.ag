@@ -2,19 +2,19 @@
 //! section:   22_gate
 //! expect:    accept
 //! provider:  credence(Reply=0.9, Hold=0.1)
-//! contains:  Reply(d)
-//! absent:    Attestation(c)
+//! contains:  Endorsed
+//! absent:    PrincipalDecision
 //! spec:      §20.1 (a cold reversible outcome commits without principal deferral)
 //! ---
 enum R { Reply, Hold }
 reversible action Reply(text body);
-principal boss;
 agent Desk grants { perform Reply } {
   on awake {
     Credence<R> c = self <- "reply?";
-    boss decide c {
-      Reply: perform Reply("ok");
-      Hold: say("hold");
+    Decision<R> d = decide c by confidence 0.8 margin 0.1;
+    endorse c by d {
+      Reply as e { perform Reply("ok"); }
+      Hold as e { say("hold"); }
     }
   }
 }

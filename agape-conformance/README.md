@@ -1,9 +1,9 @@
-# Agape — Black-Box Conformance Suite (v1.0)
+# Agape — Black-Box Conformance Suite (v1.0.0-alpha.2026.6.29.0)
 
 A set of `.ag` programs, each tagged with an expected outcome, that together
-define when an implementation of **Agape v1.0** is *valid* (every behavior
-matches the spec) and *complete* (every required behavior is exercised). Tests
-are derived **only** from `SPEC-1.0.md` — never from any implementation. An
+define when an implementation of **Agape v1.0.0-alpha.2026.6.29.0** is *valid* (every
+behavior matches the spec) and *complete* (every required behavior is exercised). Tests
+are derived **only** from `../SPEC.md` — never from any implementation. An
 implementation passes by feeding each test through its own front end + runtime
 and matching the declared outcome.
 
@@ -77,11 +77,11 @@ sync text find(text q) { return search(q); }
 | `absent` | optional | events the ledger must **not** contain |
 | `order` | optional | events that must appear in this relative order (others may interleave) |
 | `provider` | optional | stub-provider behavior for the run (§17.5 fault / credence scripting) |
-| `attest` | optional | identity-dependency ruling for `attest` (`grant` / `deny`) |
+| `principal` | optional | identity-dependency ruling for `decide c by p` (`grant` / `deny`) |
 | `manifest` | optional | `[runtime]`/policy fixture values for the run (`; `-separated) |
 | `replay` | optional | replay assertion (`chain_head_equal`) |
 | `packages` | optional | package roots, `name=path/to/lib.ag`, `; `-separated |
-| `spec` | always | the SPEC-1.0 clause(s) the test pins |
+| `spec` | always | the `SPEC.md` clause(s) the test pins |
 | `note` | optional | one-line rationale |
 
 ### Outcome statuses
@@ -98,9 +98,10 @@ sync text find(text q) { return search(q); }
 `ModuleError` (import resolution: unresolved/cyclic/ambiguous names) ·
 `VisibilityError` (naming a non-`pub` declaration; a `pub` signature exposing a private type) ·
 `InterfaceError` (an `agent : Iface` that fails to satisfy the contract) ·
-`GateError` (a `decide` with a non-reversible arm and no reachable principal, §20). An implementation
-may use its own internal names but must map to these categories; the suite asserts the
-category, not the message text.
+`GateError` (a consequential `endorse`/`perform` path with no reachable principal fallback — the
+deference requirement, §20.3; the spec calls this a "compile error" and `GateError` is the suite's
+category for it). An implementation may use its own internal names but must map to these categories;
+the suite asserts the category, not the message text.
 
 ## Ledger matcher vocabulary
 
@@ -108,19 +109,21 @@ category, not the message text.
 
 ```
 Spawned(x) AgentAwake(x) SleepEvent(x) PromptOpened(x) Prompt(x)
-Event Error  Decided(x) Abstained(x)
-Contradiction(x) Attestation(x)  QueryResult(x)  RetryExhausted TypeMismatch
+Event Error  Endorsed(x) Abstained(x) PrincipalDecision(x)
+Contradiction(x) QueryResult(x)  MemoryConsulted(x) ArtifactObserved(x) Internalized(x) Forgotten(x)
+RetryExhausted TypeMismatch
 pair(op@subj)   ← a Started/Resolved pair for async op `op` on subject `subj`
 single(op@subj) ← a single (synchronous) event
 ```
 
 `ledger:` is an exact ordered match. `contains:`/`absent:` are order-free. `order:` is an
 **ordered subsequence** — every listed event must appear, in the given relative order, with
-anything allowed in between. Subtype matching follows §9: a gate records `Decided(x)` (a
-singleton commit) or `Abstained(x)`; `Error` matches any `Error` subtype (e.g. `Contradiction`).
+anything allowed in between. Subtype matching follows §9: an `endorse` records `Endorsed(x)` (a
+singleton commit applied to a subject) or `Abstained(x)`; a `decide c by p` records
+`PrincipalDecision(x)`; `Error` matches any `Error` subtype (e.g. `Contradiction`).
 
 The message lifecycle and async pairs use ordinary event tokens: `Sent(x)` `Delivered(x)`
-`Resolved(x)` `Expired(x)` `DeliveryRefused(x)`, plus `AgentCrashed(x)` `FailedAttestation(x)`.
+`Resolved(x)` `Expired(x)` `DeliveryRefused(x)`, plus `AgentCrashed(x)` `FailedPrincipalDecision(x)`.
 
 ## Run directives — the §17.5 harness contract
 
@@ -135,8 +138,8 @@ these header directives. A test with no directives runs under the default record
     `TypeMismatch` (§8), catchable and retryable.
   - `credence(V=p, …)` — scripts the next graded judgment's distribution so a test can pin a
     margin, e.g. `credence(true=0.62, false=0.38)`.
-- `attest:` — the identity dependency's ruling for `attest … by p`: `grant` (default) or
-  `deny` (→ `FailedAttestation`, §13).
+- `principal:` — the identity dependency's ruling for `decide c by p`: `grant` (default) or
+  `deny` (→ `FailedPrincipalDecision`, §13).
 - `manifest:` — connector/dependency fixture config, `; `-separated, e.g.
   `manifest: provider.exposes_logprobs=false` — to exercise the sampling fallback (§16.8).
   Decision policy is in the test's own source (a `policy` declaration, §13), never the manifest.

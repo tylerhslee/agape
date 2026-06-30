@@ -1,0 +1,15 @@
+//! id:        ctrl_retry_unbounded_reject
+//! section:   11_control
+//! expect:    reject
+//! error:     ParseError
+//! spec:      §11, §15.2 (retry's bound is mandatory — `retry ::= block "retry" "(" Int ")"`; an unbounded `retry` with no `(N)` is a ParseError, so every reaction terminates)
+//! note:      the only loop in the language is the bounded retry; there is no unbounded form
+//! ---
+agent A {
+  on awake {
+    {
+      event<text> r = self <- "go";
+    } retry
+  }
+}
+spawn A a; awake a;

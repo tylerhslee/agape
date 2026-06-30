@@ -68,7 +68,7 @@ own section.
 
 Studio and the systems it builds **do not share a runtime**. Each runs as its own
 Agape runtime, with its own ledger, its own agent population, its own grants and
-config. Every runtime must satisfy `[RUNTIME_SPEC.md](../RUNTIME_SPEC.md)`,
+config. Every runtime must satisfy the runtime contract ([SPEC.md](../SPEC.md) §16–§17),
 including the mandatory per-agent memory envelope. Studio is a **control plane**;
 an app you build is a **separate runtime**
 that the control plane drives across an isolation boundary — not a folder it
@@ -336,7 +336,7 @@ already has:
   one per runtime.
 - **Context & memory** ↔ the three memory modalities and provenance (§10).
   Studio operators and product agents both learn through the same runtime memory
-  envelope (`[RUNTIME_SPEC.md](../RUNTIME_SPEC.md)`); the builder is not special.
+  envelope ([SPEC.md](../SPEC.md) §16.7); the builder is not special.
 - **Tools & seams** ↔ the typed tool boundary (§6b) and the somatic/agentic split.
 - **Escalations** ↔ the external-input boundary (§5b).
 

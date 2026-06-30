@@ -2,19 +2,22 @@
 //! section:   22_gate
 //! expect:    accept
 //! provider:  credence(A=0.5, B=0.5)
-//! contains:  Event
+//! contains:  Review
 //! absent:    Note
-//! spec:      §20.3 (a reversible decide tie uses default as the tiebreak instead of silently picking)
+//! spec:      §20.3 (a reversible decide tie routes to the abstain block instead of silently picking)
 //! ---
 enum R { A, B }
+event Review(text note);
 reversible action Note(text body);
 agent Desk grants { perform Note } {
   on awake {
     Credence<R> c = self <- "choose A or B";
-    decide c {
-      A: perform Note("a");
-      B: perform Note("b");
-      default: emit Event("needs-review");
+    Decision<R> d = decide c by conformal 0.1;
+    endorse c by d {
+      A as e { perform Note("a"); }
+      B as e { perform Note("b"); }
+    } abstain {
+      emit Review("needs-review");
     }
   }
 }

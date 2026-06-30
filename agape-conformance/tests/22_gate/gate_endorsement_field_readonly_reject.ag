@@ -8,8 +8,11 @@ enum R { Yes, No }
 agent Desk {
   on awake {
     Credence<R> c = self <- "yes?";
-    Endorsement<R> e = endorse(c by confidence 0.8);
-    e.margin = 0.0;
+    Decision<R> d = decide c by confidence 0.8;
+    endorse c by d {
+      Yes as e { e.margin = 0.0; }
+      No as e  { say("no"); }
+    }
   }
 }
 spawn Desk d; awake d;

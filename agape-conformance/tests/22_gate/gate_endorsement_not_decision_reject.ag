@@ -2,16 +2,19 @@
 //! section:   22_gate
 //! expect:    reject
 //! error:     TypeError
-//! spec:      §13 (`endorse(c by R)` returns Endorsement<E>, not Decision<E>)
+//! spec:      §13 (an Endorsement<E> is not a Decision<E>)
 //! ---
 enum R { Yes, No }
 agent Desk {
   on awake {
     Credence<R> c = self <- "yes?";
-    Decision<R> d = endorse(c by confidence 0.8);
-    case (d) as r {
-      Yes: { say("yes"); }
-      No:  { say("no"); }
+    Decision<R> d = decide c by confidence 0.8;
+    endorse c by d {
+      Yes as e {
+        Decision<R> bad = e;
+        say(f"{bad}");
+      }
+      No as e { say("no"); }
     }
   }
 }

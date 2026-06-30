@@ -2,12 +2,12 @@
 //! section:   03_types
 //! expect:    reject
 //! error:     TypeError
-//! spec:      §3, §13 (no text -> Principal coercion at an attest gate)
+//! spec:      §3, §13 (a principal basis must be a declared `principal`, not a string; `decide c by "alice"` has no text -> Principal coercion)
 //! ---
 agent Drafter {
   on awake {
-    event<text> memo = self <- "draft the memo";
-    attest memo by "alice";
+    Credence<bool> c = self <- "should we send the memo?";
+    Decision<bool> d = decide c by "alice";
   }
 }
-spawn Drafter d; awake d;
+spawn Drafter dr; awake dr;

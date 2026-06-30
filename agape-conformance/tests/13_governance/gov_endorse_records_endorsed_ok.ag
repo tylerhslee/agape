@@ -1,0 +1,17 @@
+//! id:        gov_endorse_records_endorsed_ok
+//! section:   13_governance
+//! expect:    accept
+//! contains:  Endorsed
+//! spec:      §9, §13 (endorse records an Endorsed event on the ledger for the exact subject)
+//! ---
+agent A {
+  on awake {
+    Credence<bool> c = self <- "is \"approve #42\" an approval?";
+    Decision<bool> d = decide c by confidence 0.9;
+    endorse c by d {
+      true as e { }
+      false as e { }
+    }
+  }
+}
+spawn A a; awake a;

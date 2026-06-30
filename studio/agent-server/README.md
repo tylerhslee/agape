@@ -3,7 +3,7 @@
 This is the local TypeScript implementation of Agape Studio's agentic layer. It
 gives the studio's operators (the builders you pair with and delegate to) real
 behavior by calling provider APIs, and it implements the shared runtime contract
-in `../../RUNTIME_SPEC.md` for Studio's own control-plane runtime.
+in [SPEC.md](../../SPEC.md) §16–§17 for Studio's own control-plane runtime.
 
 It is explicitly the **studio runtime** described in `[../STUDIO.md](../STUDIO.md)`
 §2: a TypeScript service behind a stable seam. The Rust runtime and Soma/cloud

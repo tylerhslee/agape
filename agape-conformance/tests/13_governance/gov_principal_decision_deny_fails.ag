@@ -1,0 +1,23 @@
+//! id:        gov_principal_decision_deny_fails
+//! section:   13_governance
+//! expect:    accept
+//! principal: deny
+//! contains:  FailedPrincipalDecision
+//! spec:      §13 (when the principal declines, `decide c by p` records a FailedPrincipalDecision; the decision is the principal's, deferred to the model only for the clear cases)
+//! ---
+enum Approval { Approve, Decline }
+action ReleaseFunds(int cents);
+principal alice;
+agent Clerk grants { perform ReleaseFunds } {
+  on awake {
+    Credence<Approval> c = self <- "assess this refund request";
+    Decision<Approval> d = decide c by alice;
+    endorse c by d {
+      Approve as e { perform ReleaseFunds(10000); }
+      Decline as e { say("declined"); }
+    } abstain {
+      say("principal declined to rule");
+    }
+  }
+}
+spawn Clerk a; awake a;

@@ -3,7 +3,7 @@
 This is a working Studio-runtime implementation of the part of the Agape runtime
 that matters most for any agent that must **learn Agape and get good at it**: the
 **ledger** (§7), the **three-modality memory** (§10), and the mandatory memory
-envelope defined in `../../RUNTIME_SPEC.md`. On top of it runs a learning loop —
+envelope defined in [SPEC.md](../../SPEC.md) §16.7. On top of it runs a learning loop —
 read an artifact, summarize it, internalize it, write Agape, run it, learn from
 failures, repeat.
 
