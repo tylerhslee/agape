@@ -8,7 +8,7 @@ be added when the spec grows or a gap is found.
 
 - Indexed tests: 206
 - Manifest freshness: `python3 build_manifests.py --check` passes
-- Spec audited against: `../SPEC.md` (v1.0.0-alpha.2026.6.29.0), runtime contract included (§16/§17)
+- Spec audited against: `../SPEC.md` (v1.0.0-alpha.2026.6.30.0), runtime contract included (§16/§17)
 
 > **See [`AUDIT.md`](AUDIT.md)** for the full 2026-06-29 spec↔suite lockstep audit — the
 > authoritative gap/drift worklist. Headline: the suite lags the `decide`/`endorse` gate-syntax
