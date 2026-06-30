@@ -107,7 +107,7 @@ describe("studio backend — user journeys (integration)", () => {
     const d = await (await post("/project/run", { rel: "main.ag", prompts: { question: "hi" } })).json();
     expect(d.ok).toBe(true);
     const types = d.events.map((e: any) => e.etype);
-    expect(types).toContain("Decided"); // the gate committed
+    expect(types).toContain("Endorsed"); // the gate committed
     expect(types).toContain("Reply"); // ...and the verified answer was performed
   });
 

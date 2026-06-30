@@ -42,6 +42,28 @@ describe("internalization + provenance (§10)", () => {
   });
 });
 
+describe("knowledge artifacts", () => {
+  it("records source summaries once per agent/source/hash", () => {
+    const a = mem.ensureSource("builder", "spec", "SPEC.md", "Spec", "whole-doc summary", "hash1");
+    const b = mem.ensureSource("builder", "spec", "SPEC.md", "Spec", "whole-doc summary", "hash1");
+    expect(a.created).toBe(true);
+    expect(b.created).toBe(false);
+    expect(a.source.id).toBe(b.source.id);
+    expect(mem.sourceSummaries("builder")).toHaveLength(1);
+    expect(mem.sourceSummaries("builder")[0].summary).toContain("whole-doc");
+  });
+
+  it("dedupes chunks per agent without sharing private projections", () => {
+    const source = mem.ensureSource("builder", "spec", "SPEC.md", "Spec", "summary", "hash1").source;
+    const tick = mem.internalize("builder", "Internalized", "gate", "endorse gate text", ENDORSE);
+    mem.recordSourceChunk("builder", source.id, "spec", "SPEC.md", "gate", "chunk1", tick);
+    mem.recordSourceChunk("builder", source.id, "spec", "SPEC.md", "gate", "chunk1", tick);
+    expect(mem.sourceChunk("builder", "spec", "SPEC.md", "chunk1")?.origin_tick).toBe(tick);
+    expect(mem.counts("builder").chunks).toBe(1);
+    expect(mem.sourceChunk("other-agent", "spec", "SPEC.md", "chunk1")).toBeUndefined();
+  });
+});
+
 describe("query surface (§10)", () => {
   beforeEach(() => {
     mem.internalize("builder", "Internalized", "gate", "endorse gate text", ENDORSE);

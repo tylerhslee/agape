@@ -8,6 +8,11 @@
 > Agape draws on established results from probability theory, distributed systems,
 > decision theory, and information-flow security; these are cited inline where they are
 > first used.
+>
+> Companion contract: `RUNTIME_SPEC.md` defines the obligations shared by the Rust
+> runtime, Studio runtime, and hosted runtimes such as Soma. This language spec defines
+> what programs mean; the runtime spec defines how ledgers, agents, memory, replay, and
+> runtime APIs must behave in every implementation.
 
 ---
 
@@ -858,11 +863,13 @@ off-ledger — like a local `Decision`, it must be endorsed to admit a consequen
 
 Internalization decomposes a value — through the provider — into facts, relationships, and
 embeddings written to the agent's memory; it is non-deterministic (cognition) but its shape is
-fixed (typed facts; SPO triples over a typed predicate set). It is **invoked, not ambient**: an
-agent internalizes deliberately — `store(x)` / `embed(x)` (§9), or by acting on a prompt to
-itself — and, as an opt-in config (§17, off by default), the runtime may internalize every
-received `<-` event automatically. The trigger is configurable (§16.7); the decomposition is the
-same.
+fixed (typed facts; SPO triples over a typed predicate set). Every agent reaction runs inside a
+mandatory **memory envelope**: the incoming stimulus is recorded on the ledger, the agent consults
+its own private memory for that stimulus (even if the result is empty), the resulting memory packet
+is supplied to cognition, and the experience is internalized back into that same private memory.
+`store(x)` / `embed(x)` (§9) remain explicit emphasis operations; they are not the only way an
+agent learns. Configuration may tune depth, chunking, summarization, embedding backend, and cost
+limits, but may not silently bypass the consult-or-internalize phases (§16.7).
 
 ### Provenance
 
@@ -2024,13 +2031,13 @@ Each agent owns three stores (§10): a **fact table** (relational), a **relation
 over a typed predicate set), and a **vector store** (embeddings). No store is shared — there is no
 cross-agent mutable state (§0.2).
 
-- **Internalization (configurable trigger).** Internalization decomposes a value into typed facts, SPO
-  triples, and embeddings written to the agent's memory, via a provider call — non-deterministic but
-  shape-fixed (§10), and journaled, so replay (§16.5) reproduces it without re-invoking the provider. The
-  **trigger** is configurable: by default explicit — `store(x)` / `embed(x)` (§9) or a prompt-driven
-  decision — and, when `[memory] internalize_on_receive = true` (§17, default `false`), the runtime
-  decomposes every received `<-` event automatically. Default-off keeps cognition cost pay-as-you-go: a
-  digest call happens only when asked for, not on every message.
+- **Memory envelope (mandatory trigger).** Each agent reaction consults the agent's own memory before
+  cognition and internalizes the resulting experience after cognition, tool use, check/test feedback, or
+  user correction. The consult itself is observable: an empty packet is a meaningful recorded result, not
+  an omitted step. Internalization decomposes a value into typed facts, SPO triples, and embeddings via
+  a provider call — non-deterministic but shape-fixed (§10), and journaled, so replay (§16.5) reproduces
+  it without re-invoking the provider. Configuration controls budget and fidelity, not whether memory is
+  part of the turn.
 - **Provenance.** Every memory cell carries an immutable backpointer to the ledger event that produced it;
   `origin(n)` projects it (§10). A queried value carries the trust of its provenance event — `graded` by
   default (most facts trace to internalized cognition), `settled` when the origin is an already-endorsed
@@ -2141,8 +2148,8 @@ configuration error.
 # the identity dependency (`principal NAME;`)
 [identity]  backend = "local-keyring"
 
-# memory — the internalization trigger (§10, §16.7); default off keeps cognition pay-as-you-go
-[memory]    internalize_on_receive = false
+# memory — mandatory per-agent envelope (§10, §16.7); settings tune budget/fidelity, not bypass
+[memory]    max_internalize_chars = 12000
 
 # conformal needs no manifest entry: it calibrates from the ledger, and a gate's readiness
 # floor and default α live in its `policy` declaration in source (§13)

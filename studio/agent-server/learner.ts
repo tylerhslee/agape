@@ -5,10 +5,19 @@
 import { Memory } from "./memory.ts";
 import type { Cognition } from "./provider.ts";
 import type { Runner, RunResult } from "./runner.ts";
+import { createHash } from "node:crypto";
 
 export interface SpecChunk {
   title: string;
   text: string;
+}
+export interface KnowledgeSource {
+  kind: string;
+  uri: string;
+  title: string;
+}
+export interface RetrieveOptions {
+  recordConsult?: boolean;
 }
 
 // Split the spec on its headings; drop trivially short sections.
@@ -33,23 +42,40 @@ export class Learner {
     private mem: Memory,
     private cog: Cognition,
     private runner: Runner,
-    private agent = "builder"
+    private agent = "agent"
   ) {}
 
   // §10 internalization over the spec — each chunk becomes facts + triples + an
   // embedding pinned to its spine event.
-  async ingest(spec: string, maxChunks = 8): Promise<{ chunks: number; counts: any }> {
+  async ingest(
+    spec: string,
+    maxChunks = 8,
+    source: KnowledgeSource = { kind: "spec", uri: "SPEC.md", title: "Agape language specification" }
+  ): Promise<{ chunks: number; skipped: number; summary: string; sourceHash: string; counts: any }> {
+    const sourceHash = hashText(spec);
+    const existing = this.mem.source(this.agent, source.kind, source.uri, sourceHash);
+    const summary = existing?.summary || await this.summarizeArtifact(source, spec);
+    const sourceState = this.mem.ensureSource(this.agent, source.kind, source.uri, source.title, summary, sourceHash);
     const chunks = chunkSpec(spec, maxChunks);
+    let written = 0;
+    let skipped = 0;
     for (const c of chunks) {
       const text = c.text.slice(0, 4000);
+      const chunkHash = hashText(`${source.kind}\n${source.uri}\n${c.title}\n${text}`);
+      if (this.mem.sourceChunk(this.agent, source.kind, source.uri, chunkHash)) {
+        skipped++;
+        continue;
+      }
       const decomp = await this.cog.decompose(`## ${c.title}\n${text}`);
-      this.mem.internalize(this.agent, "Internalized", c.title, text, decomp, "P");
+      const tick = this.mem.internalize(this.agent, "Internalized", c.title, text, decomp, "P");
+      this.mem.recordSourceChunk(this.agent, sourceState.source.id, source.kind, source.uri, c.title, chunkHash, tick);
+      written++;
     }
-    return { chunks: chunks.length, counts: this.mem.counts(this.agent) };
+    return { chunks: written, skipped, summary, sourceHash, counts: this.mem.counts(this.agent) };
   }
 
   // Pull grounded context for a task across all three modalities.
-  retrieve(task: string) {
+  retrieve(task: string, options: RetrieveOptions = {}) {
     const hits = this.mem.match(this.agent, task, 0.12, 5);
     const toks = new Set(task.toLowerCase().match(/[a-z_<>-]+/g) || []);
     const triples = this.mem
@@ -57,19 +83,37 @@ export class Learner {
       .filter((t) => toks.has(t.s.toLowerCase()) || toks.has(t.o.toLowerCase()))
       .slice(0, 12);
     const lessons = this.mem.select(this.agent, { key: "lesson" });
+    const summaries = this.mem.sourceSummaries(this.agent, 4);
     const context = [
+      summaries.length ? "Knowledge artifact summaries:\n" + summaries.map((s) => `- ${s.title} (${s.uri}): ${trunc(s.summary, 650)}`).join("\n") : "",
       hits.length ? "Relevant spec passages:\n" + hits.map((h) => `- ${trunc(h.text, 380)} (ledger #${h.origin_tick})`).join("\n") : "",
       triples.length ? "Known relationships:\n" + triples.map((t) => `- ${t.s} —${t.p}→ ${t.o}`).join("\n") : "",
       lessons.length ? "Lessons learned:\n" + lessons.map((l) => `- ${l.value}`).join("\n") : "",
     ]
       .filter(Boolean)
       .join("\n\n");
-    return { context, hits, triples, lessons };
+    const consultTick = options.recordConsult
+      ? this.mem.append(
+          this.agent,
+          "MemoryConsulted",
+          task,
+          JSON.stringify({
+            task,
+            summaries: summaries.length,
+            hits: hits.map((h) => h.origin_tick),
+            triples: triples.length,
+            lessons: lessons.length,
+          })
+        )
+      : null;
+    return { context, hits, triples, lessons, summaries, consultTick };
   }
 
-  codingContext(task: string) {
-    const retrieved = this.retrieve(task);
+  codingContext(task: string, options: RetrieveOptions = {}) {
+    const retrieved = this.retrieve(task, options);
     const rules = [
+      "Every agent turn must consult private memory; an empty memory packet is still a recorded observation.",
+      "For implementation work, write or identify tests first, implement against those tests, run checks, then learn from pass/fail evidence.",
       "Prefer `decide ... default ... defer` for application workflows; use `endorse` for lower-level/manual gates.",
       "Bind model testimony as `Credence<E>` over a closed enum, then gate before any consequential sink.",
       "`perform` and write tools need explicit grants plus settled, endorsed inputs.",
@@ -90,6 +134,7 @@ export class Learner {
   async writeCode(task: string, context: string): Promise<string> {
     const system =
       "You write Agape source code. Output ONLY Agape code — no prose, no fences. " +
+      "Write or identify the relevant tests first, then implement against those tests. " +
       "Ground every construct in the provided spec context; if unsure, keep it minimal and correct over clever.";
     const user = `Task: ${task}\n\nGrounded context from memory:\n${context || "(memory empty — write the simplest plausible Agape program)"}`;
     return stripFences(await this.cog.complete(system, [{ role: "user", content: user }], 1200));
@@ -125,6 +170,45 @@ export class Learner {
     return lesson;
   }
 
+  async summarizeArtifact(source: KnowledgeSource, text: string): Promise<string> {
+    const system =
+      "Summarize a knowledge artifact for an Agape agent's persistent private memory. " +
+      "Preserve the artifact's purpose, main concepts, constraints, and how it should guide future coding. " +
+      "Output one compact paragraph, no bullets, no code fences.";
+    const user = `Artifact: ${source.title} (${source.uri})\n\n${text.slice(0, 12000)}`;
+    return trunc((await this.cog.complete(system, [{ role: "user", content: user }], 700, 0)).trim(), 1800);
+  }
+
+  internalizeExperience(kind: string, subject: string, text: string, meta: Record<string, unknown> = {}): number {
+    const status = typeof meta.ok === "boolean" ? (meta.ok ? "passed" : "failed") : "observed";
+    const safeSubject = slug(subject);
+    const body = [
+      `Experience kind: ${kind}`,
+      `Subject: ${subject}`,
+      `Status: ${status}`,
+      Object.keys(meta).length ? `Metadata: ${JSON.stringify(meta)}` : "",
+      "",
+      text,
+    ].filter(Boolean).join("\n");
+    return this.mem.internalize(
+      this.agent,
+      "Experienced",
+      subject,
+      body,
+      {
+        facts: [
+          { key: "experience", value: `${kind}: ${subject}` },
+          { key: `${kind}-status`, value: status },
+        ],
+        triples: [
+          { s: safeSubject, p: "experienced-as", o: kind },
+          { s: safeSubject, p: "resulted-in", o: status },
+        ],
+      },
+      "P"
+    );
+  }
+
   state() {
     return {
       agent: this.agent,
@@ -154,7 +238,7 @@ export class Learner {
 
   // One full pass of the loop.
   async step(task: string) {
-    const { context, hits, triples, lessons } = this.retrieve(task);
+    const { context, hits, triples, lessons } = this.retrieve(task, { recordConsult: true });
     const code = await this.writeCode(task, context);
     const result = await this.runner.run(code);
     const lesson = await this.reflect(task, code, result);
@@ -177,4 +261,12 @@ function trunc(s: string, n: number): string {
 function stripFences(s: string): string {
   const m = s.match(/```(?:agape)?\s*([\s\S]*?)```/);
   return (m ? m[1] : s).trim();
+}
+
+function hashText(s: string): string {
+  return createHash("sha256").update(s).digest("hex");
+}
+
+function slug(s: string): string {
+  return (s.toLowerCase().match(/[a-z0-9_.-]+/g) || ["experience"]).slice(0, 5).join("-");
 }

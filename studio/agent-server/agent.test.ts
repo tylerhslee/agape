@@ -17,8 +17,14 @@ describe("systemPrompt", () => {
     const s = systemPrompt(item, { project: "Project: x", memory: "Rules:\n- gate before perform" });
     expect(s).toContain("Project context:");
     expect(s).toContain("Project: x");
-    expect(s).toContain("Builder memory context:");
+    expect(s).toContain("Agent private memory context:");
     expect(s).toContain("gate before perform");
+  });
+
+  it("requires test-first implementation behavior", () => {
+    const s = systemPrompt(item);
+    expect(s).toMatch(/tests first/i);
+    expect(s).toMatch(/learn from the pass\/fail result/i);
   });
 });
 

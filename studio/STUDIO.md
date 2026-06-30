@@ -68,7 +68,9 @@ own section.
 
 Studio and the systems it builds **do not share a runtime**. Each runs as its own
 Agape runtime, with its own ledger, its own agent population, its own grants and
-config. Studio is a **control plane**; an app you build is a **separate runtime**
+config. Every runtime must satisfy `[RUNTIME_SPEC.md](../RUNTIME_SPEC.md)`,
+including the mandatory per-agent memory envelope. Studio is a **control plane**;
+an app you build is a **separate runtime**
 that the control plane drives across an isolation boundary — not a folder it
 contains.
 
@@ -333,6 +335,8 @@ already has:
 - **Event log** ↔ the ledger (§7). Append-only, queryable, replayable (§15.4.2a),
   one per runtime.
 - **Context & memory** ↔ the three memory modalities and provenance (§10).
+  Studio operators and product agents both learn through the same runtime memory
+  envelope (`[RUNTIME_SPEC.md](../RUNTIME_SPEC.md)`); the builder is not special.
 - **Tools & seams** ↔ the typed tool boundary (§6b) and the somatic/agentic split.
 - **Escalations** ↔ the external-input boundary (§5b).
 
