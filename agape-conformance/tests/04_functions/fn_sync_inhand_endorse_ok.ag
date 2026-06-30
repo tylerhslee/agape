@@ -1,7 +1,0 @@
-//! id:        fn_sync_inhand_endorse_ok
-//! section:   04_functions
-//! expect:    accept
-//! spec:      §4, §13 (in-hand endorse = collapse + record, no dependency reach → sync-permitted)
-//! note:      a sync fn may endorse a Credence value already in hand.
-//! ---
-sync Decision<bool> over(Credence<bool> c) { return endorse(c by confidence 0.9); }

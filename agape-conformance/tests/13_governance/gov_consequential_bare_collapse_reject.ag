@@ -2,16 +2,18 @@
 //! section:   13_governance
 //! expect:    reject
 //! error:     TaintViolation
-//! spec:      §13 (a bare `c by R` is settled but off-ledger/unendorsed → may not license a perform)
-//! note:      only a recorded gate (endorse/attest) may license a consequential action.
+//! spec:      §13 (a sealed Decision may guide control flow but is not a subject endorsement → it may not license a perform)
+//! note:      only a recorded subject endorsement (endorse) may license a consequential action.
 //! ---
+enum R { Fraud, Clean }
 action Flag(bool b);
 agent C grants { perform Flag } {
   on awake {
-    Credence<bool> c = self <- "is this fraud?";
-    case (c by confidence 0.9) as v {
-      true: { perform Flag(true); }
-      false: { }
+    Credence<R> c = self <- "is this fraud?";
+    Decision<R> d = decide c by confidence 0.9;
+    case (d.committed) as r {
+      Fraud: { perform Flag(true); }
+      Clean: { }
     }
   }
 }

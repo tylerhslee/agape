@@ -3,14 +3,16 @@
 //! expect:    accept
 //! spec:      §13 (the optional abstain clause runs when the gate cannot commit a singleton prediction set)
 //! ---
+enum R { Fraud, Clean }
 action Flag(bool b);
 agent C grants { perform Flag } {
   on awake {
-    Credence<bool> c = self <- "is this fraud?";
-    endorse (c by confidence 0.95 margin 0.2) {
-      true: perform Flag(true);
-      false: ;
-    } abstain { say("escalate"); }
+    Credence<R> c = self <- "is this fraud?";
+    Decision<R> d = decide c by confidence 0.95 margin 0.2;
+    endorse c by d {
+      Fraud as e { perform Flag(true); }
+      Clean as e { }
+    } abstain { emit Event("escalate"); }
   }
 }
 spawn C c; awake c;

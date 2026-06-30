@@ -1,7 +1,7 @@
 //! id:        mem_store_internalizes_ok
 //! section:   10_memory
 //! expect:    accept
-//! spec:      §9, §10 (store(x) explicitly internalizes a value into the agent's memory — the invoked, default form of internalization; eager-on-receive is opt-in config, §16.7/§17)
+//! spec:      §9, §10 (store(x) is the explicit emphasis form of internalization, on top of the mandatory memory envelope that internalizes every reaction's experience anyway, §16.7)
 //! ---
 agent A {
   on awake {

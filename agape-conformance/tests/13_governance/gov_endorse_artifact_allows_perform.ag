@@ -1,0 +1,20 @@
+//! id:        gov_endorse_artifact_allows_perform
+//! section:   13_governance
+//! expect:    accept
+//! contains:  Endorsed
+//! spec:      §13 (artifact certification is ordinary subject endorsement — decide a Credence<Verification> and endorse the exact artifact; the artifact is settled only in the matching commit arm)
+//! ---
+enum Verdict { Faithful, Unsupported }
+action Reply(text body);
+agent A grants { perform Reply } {
+  on awake {
+    text draft = "the answer";
+    Credence<Verdict> c = self <- f"is this faithful: {draft}";
+    Decision<Verdict> d = decide c by confidence 0.9;
+    endorse draft by d {
+      Faithful as e { perform Reply(draft); }
+      Unsupported as e { emit Event("revise"); }
+    } abstain { emit Event("needs-review"); }
+  }
+}
+spawn A a; awake a;

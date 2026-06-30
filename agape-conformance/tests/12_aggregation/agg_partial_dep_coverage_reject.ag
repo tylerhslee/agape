@@ -1,0 +1,17 @@
+//! id:        agg_partial_dep_coverage_reject
+//! section:   12_aggregation
+//! expect:    reject
+//! error:     TypeError
+//! spec:      §12 (dependence coverage must be TOTAL over every pair; declaring only the pair (c1,c2) leaves (c1,c3) and (c2,c3) uncovered → TypeError, even though one declaration is present)
+//! note:      the weak reject tests declare ZERO dependence; this pins the harder N>=3 partial-coverage case
+//! ---
+agent A {
+  on awake {
+    Credence<bool> c1 = self <- "is this spam?";
+    Credence<bool> c2 = self <- "does this look like spam?";
+    Credence<bool> c3 = self <- "would a user flag it?";
+    independent c1, c2;
+    Credence<bool> fused = all(c1, c2, c3);
+  }
+}
+spawn A a; awake a;

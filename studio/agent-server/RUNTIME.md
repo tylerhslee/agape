@@ -1,13 +1,15 @@
 # Simulating the Agape runtime — memory + the learning loop
 
-This is a working simulation of the part of the Agape runtime that matters most for
-a builder agent that must **learn Agape and get good at it**: the **ledger** (§7) and
-the **three-modality memory** (§10). On top of it runs a learning loop — read the
-spec, internalize it, write Agape, run it, learn from failures, repeat.
+This is a working Studio-runtime implementation of the part of the Agape runtime
+that matters most for any agent that must **learn Agape and get good at it**: the
+**ledger** (§7), the **three-modality memory** (§10), and the mandatory memory
+envelope defined in [SPEC.md](../../SPEC.md) §16.7. On top of it runs a learning loop —
+read an artifact, summarize it, internalize it, write Agape, run it, learn from
+failures, repeat.
 
-It is a *reference* in TypeScript. Per the plan, the real version is the same shapes
-**rewritten in Rust** with the **LLM provider swapped to OpenAI** — so everything
-here sits behind two seams (`Cognition`, `Embedder`) and a portable schema.
+It is a TypeScript implementation of the same runtime contract the Rust runtime
+and Soma/cloud runtime must satisfy. Storage choices may differ, but ledger,
+private-memory, provenance, replay, and learning semantics must stay in lockstep.
 
 ## The memory architecture (faithful to SPEC §10, §7)
 
@@ -51,10 +53,14 @@ spine(tick PK monotonic, etype, subject, payload, corr, agent, ts)
 
 ## The learning loop
 
-A builder agent learns Agape by living on the ledger:
+Studio's Builder operator learns Agape by living on the ledger. This is Studio's
+application policy for that operator; the shared runtime rule is only that agents
+can internalize selected artifacts into their own private memory:
 
-1. **Ingest** — chunk `SPEC.md`, append each as a ledger event, **internalize** it
-   (facts + triples + embedding, with provenance). This *is* the §10 mechanism.
+1. **Ingest** — summarize the whole artifact, chunk `SPEC.md`, append each new
+   chunk as a ledger event, **internalize** it (facts + triples + embedding, with
+   provenance). The summary travels with future recall packets so chunk retrieval
+   never loses the document's larger shape.
 2. **Retrieve** — for a coding task: `match` (vector) the task against the spec,
    `find/where` related concepts, `select` prior lessons. Assemble grounded context.
 3. **Write** — the LLM writes Agape source for the task, given that context.
@@ -79,7 +85,7 @@ writes — it just can't get execution feedback, and says so. Building agape-rs 
 
 | Method | Path | Does |
 |---|---|---|
-| POST | `/learn/ingest` | chunk + internalize `SPEC.md` into a fresh agent memory |
+| POST | `/learn/ingest` | summarize, chunk, dedupe, and internalize `SPEC.md`, a project-relative artifact (`rel`), or an inline body into one agent's private memory |
 | POST | `/learn/step` | run one task through retrieve → write → run → reflect |
 | GET | `/learn/state` | ledger size + per-store counts + recent lessons |
 | GET | `/learn/recall?q=` | `match` the query and return grounded hits (debug the vector store) |

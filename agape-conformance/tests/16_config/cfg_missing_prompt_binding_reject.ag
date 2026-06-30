@@ -2,8 +2,7 @@
 //! section:   16_config
 //! expect:    reject
 //! error:     ConfigError
-//! manifest:  config.require_bindings=true
-//! spec:      §17 (each prompt declaration resolves to a manifest binding; missing binding is a configuration error)
+//! spec:      §17.1 (each prompt declaration resolves to a manifest binding; an unbound declared dependency is ALWAYS a ConfigError, not a late runtime lookup — no opt-in flag)
 //! ---
 prompt text question;
 agent A {}

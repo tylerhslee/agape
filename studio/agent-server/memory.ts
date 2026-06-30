@@ -38,6 +38,28 @@ export interface MatchHit {
   score: number;
   origin_tick: number;
 }
+export interface SourceRow {
+  id: number;
+  agent: string;
+  kind: string;
+  uri: string;
+  title: string;
+  summary: string;
+  source_hash: string;
+  origin_tick: number;
+  ts: number;
+}
+export interface SourceChunkRow {
+  id: number;
+  agent: string;
+  source_id: number;
+  source_kind: string;
+  source_uri: string;
+  title: string;
+  chunk_hash: string;
+  origin_tick: number;
+  ts: number;
+}
 
 export class Memory {
   private db: Database.Database;
@@ -63,9 +85,23 @@ export class Memory {
       CREATE TABLE IF NOT EXISTS embeddings (
         id INTEGER PRIMARY KEY AUTOINCREMENT, agent TEXT NOT NULL,
         text TEXT NOT NULL, vec TEXT NOT NULL, origin_tick INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS sources (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, agent TEXT NOT NULL,
+        kind TEXT NOT NULL, uri TEXT NOT NULL, title TEXT NOT NULL,
+        summary TEXT NOT NULL, source_hash TEXT NOT NULL,
+        origin_tick INTEGER NOT NULL, ts INTEGER NOT NULL,
+        UNIQUE(agent, kind, uri, source_hash));
+      CREATE TABLE IF NOT EXISTS source_chunks (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, agent TEXT NOT NULL,
+        source_id INTEGER NOT NULL, source_kind TEXT NOT NULL, source_uri TEXT NOT NULL,
+        title TEXT NOT NULL, chunk_hash TEXT NOT NULL,
+        origin_tick INTEGER NOT NULL, ts INTEGER NOT NULL,
+        UNIQUE(agent, source_kind, source_uri, chunk_hash));
       CREATE INDEX IF NOT EXISTS i_facts_agent ON facts(agent);
       CREATE INDEX IF NOT EXISTS i_triples_agent ON triples(agent, s, p, o);
       CREATE INDEX IF NOT EXISTS i_emb_agent ON embeddings(agent);
+      CREATE INDEX IF NOT EXISTS i_sources_agent ON sources(agent, kind, uri);
+      CREATE INDEX IF NOT EXISTS i_source_chunks_agent ON source_chunks(agent, source_kind, source_uri);
     `);
   }
 
@@ -106,6 +142,70 @@ export class Memory {
     });
     tx();
     return tick;
+  }
+
+  // ── knowledge artifacts: uploaded/read documents that an agent internalizes
+  // into its own private store. Physical chunks may dedupe; semantic ownership is
+  // still per-agent via the `agent` column.
+  source(agent: string, kind: string, uri: string, sourceHash: string): SourceRow | undefined {
+    return this.db
+      .prepare(`SELECT * FROM sources WHERE agent = ? AND kind = ? AND uri = ? AND source_hash = ?`)
+      .get(agent, kind, uri, sourceHash) as SourceRow | undefined;
+  }
+
+  ensureSource(
+    agent: string,
+    kind: string,
+    uri: string,
+    title: string,
+    summary: string,
+    sourceHash: string
+  ): { source: SourceRow; created: boolean } {
+    const existing = this.source(agent, kind, uri, sourceHash);
+    if (existing) return { source: existing, created: false };
+    const tick = this.append(
+      agent,
+      "ArtifactObserved",
+      uri,
+      JSON.stringify({ kind, uri, title, source_hash: sourceHash, summary })
+    );
+    const info = this.db
+      .prepare(`INSERT INTO sources (agent,kind,uri,title,summary,source_hash,origin_tick,ts) VALUES (?,?,?,?,?,?,?,?)`)
+      .run(agent, kind, uri, title, summary, sourceHash, tick, Date.now());
+    return {
+      source: this.db.prepare(`SELECT * FROM sources WHERE id = ?`).get(Number(info.lastInsertRowid)) as SourceRow,
+      created: true,
+    };
+  }
+
+  sourceChunk(agent: string, kind: string, uri: string, chunkHash: string): SourceChunkRow | undefined {
+    return this.db
+      .prepare(`SELECT * FROM source_chunks WHERE agent = ? AND source_kind = ? AND source_uri = ? AND chunk_hash = ?`)
+      .get(agent, kind, uri, chunkHash) as SourceChunkRow | undefined;
+  }
+
+  recordSourceChunk(
+    agent: string,
+    sourceId: number,
+    kind: string,
+    uri: string,
+    title: string,
+    chunkHash: string,
+    originTick: number
+  ): void {
+    this.db
+      .prepare(
+        `INSERT OR IGNORE INTO source_chunks
+          (agent,source_id,source_kind,source_uri,title,chunk_hash,origin_tick,ts)
+         VALUES (?,?,?,?,?,?,?,?)`
+      )
+      .run(agent, sourceId, kind, uri, title, chunkHash, originTick, Date.now());
+  }
+
+  sourceSummaries(agent: string, limit = 5): SourceRow[] {
+    return this.db
+      .prepare(`SELECT * FROM sources WHERE agent = ? ORDER BY id DESC LIMIT ?`)
+      .all(agent, limit) as SourceRow[];
   }
 
   // ── FACTS: `select … where` ──
@@ -161,7 +261,14 @@ export class Memory {
   counts(agent: string) {
     const one = (t: string) =>
       (this.db.prepare(`SELECT count(*) c FROM ${t} WHERE agent = ?`).get(agent) as any).c as number;
-    return { spine: this.spineSize(), facts: one("facts"), triples: one("triples"), embeddings: one("embeddings") };
+    return {
+      spine: this.spineSize(),
+      facts: one("facts"),
+      triples: one("triples"),
+      embeddings: one("embeddings"),
+      sources: one("sources"),
+      chunks: one("source_chunks"),
+    };
   }
 
   close() {

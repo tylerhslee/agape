@@ -1,13 +1,20 @@
-# Agape Language Specification (v1.0.0-alpha.2026.6.29.0)
+# Agape Language Specification (v1.0.0-alpha.2026.6.30.0)
 
 > Agape is a programming language for multi-agent systems. This document is the
-> authoritative reference. The prose (§0–§14) defines the language for a reader; the
-> formal semantics (§15) defines it precisely enough that two implementations are
-> obligated to agree. Where the prose and §15 conflict, §15 wins.
+> authoritative reference. The prose (§0–§14 and the layered sections §16–§20) defines the
+> language for a reader; the formal semantics (§15) defines it precisely enough that two
+> implementations are obligated to agree. Where the prose and §15 conflict, §15 wins.
 >
 > Agape draws on established results from probability theory, distributed systems,
 > decision theory, and information-flow security; these are cited inline where they are
 > first used.
+>
+> Single document, two layers. §0–§15 define what programs *mean*; **§16 (The runtime)**
+> defines what every conformant implementation *does* — the obligations shared by the Rust
+> CLI runtime, the Studio runtime, and hosted runtimes such as Soma: how ledgers, agents,
+> private memory, replay, and runtime APIs must behave. The two layers are kept distinct so a
+> reader can follow either alone, but they are one contract: the runtime is the operational
+> substrate that makes the language true over time.
 
 ---
 
@@ -43,7 +50,7 @@ Two ideas underlie the language:
    is the **provider**; accountability is a `**principal`**; the world is a `**tool`**. Swapping a
    dependency's backend changes no Agape source.
 
-These ideas form Agape's **trusted kernel**: `Credence`, sealed `Decision`, subject-scoped
+These ideas form Agape's **trusted kernel**: `Credence`, sealed `Decision`, subject
 `Endorsement`, `decide`, `endorse`, the taint lattice, default-deny grants, consequential sink checks
 (`perform` and write tools), and ledger record/replay. Everything else in the language is
 either static structure erased before runtime (§19), ordinary computation over already-settled
@@ -126,8 +133,8 @@ Trust records a value's cognition-provenance. Agape uses three levels (§13, §1
 constrained distribution over a closed enum's variants, §3). More structured than **raw**
 — the model has been forced to commit to a fixed set of outcomes — but not yet
 committed by a gate. Queried memory facts also default to **graded** (§10).
-- **settled** — a value carrying no un-endorsed cognition: a sealed `Decision`, a
-branch-scoped `Endorsement` about the exact subject value, a constant, or external data settled by
+- **settled** — a value carrying no un-endorsed cognition: a sealed `Decision`, an
+`Endorsement` of an exact subject value, a constant, or external data settled by
 origin (a `prompt`, a read-tool result over settled inputs).
 
 Trust is contagious upward; only a gate moves a value down toward **settled**. A consequential action may consume only a **settled** value whose settling is recorded on the ledger — an `Endorsement` (§13). External data is settled by origin; only un-endorsed cognition is withheld.
@@ -145,25 +152,27 @@ value (handed to the caller, not emitted).
 | construct                            | async? | trust of result      | # events | type             |
 | ------------------------------------ | ------ | -------------------- | --------- | ---------------- |
 | `Credence<bool> c = self <- "is …?"` | yes    | `graded`             | lifecycle | `Credence<bool>` |
-| `decide c by policy`                 | no     | `settled`            | no        | `Decision<bool>` |
-| `endorse memo by d { … }`            | no¹    | `settled`            | single    | `Endorsement<text>` in each arm |
-| `decide c by alice`                  | yes    | `settled`            | pair      | `Decision<Verification>` |
+| `decide c by r`                      | no     | `settled`            | no        | `Decision<bool>` |
+| `endorse memo by d`                  | no¹    | `settled`            | single    | `Endorsement<text>` |
+| `alice decide c by r`                | yes    | `settled`            | 0 or 1¹   | `Decision<Verdict>` |
 | `Credence<E> c = peer <- "…?"`       | yes    | `graded`             | lifecycle | `Credence<E>`    |
 | `search(q)` (read tool, §6b)         | yes    | `⊔ inputs`           | pair      | `text`           |
 | `double(3)` (pure)                   | no     | `settled`            | no        | `int`            |
 
 
-¹ `endorse` over an in-hand `Decision` is synchronous (record + branch, no dependency reach).
-Principal-driven `decide` is async because it reaches the identity dependency. See §13.
+¹ `endorse` over an in-hand `Decision` is synchronous (record only, no dependency reach). A
+principal-prefixed `decide` is async (it may reach the identity dependency) and appends **0**
+events when the rule commits or **1** (`PrincipalDecision`, or `FailedPrincipalDecision` on
+decline) when it escalates. A rule-only `decide` appends **no** event — its outcome is recorded
+only when the decision is later endorsed. See §13.
 
 - A semantic judgment yields a `Credence<E>` — a graded distribution over the variants of
-enum `E`, not a `bool`. To obtain a committed value, gate it with `decide c by basis`; the policy,
-principal, or rule is never hidden.
-- `decide c by policy` is the gate (`graded → settled`); it is `sync` when the basis is local policy
-and async when the basis is a `principal`.
-- `endorse subject by decision { … }` records that the decision is being applied to that exact
-subject value and yields a branch-scoped `Endorsement<T>`, the form admissible for consequential
-use (§13).
+enum `E`, not a `bool`. To obtain a committed value, gate it with `decide c by r`; the rule is
+never hidden.
+- `decide c by r` is the gate (`graded → settled`); it is `sync` for a rule-only gate and async when
+prefixed with a `principal`.
+- `endorse subject by d` applies the decision to that exact subject value and yields an
+`Endorsement<T>`, the settled form admissible for consequential use (§13).
 - A `Credence` is produced by binding a send to a `Credence<E>`-typed slot (§3, §8), whatever
 the destination; there is no separate `~` or `entail` operator.
 
@@ -174,13 +183,15 @@ the destination; there is no separate `~` or `entail` operator.
 - **Comments:** `//` to end of line.
 - **Whitespace:** insignificant except as a token separator.
 - **Statement terminator:** `;` (explicit, required).
-- **String:** `"..."` with escapes `\n \t \" \\`.
-- **F-string:** `f"...{expr}..."`. Lexed as one `FSTR` token; `{expr}` parsed after.
-- **Numbers:** `int`(`42`) and `float`(`3.5`).
-- **Identifiers:** `[A-Za-z_][A-Za-z0-9_]`*. Type names are conventionally capitalized;
+- **String:** `String` = `"..."` with escapes `\n \t \" \\`.
+- **F-string:** `FString` = `f"...{expr}..."`. Lexed as one `FSTR` token; `{expr}` parsed after.
+- **Numbers:** `Int` = a decimal integer (`42`); `Float` = a decimal with a point (`3.5`).
+The grammar terminal `Number` = `Int | Float` (so `conformal α` / `match θ` accept either; `retry(Int)`
+and `quorum(Int, …)` require an `Int`).
+- **Identifiers:** `Ident` = `[A-Za-z_][A-Za-z0-9_]`*. Type names are conventionally capitalized;
 values and instances are lowercase.
-- **Operators (multi-char first):** `<-  ->  |>  >=  <=  ==  !=  { } ( ) [ ] ; , . : =  +
-  - - /  <  >  !`
+- **Operators (multi-char first):** `<-  ->  |>  &&  ||  >=  <=  ==  !=  { } ( ) [ ] ; , . : =
+  +  -  *  /  <  >  !`
 - **The two arrows:** `<-` is the one communication/write arrow (send a message, write a
   `mem`, §6, §10); `->` is the memory-recall operator (`mem -> "query"`, §10). `->` is **not**
   a `LexError` — it lexes as an operator, and the checker rejects it on a non-`mem` left-hand
@@ -194,37 +205,41 @@ int float bool text null event action array  // types + ledger wrappers (event =
 agent extend sync                         // declarations (sync = marked color)
 struct enum                               // user nominal-type declarations
 grants tool read write                    // capability typing (§13); tool decl + effect class (§6b)
-spawn awake sleep self on prompt instruction   // lifecycle + external input sensor + system prompt (§5)
+spawn awake sleep crash self on prompt instruction   // lifecycle (incl. `on crash`) + external input sensor + system prompt (§5)
 principal policy                          // accountable identity + decision policy (§3, §13)
-when case if else return retry default         // control / reactive
-decide endorse perform emit abstain       // gate / subject endorsement / action perform / event emit / abstain clause
+when if else return retry                 // control / reactive
+decide endorse perform emit abstain       // gate collapse / subject endorsement / action perform / event emit / abstain clause
 find where select from match              // queries
 mem forget                                // private-memory handle + seams (§10): `mem m <- v` / `m -> q` / `forget m`
 all any quorum independent dependent      // aggregation, dependence declaration, quorum (§12)
-true false                                // bool literals
+true false abstained                      // bool literals + the abstained-decision sentinel (§3, §13)
 module import pub interface requires      // library layer (§19): modules/imports, visibility, interfaces (when E decide T)
 reversible                              // low-stakes sink marker (§20)
 ```
 
 `decide` is the only gate collapse: it turns a `Credence<E>` into a sealed `Decision<E>`.
-`endorse` records that a `Decision<E>` is being applied to a specific subject value and yields
-a branch-scoped `Endorsement<T>` (§13). Artifact certification is ordinary endorsement of an
-artifact subject; there is no separate `certify` surface form.
-`independent` / `dependent` declare the dependence structure of values fused by
-`all`/`any`/`quorum` (§12).
+`endorse` applies a `Decision<E>` to a specific subject value and yields a settled
+`Endorsement<T>` (§13). `independent` / `dependent` declare the dependence structure of values fused
+by `all`/`any`/`quorum` (§12).
 
-**Contextual words** (lexed as identifiers, meaningful only in position): `as`, `by`
-(gate rule / principal basis), `about` (the `when` subject filter, §7), `reach` /
-`use` (grants), `origin` (find projection), `expires` (send-lifetime clause, §6), `of`
-(quorum, §12), `confidence` / `margin` / `conformal` / `over` (rule clauses, §13). `as` and
-`from` (already a query keyword) double as the import-clause words (`import m as x;`,
+**Contextual words** are recognized only in their syntactic position; elsewhere they lex as
+ordinary identifiers, and a declaration may not use one where it would collide with that position:
+`as` (arm value binder), `by` (gate rule), `about` (the `when` subject filter, §7), `reach` /
+`use` (grants), `origin` (find projection), `expires` (send-lifetime clause, §6),
+`confidence` / `margin` / `conformal` (rule clauses, recognized positionally after `by`, §13). `as`
+and `from` (already a query keyword) double as the import-clause words (`import m as x;`,
 `import { a } from m;`, §19); `Error` (a prelude identifier) doubles as the only permitted
 user-event supertype in `event Foo(..) : Error;` (§9, §19).
 
-**Prelude identifiers** (defined in §9, not the grammar): `Entailment`, `Contradiction`,
-`Neutral`, `Credence`, `Decision`, `Endorsement`, `Principal`, `Rule`, `Event`, `Error`,
-`PrincipalDecision`, `Endorsed`, `Abstained`, `AgentCrashed`, `Delivered`, `Resolved`, `Expired`,
-`DeliveryRefused`, `QueryResult`, `ToolStarted`, `ToolResolved`, `say`, `store`, `embed`.
+**Prelude identifiers** (selected; the full set is defined in §9, not the grammar): the types
+`Credence`, `Decision`, `Endorsement`, `Principal`; the enum `Entailment` (`Entails`, `Contradicts`,
+`Neutral`) and `Basis`; the built-in events `Event`, `Error`, `Endorsed`, `Abstained`,
+`PrincipalDecision`, `FailedPrincipalDecision`, `Contradiction`, `Spawned`, `AgentAwake`,
+`AgentAsleep`, `AgentCrashed`, `Sent`, `Delivered`, `Resolved`, `Expired`, `DeliveryRefused`,
+`PromptOpened`, `Prompt`, `QueryResult`, `MemoryConsulted`, `Internalized`, `ArtifactObserved`,
+`Forgotten`, `ToolStarted`, `ToolResolved`, `RetryExhausted`, `TypeMismatch`, `MarginFloorViolation`;
+and the built-in functions `say`, `store`, `embed`. (`Rule` is the gate's parameter, not a type —
+§3.)
 
 ---
 
@@ -257,8 +272,8 @@ action Transfer(int cents, text to);               // a performative; fields inv
 required: structured output (§8) has no optional-by-omission, so optionality is modeled
 as a nullable union field. A struct literal is `NAME { field: v, … }` and must supply
 every field; a missing field is a `TypeError`.
-- `**enum NAME { A, B, … }**` — a closed set of named variants; `case` (§11)
-pattern-matches them with compile-time exhaustiveness.
+- `**enum NAME { A, B, … }**` — a closed set of named variants; a gate's arm block (§13)
+dispatches them with compile-time exhaustiveness, and `if`/`==` branches on a committed variant (§11).
 - `**event NAME(field: T, …);**` — a plain record (assertive); anyone may `emit` it, no power
 needed. `**action NAME(field: T, …);**` — a performative: `perform NAME(v, …)` is a consequential
 act that needs the `perform NAME` power (§13) and only `settled` values. Event/action invocation
@@ -327,9 +342,10 @@ value that carries its own *basis*, so the gate is uniform ("apply this rule to 
 whatever basis the rule holds. Two bases (§13):
 
 - **threshold** — `confidence θ` (optionally `confidence θ margin δ`): commit the top variant when
-its score ≥ `θ` and its lead over the runner-up ≥ `δ`. `margin` is a threshold-basis refinement,
-meaningful only for three-plus variants (for `bool` it is redundant with `θ`). Cheap, needs no
-data, no guarantee. When backed by an active calibrated GateProfile, the same basis can be read as
+its score ≥ `θ` and its lead over the runner-up ≥ `δ`, else abstain. `margin δ` constrains the
+top-vs-runner-up gap for any enum; for exactly two variants (and `bool`) the gap is monotone in the
+top score, so `δ` is redundant with `θ` there — it is **accepted as a no-op**, not an error. Cheap,
+needs no data, no guarantee. When backed by an active calibrated GateProfile, the same basis can be read as
 a calibrated probability threshold or expected-loss boundary; without that profile it is an
 explicit heuristic.
 - **conformal** — `conformal α`: a distribution-free, finite-sample coverage bound at level `α`,
@@ -356,17 +372,18 @@ on the ledger. Four flavours differ only in what they supply:
 | ------------------ | ------------------------------ | ---------------------------- |
 | `prompt T name;`   | an external input source (§5b) | `when (Prompt p about name)` |
 | `tool R name(..);` | a world capability (§6b)       | a tool call                  |
-| `principal name;`  | an accountable identity        | `decide c by name`           |
+| `principal name;`  | an accountable identity        | `name decide c by r`         |
 
 
 ```agape
 principal alice;          // an accountable identity, resolved by config (§17)
 ```
 
-A `principal` is the basis of an external decision (`decide c by alice`, §13); its own trust is
-`settled`, and a name is a forgeable claim, not a credential (`decide c by "alice"` is a
+A `principal` is the escalation prefix of a decision (`alice decide c by r`, §13); its own trust is
+`settled`, and a name is a forgeable claim, not a credential (a string in the prefix position is a
 `TypeError`). A conformal gate needs no separate dependency: it calibrates from its own recorded
-decisions on the ledger, and below a configured minimum of labelled cases (§13, §17) it abstains. No
+decisions on the ledger, and below the source-declared `readiness` minimum of labelled cases (its
+`policy`, §13) it abstains. No
 credential appears in source; it is bound in the manifest (`[identity]`, §17), and
 authentication/signing happen at the gate, not the declaration. `Credence<E>` is **not** a declared
 dependency — it is a value *received* from the provider, not a declared name.
@@ -398,20 +415,20 @@ the decided enum does not pretend to.
 
 ```agape
 sync int   double(int x)            { return x * 2; }                 // sync, bare int
-sync Decision<bool> over(Credence<bool> c) { return decide c by confidence 0.9; }  // sync; the collapse is deterministic
+sync Decision<bool> collapse(Credence<bool> c) { return decide c by confidence 0.9; }  // sync; the collapse is deterministic
 Credence<bool> about_poker(text x)  {                                 // async, graded judgment
     Credence<bool> c = self <- f"is {x} a game of poker?";
     return c;
 }
 ```
 
-Policy-driven `decide c by R` is `sync` (§13). The cognition is in producing the `Credence` (the
+A rule-only `decide c by r` is `sync` (§13). The cognition is in producing the `Credence` (the
 provider send bound to a `Credence` slot, which is async); applying a threshold/margin to a
 `Credence` value is pure comparison. So a `sync` function may take a `Credence` and decide it by a
 local rule; the judgment is agentic, the collapse is deterministic, and the decision is fixed
 given the `Credence` (§15.5). A `sync` function may likewise `emit`, and may `endorse` a subject
-by an in-hand `Decision` (record + branch, no dependency reach); it may not `decide c by p` for a
-`principal` `p` (identity dependency = async)
+by an in-hand `Decision` (record only, no dependency reach); it may not use a `principal`-prefixed
+`decide` (`p decide c by r` reaches the identity dependency = async)
 and may not make a tool call (§6b).
 
 ---
@@ -423,7 +440,7 @@ and may not make a tool call (§6b).
 ```agape
 agent NAME ( [TYPE PARAM] , ... ) [grants { CAP , ... }] {
     FIELD_DECLS          // event<T> slots, etc.
-    CONSTRUCTOR_STMTS    // run at first awake
+    CONSTRUCTOR_STMTS    // run at spawn (see Lifecycle)
     when (SUBJECT) { ... }
     on awake { ... }
     on sleep { ... }
@@ -433,7 +450,7 @@ agent NAME ( [TYPE PARAM] , ... ) [grants { CAP , ... }] {
 
 - `agent` is a template (like a class). A field `event<T> name;` is a typed slot.
 - The `( TYPE PARAM , … )` list declares the constructor parameters; they are bound at
-`awake`, not `spawn` (see Lifecycle).
+`spawn`, when the constructor body runs — not at `awake`, which takes no arguments (see Lifecycle).
 - `self` is the agent's reference to itself.
 - `extend PARENT(args);` (first statement) is composition/inheritance.
 - `grants { ... }` (optional) declares the agent's authority (§13).
@@ -562,8 +579,7 @@ requires `Sent`, `Resolved` requires `Delivered`.
 A send issued but never `Delivered` is lost. Loss is the absence of `Delivered`, not an
 event: it is unmet liveness, which is not a violation. Loss is monotonic and revisable;
 orphaned (lost) sends are found by query (§10): the sends whose maximum recorded phase is
-below `Delivered`. The default delivery contract is at-most-once; a reliable, ordered
-channel is an explicit per-channel opt-in.
+below `Delivered`. The delivery contract is at-most-once.
 
 ### Expiry — an optional tombstone
 
@@ -649,7 +665,7 @@ inside Agape (§0.1).
 ### Events
 
 Every meaningful action appends an immutable `Event`: `{ tick, etype, subject, payload, corr, agent }`. `tick` is system-assigned and monotonic; `subject` is the source the event
-is about (the `when` correlation key); `corr` links a `Started` to its `Resolved`.
+is about (the `when (… about subject)` filter key); `corr` is the correlation key that links a `Started` to its `Resolved`.
 
 ### Ledger heads, projections, and stale state
 
@@ -682,17 +698,19 @@ uncertainty about what they depend on is not.
 ### Subjects: every event has a source
 
 A send `d <- p` produces events with subject `d`; a typed binding `event<T> x = …;` gives
-the produced event subject `x`. A `decide` over a `Credence` produces a decision event whose
-subject is the credence/provenance scope; an `endorse subject by d` produces an endorsement event
-whose subject is the exact endorsed value. A tool call's pair is subjected at the tool name. A
-literal operand has an ephemeral address; its event still lands on the ledger.
+the produced event subject `x`. A rule-only `decide` appends no event; a principal-prefixed
+`p decide c by r` that escalates produces a `PrincipalDecision` subjected at the credence/provenance
+scope; an `endorse subject by d` produces an `Endorsed`/`Abstained` event whose subject is the exact
+endorsed value. A tool call's pair is subjected at the tool name. A literal operand has an ephemeral
+address; its event still lands on the ledger.
 
 ### Async event discipline
 
-A send (`<-`) appends the three-phase `Sent`/`Delivered`/`Resolved` chain (§6). Any other
-operation with a pending window that reaches a declared dependency (`decide c by p` for a
-principal, a tool call) appends a `Started`/`Resolved` pair correlated by `corr`. Synchronous ops
-(`==`, arithmetic, policy-driven `decide`, an in-hand `endorse`) append a single event or none.
+A send (`<-`) appends the three-phase `Sent`/`Delivered`/`Resolved` chain (§6). A tool call appends
+a `ToolStarted`/`ToolResolved` pair correlated by `corr`. A principal-prefixed `p decide c by r` is
+async (it may reach the identity dependency) but appends a single terminal `PrincipalDecision`
+(or `FailedPrincipalDecision` on decline), and nothing at all when the rule commits without escalating.
+Synchronous ops (`==`, arithmetic, a rule-only `decide`, an `endorse`) append a single event or none.
 
 ### `when` — the subscription
 
@@ -721,14 +739,15 @@ when their scopes were entered; within a single scope, lexical order. This total
 part of the semantics so that replay is well-defined.
 
 ```agape
-Credence<bool> c = self <- f"is {name} 'John'?";
-Decision<bool> d = decide c by confidence 0.9;
-endorse name by d {
-  true: emit Logged("john");
-  false: emit Logged("not-john");
-}                                                   // records endorsement about `name`
-when (Contradiction k about john) { ... }    // a Credence<Entailment> that committed to Contradicts at john
-when (Error e) { ... }                       // every error, any source (incl. Contradiction)
+event Logged(text note);
+Credence<Entailment> rel = self <- f"does {claim} entail {evidence}?";
+decide rel by confidence 0.9 {
+  Entails     { emit Logged("supported"); }
+  Contradicts { emit Logged("refuted"); }
+  Neutral     { emit Logged("unrelated"); }
+}
+when (Contradiction k about rel) { ... }   // fires when the gate commits `rel` to Contradicts (§8)
+when (Error e) { ... }                     // every error, any source (Contradiction is an Error subtype)
 ```
 
 ---
@@ -807,10 +826,11 @@ distribution (§17).
 enum Entailment { Entails, Contradicts, Neutral }          // committed from a Credence<Entailment>
 type Credence<E>                                           // a graded judgment over enum E (§3)
 type Decision<E>                                           // a gate's committed outcome over E (§13); fields: .committed (E|abstained), .basis (Basis), .margin (float) — §20
-type Endorsement<T>                                        // a ledger-recorded endorsement about an exact subject value T (§13)
+type Endorsement<T>                                        // the SETTLED subject of type T: .subject:T (coerces to T at a sink), exposes T's fields, + .committed/.basis/.margin (§13, §20.4)
 enum Basis { Threshold, Conformal, Calibrated, Principal } // how a Decision was settled (Decision.basis, §13/§20)
 type Principal                                             // an accountable identity — a declared dependency (§3)
-// Rule is the gate's PARAMETER, not a type: `confidence θ [margin δ]` | `conformal α`  (§3, §13)
+// Rule is the gate's PARAMETER, not a type: `confidence θ [margin δ]` | `conformal α` | a named `policy`  (§3, §13)
+// abstained — the prelude sentinel value of Decision.committed when the gate did not commit (§3, §13)
 
 // Built-in ledger events:
 //   Event(text)            user progress/info event (via `emit`)
@@ -818,19 +838,23 @@ type Principal                                             // an accountable ide
 //   Endorsed(subj)         a Decision was applied to an exact subject value
 //   Abstained(subj)        a gate could not commit at subj
 //   Contradiction(subj)    emitted when a Credence<Entailment> commits to Contradicts
-//   PrincipalDecision(subj)  a principal-driven `decide c by p`
+//   PrincipalDecision(subj)    a principal-prefixed `p decide c by r` that escalated and got a ruling
+//   FailedPrincipalDecision(subj)  the principal declined or was unavailable (decision stays abstained)
+//   MarginFloorViolation(subj)  a committed decision's margin was below the policy floor at a sink (§13)
 //   QueryResult(subj)      the event a query STATEMENT lands
+//   MemoryConsulted(subj)  the memory-envelope consult trace (counts/query meta, §16.7)
 //   Internalized(subj)     a store/embed memory write (incidental trace, §15.5.1)
+//   ArtifactObserved(subj) a knowledge-artifact ingest opening (kind/uri/hash, §16.7b)
+//   Forgotten(subj)        a `forget` memory tombstone (§10)
 //   ToolStarted/ToolResolved   the tool pair (§6b)
-//   Spawned / AgentAwake / SleepEvent / AgentCrashed   lifecycle (§5)
-//   Sent / Delivered / Resolved                message lifecycle (§6)
+//   Spawned / AgentAwake / AgentAsleep / AgentCrashed   lifecycle (§5)
+//   Sent / Delivered / Resolved                message lifecycle (§6); a send's provider reply is its Resolved
 //   Expired(corr) / DeliveryRefused(corr)      message expiry / refused-late-delivery (§6)
 //   PromptOpened(name) / Prompt(name)          external input sensor (§5b)
-//   <Op>Started / <Op>Resolved                 async dependency pairs (tool, principal decide)
 ```
 
 **Event-type hierarchy.** `Error` is the root; `Contradiction`, `TypeMismatch`,
-`RetryExhausted`, `FailedPrincipalDecision`, and `AgentCrashed` extend it. `when` matches by
+`RetryExhausted`, `FailedPrincipalDecision`, `MarginFloorViolation`, and `AgentCrashed` extend it. `when` matches by
 subtype, so `when (Error e)` catches a `Contradiction`; a contradiction is an `Error`
 subtype, and code that wants only faults matches the specific types. `Expired` and a lost
 send are not errors. A user `event` may extend this root — `event Foo(..) : Error;`
@@ -851,18 +875,21 @@ Each agent has its own memory:
 
 - **FACTS** → a deterministic table, queried with `select`.
 - **RELATIONSHIPS** → a graph, queried with `find ... where`.
-- **SEMANTICS** → a vector store, queried with `match`. `match` is a gate: `match { m: q } > θ` thresholds similarity, settling hits against `θ`, and yields `settled` but
-off-ledger — like a local `Decision`, it must be endorsed to admit a consequential use.
+- **SEMANTICS** → a vector store, queried with `match`. `match v > θ` thresholds similarity and
+yields the nearest off-ledger `Hit`s above `θ`; like a recall, a hit's trust is `graded` (§13), so a
+hit must be re-judged (fed into a `Credence`) and gated before a consequential sink.
 
 ### Internalization
 
 Internalization decomposes a value — through the provider — into facts, relationships, and
 embeddings written to the agent's memory; it is non-deterministic (cognition) but its shape is
-fixed (typed facts; SPO triples over a typed predicate set). It is **invoked, not ambient**: an
-agent internalizes deliberately — `store(x)` / `embed(x)` (§9), or by acting on a prompt to
-itself — and, as an opt-in config (§17, off by default), the runtime may internalize every
-received `<-` event automatically. The trigger is configurable (§16.7); the decomposition is the
-same.
+fixed (typed facts; SPO triples over a typed predicate set). Every agent reaction runs inside a
+mandatory **memory envelope**: the incoming stimulus is recorded on the ledger, the agent consults
+its own private memory for that stimulus (even if the result is empty), the resulting memory packet
+is supplied to cognition, and the experience is internalized back into that same private memory.
+`store(x)` / `embed(x)` (§9) remain explicit emphasis operations; they are not the only way an
+agent learns. Configuration may tune depth, chunking, summarization, embedding backend, and cost
+limits, but may not silently bypass the consult-or-internalize phases (§16.7).
 
 ### Provenance
 
@@ -878,8 +905,8 @@ A queried fact carries the trust of the ledger event it traces to (provenance-ba
 Because most facts trace to internalized cognition, the default trust of a `find` /
 `select` result is `graded` (structured but not gate-committed): it may flow through
 control flow but must be re-gated before a consequential sink. A fact whose origin is an
-already-endorsed (`settled`) event carries `settled`. `match` hits are `settled` but off-ledger (a
-gate, above). A value's provenance, not its having-been-stored, determines whether it may act.
+already-endorsed (`settled`) event carries `settled`. `match` hits are `graded` and off-ledger
+(above). A value's provenance, not its having-been-stored, determines whether it may act.
 
 ### Query surface
 
@@ -943,26 +970,16 @@ composed — a deterministic ledger query feeds a `<-` send, and the seam taints
 
 ### `if` / `else`
 
-The condition is `bool`; `!` is boolean negation. A `Credence<bool>` is not a `bool` — gate it
-(`Decision<bool> d = decide c by R`, then dispatch on the `Decision`); a bare `Credence` in an
-`if` is a `TypeError`.
+`if`/`else` is the deterministic branch: the condition is a settled `bool` — a comparison
+(`==`/`!=`/`<`/`>`/`<=`/`>=`), a boolean field, a boolean tool result — and `!` is boolean negation.
+It branches on *facts*, never on cognition: a `Credence<bool>` is not a `bool`, so a bare `Credence`
+in an `if` is a `TypeError`. To branch on a judgment, collapse it first (`Decision<bool> d = decide c
+by r`) and test the committed variant (`if (d.committed == true)`); a gate's arm block (§13) is the
+sugar for exactly that.
 
-### `case` — enum pattern matching
-
-```agape
-case (EXPR) as e {
-    VARIANT_A: { ... }
-    default:   { ... }
-}
-```
-
-- General over any enum; `Entailment`/`Decision`/user enums are the common cases.
-- Exhaustiveness is checked at compile time; a non-exhaustive `case` with no `default` is
-an `ExhaustivenessError`.
-- A `Credence<E>` is not matched directly; gate it first (`case (EXPR by r) …`): the collapse
-yields a singleton variant if its margin over the runner-up clears the rule, else `abstain`.
-Committing to `Contradicts` also fires the first-class `Contradiction` event (§8). `case` over a
-pure enum is synchronous.
+A committed variant is a settled value, so `==` over `.committed` is exactly-gated (§15.5.5) and is
+the kernel form of verdict branching. Exhaustiveness over an enum's variants is checked on a gate's
+**arm block** (§13), not on `if`; a missing arm with no `abstain` is an `ExhaustivenessError`.
 
 ### `retry` — re-attempts
 
@@ -1021,7 +1038,8 @@ collapses as their number grows). `quorum` expresses this:
 ```agape
 independent j1, j2, j3;                          // diverse judges/evidence
 Credence<bool> agreed = quorum(2, [j1, j2, j3]); // graded "at least 2 of 3 commit"
-endorse (agreed by confidence 0.9) { ... }       // gate the fused quorum once
+Decision<bool> d = decide agreed by confidence 0.9;  // gate the fused quorum once
+// then apply it: `endorse subject by d { true { … } false { … } }` (§13)
 ```
 
 - `**quorum(k, [c1, …, cn])**` fuses `n` `Credence<bool>` judgments into a single
@@ -1075,15 +1093,17 @@ A value's trust records its cognition-provenance: `settled ⊑ graded ⊑ raw` (
 - a bare send reply, before it is bound to a `Credence`, → `raw`.
 - a send bound to a `Credence<E>` slot → `graded` (a graded judgment), for any destination; a
 queried fact defaults to `graded` (§10).
-- `decide c by basis` → a sealed `Decision<E>` (committed or abstained, but not a subject
-endorsement).
-- `endorse subject by d { ... }` → settles only that exact subject value, and only inside the
-matching endorsement arm, with an `Endorsed(subject, decision, variant)` ledger record.
+- `decide c by r` → a sealed `Decision<E>` carrying `.committed` (a variant of `E`, or `abstained`),
+`.basis`, and `.margin`. A `Decision` guides branching but is not itself an endorsed subject.
+- `endorse subject by d` → an `Endorsement<T>`: the **settled** form of the subject value, carrying
+the subject's own fields plus the decision's `.committed`/`.basis`/`.margin`, with an
+`Endorsed(subject, decision, variant)` ledger record. It is sink-admissible only inside a branch
+that has narrowed its `.committed` to a committed variant (below).
 - a constant, a `prompt`, and a read-`tool` called with `settled` inputs → `settled` by
 origin: external data carries no un-endorsed cognition.
 
 Trust is contagious upward (a value is as `raw` as its least-settled input). Only `decide` creates
-a `Decision`; only `endorse` applies that decision to a subject value. A `Principal` is `settled`.
+a `Decision`; only `endorse` produces a settled `Endorsement` of a subject value. A `Principal` is `settled`.
 
 ```agape
 enum Approval { Approve, Decline }
@@ -1110,87 +1130,99 @@ agent Clerk grants { perform ReleaseFunds } {
 }
 ```
 
-### The gate — `decide`, `endorse`, `abstain`
+### The gate — `decide`, `endorse`, and arms
 
-A gate has two explicit steps:
+The gate is two value-producing operations plus a sugar for branching on them.
 
-1. `decide c by basis` turns a `Credence<E>` into a sealed `Decision<E>`.
-2. `endorse subject by d { ... }` records that `d` is being applied to an exact subject value and
-   dispatches on the decision's committed variant.
+1. `decide c by r` collapses a `Credence<E>` into a sealed `Decision<E>`. The rule `r` is always
+   present (§3). The gate's uniform surface is **commit-or-abstain**: it records the chosen variant
+   in `.committed`, or `.committed` is `abstained`. *How* it commits depends on the basis — under
+   `confidence θ [margin δ]` it commits the top variant when its score ≥ `θ` and its lead ≥ `δ`
+   (§3); under `conformal α` it forms a **prediction set** `{ v : nonconformity(v) ≤ q̂ }` and commits
+   iff that set is a singleton (§15.5.6). The prediction set is the principled object over three-plus
+   variants, where a bare scalar threshold has no meaning.
+2. `endorse subject by d` applies the decision `d` to an exact `subject` and yields an
+   `Endorsement<T>` — the settled form of the subject, carrying its fields plus `.committed`,
+   `.basis`, `.margin`, with an `Endorsed(subject, decision, variant)` ledger record.
 
-Over a `Credence<E>`, `decide` forms a **prediction set** — the variants it deems plausible under
-its basis — and **commits iff that set is a singleton**; otherwise it **abstains**. A prediction set
-is the principled object over three-plus variants, where a bare scalar threshold has no meaning.
+Both are ordinary values, so `decide` then `endorse` is the canonical pipeline:
 
 ```agape
-Credence<Verdict> c = self <- f"review this response: {response}";
+enum Verdict { Faithful, Unsupported }
+action Publish(text body);   event NeedsRevision(text body);   action Escalate(text id);
 
-Decision<Verdict> model = decide c by confidence 0.9 margin 0.1;
-Decision<Verdict> human = decide c by alice;
+Credence<Verdict> c = self <- f"is this faithful: {response}";
+Decision<Verdict>  d = decide c by confidence 0.9 margin 0.1;
+Endorsement<text>  e = endorse response by d;
+```
 
-endorse response by model {
-  Approve as e {
-    perform Publish(response);
-  }
-  Revise as e {
-    emit NeedsRevision(response);
-  }
+**Branching is the sugar.** Acting on a verdict is branching on `.committed`, written with `if`:
+
+```agape
+if (e.committed == Faithful) { perform Publish(e); }   // e is the settled subject
+```
+
+The **arm block** is sugar for exactly this — it hoists the `.committed` test into the arm header,
+and the optional `as e` names the gate value (a `Decision` for `decide`, an `Endorsement` for
+`endorse`), narrowed to that arm:
+
+```agape
+endorse response by d {
+  Faithful as e   { perform Publish(e); }          // == if (e.committed == Faithful) { … }
+  Unsupported     { emit NeedsRevision(response); }
 } abstain {
-  Decision<Verdict> h = decide c by alice;
-
-  endorse response by h {
-    Approve as e {
-      perform Publish(response);
-    }
-    Revise as e {
-      emit NeedsRevision(response);
-    }
-  }
+  perform Escalate("needs-review");                // a literal is settled by origin
 }
 ```
 
-- `**decide c by R**` collapses a `Credence<E>` to a sealed `Decision<E>` by a local `Rule` or
-`policy` `R` (§3). It is color-`S` when the `Credence` is already in hand. A `Decision` may guide
-control flow and may be endorsed, but it is not itself an endorsement of any subject value.
-- `**decide c by p**`, where `p` is a `principal`, is the human/accountable basis. It reaches the
-identity dependency, obtains `p`'s signed decision over the same `Credence<E>` frame, records
-`PrincipalDecision { who, credence, decision, signature }`, and returns a sealed `Decision<E>`.
-The syntax is the same because policy and principal are both decision bases.
-- `**endorse subject by d { arms }**` records `Endorsed { subject_hash, decision_id, variant }`
-and then dispatches on `d.committed`. Inside a matching arm, the optional `as e` binder has type
-`Endorsement<T>` for the exact subject type `T`, and only that subject value is considered settled
-for the dynamic extent of the arm. If `d` abstained, no variant arm runs and the optional
-`abstain` block runs.
-- The checker requires the endorsed subject to be in the decision's dependency scope. A decision
-about `other_response` cannot endorse `response`. If the dependency scope is dynamic or unknown,
-the checker rejects the endorsement or forces an explicit principal path. This catches irrelevant
-decision use mechanically; it does not attempt to prove natural-language semantic relevance.
-- `certify` is removed as a separate source form. Artifact certification is ordinary subject
-endorsement: decide a `Credence<Verification>` and `endorse artifact by d { Pass as e { ... } }`.
-`attest` is removed as a separate source form. Principal attestation is the provenance of
-`decide c by principal`.
+desugars to a single binding plus an `if` chain on `.committed`, with `abstain` as the
+`abstained` branch. Either form is the same kernel; arms are pure ergonomics. A `decide` may be
+written arm-less (as above) purely to defer its branch to a later `endorse`; branching itself is
+never skipped. Arm headers are the gate enum's variants — for a `bool` gate they are the literals
+`true` and `false`. Arms on a **`decide`** bind a `Decision` (no subject), so they may dispatch and
+emit but **cannot drive a consequential sink**; only an `endorse`'s arms settle a subject and reach a
+sink — the `decide`-then-`endorse`-with-arms pipeline is the canonical sink-reaching form.
 
-**The rule selects the policy basis (§3); the gate stays uniform.** `by confidence θ` is the
-**threshold** basis; `by conformal α` is the **conformal** basis — the prediction set is
-`{ v : nonconformity(v) ≤ q̂ }`, where `q̂` is the level-`α` quantile of the gate's own recorded
-endorsements/principal decisions and their labels on the ledger. This gives finite-sample set
-coverage under
-exchangeability without requiring the provider scores to be calibrated probabilities. `by p`, where
-`p` is a `principal`, is the principal basis. The principal decision record or later endorsement
-event pins which basis settled the decision and the applied rule/profile/principal, so a
-recalibration or identity backend change does not change how an earlier run replays.
+- `**decide c by R**` collapses a `Credence<E>` to a `Decision<E>` by a `Rule` or `policy` `R`
+(§3). It is color-`S` when the `Credence` is already in hand.
+- `**p decide c by R**`, with a `principal` `p` as the prefix, attaches human escalation. The rule
+runs first; when it cannot commit, the identity dependency is reached — `p` is consulted (over MCP
+or another identity backend), the human's reply arrives as one of `E`'s variants, and the runtime
+records `PrincipalDecision { who, credence, decision, signature }`. A declined or unavailable
+principal records `FailedPrincipalDecision` and the decision stays `abstained`. A principal-prefixed
+`decide` is color-`A` (it may reach identity); a rule-only `decide` is color-`S`.
+- `**endorse subject by d**` records `Endorsed { subject_hash, decision_id, variant }` and returns
+`Endorsement<T>`. The `Endorsement` is always settled, but is **sink-admissible only inside a branch
+that has narrowed its `.committed` to a committed variant** — an arm, or an explicit `if (e.committed == V)`.
+In the `abstain`/`else` branch (`.committed == abstained`) the endorsement is settled but **not
+committed-narrowed**, so the endorsed subject cannot itself reach a sink (the committed-narrowing clause
+of the consequential rule, §15.3.3) — a settled literal or other settled-by-origin value may still be
+performed there.
+- The checker requires the endorsed subject to be in the decision's dependency scope: a decision
+about `other_response` cannot endorse `response`. If the dependency scope is dynamic or unknown, the
+checker rejects the endorsement or forces an explicit principal path. This catches irrelevant
+decision use mechanically; it does not attempt to prove natural-language semantic relevance.
+
+**The rule selects the basis (§3); the gate stays uniform.** `by confidence θ` is the **threshold**
+basis; `by conformal α` is the **conformal** basis — the prediction set is `{ v : nonconformity(v) ≤ q̂ }`,
+where `q̂` is the level-`α` quantile of the gate's own recorded decisions and their labels on the
+ledger, giving finite-sample set coverage under exchangeability without requiring calibrated
+provider scores. Human escalation is the `principal` prefix, not a basis. The recorded decision or
+endorsement event pins which rule, profile, and (if any) principal settled it, so a recalibration or
+identity-backend change does not change how an earlier run replays.
 
 **Policy — a named rule bundle (source, not config).** A `policy NAME { … }` declaration (§15.2)
 names a reusable decision rule in source — never in the manifest (§17). Its directives are: a
 **basis** — `threshold θ` with optional `margin δ` (the threshold basis), or `conformal α` with
 optional `readiness N` (the conformal basis; `N` the minimum labelled cases before autonomous
-commit, the bootstrap below); the consequential **`floor m`** (the margin floor checked at a sink,
-below); and an optional **`fallback p`** (`p` a `principal`) — the cold-start / abstain defer. A gate
-applies a policy by name (`decide c by NAME`); an inline rule (`confidence θ`, `conformal α`) is
-the anonymous form.
+commit, the bootstrap below); and the consequential **`floor m`** (the margin floor checked at the
+sink, below). A gate applies a policy by name (`decide c by NAME`); an inline rule (`confidence θ`,
+`conformal α`) is the anonymous form. The inline keyword `confidence θ` and the `policy` directive
+`threshold θ` denote the same threshold basis. Human escalation is the `principal` prefix on the
+gate, not a policy directive.
 
 **GateProfile — empirical authority, not source syntax.** Source declares the decision intent
-(label space, rule, readiness, margin/floor, fallback principal, and any action loss annotation).
+(label space, rule, readiness, margin/floor).
 The runtime records the empirical evidence that makes autonomous use legitimate in ledgered
 **GateProfiles**: the provider/model, schema hash, prompt-template hash, score function,
 calibration examples, calibration ledger head, fitted parameters/quantile, metrics, and status
@@ -1203,7 +1235,7 @@ Future runs may not silently reuse a stale or incompatible profile.
 
 - **Cold** — no compatible profile or too few labels. Consequential cases fail closed: only
   explicitly low-risk/obvious threshold decisions may proceed, and ambiguous or high-stakes cases
-  route to `abstain` / `fallback p`. Those human/principal decisions become labels.
+  route to the gate's `principal` prefix (or `abstain` if none). Those principal decisions become labels.
 - **Warm** — enough compatible labels for conformal coverage. The gate forms a prediction set and
   commits iff the set is singleton; otherwise it abstains and accumulates more labels.
 - **Mature** — enough labels and a stable distribution for calibrated expected-loss decisions. The
@@ -1212,22 +1244,21 @@ Future runs may not silently reuse a stale or incompatible profile.
   still defer; "mature" means autonomous when justified, not autonomous always.
 
 **The `abstain` clause** is optional, like an `else`: on a singleton set the matching arm runs;
-otherwise the `abstain` block runs. A fallback principal is expressed by calling
-`decide c by p` in that block; the resulting principal decision can then be endorsed through the
-same arms. An omitted `abstain` is a recorded no-op — the gate still records its
-abstention. Because an un-settled value cannot reach a consequential sink (the rule below), an
-unhandled abstain cannot leak into an action. This removes any need for a designated abstain
+otherwise the `abstain` block runs (`.committed == abstained`). Escalation to a human is the
+`principal` prefix on the `decide` (`p decide c by r`); the principal's reply arrives as a variant
+and drives the arms. An omitted `abstain` is a recorded no-op — the gate still records its
+abstention. Because the subject is sink-admissible only inside a committed branch (the rule below),
+an unhandled abstain cannot leak into an action. This removes any need for a designated abstain
 *variant* on a user enum; `Entailment`'s `Neutral` is a convenience over it.
 
-**The supervised-to-autonomous bootstrap.** A conformal gate certifies nothing without data, and
+**The supervised-to-autonomous bootstrap.** A conformal gate guarantees nothing without data, and
 its data is the ledger itself — its own past decisions and their recorded outcomes. Below a minimum
-of labelled cases (§17) the gate abstains, routing every case to `abstain` — typically a
-`decide c by principal` fallback. Those principal decisions become the first labelled cases; once
-enough accrue the gate
-commits autonomously, escalating thereafter only genuinely ambiguous (non-singleton) cases. A fresh
-agent is thus human-supervised by construction and earns autonomy as it accumulates grounded
-labels. A recorded outcome that labels a judgment references that judgment's ledger id, so the
-judgment↔label join stays auditable on the ledger rather than in untyped host state.
+of labelled cases (§17) the gate cannot commit, so a principal-prefixed `decide` (`p decide c by r`)
+routes those cases to `p`. Those principal decisions become the first labelled cases; once enough
+accrue the gate commits autonomously, escalating thereafter only genuinely ambiguous (non-singleton)
+cases. A fresh agent is thus human-supervised by construction and earns autonomy as it accumulates
+grounded labels. A recorded outcome that labels a judgment references that judgment's ledger id, so
+the judgment↔label join stays auditable on the ledger rather than in untyped host state.
 
 **Profile invalidation.** A profile is valid only for the source and runtime conditions it records:
 same policy id, enum/schema, prompt-template hash, provider/model, score function, calibration pool,
@@ -1238,32 +1269,36 @@ prevents future decisions from treating old evidence as current.
 
 **The consequential-action rule.** A consequential sink — a `perform` argument or a write-tool
 input — may consume a value only if it is `**settled`**: it carries no un-endorsed cognition. A
-`Credence` reaches a consequentially usable settlement only through `decide`, followed by
-subject-scoped `endorse`; the endorsed subject is settled only inside the matching endorsement arm.
-External data is `settled` by origin and passes freely — only un-endorsed cognition is
-rejected (the check is static). Additionally, if the value is endorsed by a gated decision, the margin floor is
-checked at runtime — `margin ≥ m`, with `m` the `floor` of the gate's `policy` (§13, declared in source, not the manifest). A judgment below `m` abstains and is the typed trigger for
-escalation.
+`Credence` reaches a usable settlement only through `decide` then `endorse`, and the resulting
+`Endorsement` is sink-admissible only inside a branch that has narrowed its `.committed` to a
+committed variant (so an `abstained` decision statically cannot reach a sink). External data is
+`settled` by origin and passes freely — only un-endorsed cognition is rejected. This static check is
+joined by one runtime check at the sink: the **margin floor** — `margin ≥ m`, with `m` the `floor`
+of the gate's `policy` (declared in source, not the manifest). A committed decision whose margin is
+below `m` faults the action (`MarginFloorViolation`, §16.6), the typed trigger for escalation. A gate
+that uses an inline rule with no named `policy` declares no `floor`, so it performs only the static
+admission check and raises no `MarginFloorViolation`; to impose a runtime floor, apply a `policy`
+declaring `floor m`.
 
-**Loss direction.** Whether a false accept or a false reject is costlier is a property of the
-action's loss, declared per `action` type. It is also what *grounds* a threshold: the
-Bayes-optimal `θ = c_FA / (c_FA + c_FR)`. `m` sets how confident the gate must be; the
-loss-direction declaration sets which way to fail when it is not. Absent a declaration, a
-consequential gate fails closed.
+**Fail-closed by default.** `m` (the margin floor) sets how confident the gate must be; when a
+consequential decision does not clear it, the action faults rather than proceeds — a consequential
+gate **fails closed**. (Asymmetric loss — weighting a false accept against a false reject to ground
+the threshold decision-theoretically, e.g. the Bayes-optimal `θ = c_FA / (c_FA + c_FR)` — is a future
+enrichment carried by the calibrated GateProfile, §16.8, not a source annotation in this version.)
 
 ### The external dependencies, one discipline
 
 
-| dependency | supplies        | reached at      | color | trust of result                        |
-| ---------- | --------------- | --------------- | ----- | -------------------------------------- |
-| provider   | a model         | `self <- p`     | `A`   | `raw` / `graded` (Credence slot)       |
-| identity   | a `principal`   | `decide c by p` | `A`   | `Decision<E>` with principal provenance |
-| tool       | the world (MCP) | `name(args)`    | `A`   | `⊔` inputs (read) / a sink (write) |
+| dependency | supplies        | reached at        | color | trust of result                        |
+| ---------- | --------------- | ----------------- | ----- | -------------------------------------- |
+| provider   | a model         | `self <- p`       | `A`   | `raw` / `graded` (Credence slot)       |
+| identity   | a `principal`   | `p decide c by r` | `A`   | `Decision<E>` with principal provenance |
+| tool       | the world (MCP) | `name(args)`      | `A`   | `⊔` inputs (read) / a sink (write) |
 
 
-All three are external, non-deterministic, journaled, and swappable by config. A conformal gate
-needs no external dependency — it calibrates from its own recorded endorsements and principal
-decisions on the ledger (§13).
+All three are external, non-deterministic, journaled, and swappable by config. A rule-only gate
+needs no external dependency — a conformal gate calibrates from its own recorded decisions on the
+ledger (§13).
 The membrane — capability + trust + ledger + gate — is identical across them.
 
 ### Provenance
@@ -1291,13 +1326,16 @@ model testimony to world effect is:
 
 ```
 raw reply -> Credence<E> -> Decision<E> -> Endorsement<T> -> granted sink -> ledger
-raw artifact -> Credence<Verifier> -> Decision<Verifier> -> Endorsement<Artifact> -> granted sink -> ledger
 ```
+
+The subject `T` may be anything cognition produced — a reply, a generated artifact, a parsed claim;
+the chain is the same.
 
 A helper function, library abstraction, interface dispatch, memory recall, query, tool result,
 or surface shorthand may make this path easier to write, but may not add a second path. A
-`Decision` may guide control flow, but only a branch-scoped `Endorsement` can settle a subject for
-a consequential sink. Recall from memory defaults to graded; read tools join the trust of their
+`Decision` may guide control flow, but only an `Endorsement` (settled subject) can drive a
+consequential sink, and only inside a branch that has narrowed its `.committed` to a committed
+variant. Recall from memory defaults to graded; read tools join the trust of their
 inputs; write tools are sinks. If the checker cannot establish a value's type, trust,
 endorsement, tool effect, grant, or replay source at a kernel boundary, the conformant behavior is
 to reject rather than infer authority.
@@ -1307,15 +1345,15 @@ identity, world/tools) enters only through a declared dependency; no hidden runt
 outside the kernel contract; every sugar desugars into kernel operations or erases statically.
 
 **Type & effect** — `sync` is the marked color and cannot reach a declared dependency
-(including a tool call), though it may `emit`, policy-decide an in-hand `Credence`, and `endorse`
+(including a tool call), though it may `emit`, rule-decide an in-hand `Credence`, and `endorse` by
 an in-hand `Decision`;
 `event<T>` marks ledger presence; a send bound to a `Credence<E>` slot yields a graded
-judgment, never a committed value; `decide c by basis` creates a sealed `Decision<E>`, `endorse
-subject by d` records that decision against an exact subject, and only a `settled` endorsed value
-may drive a consequential sink
+judgment, never a committed value; `decide c by r` creates a sealed `Decision<E>`, `endorse
+subject by d` produces an `Endorsement<T>` of an exact subject, and only an `Endorsement` —
+sink-admissible inside a committed branch — may drive a consequential sink
 (a `perform` arg or a write-tool input); fusion of two or more `Credence`s (including
 `quorum`) requires a total `independent`/`dependent` declaration over the `array<Credence>`;
-`decide c by p` takes a `Principal` (no `text → Principal`); user
+a `principal` prefix on `decide` takes a `Principal` (no `text → Principal`); user
 `struct`/`enum`/`event`/`action` types are explicitly declared; a read `tool` requires a
 `use` grant and carries its inputs' trust; authority, trust (three-level), color, and
 tool-use are checked statically and interprocedurally; a violation is a compile error.
@@ -1323,9 +1361,12 @@ tool-use are checked statically and interprocedurally; a violation is a compile 
 **Runtime** — ticks are system-level; structured output uses constrained decoding;
 subscriptions are prospective and hoisted (never retroactive), and history is reached by
 query; multi-handler firing is registration-order; a message trace is a prefix of
-`Sent→Delivered→Resolved`; every memory write carries a provenance backpointer; all three
+`Sent→Delivered→Resolved`; every memory write carries a provenance backpointer; each agent
+instance's private memory is isolated and is consulted-then-internalized on every reaction (the
+mandatory envelope, §16.7), and recall cannot launder trust; all three
 dependencies journal their oracle/tool results to the ledger for replay (§15.4.2); replay
-re-serves recorded dependency results and never re-invokes a write sink; the margin floor `m`
+re-serves recorded dependency results (including memory decomposition/embedding) and never
+re-invokes a write sink; the margin floor `m`
 is enforced at the consequential sink.
 
 ---
@@ -1339,9 +1380,9 @@ is enforced at the consequential sink.
 ## 15.0 Modeling choices
 
 - Two qualifiers travel with every expression. Color `c ∈ {S, A}` (does it reach a declared dependency?)
-and trust `t ∈ {settled, graded, raw}` (cognition-provenance). A gate has color `A` when its
-basis reaches a declared dependency, such as `decide c by p` for a `principal`; policy-driven
-`decide` and in-hand `endorse` are `S`.
+and trust `t ∈ {settled, graded, raw}` (cognition-provenance). A gate has color `A` when it may
+reach a declared dependency, such as a principal-prefixed `p decide c by r`; a rule-only
+`decide` and an `endorse` are `S`.
 - `Endorsement<T>` is the first-class recorded proof that a decision was applied to an exact
 subject value; it is the proof object checked at consequential sinks.
 - Authority is a property of the agent context (its `grants`, including `use`).
@@ -1352,7 +1393,7 @@ non-determinism, modeled as oracle relations (§15.4.2).
 
 ```
 c ∈ {S,A}   color   (S ⊑ A)        t ∈ {settled,graded,raw}   trust   (settled ⊑ graded ⊑ raw)
-Γ           x ↦ (T, t)             r : Rule       a decision rule {threshold, margin}
+Γ           x ↦ (T, t)             r : Rule   a decision rule (threshold `confidence θ [margin δ]` | conformal `α` | a named `policy`)
 Σ           agent signatures       A              action type names (consequential)
 G           grants set incl. ("perform",A) ("reach",D) ("use",K)
 Endorsement<T>  a ledger-recorded endorsement about subject type T (created only via endorse)
@@ -1376,7 +1417,7 @@ typedecl   ::= "struct" Ident typarams? "{" field ("," field)* "}"            //
              | "event"  Ident "(" field ("," field)* ")" (":" "Error")? ";"   // optional Error supertype (§19.5)
              | "reversible"? "action" Ident "(" field ("," field)* ")" ";"   // performative; `reversible` = low-stakes sink (§20)
 field      ::= type Ident                                     // "name: T" also accepted
-tool       ::= "reversible"? ("read"|"write") "tool" type Ident params config?  // effect class; `reversible` = low-stakes sink (§20)
+tool       ::= "reversible"? ("read"|"write") "tool" type Ident params config? ";"  // effect class; `reversible` = low-stakes sink (§20)
 agent      ::= "agent" Ident params ifaces? grants? "{" abody* "}"   // ifaces (§19.5); agents are NOT generic
 ifaces     ::= ":" modpath ("," modpath)*                     // implemented interfaces (nominal)
 interface  ::= "interface" Ident "{" ifmember* "}"            // (§19.5); a type, not instantiable; not generic
@@ -1405,13 +1446,13 @@ stmt       ::= vardecl | assign | spawn | prompt | principal | depdecl
              | "awake" Ident ";" | "sleep" Ident ";"
              | "emit" modpath "(" [expr ("," expr)*] ")" ";"     // plain event; args match fields positionally
              | "perform" modpath "(" [expr ("," expr)*] ")" ";"  // action; args match fields positionally
-             | endorse                                  // subject-scoped endorsement (§13)
-             | "say" "(" expr ")" ";" | "return" expr? ";"
+             | dispatch                                 // a gate (decide/endorse) with arms — sugar over `if` (§13)
+             | "return" expr? ";"                       // `say(x)`/`store(x)`/`embed(x)` are ordinary calls (`expr ;`)
              | "if" "(" expr ")" block ("else" block)?
-             | when | case | retry
+             | when | retry
              | expr ";"
-vardecl    ::= type Ident ("=" expr)? ";"
-assign     ::= (Ident | "self" "." Ident | postfix) "=" expr ";"
+vardecl    ::= type Ident ("=" expr)? ";"               // disambiguated from `assign` by the leading `type Ident` (LL(2))
+assign     ::= postfix "=" expr ";"                     // postfix covers `x`, `self.f`, `x.f`, `x[i]`
 spawn      ::= "spawn" modpath typeargs? Ident args? ";"      // allocate + construct; type may be qualified/generic
 prompt     ::= "prompt" type Ident ";"
 instruction ::= "instruction" String ";"                // compile-time system prompt; global or agent-scoped (§5)
@@ -1420,10 +1461,13 @@ forget     ::= "forget" Ident ";"                       // tombstone a `mem` han
 principal  ::= "principal" Ident config? ";"            // identity backend binds principal names
 depdecl    ::= ("independent"|"dependent") Ident ("," Ident)* ";"
 when       ::= "when" "(" type Ident? ("about" expr)? ")" ("if" "(" expr ")")? block   // type may be a qualified etype
-endorse    ::= "endorse" expr "by" expr endorsearms ("abstain" block)? ";"?
-endorsearms ::= "{" (Ident ("as" Ident)? block)* "}"    // dispatch on Decision variants; `as` binds Endorsement<T>
-arms       ::= "{" (Ident ":" block)* "}"               // case arms
-case       ::= "case" "(" expr ")" "as" Ident "{" (Ident ":" block)* ("default" ":" block)? "}"
+gate       ::= Ident? "decide" expr "by" rule           // → Decision<E>; the optional leading Ident is the escalation prefix — it must resolve to a `Principal` (T-Decide-Principal, §15.3.2); needs LL(2) lookahead to `decide`
+             | "endorse" expr "by" expr                 // → Endorsement<T> (subject, decision)
+dispatch   ::= gate armblock ("abstain" ("as" Ident)? block)? ";"?   // SUGAR: bind the gate value, branch on `.committed` (§13)
+armblock   ::= "{" (armhead ("as" Ident)? block)* "}"   // colon-free `Variant [as e] { … }` arms; `as e` binds the gate value, narrowed
+armhead    ::= Ident | "true" | "false"                 // a variant of the gate's enum E (true/false for a bool gate)
+block      ::= "{" (vardecl | stmt | when)* "}"         // a scope; hoists its `when` subscriptions (§16.3)
+args       ::= "(" (expr ("," expr)*)? ")"              // call / spawn / extend arguments (no trailing comma)
 retry      ::= block "retry" "(" Int ")"          // re-attempt the block up to N times on a fault
 find       ::= "find" Ident ("," "origin" "(" Ident ")")? "where" "{" triple+ "}"   // → array<T>
 select     ::= "select" (Ident ("," Ident)* | "*") "from" Ident "where" "{" cond "}"  // → array<Record>
@@ -1432,15 +1476,22 @@ triple     ::= operand operand operand ";"          // subject predicate object 
 cond       ::= cmp (("&&"|"||") cmp)*                // a boolean filter over fields
 operand    ::= Ident | String | Int | Float
 
+// Disambiguation: in `decide e by rule`, the `rule`'s `expr` alternative (a named `policy`) must NOT
+// be a bare struct literal — wrap an expression rule in parentheses (`by (e)`) — so that the `{` after
+// a complete `gate` is unambiguously the `armblock`, not a struct-literal tail of the rule.
+
 expr       ::= expr "<-" expr ("expires" Number)?              // send; or write a `mem` (LHS type-directed, §10)
              | expr "->" expr                            // recall from a `mem` (§10); same precedence as `<-`
              | expr "|>" expr                            // pipe
-             | "decide" expr "by" (rule | expr)          // Credence<E> → sealed Decision<E>
-             | "all" "(" expr ")" | "any" "(" expr ")"   // fuse an array<Credence<bool>>
+             | gate                                      // a gate as an expression: decide → Decision<E>, endorse → Endorsement<T> (kernel)
+             | ("all"|"any") "(" expr ("," expr)* ")"    // fuse Credence<bool> operands (a comma list, or a single array<Credence<bool>>)
              | "quorum" "(" Int "," expr ")"             // ≥ k of an array<Credence<bool>>
              | find | select | match                     // ledger/memory queries → array<…>
              | cmp
-rule       ::= "confidence" Number ("margin" Number)? | "conformal" Number | expr  // or a Rule value
+rule       ::= "confidence" Number ("margin" Number)?    // threshold basis
+             | "conformal" Number?                       // conformal basis; with no α, inherits the file `conformal` default (else 0.05, §20.2)
+             | modpath                                   // a named `policy` (§13)
+             | "(" expr ")"                              // a Rule-valued expression (parenthesized so its `{`, if any, is not an armblock); must be Rule-typed (else TypeError)
 cmp        ::= add (("=="|"!="|"<"|">"|"<="|">=") add)?
 add        ::= mul (("+"|"-") mul)*
 mul        ::= unary (("*"|"/") unary)*
@@ -1482,12 +1533,16 @@ both contagious upward (a value is as `raw` as its least-settled input) unless a
 Γ ⊢ K(a₁..aₙ) : R ! A · (⊔tᵢ)        // result carries its inputs' provenance; ILL-FORMED if use not granted
 
 Γ ⊢ e : Credence<E> ! c · graded    r : Rule
-────────────────────────────────────────────  (T-Decide-Policy / GATE)
+────────────────────────────────────────────  (T-Decide / GATE)
 Γ ⊢ decide e by r : Decision<E> ! c · settled
 
-Γ ⊢ e : Credence<E> ! _ · graded    Γ ⊢ p : Principal
+Γ ⊢ e : Credence<E> ! _ · graded    r : Rule    Γ ⊢ p : Principal
 ────────────────────────────────────────────  (T-Decide-Principal / GATE, async)
-Γ ⊢ decide e by p : Decision<E> ! A · settled
+Γ ⊢ p decide e by r : Decision<E> ! A · settled
+
+Γ ⊢ a : T · _    Γ ⊢ d : Decision<E> · settled    a ∈ scope(d)
+────────────────────────────────────────────  (T-Endorse / GATE)
+Γ ⊢ endorse a by d : Endorsement<T> ! S · settled
 
 Γ ⊢ cs : array<Credence<Bool>> ! col · graded    dep-declared(cs)
 ──────────────────────────────────────────────────────────────  (T-Fuse)   // all/any/quorum
@@ -1495,13 +1550,13 @@ both contagious upward (a value is as `raw` as its least-settled input) unless a
         // ILL-FORMED if any pair in cs is neither independent- nor dependent-declared
 ```
 
-The GATE rules (`T-Decide-Policy`, `T-Decide-Principal`) are the only routes from `Credence` to
-`Decision`; only `endorse subject by decision` sets a subject-scoped endorsement. A read-`tool` is
-async and carries its inputs' provenance (a
-write tool is a consequential sink, §15.3.3); both require a `use` grant. `W-Endorse` is
-synchronous when its `Decision` is already in hand (no dependency reach). T-Fuse (covering
-`all`/`any`/`quorum`) requires total dependence
-coverage over the `array<Credence>`.
+The GATE rules (`T-Decide`, `T-Decide-Principal`) are the only routes from `Credence` to `Decision`;
+`T-Endorse` is the only route from a `Decision` to a settled `Endorsement` of a subject, and is
+synchronous (the `Decision` is in hand). A principal prefix makes `decide` async (it may reach the
+identity dependency). A read-`tool` is async and carries its inputs' provenance (a write tool is a
+consequential sink, §15.3.3); both require a `use` grant. T-Fuse (covering `all`/`any`/`quorum`)
+requires total dependence coverage over the `array<Credence>`. The arm-block (`dispatch`, §15.2) is
+sugar: it binds the gate value and branches on `.committed` (W-Endorse, below).
 
 ### 15.3.3 Statement & agent well-formedness — the guarantees
 
@@ -1519,7 +1574,7 @@ coverage over the `array<Credence>`.
 // COLOR — interprocedural (a tool call forces A):
 c_f = S
 ──────────────────────────────────────  (W-SyncSeamFree)
-⊢ f  ok    // body reaches no declared dependency (no <-, no Credence-slot, no principal decide, NO tool call) AND calls only S fns
+⊢ f  ok    // body reaches no declared dependency (no <-, no Credence-slot, no principal-prefixed decide, NO tool call) AND calls only S fns
 
 // AUTHORITY — perform / reach / use (DEFAULT-DENY):
 allowed(C,kind,X) ⟺ G ≠ ⊥ ∧ ((kind,X) ∈ G ∨ G = {*})
@@ -1534,17 +1589,31 @@ agent C extends P
 ──────────────────────  (W-Extend)
 grants(C) ⊆ grants(P)        // ⊥ ⊆ G ⊆ {*}; covers perform/reach/use uniformly
 
-// THE CONSEQUENTIAL-ACTION RULE (static endorsement; runtime margin):
-sink(s)     Γ ⊢ e : _ · t     t ≠ settled
+// THE CONSEQUENTIAL-ACTION RULE (static admission + flow narrowing; runtime margin floor):
+sink(s)     Γ ⊢ e : Te · t     ¬( t = settled ∧ ( Te ≠ Endorsement<_>  ∨  committed-narrowed(e) ) )
 ──────────────────────────────────────────────────────────────  (W-Consequential-static)
-s(…e…)  is ILL-FORMED       // sink = perform arg / write-tool input; an un-settled value rejected
-// at runtime, for an Endorsement:  margin(e) ≥ m   else the action faults
+s(…e…)  is ILL-FORMED
+// sink = perform arg / write-tool input. A settled NON-Endorsement (a constant, a `prompt` value,
+// a settled read-tool result) passes freely — external data is settled by origin. An `Endorsement`
+// passes only when committed-narrowed (an abstained branch is ILL-FORMED). A graded/raw value is rejected.
+// At runtime, for an admitted `Endorsement`: margin(e) ≥ m, else the action faults (MarginFloorViolation).
 
-// ENDORSE (subject-scoped settlement):
-Γ ⊢ a : T · t      Γ ⊢ d : Decision<E> · settled      a ∈ scope(d)
+// ENDORSE / arm flow narrowing (subject settlement is flow-sensitive on `.committed`):
+Γ ⊢ (endorse a by d) : Endorsement<T> · settled      a ∈ scope(d)
 ──────────────────────────────────────────────────────────────  (W-Endorse)
-inside arm v of E: Γ[a ↦ T · settled, e ↦ Endorsement<T> · settled] ⊢ body ok
-abstain/default:   Γ[a ↦ T · t]                                      ⊢ body ok
+let e = endorse a by d :
+  inside a branch where e.committed is narrowed to a variant v (an arm, or `if (e.committed == v)`):
+      Γ[e ↦ Endorsement<T> · settled, committed-narrowed(e)]  ⊢ body ok    // e is sink-admissible; e coerces to its subject T at a sink
+  inside the abstain / non-committed branch (e.committed == abstained):
+      Γ[e ↦ Endorsement<T> · settled]                         ⊢ body ok    // NOT committed-narrowed; not sink-admissible
+
+// ARMS — exhaustiveness + arm-name validity for `gate armblock` (sugar over the above):
+Γ ⊢ g : (Decision<E> | Endorsement<E-of-d>)      each arm head ∈ variants(E) (or true/false for bool E)
+arms cover all variants(E)  ∨  an `abstain` block is present
+──────────────────────────────────────────────────────────────  (W-Arms)
+⊢ g { arms } [abstain b]  ok    // else ExhaustivenessError; a non-variant arm head is a TypeError;
+                                 // `as e` binds the gate value (Decision for decide, Endorsement for endorse),
+                                 // committed-narrowed in a variant arm, not narrowed in `abstain`
 
 // CALL — trust transfer and consequential-arg rejection:
 Γ ⊢ aᵢ : _ ! _ · tᵢ        t_result = ⊔ { tᵢ : i ∈ ρ_f }
@@ -1566,12 +1635,12 @@ margin floor is runtime.
 ### 15.4.2 The external dependencies as oracles (where stochasticity lives)
 
 ```
-think  : Π × Prompt × Schema  ⇝  Value × Π             (provider; NON-deterministic)
-decide : Ψ × Principal × Credence<E> ⇝ Decision<E>×Sig × Ψ  (identity dependency; external, auditable)
-invoke : Ω × Tool × Args      ⇝  Value × Ω              (tool dependency; external, effectful)
+think   : Π × Prompt × Schema   ⇝  Value × Π             (provider; NON-deterministic)
+consult : Ψ × Principal × Credence<E> ⇝ (E × Signature) × Ψ  (identity dependency; external, auditable; Signature = the principal's signed ruling)
+invoke  : Ω × Tool × Args       ⇝  Value × Ω              (tool dependency; external, effectful)
 ```
 
-All three oracles' results are journaled to the ledger as produced (`ThinkResolved` /
+All three oracles' results are journaled to the ledger as produced (the send's `Resolved` /
 `PrincipalDecision` / `ToolResolved`). Replay never re-invokes an oracle or a tool: it serves
 each from the recording in order — a write tool is replayed as its recorded
 result, not re-run. The ledger is hash-chained, so a faithful replay regenerates an
@@ -1590,28 +1659,32 @@ single-runtime evidence fusion, not multi-node agreement.) Counterfactual/forens
 library.
 
 ```
-// DECIDE by policy/rule — local gate collapse; no oracle, sealed off-ledger value:
-v' = collapse(eval(e), r)        // singleton prediction set ⇒ that variant; else abstain
-─────────────────────────────────────────────  (E-Decide-Policy)
-⟨…|S| decide e by r ⟩ → Decision v', ledger S
+// DECIDE (rule only) — local gate collapse; no oracle; sealed Decision value:
+v' = collapse(eval(c), r)        // singleton prediction set ⇒ that variant; else `abstained`
+─────────────────────────────────────────────  (E-Decide)
+⟨…|S| decide c by r ⟩ → Decision{committed:v', …}, ledger S
 
-// DECIDE by principal — identity dependency + record; async:
-(Ψ, p, eval(e)) ⇝ (decision, sig, Ψ')
+// DECIDE (principal prefix) — rule first; on non-commit, reach the identity dependency; async:
+v' = collapse(eval(c), r)
+(v' ≠ abstained)                       ⇒ S' = S , v'' = v' , Ψ' = Ψ                          // rule committed; no escalation, no event
+(v' = abstained ∧ consult succeeds)    ⇒ (Ψ, p, eval(c)) ⇝ (decision, sig, Ψ') , S' = append(S, PrincipalDecision(who:p, credence:c, decision, sig)) , v'' = decision
+(v' = abstained ∧ consult declines/unavailable) ⇒ S' = append(S, FailedPrincipalDecision(who:p, credence:c)) , v'' = abstained , Ψ' = Ψ
 ─────────────────────────────────────────────  (E-Decide-Principal)
-⟨…|Ψ|S| decide e by p; k⟩ → ⟨…|Ψ'| append(S, PrincipalDecision(who:p, credence:e, decision, sig)) | Decision(decision); k⟩
+⟨…|Ψ|S| p decide c by r; k⟩ → ⟨…|Ψ'| S' | Decision{committed:v'', …}; k⟩
 
-// ENDORSE — apply an existing Decision to an exact subject; synchronous; single event:
+// ENDORSE — apply an existing Decision to an exact subject; synchronous; single event; → Endorsement value:
 d = eval(decision) ; v' = d.committed ; require subject ∈ scope(d)
-ev = (v' = abstain) ? Abstained(subject) : Endorsed(subject_hash(subject), decision_id(d), v')
+ev = (v' = abstained) ? Abstained(subject) : Endorsed(subject_hash(subject), decision_id(d), v')
 ─────────────────────────────────────────────  (E-Endorse)
-⟨…|S| endorse subject by decision { arms }; k⟩
-  → ⟨…| append(S, ev) | dispatch(v', arms with subject settled only in matching arm); k⟩
+⟨…|S| endorse subject by decision ⟩ → append(S, ev), Endorsement{subject, committed:v', …}
+// The arm-block sugar binds the Endorsement and branches on `.committed`; the subject is
+// sink-admissible only within a committed-variant branch (W-Endorse, §15.3.3).
 
 // TOOL CALL (read-only) — tool dependency + record; async pair; result carries inputs' trust:
 ("use",K) granted    (Ω, K, eval(a…)) ⇝ (v, Ω')    t = ⊔ trust(aᵢ)
 S' = append(append(S, ToolStarted(K)), ToolResolved(K, v))
 ─────────────────────────────────────────────  (E-Tool)
-⟨…|Ω|μ|S| x = K(a…); k⟩ → ⟨…|Ω'|μ[x↦v (trust t)]|S'| k⟩   // a write tool is a consequential sink (W-Consequential)
+⟨…|Ω|μ|S| x = K(a…); k⟩ → ⟨…|Ω'|μ[x↦v (trust t)]|S'| k⟩   // a write tool is a consequential sink (W-Consequential-static)
 
 // SPAWN — allocate + bind ctor args + run constructor; mailbox closed; hoist subs:
 Â' = Â[name ↦ { type, params := eval(args), awake:false }] ;  register-hoisted-subs(ctor-body)
@@ -1666,16 +1739,17 @@ src(x)=x   src(self)=current agent   src(d<-p)=binding name else @vN   src(compo
 ### 15.5.1 Observable outcome vs incidental trace
 
 For a terminal ledger `S`, the observable outcome `obs(S)` is the subsequence of committed
-events: performed actions, gate decisions, subject endorsements, principal decisions, `case`-selected
-variants, and top-level bindings of bounded type. It excludes the incidental trace:
-`Think*` payloads (the wording), `say` output, internalized memory text, raw tool-result
+events: performed actions, subject endorsements (`Endorsed`/`Abstained`), principal decisions
+(`PrincipalDecision`/`FailedPrincipalDecision`), `Contradiction`s, write-tool results, and top-level
+bindings of bounded type. It excludes the incidental trace: send `Resolved` reply payloads
+(the wording), `say` output, internalized memory text, raw tool-result
 payloads not yet gated, graded `Credence` distributions no gate committed, and raw
 `event<text>` replies that never reach a committed event.
 
 ### 15.5.2 Observational equivalence `≈`
 
 ```
-≈_Bool, ≈_Int, ≈_Null, ≈_Entailment, ≈_Verification, ≈_AgentId  :=  structural equality
+≈_Bool, ≈_Int, ≈_Null, ≈_Entailment, ≈_Enum, ≈_AgentId  :=  structural equality
 ≈_Text                                                        :=  sim(a,b) ≥ θ   // bounded
 ≈_record / ≈_list                                            :=  componentwise / pairwise ≈
 ```
@@ -1822,11 +1896,13 @@ operational semantics.
 For well-typed `P`: **(T1) Authority safety** — an agent `perform`s, `use`s, and `reach`es
 only what its `grants` (powers) name; grants are subtractive under `extend`; no runtime value
 extends them. **(T2) Decision and endorsement** — the only operation that settles a `graded`
-judgment is `decide`, which commits a singleton `Decision` (recorded, `margin ≥ m`) or `abstain`s;
-the only operation that settles a subject value for consequential use is `endorse subject by d`,
-which records the exact subject and decision. **(T3) Consequential non-interference** — no value
-carrying un-endorsed cognition reaches a consequential sink (a `perform` argument or an
-write-tool input); equivalently, varying the model's raw judgments
+judgment is `decide`, which yields a `Decision` whose `.committed` is a singleton variant or
+`abstained`; the only operation that settles a subject value is `endorse subject by d`, yielding an
+`Endorsement` that records the exact subject and decision. **(T3) Consequential non-interference** —
+no value carrying un-endorsed cognition reaches a consequential sink (a `perform` argument or a
+write-tool input), and an `Endorsement` is sink-admissible only inside a branch that narrowed its
+`.committed` to a committed variant (so an `abstained` decision cannot reach a sink), with the
+runtime margin floor `margin ≥ m` checked there; equivalently, varying the model's raw judgments
 changes no world-effect except through a gate (Lemma 1, §15.5). **(T4) Reproducibility up to
 `≈`** — state is a function of the ledger plus recorded oracle results; a recorded run replays
 to chain-head equality unconditionally; inter-agent message content is derived, not stored.
@@ -1884,6 +1960,17 @@ must expose the same kernel boundary: no external dependency is reached except t
 declared seam, no consequential sink runs except through grants plus endorsement, and no
 future-relevant state escapes the ledger/replay contract.
 
+**One runtime, one system.** An Agape runtime is the sole authority for one running Agape
+system: it owns the append-only ledger, the agent population and lifecycle, the provider,
+identity, tool, and prompt dependencies, and each agent instance's private memory substrate. A
+runtime shares **no mutable state** with another runtime — the Studio runtime, a packaged product
+app, and a hosted (e.g. Soma) tenant runtime are *separate* runtimes unless explicitly connected
+through an external protocol, and when two runtimes communicate their messages are ordinary
+ledgered events at each boundary (§6). The runtime is not "global agent memory": the runtime has a
+*ledger* (objective, shared, §16.2); agents have *private memory* (subjective, per-instance,
+§16.7). The obligations below (§16.1–§16.9) are the cross-runtime contract every conformant
+implementation satisfies; a release reports its conformance against them (§17.6).
+
 ### 16.1 Execution model and the scheduler
 
 The runtime is a **discrete-event simulator** over a single growing ledger (§0.2, §15.4.1). Its state
@@ -1894,7 +1981,7 @@ assigned, monotonic, gap-free (§7).
 - **Top-level evaluation.** The program's top-level statements run in source order (§0.2). A statement
   executes to a value or to a ledger append; an append fires any matching subscriptions (§16.3) before
   the next statement begins.
-- **Asynchrony.** Reaching a declared dependency (a send `<-`, a tool call, `decide c by p`) does not
+- **Asynchrony.** Reaching a declared dependency (a send `<-`, a tool call, a principal-prefixed `p decide c by r`) does not
   block: the runtime appends the operation's opening event(s) (`Sent`, `ToolStarted`, …), issues the
   oracle call (§16.4), and enqueues a **resolution** on `Q`. The continuation after the call resumes
   when that resolution is dispatched. Many operations may be in flight at once (a `|>` fan-out, §12,
@@ -1914,6 +2001,30 @@ assigned, monotonic, gap-free (§7).
   observable effects by the issue-order rule, and there is no shared mutable state (each agent owns its
   memory, §10), so given the journaled oracle results the ledger is reproduced exactly (§16.5).
 
+### 16.1a Runtime identity and isolation
+
+Each runtime has a stable **runtime id** and a **runtime kind** — e.g. `rust-local` (the CLI /
+toolchain runtime), `studio-local` (the Studio control-plane runtime), or `cloud` / `soma` (a
+hosted runtime). The kind names the deployment, not a different language: every kind satisfies the
+same §16 contract.
+
+Each agent **instance** has a stable runtime-local id. Two instances of the same agent template
+(§5) are *distinct cognitive entities* with *distinct private-memory namespaces* (§16.7) — same
+code, different memory, no shared subjective state. A recommended identity tuple:
+
+```text
+runtime_id        // which runtime authority
+agent_template    // the agent declaration (§5)
+agent_instance_id // this spawned instance
+agent_generation  // bumped when an instance is collected and respawned fresh
+ledger_head       // the ledger prefix the view is derived from (§7)
+```
+
+`agent_generation` advances only when a slept agent with no live references is collected and a
+later `spawn` creates a *fresh* entity (§5); `sleep` / `awake` / a contained crash do **not** erase
+memory or advance the generation, because an agent's state is a function of the ledger and its
+private memory, not fragile in-flight state (§5, §16.6).
+
 ### 16.2 The ledger journal — serialization, hashing, ticks
 
 The ledger is an append-only, hash-chained log (§7, §15.4.2a). A conformant runtime fixes three things
@@ -1930,6 +2041,14 @@ a replay (§16.5) and an audit depend on:
 - **Hash chain.** Genesis `h₀ = SHA-256("agape/v1")`; thereafter `hᵢ = SHA-256(hᵢ₋₁ ‖
   serialize(eventᵢ))`. The **chain-head** is `h_{|S|−1}`: SHA-256 over the canonical serialization of
   every field, so nothing observable sits outside the commitment.
+- **Stored vs hashed fields.** A runtime **may persist additional, non-canonical fields** beside the
+  hashed record — most commonly a wall-clock `ts`, and the materialized `prev_hash` / `hash` of the
+  chain above. Only the six canonical fields are hashed; the wall-clock `ts` is **never** part of the
+  serialization, so wall-clock time cannot affect the chain-head and replay (§16.5) reproduces it
+  exactly. (A behavior that genuinely depends on wall time — a `wall-clock expires` lifetime, §6 — is
+  captured not by `ts` but by a *journaled* event whose firing is recorded, §16.5.) Which fields are
+  hashed, the hash algorithm, the canonical serialization, and any redaction rules are fixed per
+  runtime version and advertised by runtime metadata (§17.6).
 - **Chain-head equality (T4).** Two runs are replay-equivalent iff their chain-heads are equal (§15.4.2,
   §16.5) — the operational form of observational equivalence `≈` (§15.5.2) for a recorded run: identical
   journals ⇒ identical ledger ⇒ identical head.
@@ -1970,8 +2089,9 @@ appends its opening event, invokes the seam, journals the result (§16.5), and a
   sampling fallback (§16.8). The result is journaled as the send's `Resolved` (with the raw response and
   per-variant scores, §15.5.1, for replay and calibration). A schema-violating return is a `TypeMismatch`
   (§16.6).
-- **Identity (`principal_decide`).** `decide c by p` presents `(p, c)` to the identity dependency,
-  which returns the principal's signed `Decision<E>`. The backend (e.g. `local-keyring`, §17)
+- **Identity (`principal_decide`).** A principal-prefixed `p decide c by r` runs the rule first; when
+  it cannot commit, it presents `(p, c)` to the identity dependency, which returns the principal's
+  signed verdict (a variant of `E`). The backend (e.g. `local-keyring`, §17)
   signs a canonical serialization of `(who = p, credence = ledger-id(c), decision)`; the runtime
   records `PrincipalDecision { who, credence, decision, signature }` (§9). A declined ruling
   records a `FailedPrincipalDecision` (§13). No key material appears in source (§3).
@@ -1992,6 +2112,14 @@ lifetime's firing (§6); a logical-tick lifetime is already deterministic.
   from the journal instead of invoking the seam**: the *i*-th call of a given kind, in issue order
   (§16.1), is answered by the *i*-th recorded result of that kind. Replay invokes nothing external — a
   `write` tool is replayed as its recorded result, never re-run against the world.
+- **What must be reproducible.** Replay never re-calls cognition completions, identity decisions, or
+  tools (above), and it likewise never re-calls the **memory-internalization oracles** — decomposition,
+  summarization, and embedding (§16.7). Each such call is either journaled (a non-deterministic provider
+  result is recorded like any oracle output) or **deterministically derived from recorded inputs by a
+  versioned algorithm** whose version is part of runtime metadata (§17.6). Either way memory is a
+  projection of ledgered events plus recorded oracle results: a faithful runtime can rebuild every
+  agent's private memory from the ledger, or verify materialized memory against its ledger provenance
+  (§16.7).
 - **Chain-head equality (T4).** A faithful replay regenerates an identical ledger and therefore an
   identical chain-head (§16.2); chain-head equality *is* the proof of replay-equivalence (§15.4.2), the
   operational form of `≈` (§15.5.2). The conformance test-mode asserts it (§17.5).
@@ -2012,6 +2140,11 @@ lifetime's firing (§6); a logical-tick lifetime is already deterministic.
   subscription (§5), not a built-in.
 - **TypeMismatch.** A schema-violating provider return is a typed `TypeMismatch` (§8) — catchable and
   retryable, not in itself a crash.
+- **MarginFloorViolation.** When a consequential sink receives an endorsed value whose `.margin` is
+  below the gate's policy `floor m` (§13), the runtime appends a typed `MarginFloorViolation` and
+  faults the invocation (the action does not run). Like `TypeMismatch` it is a catchable `Error`
+  (§9): `when (Error e)` / `on crash` / a `retry` block may handle it — it is the typed trigger for
+  escalation, not a silent skip.
 - **Retry.** `{ block } retry(N)` re-executes `block` from its start on an `Error`, up to `N`
   times. Variable assignments the block made carry across attempts; ledger events appended by a failed
   attempt remain on the log (the ledger is immutable) — a re-attempt appends fresh events. On exhaustion the
@@ -2020,29 +2153,78 @@ lifetime's firing (§6); a logical-tick lifetime is already deterministic.
 
 ### 16.7 The memory runtime
 
-Each agent owns three stores (§10): a **fact table** (relational), a **relationship graph** (SPO triples
-over a typed predicate set), and a **vector store** (embeddings). No store is shared — there is no
-cross-agent mutable state (§0.2).
+Each agent instance owns one private memory unit with three modalities (§10): a **fact table**
+(relational, exact/selective facts), a **relationship graph** (SPO triples over a typed predicate
+set, concept/entity relations), and a **vector store** (embeddings, similarity recall). No store is
+shared — there is no cross-agent mutable state (§0.2).
 
-- **Internalization (configurable trigger).** Internalization decomposes a value into typed facts, SPO
-  triples, and embeddings written to the agent's memory, via a provider call — non-deterministic but
-  shape-fixed (§10), and journaled, so replay (§16.5) reproduces it without re-invoking the provider. The
-  **trigger** is configurable: by default explicit — `store(x)` / `embed(x)` (§9) or a prompt-driven
-  decision — and, when `[memory] internalize_on_receive = true` (§17, default `false`), the runtime
-  decomposes every received `<-` event automatically. Default-off keeps cognition cost pay-as-you-go: a
-  digest call happens only when asked for, not on every message.
+- **Per-agent isolation.** Memory is namespaced per *instance*, not per *template*: no agent may read
+  or mutate another agent's memory except through an explicit, ledgered Agape interaction (a send, §6).
+  If an implementation physically deduplicates storage across instances, the *semantic* projection is
+  still per-agent — **shared physical storage cannot create shared subjective memory.**
+- **The memory cell.** Each stored cell is the storage realization of the §7 `Fact<T>` projection
+  record, carrying the same staleness metadata plus its physical coordinates:
+
+  ```text
+  agent_instance_id    // the owning instance (§16.1a) — the isolation key
+  modality             // facts | relationships | semantics
+  key_or_subject       // the fact key / node / item
+  value_or_edge        // the stored value or SPO edge
+  origin_tick          // backpointer to the producing ledger event (§7, §10)
+  taint                // settled | graded | raw — the provenance event's trust (§13)
+  basis_head           // the ledger prefix the value was derived from (§7)
+  valid_through        // the head through which it is known current
+  dependency_scope     // the event/state keys whose change can stale it (§7, §16.7a)
+  created_at           // wall-clock, non-canonical (never hashed, §16.2)
+  ```
+
+- **Memory envelope (mandatory trigger).** Each agent reaction runs the **memory envelope** below
+  in full. The runtime may tune limits, ranking, summarization, and embedding backends, and a
+  cost-constrained run may record a *budget-limited* packet — but it does **not** omit the consult
+  (step 4), its recorded trace (step 5), or the internalization (step 9) to save cost, and a limited
+  packet says it was limited. Configuration controls budget and fidelity, not whether memory is part
+  of the turn.
+
+  ```text
+  1. Receive the stimulus.
+  2. Append (or identify) the ledger event representing that stimulus.
+  3. Build a memory query from the stimulus, current task, agent role, and ledger head.
+  4. Consult the instance's private facts, graph, and vector memory.
+  5. Append MemoryConsulted with counts, query metadata, and result provenance (§9).
+  6. Build the cognition/tool/action context from source instruction (§5), project context,
+     and the memory packet.
+  7. Execute the reaction.
+  8. Append the resulting ledger events.
+  9. Internalize the experience into the same instance's private memory.
+  ```
+
+  The **memory packet** supplied to cognition includes, within budget: whole-artifact summaries
+  relevant to the task (§16.7b); precise chunk/vector hits with their origin ticks; graph
+  relationships for entities in the task; prior lessons, failures, and working patterns (§16.7c);
+  recent related run/check/test outcomes; and, when applicable, the explicit fact that memory was
+  empty. **An empty lookup is a meaningful recorded result, not an omitted step** — step 5 records
+  that memory was consulted and returned no applicable context.
+
+  Internalization (step 9) decomposes a value into typed facts, SPO triples, and embeddings via a
+  provider call — non-deterministic but shape-fixed (§10), and journaled (or deterministically
+  derived, §16.5), so replay reproduces it without re-invoking the provider. **Memory cannot launder
+  trust:** a recalled value is subjective and stays tainted (§10, §13); it must be re-gated before a
+  consequential sink. And **memory cannot rewrite behavior:** instructions, grants, policy, and
+  dependency bindings are source/config artifacts (§5, §13, §17) — memory may *guide* a turn but
+  never silently override them.
 - **Provenance.** Every memory cell carries an immutable backpointer to the ledger event that produced it;
   `origin(n)` projects it (§10). A queried value carries the trust of its provenance event — `graded` by
   default (most facts trace to internalized cognition), `settled` when the origin is an already-endorsed
   event (§10, §13).
-- **Query execution.** `select COLS from G where { COND }` is a relational scan with a boolean field
+- **Query execution.** `select COLS from F where { COND }` is a relational scan with a boolean field
   filter; `find x [, origin(x)] where { TRIPLE+ }` is a conjunctive pattern match over the graph binding
-  `x`; `match v > θ` is the cosine similarity of `v` against the vector store thresholded at `θ` — a gate
-  yielding a `settled`, off-ledger result (§10). `select … from ledger` runs the same relational query over
+  `x`; `match v > θ` is the cosine similarity of `v` against the vector store thresholded at `θ`, yielding
+  off-ledger `Hit`s whose trust is `graded` (§10). `select … from ledger` runs the same relational query over
   the log itself.
-- **The `Record` row type (§10).** A projected `select COLS …` yields `array<Record>`, where
+- **The `Record` and `Hit` row types (§10).** A projected `select COLS …` yields `array<Record>`, where
   `Record` is the structural row type of the projected, typed columns; `select * from F …` yields
-  `array<F>` for fact type `F`. (This resolves §10's reference to an otherwise-undefined `Record`.)
+  `array<F>` for fact type `F`. A `match v > θ` yields `array<Hit>`, where `Hit` is the structural row
+  type pairing the matched item with its similarity score.
 
 ### 16.7a Projection maintenance and conflicts
 
@@ -2082,6 +2264,61 @@ endorsing them as facts, and checking declared invariants over those facts; it i
 Agape as ambient semantics. Adding a new domain invariant does not require a new language version
 unless it requires new kernel authority.
 
+### 16.7b Knowledge-artifact internalization
+
+A **knowledge artifact** is any durable input an agent is allowed or instructed to learn from: this
+spec or any project file, a README or design doc, generated code, check/test/run output, a user
+correction or review, a tool result, a prior ledger slice, or a hosted/uploaded file. Internalizing
+an artifact is the same memory operation as §16.7 step 9, applied to a durable source rather than to
+the immediate experience.
+
+- **It is an agent capability, not an ambient sweep.** An agent internalizes an artifact only when
+  source, configuration, a user instruction, or host-initialization policy *explicitly selects* that
+  artifact as part of the agent's knowledge. The runtime provides the operation and preserves
+  provenance; it does **not** decide that every file it can see is learned by default. (This is the
+  §16.7 isolation discipline applied to inputs: knowledge is agent-owned, with provenance.)
+- **Both whole and parts are preserved.** Chunks alone can lose an artifact's larger purpose, so
+  ingestion keeps a whole-artifact summary *and* precise chunks:
+
+  ```text
+  1. Append ArtifactObserved(kind, uri, source_hash, title) (§9).
+  2. Summarize the whole artifact for future orientation.
+  3. Chunk it with stable chunk hashes (by headings, the default for Markdown / sectioned source).
+  4. Decompose new chunks into facts and SPO triples.
+  5. Embed new chunks.
+  6. Store summary, facts, triples, and embeddings in the agent's private memory (§16.7).
+  7. Record provenance from each cell to its ledger event and the artifact hash.
+  ```
+
+- **Idempotent on unchanged input.** Source hash and chunk hashes prevent duplicate memory cells:
+  re-ingesting an unchanged artifact is a no-op. When an artifact changes, new chunks are added and
+  old chunks remain historical unless a tombstone/retraction event marks them superseded (§10
+  `forget`, §7 staleness).
+- **File upload is not special.** A file saved in the project folder and read by an agent is
+  internalized through this same mechanism — there is no separate upload path.
+
+### 16.7c Learning from experience
+
+Beyond explicit artifacts, every agent-internal experience that can improve future behavior is
+recorded and internalized through the §16.7 envelope: code written, tests written or selected,
+`agape check` results, `agape run` results and their ledger events, unit/integration/conformance
+pass/fail, provider failures, tool failures, user feedback and corrections, and accepted working
+patterns.
+
+For implementation work, an agent follows the loop:
+
+```text
+consult memory -> write/identify tests -> implement -> run checks/tests ->
+internalize pass/fail -> retry or report
+```
+
+Failure memories are distilled into reusable **lessons**; success memories are stored as working
+**patterns**. When retrieval conflicts, **user correction outranks an inferred lesson** — explicit
+human feedback is higher-authority memory than a pattern the agent inferred on its own. None of this
+is new kernel authority: a lesson is an ordinary tainted memory fact (§10), so acting on it still
+requires re-gating at the sink (§13). (`agape check` / `run` are the toolchain commands of §17; the
+events they emit are ordinary ledger events.)
+
 ### 16.8 The calibration pipeline
 
 A `Credence<E>` is a scored structured judgment over the forced categorical choice of `E`'s variants
@@ -2106,6 +2343,32 @@ A `Credence<E>` is a scored structured judgment over the forced categorical choi
   policy, score function, calibration pool, and drift status recorded at activation. A mismatch stales the
   profile for future decisions and forces abstain/fallback until a new profile is activated; replay of old
   decisions remains stable because each gate event records the profile it used.
+
+### 16.9 The runtime API surface
+
+Any *interactive* runtime — the CLI server, Studio, a hosted runtime — exposes the following
+operations, or an equivalent transport-level surface. The transport may be HTTP, MCP, stdio,
+WebSocket, or another protocol; the **semantic contract is independent of transport**. A
+non-interactive embedding (a library linking the runtime directly) need not expose them as a network
+API but must offer the same operations as calls.
+
+| operation          | required behavior                                                         |
+| ------------------ | ------------------------------------------------------------------------ |
+| `health`           | runtime id/kind, impl version, language-spec version, ledger head, provider status (§17.6) |
+| `run`              | execute source or the project entry; return the appended events and the new head |
+| `check`            | run the static checks (§15.3, §19.6) and return structured diagnostics   |
+| `ledger.read`      | query event ranges and subjects over the ledger (§7, §10)                |
+| `agent.respond`    | run one agent turn through the memory envelope (§16.7)                    |
+| `memory.ingest`    | internalize an artifact into one agent's private memory (§16.7b)         |
+| `memory.context`   | return the memory packet for a task *without* running cognition (§16.7)   |
+| `memory.inspect`   | inspect counts, summaries, recent cells, and provenance (§16.7)          |
+| `config.read/write`| manage the **dependency/connector** bindings and memory budgets (provider, tools, identity; §17) — **never** decision policy, which lives in source (§13, §17.2) |
+
+`config.read/write` is deliberately scoped to dependency and connector configuration plus memory
+budgets; it cannot set a gate threshold, margin, floor, or conformal α, because those are source
+`policy` declarations (§13), not manifest knobs (§17.2). All operations act through the same kernel
+boundary — `run`/`agent.respond` cannot bypass grants, endorsement, or the ledger; `memory.*` cannot
+launder trust (§16.7).
 
 ---
 
@@ -2135,14 +2398,15 @@ configuration error.
 # the cognition dependency
 [provider]  backend = "anthropic"   model = "claude-…"   temperature = 0
             exposes_logprobs = false      # DERIVED from backend (anthropic=false, openai/gemini=true); set only to force fallback
+            sampling_fallback = true      # may the sampling fallback run when logprobs are absent? (default true; set false to disable)
             fallback_samples = 10         # samples to estimate one judgment's distribution (min 10)
             fallback_temperature = 0.7    # REQUIRED when temperature = 0 and exposes_logprobs = false
 
 # the identity dependency (`principal NAME;`)
 [identity]  backend = "local-keyring"
 
-# memory — the internalization trigger (§10, §16.7); default off keeps cognition pay-as-you-go
-[memory]    internalize_on_receive = false
+# memory — mandatory per-agent envelope (§10, §16.7); settings tune budget/fidelity, not bypass
+[memory]    max_internalize_chars = 12000
 
 # conformal needs no manifest entry: it calibrates from the ledger, and a gate's readiness
 # floor and default α live in its `policy` declaration in source (§13)
@@ -2220,7 +2484,7 @@ A model's answer varies for two reasons:
 - **Aleatoric** (sampling) — governed by `temperature`; `temperature = 0` is greedy
 (near-deterministic); replay eliminates it by re-serving the journal.
 - **Epistemic** (genuine ambiguity) — no temperature removes it; a true coin-flip yields a
-low-margin judgment. The remedy is the margin floor `m` → escalate to a principal (`decide c by p`), or fuse independent judges by `quorum` (§12) to raise the margin.
+low-margin judgment. The remedy is the margin floor `m` → escalate to a principal (the `p decide c by r` prefix), or fuse independent judges by `quorum` (§12) to raise the margin.
 
 Three knobs: config (`temperature=0` + pinned model + `m`); gate design (crisp criteria →
 high margin → exactly-gated); escalation/quorum (the human path or independent fusion for
@@ -2246,6 +2510,37 @@ for the run (e.g. `exposes_logprobs` to exercise the sampling fallback, §16.8).
   endorsement, grants, write-tool gating, or replay. A feature is conformant only if its
   accepted forms reduce to kernel operations and its rejected forms fail at the correct
   boundary.
+- **Memory-envelope coverage.** Because the memory runtime (§16.7) is part of the contract, a
+  runtime is memory-conformant only if it passes tests for: (1) mandatory memory consultation on
+  every agent turn, *including* the empty-memory case (the `MemoryConsulted` trace, §16.7); (2)
+  per-agent memory isolation across multiple instances of the same template (§16.1a); (3)
+  artifact ingestion producing summary + chunks + facts + graph + vectors when an artifact is
+  internalized (§16.7b); (4) idempotent re-ingestion of an unchanged artifact; (5) check/test/run
+  *failure* internalization and (6) *success* internalization (§16.7c); (7) user-correction
+  internalization and its retrieval precedence over inferred lessons; (8) memory provenance back to
+  ledger origin ticks (§10); (9) replay without re-invoking provider/tool/decomposition oracles
+  (§16.5); and (10) no memory-to-action trust laundering (§16.7, §13). The CLI, Studio, and hosted
+  runtimes share this memory-envelope suite; UI-specific (Studio) and cloud-isolation (hosted) tests
+  are additional, not substitutes.
+
+### 17.6 Runtime lockstep and release reporting
+
+Because the language and its runtime are one contract (§16), a release is only meaningful if its
+moving parts are reported together. Every release reports:
+
+- the **language-spec version** (this document; the version embeds the former runtime-spec version,
+  §0);
+- the **runtime implementation version**;
+- the **conformance suite version** (kernel + memory-envelope, §17.5);
+- the **memory schema / projection version** (§16.7);
+- the **provider / decomposition / embedding algorithm versions** used for memory and calibration
+  (§16.5, §16.8);
+- the **canonical-ledger version** — hash algorithm, serialization, and redaction rules (§16.2).
+
+These are what `health` advertises (§16.9) and what a recording is identified against alongside
+`(I, manifest, recording)` (§17.3). **Changing the memory envelope, the ledger schema, the replay
+contract, or private-memory semantics requires a spec update and passing conformance tests before it
+is considered implemented** — the runtime contract does not drift ahead of (or behind) the document.
 
 ---
 
@@ -2424,8 +2719,8 @@ profile. If any endorsement arm reaches a non-reversible sink, the gate is **con
 earns autonomy over time:
 
 - **Cold** (no compatible profile or labelled cases < readiness, §13): commit only obvious,
-  low-risk threshold cases. Non-reversible or ambiguous outcomes defer to the fallback principal.
-  Those deferrals are the first labels.
+  low-risk threshold cases. Non-reversible or ambiguous outcomes route to the gate's `principal`
+  prefix. Those principal decisions are the first labels.
 - **Warm** (enough compatible labels for conformal coverage): run the conformal profile (§15.5.6).
   Commit iff the prediction set is singleton and the consequential margin/floor passes; otherwise
   defer and add another label.
@@ -2453,39 +2748,39 @@ coverage guarantee valid). Authors control scope by how they *factor* gates: a s
 routed through one gate shares a pool; separate gates keep separate pools. There is deliberately no
 cross-site pooling construct.
 
-### 20.3 Endorsement arms, fallback, and static checks
+### 20.3 Endorsement arms, escalation, and static checks
 
-`endorse subject by d { ... }` dispatches a `Decision<E>` over its committed variant. A matching
-arm may bind the branch-scoped endorsement:
+`endorse subject by d { ... }` is the arm-block sugar (§13): it binds the `Endorsement<T>`,
+branches on its `.committed`, and settles the subject inside each committed-variant arm. A matching
+arm may name the endorsement with `as e`:
 
 ```agape
+enum Review { Approved, Rejected }
+action Publish(text body);   event Rejected(text body);   event NeedsReview(text id);
+
+Decision<Review> d = p decide c by r;     // p escalates only when the rule can't commit (see below)
 endorse response by d {
-  Approved as e {
-    perform Publish(response);
-  }
-  Rejected as e {
-    emit Rejected(response);
-  }
+  Approved as e { perform Publish(e); }   // e is the settled response, narrowed to Approved
+  Rejected     { emit Rejected(response); }
 } abstain {
-  Decision<Review> h = decide c by alice;
-  // Usually endorse the same subject by `h` here.
+  emit NeedsReview("needs-review");       // reached only if the rule abstained AND p declined or was unavailable
 }
 ```
 
-- **commit** — the matching arm fires, and the exact endorsed subject is settled inside that arm.
-- **abstain** — if `d` abstained, the optional `abstain` block runs; omitted abstain is a recorded
-  no-op.
-- **defer** — a principal fallback is an ordinary `Decision<E> h = decide c by principal;` in the
-  abstain block. It can then be endorsed through the same subject/arms, and becomes a label for
-  future calibration.
+- **commit** — the matching arm fires, and the endorsed subject (`e`) is settled inside that arm.
+- **abstain** — if `d` abstained, the optional `abstain` block runs; an omitted `abstain` is a
+  recorded no-op.
+- **escalate** — human escalation is the `principal` prefix on the `decide` (`p decide c by r`): the
+  rule runs first, and only a non-committing case reaches `p`, whose reply arrives as a variant and
+  drives the same arms — and becomes a label for future calibration.
 - **notify** is orthogonal — a plain `emit` (no dedicated form); the ledger records it.
 
 **Static checks** (extending the consequential-action rule, §13/§15.3.3):
 - **Subject-scope requirement.** The endorsed subject must be in the decision's dependency scope;
   otherwise the endorsement is a compile error or, for dynamic/unknown scopes, a forced principal
   path.
-- **Deference requirement.** A consequential endorsement path with no reachable principal fallback
-  is a compile error unless its policy explicitly declares a non-human cold-start strategy.
+- **Deference requirement.** A consequential path with no `principal` prefix and no compatible mature
+  profile is a compile error unless its policy explicitly declares a non-human cold-start strategy.
   Autonomy is earned via labels; a local fallback action does not substitute for labels.
 - **Distribution-source check** (config-aware, §16). A consequential gate needs a distribution: a
   provider with logprobs → ok; without, but with the sampling fallback configured → ok (warn on
@@ -2495,8 +2790,12 @@ endorse response by d {
 ### 20.4 Inspecting a decision and endorsement provenance
 
 A `Decision<E>` is introspectable for how it was settled: read-only `**.committed`** (the variant,
-or abstained), `**.basis`** (`Basis = Threshold | Conformal | Calibrated | Principal`),
+or `abstained`), `**.basis`** (`Basis = Threshold | Conformal | Calibrated | Principal`),
 `**.margin`** (the gap `g`, §15.5.6), and provenance for the source `Credence`, profile, or
-principal. An `Endorsement<T>` is introspectable for its subject hash, decision id, committed
-variant, ledger tick, and the same decision provenance. This is Agape's reflection surface over
-gate metadata, not general structural `typeof`.
+principal. An `Endorsement<T>` **is** the settled subject: it carries the underlying value of type
+`T` (reachable explicitly as **`e.subject : T`**, and the whole `Endorsement<T>` coerces to `T` at a
+consequential sink), exposes `T`'s own fields directly (`e.some_field`), and adds the read-only gate
+metadata `.committed` / `.basis` / `.margin` plus the endorsement's subject hash, decision id, and
+ledger tick. Where a field of `T` collides with a reserved metadata accessor, the metadata name wins
+and the shadowed field is reached through `e.subject` (e.g. `e.subject.committed`). This is Agape's
+reflection surface over gate metadata, not general structural `typeof`.

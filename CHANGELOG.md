@@ -6,6 +6,43 @@ All notable changes to Agape are recorded here. The format follows
 suite, and the studio move in lockstep — a release is the whole bundle at one
 version.
 
+## [1.0.0-alpha.2026.6.30.0] — 2026-06-30
+
+A spec-only release that finalizes the decision-gate model and folds the runtime
+contract into the language specification. The `SPEC.md` document is the deliverable;
+the conformance suite and the `agape-rs` runtime are **not yet re-aligned** to this
+spec (tracked as follow-up work) and remain at the previous alpha for now.
+
+### Language — the decision gate, redesigned
+
+- **The kernel is the dot-form.** `decide c by r` yields a `Decision<E>` with read-only
+  `.committed` (a variant of `E`, or the new `abstained` sentinel), `.basis`, and `.margin`.
+  `endorse s by d` yields an `Endorsement<T>` — the *settled subject* itself: it coerces to
+  `T` at a sink, exposes `T`'s fields, carries the gate metadata, and adds an `e.subject : T`
+  accessor.
+- **The rule is always present; the principal is a prefix.** A gate is `decide c by r` (rule
+  only) or `p decide c by r` (an escalation prefix — the identity dependency is consulted only
+  when the rule cannot commit, and the human reply arrives as a variant). The old
+  `decide c by <principal>` basis is removed.
+- **Arms are sugar.** A `decide`/`endorse` arm block desugars to a binding plus `if` on
+  `.committed`; `case` is removed. `if`/`==` over settled values (including `.committed`) is the
+  deterministic branch primitive; arms are the cognition-verdict primitive.
+- **Safety, restated.** "An abstained/un-committed decision cannot reach a sink" is now a static
+  property via flow-sensitive committed-narrowing; the one runtime sink check is the margin floor
+  (`MarginFloorViolation`).
+
+### Specification
+
+- **Runtime spec merged.** The former standalone `RUNTIME_SPEC.md` is now §16 (The runtime) and
+  §17 (Configuration) of `SPEC.md`: runtime identity/isolation, the mandatory memory envelope,
+  knowledge-artifact internalization, learning-from-experience, the runtime API surface, and
+  release lockstep. `RUNTIME_SPEC.md` survives only as a redirect.
+- **Grammar completed.** Defined previously-missing productions (`block`, `args`, `armhead`,
+  lexical terminals) and removed ambiguities, so a front-end can be built from §15.2 alone.
+- **Verified.** Two adversarial verification passes over the whole document (90 findings, then 8)
+  were applied; the result is internally consistent and implementable, with 0 critical issues
+  remaining.
+
 ## [1.0.0-alpha.2026.6.29.0] — 2026-06-29
 
 This release resets Agape's public version line to an explicit alpha. Earlier
@@ -240,4 +277,5 @@ and every effect is recorded on an append-only **ledger**.
   manifest drift; `release.yml` builds the bundle for Linux, macOS, and Windows on a
   `v1.0.0` tag and publishes a GitHub Release.
 
+[1.0.0-alpha.2026.6.30.0]: https://github.com/tylerhslee/agape/releases/tag/v1.0.0-alpha.2026.6.30.0
 [1.0.0-alpha.2026.6.29.0]: https://github.com/tylerhslee/agape/releases/tag/v1.0.0-alpha.2026.6.29.0

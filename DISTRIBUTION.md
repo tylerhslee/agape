@@ -5,7 +5,7 @@
 > config, and a `serve` protocol that frontends (e.g. the Agape Studio IDE) attach
 > to. Forward-looking; the Rust implementation is the intended vehicle.
 > Cross-refs: the provider seam (SPEC §0, §8), the reproducibility model
-> (SPEC §15.5), thesis #8 ("swap the config").
+> (SPEC §15.5), the runtime contract (SPEC §16–§17), thesis #8 ("swap the config").
 
 ---
 
@@ -74,7 +74,7 @@ fallback_temperature = 0.7
 backend = "local-keyring"
 
 [memory]
-internalize_on_receive = false
+max_internalize_chars = 12000
 
 [tools]
 payments = { mcp = "https://payments.internal/mcp" }
@@ -108,8 +108,9 @@ Three principles to lock in:
 
 The CLI is the **engine**; a frontend (the Agape Studio IDE) is a **client**. The
 frontend must not reimplement the runtime — it attaches to a stable interface that
-`<cli> serve` exposes. That interface is the contract between the toolchain and any
-frontend, and it should be pinned **before** the two efforts drift:
+`<cli> serve` exposes. SPEC §16–§17 is the cross-runtime contract (and §16.9 the
+runtime API surface); this interface is the transport/API shape the toolchain
+exposes to frontends, and it should be pinned **before** the two efforts drift:
 
 - **ledger stream** — events out: the live append-only log the frontend renders.
 - **eval** — run a snippet in the project's accumulated context (guarantees

@@ -7,7 +7,7 @@ import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
 import { buildMessages, type AgentContext, type Intent } from "./agent.ts";
-import { AnthropicCognition, HashingEmbedder, OpenAICognition, type Cognition } from "./provider.ts";
+import { AnthropicCognition, HashingEmbedder, MockCognition, OpenAICognition, type Cognition } from "./provider.ts";
 import { Memory } from "./memory.ts";
 import { makeRunner } from "./runner.ts";
 import { Learner } from "./learner.ts";
@@ -99,7 +99,7 @@ function cognition(): Cognition {
       if (!process.env.ANTHROPIC_API_KEY) throw new Error("ANTHROPIC_API_KEY not set — Claude cognition needs a live key.");
       _cognition = new AnthropicCognition();
     } else {
-      throw new Error("Live cognition is disabled — choose Claude or OpenAI in Studio settings.");
+      _cognition = new MockCognition();
     }
   }
   return _cognition;
@@ -252,14 +252,23 @@ function projectManifest() {
   return { rel: "agape.toml", languageVersion: projectLanguageVersion() };
 }
 let learner: Learner | null = null;
-function getLearner(): Learner {
-  if (!learner) {
+let sharedMemory: Memory | null = null;
+let sharedRunner: ReturnType<typeof makeRunner> | null = null;
+const DEFAULT_AGENT_ID = "Builder-1";
+function getMemory(): Memory {
+  if (!sharedMemory) {
     fs.mkdirSync(path.join(HERE, "data"), { recursive: true });
-    const mem = new Memory(new HashingEmbedder(), path.join(HERE, "data", "agape.db"));
-    const runner = makeRunner(AGAPE_RS);
-    learner = new Learner(mem, cognition(), runner);
-    console.log(`agent-server: learner ready · runner = ${runner.name}`);
+    sharedMemory = new Memory(new HashingEmbedder(), path.join(HERE, "data", "agape.db"));
   }
+  return sharedMemory;
+}
+function getRunner() {
+  if (!sharedRunner) sharedRunner = makeRunner(AGAPE_RS);
+  return sharedRunner;
+}
+function getLearner(agentId = DEFAULT_AGENT_ID): Learner {
+  if (!learner) console.log(`agent-server: learner ready · runner = ${getRunner().name}`);
+  learner = new Learner(getMemory(), cognition(), getRunner(), agentId);
   return learner;
 }
 
@@ -469,28 +478,44 @@ function projectContextForAgent(task: string): string {
   return limitText(sections.join("\n\n"), 26_000);
 }
 
-function builderMemoryForAgent(task: string): string {
+function agentInstanceId(item: any): string {
+  const id = String(item?.assignee || item?.agent || DEFAULT_AGENT_ID).trim();
+  return id || DEFAULT_AGENT_ID;
+}
+
+function agentMemoryForTurn(agentId: string, task: string): string {
   try {
-    const ctx = getLearner().codingContext(task);
+    const ctx = getLearner(agentId).codingContext(task, { recordConsult: true });
     const parts = [
+      `Agent: ${ctx.agent}`,
       `Runner: ${ctx.runner}`,
       `Memory counts: ledger=${ctx.counts?.spine ?? 0}, facts=${ctx.counts?.facts ?? 0}, triples=${ctx.counts?.triples ?? 0}, embeddings=${ctx.counts?.embeddings ?? 0}`,
+      `Memory consult: ${ctx.consultTick ? `recorded at ledger #${ctx.consultTick}` : "recorded with no new ledger tick"}`,
       ctx.rules?.length ? "Rules:\n" + ctx.rules.map((r: string) => `- ${r}`).join("\n") : "",
       ctx.context ? "Retrieved context:\n" + ctx.context : "Retrieved context: memory is empty or no entries matched.",
     ].filter(Boolean);
     return limitText(parts.join("\n\n"), 10_000);
   } catch (e: any) {
-    return `Builder memory unavailable for this turn: ${e?.message || "unknown error"}.`;
+    return `Agent memory unavailable for this turn: ${e?.message || "unknown error"}.`;
   }
 }
 
 function agentContext(item: any, thread: any[], intent: Intent): AgentContext {
   const task = agentTask(item, thread, intent);
+  const agentId = agentInstanceId(item);
   return {
     operation: operationGuidance(intent),
     project: projectContextForAgent(task),
-    memory: builderMemoryForAgent(task),
+    memory: agentMemoryForTurn(agentId, task),
   };
+}
+
+function recordAgentExperience(agentId: string, kind: string, subject: string, text: string, meta: Record<string, unknown> = {}): void {
+  try {
+    getLearner(agentId).internalizeExperience(kind, subject, text, meta);
+  } catch (e: any) {
+    console.warn(`agent-server: memory internalization failed for ${agentId}: ${e?.message || e}`);
+  }
 }
 
 function normalizeAgentIntent(value: unknown): Intent {
@@ -792,58 +817,84 @@ const server = http.createServer(async (req, res) => {
       const { item, thread, intent } = (await readJson(req)) || {};
       if (!item || !item.title) return send(res, 400, { error: "item.title is required" });
       const safeThread = Array.isArray(thread) ? thread : [];
+      const agentId = agentInstanceId(item);
       const turnIntent = routeAgentIntent(intent, item, safeThread);
-      const direct = directAgentAnswer(item, safeThread, turnIntent);
-      if (direct) return send(res, 200, { text: direct, intent: turnIntent, source: "project-context" });
       const context = agentContext(item, safeThread, turnIntent);
+      const task = agentTask(item, safeThread, turnIntent);
+      const direct = directAgentAnswer(item, safeThread, turnIntent);
+      if (direct) {
+        recordAgentExperience(agentId, "agent-turn", task, direct, { source: "project-context", intent: turnIntent });
+        return send(res, 200, { text: direct, intent: turnIntent, source: "project-context" });
+      }
       const { system, messages } = buildMessages(item, safeThread, turnIntent, context);
       try {
         const text = await cognition().complete(system, messages, 1024);
         if (placeholderProgress(text)) {
           const repaired = fallbackAgentAnswer(item, safeThread, turnIntent, "placeholder progress");
-          if (repaired) return send(res, 200, { text: repaired, intent: turnIntent, source: "repair" });
+          if (repaired) {
+            recordAgentExperience(agentId, "agent-turn", task, repaired, { source: "repair", intent: turnIntent, reason: "placeholder progress" });
+            return send(res, 200, { text: repaired, intent: turnIntent, source: "repair" });
+          }
         }
-        return send(res, 200, { text: text || "(the agent had nothing to add)", intent: turnIntent, source: "model" });
+        const responseText = text || "(the agent had nothing to add)";
+        recordAgentExperience(agentId, "agent-turn", task, responseText, { source: "model", intent: turnIntent });
+        return send(res, 200, { text: responseText, intent: turnIntent, source: "model" });
       } catch (e: any) {
         const fallback = fallbackAgentAnswer(item, safeThread, turnIntent, e?.message || "provider unavailable");
-        if (fallback) return send(res, 200, { text: fallback, intent: turnIntent, source: "fallback" });
+        if (fallback) {
+          recordAgentExperience(agentId, "agent-turn", task, fallback, { source: "fallback", intent: turnIntent, error: e?.message || "provider unavailable" });
+          return send(res, 200, { text: fallback, intent: turnIntent, source: "fallback" });
+        }
         throw e;
       }
     }
 
     // ── the learning loop ──
     if (req.method === "POST" && url === "/learn/ingest") {
-      const { maxChunks } = (await readJson(req)) || {};
-      if (!fs.existsSync(SPEC_PATH)) return send(res, 404, { error: `SPEC.md not found at ${SPEC_PATH}` });
-      const spec = fs.readFileSync(SPEC_PATH, "utf8");
-      const out = await getLearner().ingest(spec, Number(maxChunks) || 8);
+      const { maxChunks, text, rel, kind, uri, title, agent } = (await readJson(req)) || {};
+      let body = typeof text === "string" ? text : "";
+      if (!body && rel) {
+        const projectText = safeProjectRead(String(rel), 240_000);
+        if (!projectText) return send(res, 404, { error: `project artifact not found or not readable: ${rel}` });
+        body = projectText;
+      }
+      const source = {
+        kind: String(kind || (rel ? "project-file" : body ? "artifact" : "spec")),
+        uri: String(uri || (rel ? String(rel) : body ? "inline-artifact" : "SPEC.md")),
+        title: String(title || (rel ? path.basename(String(rel)) : body ? "Inline knowledge artifact" : "Agape language specification")),
+      };
+      if (!body) {
+        if (!fs.existsSync(SPEC_PATH)) return send(res, 404, { error: `SPEC.md not found at ${SPEC_PATH}` });
+        body = fs.readFileSync(SPEC_PATH, "utf8");
+      }
+      const out = await getLearner(String(agent || DEFAULT_AGENT_ID)).ingest(body, Number(maxChunks) || 8, source);
       return send(res, 200, out);
     }
 
     if (req.method === "POST" && url === "/learn/step") {
-      const { task } = (await readJson(req)) || {};
+      const { task, agent } = (await readJson(req)) || {};
       if (!task) return send(res, 400, { error: "task is required" });
-      return send(res, 200, await getLearner().step(String(task)));
+      return send(res, 200, await getLearner(String(agent || DEFAULT_AGENT_ID)).step(String(task)));
     }
 
     if (req.method === "POST" && url === "/learn/context") {
-      const { task } = (await readJson(req)) || {};
+      const { task, agent } = (await readJson(req)) || {};
       if (!task) return send(res, 400, { error: "task is required" });
-      return send(res, 200, getLearner().codingContext(String(task)));
+      return send(res, 200, getLearner(String(agent || DEFAULT_AGENT_ID)).codingContext(String(task)));
     }
 
     if (req.method === "GET" && url === "/learn/state") {
-      return send(res, 200, getLearner().state());
+      return send(res, 200, getLearner(DEFAULT_AGENT_ID).state());
     }
 
     // Free read-only snapshot for the inspector (no cognition).
     if (req.method === "GET" && url === "/learn/inspect") {
-      return send(res, 200, getLearner().inspect());
+      return send(res, 200, getLearner(DEFAULT_AGENT_ID).inspect());
     }
 
     if (req.method === "GET" && url === "/learn/recall") {
       const q = new URL(req.url || "", "http://x").searchParams.get("q") || "";
-      return send(res, 200, { query: q, hits: getLearner().recall(q) });
+      return send(res, 200, { query: q, hits: getLearner(DEFAULT_AGENT_ID).recall(q) });
     }
 
     // ── the Review studio ──
@@ -923,7 +974,8 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, { ok: true });
     }
     if (req.method === "POST" && url === "/project/run") {
-      const { rel, prompts, claude, live, cognitionProvider, judgeProvider, samples, temperature, openaiTopLogprobs } = (await readJson(req)) || {};
+      const body = (await readJson(req)) || {};
+      const { rel, prompts, claude, live, cognitionProvider, judgeProvider, samples, temperature, openaiTopLogprobs, agent } = body;
       if (!rel) return send(res, 400, { error: "rel (a project .ag file) is required" });
       updateProviderConfig({
         ...(cognitionProvider === undefined ? {} : { cognitionProvider }),
@@ -932,7 +984,9 @@ const server = http.createServer(async (req, res) => {
         temperature,
         openaiTopLogprobs,
       });
-      return send(res, 200, await runProjectFile(String(rel), prompts || {}, !!(live ?? claude), Number(samples) || 0, Number(temperature) || 0));
+      const out = await runProjectFile(String(rel), prompts || {}, !!(live ?? claude), Number(samples) || 0, Number(temperature) || 0);
+      recordAgentExperience(String(agent || DEFAULT_AGENT_ID), "project-run", String(rel), JSON.stringify(out).slice(0, 8000), { ok: !!out.ok, rel: String(rel) });
+      return send(res, 200, out);
     }
 
     if (req.method === "POST" && url === "/review/test-save") {

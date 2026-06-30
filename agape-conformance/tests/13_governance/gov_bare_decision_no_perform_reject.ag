@@ -1,0 +1,17 @@
+//! id:        gov_bare_decision_no_perform_reject
+//! section:   13_governance
+//! expect:    reject
+//! error:     TaintViolation
+//! spec:      §13 (a sealed Decision<E> alone does not settle a subject; performing the raw artifact without an `endorse` is a taint violation)
+//! ---
+enum Verdict { Faithful, Unsupported }
+action Reply(text body);
+agent A grants { perform Reply } {
+  on awake {
+    text draft = "the answer";
+    Credence<Verdict> c = self <- f"is this faithful: {draft}";
+    Decision<Verdict> d = decide c by confidence 0.9;
+    perform Reply(draft);
+  }
+}
+spawn A a; awake a;

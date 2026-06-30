@@ -21,6 +21,8 @@ providers, review conformance, and decide when human judgment should take over.
 - Exposes a runtime deployment panel for local runtimes today and cloud runtimes
   such as Soma later.
 - Includes review and conformance surfaces for checking language behavior.
+- Treats the local Studio runtime, local Rust runtime, and future Soma/cloud
+  runtime as implementations of the shared runtime contract ([SPEC.md](../SPEC.md) §16–§17).
 
 ## How It Relates To Agape
 

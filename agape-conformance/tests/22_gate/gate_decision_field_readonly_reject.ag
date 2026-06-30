@@ -8,7 +8,7 @@ enum R { Yes, No }
 agent A {
   on awake {
     Credence<R> c = self <- "yes?";
-    Decision<R> d = c by confidence 0.8;
+    Decision<R> d = decide c by confidence 0.8;
     d.margin = 0.0;
   }
 }

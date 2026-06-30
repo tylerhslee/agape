@@ -1,14 +1,14 @@
 # Agape Studio — agent server (somatic simulation)
 
-This is a **temporary stand-in** for Agape Studio's agentic layer. It gives the
-studio's operators (the builders you pair with and delegate to) real behavior by
-calling live provider APIs, so the studio feels agentic today — before the Agape
-runtime and its operators exist.
+This is the local TypeScript implementation of Agape Studio's agentic layer. It
+gives the studio's operators (the builders you pair with and delegate to) real
+behavior by calling provider APIs, and it implements the shared runtime contract
+in [SPEC.md](../../SPEC.md) §16–§17 for Studio's own control-plane runtime.
 
-It is explicitly the **somatic layer** described in `[../STUDIO.md](../STUDIO.md)`
-§2: a small TypeScript service behind a stable seam. When the Agape backend (driven
-over MCP) lands, it slots in **behind the same contract** and this server goes away.
-The React frontend does not change.
+It is explicitly the **studio runtime** described in `[../STUDIO.md](../STUDIO.md)`
+§2: a TypeScript service behind a stable seam. The Rust runtime and Soma/cloud
+runtime must implement the same runtime contract; the React frontend should not
+need to care which conforming runtime it is attached to.
 
 ```
 React UI ──/agent/*──▶ agent-server (provider APIs today) ◀── this seam

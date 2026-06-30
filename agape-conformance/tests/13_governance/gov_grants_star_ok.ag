@@ -1,13 +1,19 @@
 //! id:        gov_grants_star_ok
 //! section:   13_governance
 //! expect:    accept
+//! contains:  Endorsed
 //! spec:      §13 (grants { * } is the explicit unconstrained opt-out — lattice top)
 //! ---
-action Pay(int amount);
+enum R { Pay, Hold }
+action Disburse(int amount);
 agent A grants { * } {
   on awake {
-    Credence<bool> c = self <- "should we pay?";
-    endorse (c by confidence 0.9) { true: perform Pay(100); false: ; }
+    Credence<R> c = self <- "should we pay?";
+    Decision<R> d = decide c by confidence 0.9;
+    endorse c by d {
+      Pay as e { perform Disburse(100); }
+      Hold as e { }
+    }
   }
 }
 spawn A a; awake a;

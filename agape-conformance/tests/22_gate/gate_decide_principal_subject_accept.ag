@@ -1,19 +1,22 @@
 //! id:        gate_decide_principal_subject_accept
 //! section:   22_gate
 //! expect:    accept
-//! spec:      §20 (decide with a principal subject; a non-reversible arm has a reachable principal)
+//! principal: grant
+//! contains:  PrincipalDecision; Endorsed
+//! spec:      §13 (`decide c by p` uses a principal as the decision basis; a non-reversible arm has its reachable principal)
 //! ---
 conformal 0.05;
 enum R { Approve, Reject }
 event Ask(body: text);
-action Commit(body: text)
+action Commit(body: text);
 principal boss;
 agent Desk grants { perform Commit } {
   when (Ask q) {
     Credence<R> c = self <- q.body;
-    boss decide c {
-      Approve: perform Commit(q.body);
-      Reject: say("rejected");
+    Decision<R> d = decide c by boss;
+    endorse c by d {
+      Approve as e { perform Commit(q.body); }
+      Reject as e { say("rejected"); }
     }
   }
 }

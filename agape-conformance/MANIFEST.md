@@ -1,6 +1,6 @@
-# Agape v1.0 — Conformance Test Index
+# Agape v1.0.0-alpha.2026.6.29.0 — Conformance Test Index
 
-**197 tests** — accept: 123, reject: 74
+**208 tests** — accept: 127, reject: 81
 
 A conformant implementation must satisfy every `accept`/`reject` test (rejects with the declared error class; accepts matching any asserted spine).
 
@@ -22,7 +22,7 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 
 | id | expect | error | spec |
 |---|---|---|---|
-| `axes_collapse_is_decision` | accept | — | §13, §15.2 (`c by R` collapses a Credence to a Decision — settled, off-ledger, in hand) |
+| `axes_collapse_is_decision` | accept | — | §13, §15.2 (`decide c by R` collapses a Credence to a Decision — settled, off-ledger, in hand) |
 | `axes_credence_is_graded_judgment` | accept | — | §1, §8 (a semantic judgment is a provider send bound to Credence<E> → graded) |
 | `axes_pure_call_sync_settled` | accept | — | §1 Axis A/B (a pure `sync` fn reaches no dependency and stays `settled`) |
 | `axes_send_reply_is_raw` | accept | — | §1 Axis B/C, §15.3.2 T-Send (`d <- p` is on the ledger; its reply is `raw`) |
@@ -44,7 +44,7 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 | `type_event_multifield_payload_ok` | accept | — | §3 (event invocation uses positional fields in declaration order) |
 | `type_event_multifield_type_reject` | reject | TypeError | §3 (emit arguments are type-checked positionally) |
 | `type_event_null_no_reply` | accept | — | §3 (event<null> = sent, no typed reply bound) |
-| `type_no_text_to_principal_reject` | reject | TypeError | §3, §13 (no text -> Principal coercion at an attest gate) |
+| `type_no_text_to_principal_reject` | reject | TypeError | §3, §13 (a principal basis must be a declared `principal`, not a string; `decide c by "alice"` has no text -> Principal coercion) |
 | `type_scalars` | accept | — | §3 (scalars int/float/bool/text/null) |
 | `type_struct_decl_and_literal` | accept | — | §3 (struct declaration + struct literal supplying all fields) |
 | `type_struct_extra_field_reject` | reject | TypeError | §3, §8 (struct literals/schema objects are exact; extra fields are rejected) |
@@ -57,11 +57,11 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 
 | id | expect | error | spec |
 |---|---|---|---|
-| `fn_sync_attest_by_principal_reject` | reject | ColorViolation | §4, §13 (attest … by Principal reaches the identity dependency → async) |
 | `fn_sync_calls_async_reject` | reject | ColorViolation | §4 (a sync fn may only call other sync fns) |
+| `fn_sync_decide_by_principal_reject` | reject | ColorViolation | §4, §13 (`decide c by p` for a principal reaches the identity dependency → async; a sync fn may not) |
 | `fn_sync_embed_reject` | reject | ColorViolation | §9, §10 (embed reaches the provider-backed memory substrate, so a sync function may not call it) |
 | `fn_sync_emit_ok` | accept | — | §4 (emit is a ledger append, permitted in sync; a plain event needs no power) |
-| `fn_sync_inhand_endorse_ok` | accept | — | §4, §13 (in-hand endorse = collapse + record, no dependency reach → sync-permitted) |
+| `fn_sync_inhand_decide_ok` | accept | — | §4, §13 (policy-driven `decide` over an in-hand Credence is a pure collapse, no dependency reach → sync-permitted) |
 | `fn_sync_pure_ok` | accept | — | §4 (a sync fn that reaches no declared dependency is well-formed) |
 | `fn_sync_reaches_seam_reject` | reject | ColorViolation | §1 Axis A, §4 (a sync fn may not reach the provider via `<-`) |
 | `fn_sync_store_reject` | reject | ColorViolation | §9, §10 (store reaches the provider-backed memory substrate, so a sync function may not call it) |
@@ -144,7 +144,7 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 | `mem_recall_after_forget_reject` | reject | TypeError | §10 (forget consumes the mem handle; the region is unrecallable going forward) |
 | `mem_recall_requires_mem_reject` | reject | TypeError | §10 (`->` recall requires a `mem` handle on the left; a non-`mem` LHS is a TypeError) |
 | `mem_select_boolean_ops_ok` | accept | — | §10 (select where conditions support comparison operators combined by boolean connectives) |
-| `mem_store_internalizes_ok` | accept | — | §9, §10 (store(x) explicitly internalizes a value into the agent's memory — the invoked, default form of internalization; eager-on-receive is opt-in config, §16.7/§17) |
+| `mem_store_internalizes_ok` | accept | — | §9, §10 (store(x) is the explicit emphasis form of internalization, on top of the mandatory memory envelope that internalizes every reaction's experience anyway, §16.7) |
 | `mem_store_records_internalized` | accept | — | §9, §10 (store(x) explicitly internalizes a value and records Internalized) |
 | `mem_write_recall_accept` | accept | — | §10 (a `mem` handle into private memory: write with `<-`, recall with `->`) |
 
@@ -160,6 +160,7 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 | `ctrl_if_else` | accept | — | §11 (if/else over a bool) |
 | `ctrl_retry_bounded` | accept | — | §11, §15.2 (the only loop is the bounded `{ block } retry(N)`) |
 | `ctrl_retry_exhausted` | accept | — | §11 (a `{ block } retry(N)` re-attempts on a fault; on exhaustion it emits RetryExhausted and the fault propagates) |
+| `ctrl_retry_unbounded_reject` | reject | ParseError | §11, §15.2 (retry's bound is mandatory — `retry ::= block "retry" "(" Int ")"`; an unbounded `retry` with no `(N)` is a ParseError, so every reaction terminates) |
 
 ## 12_aggregation
 
@@ -171,6 +172,7 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 | `agg_any_no_dep_decl_reject` | reject | TypeError | §12 (any over Credence<bool> judges requires total independent/dependent coverage) |
 | `agg_dependent_fuse_ok` | accept | — | §12 (a `dependent` declaration fuses conservatively into one Credence<bool>) |
 | `agg_mixed_clusters_fuse` | accept | — | §12 (mixed sets compose: each `dependent` cluster fuses conservatively first, then the cluster results combine by the independent rule; coverage must be total over every pair) |
+| `agg_partial_dep_coverage_reject` | reject | TypeError | §12 (dependence coverage must be TOTAL over every pair; declaring only the pair (c1,c2) leaves (c1,c3) and (c2,c3) uncovered → TypeError, even though one declaration is present) |
 | `agg_pipe_fanout_ok` | accept | — | §12 (`coll |> fn` maps each element of a collection through fn) |
 | `agg_quorum_independent_ok` | accept | — | §12 (quorum over independent Credence<bool> judges fuses to one Credence<bool>) |
 | `agg_quorum_no_dep_decl_reject` | reject | TypeError | §12 (fusion — incl. quorum — requires a total independent/dependent declaration) |
@@ -179,20 +181,24 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 
 | id | expect | error | spec |
 |---|---|---|---|
-| `gov_attest_by_principal_ok` | accept | — | §13 (attest e by p reaches the identity dependency and records an Attestation — the principal basis) |
-| `gov_attest_deny_failed` | accept | — | §13 (when the principal declines, the attest gate records a FailedAttestation; the decision is the principal's, deferred to the model only for the clear cases) |
-| `gov_attest_records_attestation` | accept | — | §13, §16.4 (a granted attest records an Attestation event for the gated value) |
+| `gov_bare_decision_no_perform_reject` | reject | TaintViolation | §13 (a sealed Decision<E> alone does not settle a subject; performing the raw artifact without an `endorse` is a taint violation) |
 | `gov_conformal_coldstart_abstains` | accept | — | §13 (a conformal gate with no recorded decisions is below its labelled-case readiness floor and abstains — the supervised cold start; autonomy is earned as grounded labels accrue) |
 | `gov_conformal_gate_ok` | accept | — | §13 (the conformal basis `by conformal α` is a distribution-free finite-sample gate calibrated from the ledger) |
-| `gov_consequential_bare_collapse_reject` | reject | TaintViolation | §13 (a bare `c by R` is settled but off-ledger/unendorsed → may not license a perform) |
+| `gov_consequential_bare_collapse_reject` | reject | TaintViolation | §13 (a sealed Decision may guide control flow but is not a subject endorsement → it may not license a perform) |
 | `gov_endorse_abstain_ok` | accept | — | §13 (the optional abstain clause runs when the gate cannot commit a singleton prediction set) |
-| `gov_endorse_records_decided_ok` | accept | — | §9, §13 (endorse records the collapse as a Decided event on the ledger, subject = the binding) |
-| `gov_endorsed_perform_ok` | accept | — | §13 (an endorsed Decision may license a consequential perform) |
+| `gov_endorse_artifact_allows_perform` | accept | — | §13 (artifact certification is ordinary subject endorsement — decide a Credence<Verification> and endorse the exact artifact; the artifact is settled only in the matching commit arm) |
+| `gov_endorse_records_endorsed_ok` | accept | — | §9, §13 (endorse records an Endorsed event on the ledger for the exact subject) |
+| `gov_endorsed_perform_ok` | accept | — | §13 (a recorded subject endorsement may license a consequential perform in its commit arm) |
+| `gov_endorsed_subject_allows_perform` | accept | — | §13 (endorsing the exact subject by a sealed Decision settles it inside the matching commit arm, licensing a perform) |
 | `gov_extend_use_subtractive_reject` | reject | AuthorityViolation | §5, §13 (capabilities, incl. `use`, are subtractive under extend) |
 | `gov_grants_star_ok` | accept | — | §13 (grants { * } is the explicit unconstrained opt-out — lattice top) |
 | `gov_margin_floor_abstains` | accept | — | §13 (a gated decision whose margin is below its policy `floor` m abstains — the typed trigger for escalation — even when the threshold is met) |
+| `gov_negative_arm_taint_reject` | reject | TaintViolation | §13 (endorse settles the subject only in its matching commit arm; a non-endorsing arm cannot launder the raw artifact into a perform) |
 | `gov_perform_reach_subtractive_reject` | reject | AuthorityViolation | §5, §13 (grants are subtractive under extend for `perform`/`reach` too — a child may not exceed its parent's authority) |
 | `gov_perform_ungranted_reject` | reject | AuthorityViolation | §13 (default-deny: an agent may only perform actions in its grants) |
+| `gov_principal_decision_deny_fails` | accept | — | §13 (when the principal declines, `decide c by p` records a FailedPrincipalDecision; the decision is the principal's, deferred to the model only for the clear cases) |
+| `gov_principal_decision_ok` | accept | — | §13 (`decide c by p` reaches the identity dependency and records a PrincipalDecision — the principal basis — then endorses the subject) |
+| `gov_principal_decision_records` | accept | — | §13, §16.4 (a granted `decide c by p` records a PrincipalDecision event for the gated credence) |
 | `gov_reach_ungranted_reject` | reject | AuthorityViolation | §13 (sending into another agent requires a `reach` grant) |
 | `gov_read_tool_settled_perform_ok` | accept | — | §6b, §13 (a read tool over settled inputs yields a settled result — external data settled by origin — that may drive a perform) |
 | `gov_tool_requires_effect_class_reject` | reject | ParseError | §6b, §15.2 (every tool declares an effect class — `read` or `write`; omitting it is a ParseError) |
@@ -214,14 +220,14 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 
 | id | expect | error | spec |
 |---|---|---|---|
-| `cfg_eager_internalize` | accept | — | §16.7, §17 (with `[memory] internalize_on_receive = true`, every received `<-` event is auto-decomposed into memory — the eager, opt-in trigger; default is off) |
-| `cfg_missing_principal_binding_reject` | reject | ConfigError | §17 (each principal declaration resolves to an identity binding; missing binding is a configuration error) |
-| `cfg_missing_prompt_binding_reject` | reject | ConfigError | §17 (each prompt declaration resolves to a manifest binding; missing binding is a configuration error) |
-| `cfg_missing_tool_binding_reject` | reject | ConfigError | §17 (each tool declaration resolves to a configured world capability; missing binding is a configuration error) |
+| `cfg_internalize_is_mandatory` | accept | — | §16.7 (the mandatory memory envelope internalizes every reaction's experience; consult+internalize is unconditional — there is no opt-in/opt-out config knob, and configuration tunes budget/fidelity, not whether memory is part of the turn) |
+| `cfg_missing_principal_binding_reject` | reject | ConfigError | §17.1 (each principal declaration resolves to an identity binding; an unbound declared dependency is ALWAYS a ConfigError, not a late runtime lookup — no opt-in flag) |
+| `cfg_missing_prompt_binding_reject` | reject | ConfigError | §17.1 (each prompt declaration resolves to a manifest binding; an unbound declared dependency is ALWAYS a ConfigError, not a late runtime lookup — no opt-in flag) |
+| `cfg_missing_tool_binding_reject` | reject | ConfigError | §17.1 (each tool declaration resolves to a configured world capability; an unbound declared dependency is ALWAYS a ConfigError, not a late runtime lookup — no opt-in flag) |
 | `cfg_require_fallback_temperature_reject` | reject | ConfigError | §17 (a text-only provider at temperature 0 requires fallback_temperature for sampling fallback) |
 | `cfg_sampling_fallback` | accept | — | §16.8, §17 (a text-only provider — no logprobs — is served by the sampling fallback: the credence is the empirical frequency of N forced draws; a confident judgment still commits) |
 | `cfg_sampling_fallback_disabled_defers` | accept | — | §20.3, §17 (without logprobs or sampling fallback, conformal degrades to deferral/abstain) |
-| `cfg_strict_bindings_ok` | accept | — | §17 (declared dependencies pass configuration binding when every dependency has a manifest entry) |
+| `cfg_strict_bindings_ok` | accept | — | §17.1 (declared dependencies pass configuration binding when every dependency has a manifest entry) |
 
 ## 18_modules
 
@@ -287,17 +293,22 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 
 | id | expect | error | spec |
 |---|---|---|---|
-| `gate_all_reversible_no_principal_accept` | accept | — | §20 (all arms reversible -> argmax-forever; no principal required) |
-| `gate_cold_nonreversible_defers_to_principal` | accept | — | §20.1, §20.3 (cold non-reversible decide defers to a reachable principal before the action arm commits) |
+| `gate_all_reversible_no_principal_accept` | accept | — | §20.1 (all arms reach reversible sinks -> no principal fallback required) |
+| `gate_cold_nonreversible_defers_to_principal` | accept | — | §20.1, §20.3 (cold non-reversible path reaches a principal before the action arm commits) |
 | `gate_cold_reversible_no_defer` | accept | — | §20.1 (a cold reversible outcome commits without principal deferral) |
-| `gate_decide_defer_clause_accept` | accept | — | §20 (decide with a trailing `defer to p` clause supplies the principal) |
-| `gate_decide_principal_subject_accept` | accept | — | §20 (decide with a principal subject; a non-reversible arm has a reachable principal) |
+| `gate_decide_defer_clause_accept` | accept | — | §20.3 (deference is an ordinary `decide c by principal` inside the abstain block) |
+| `gate_decide_principal_subject_accept` | accept | — | §13 (`decide c by p` uses a principal as the decision basis; a non-reversible arm has its reachable principal) |
 | `gate_decision_field_readonly_reject` | reject | TypeError | §20.4 (Decision provenance fields are read-only) |
 | `gate_decision_introspection_accept` | accept | — | §20.4, §9 (Decision provenance: .basis over the Basis enum) |
 | `gate_decision_introspection_committed_margin_accept` | accept | — | §20.4 (Decision provenance exposes .committed and .margin, not only .basis) |
-| `gate_file_conformal_decl_accept` | accept | — | §20 (file-level `conformal α;` declaration) |
-| `gate_nonreversible_no_principal_reject` | reject | GateError | §20 (a non-reversible arm with no reachable principal is a compile error) |
-| `gate_per_gate_conformal_accept` | accept | — | §20 (per-gate conformal α override on a decide) |
-| `gate_reversible_action_accept` | accept | — | §20 (`reversible action` — reversibility annotates a perform sink) |
-| `gate_reversible_tie_abstains` | accept | — | §20.3 (a reversible decide with no plurality and no default abstains; it never silently picks) |
-| `gate_reversible_tie_default` | accept | — | §20.3 (a reversible decide tie uses default as the tiebreak instead of silently picking) |
+| `gate_decision_not_endorsement_reject` | reject | TypeError | §13 (`decide c by R` yields a Decision<E>, not an Endorsement<E>) |
+| `gate_endorsement_expr_type_accept` | accept | — | §13, §20.4 (the `as e` arm binder has type Endorsement<E>, the recorded form of a gate decision) |
+| `gate_endorsement_field_readonly_reject` | reject | TypeError | §20.4 (Endorsement provenance fields are read-only) |
+| `gate_endorsement_introspection_accept` | accept | — | §20.4 (Endorsement exposes the same read-only provenance fields as Decision) |
+| `gate_endorsement_not_decision_reject` | reject | TypeError | §13 (an Endorsement<E> is not a Decision<E>) |
+| `gate_file_conformal_decl_accept` | accept | — | §20 (file-level `conformal α;` declaration sets the default basis) |
+| `gate_nonreversible_no_principal_reject` | reject | GateError | §20.3 (a consequential endorsement path with no reachable principal fallback is a compile error) |
+| `gate_per_gate_conformal_accept` | accept | — | §20 (per-gate conformal α override on a decide expression) |
+| `gate_reversible_action_accept` | accept | — | §20.1 (`reversible action` — reversibility annotates a perform sink) |
+| `gate_reversible_tie_abstains` | accept | — | §20.3 (a reversible decide with no singleton prediction set abstains; it never silently picks) |
+| `gate_reversible_tie_default` | accept | — | §20.3 (a reversible decide tie routes to the abstain block instead of silently picking) |

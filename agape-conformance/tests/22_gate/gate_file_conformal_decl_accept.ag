@@ -1,17 +1,23 @@
 //! id:        gate_file_conformal_decl_accept
 //! section:   22_gate
 //! expect:    accept
-//! spec:      §20 (file-level `conformal α;` declaration)
+//! principal: grant
+//! contains:  Endorsed
+//! spec:      §20 (file-level `conformal α;` declaration sets the default basis)
 //! ---
 conformal 0.02;
 enum R { Yes, No }
 event Ask(body: text);
-action Act(body: text)
+action Act(body: text);
 principal boss;
 agent Desk grants { perform Act } {
   when (Ask q) {
     Credence<R> c = self <- q.body;
-    boss decide c { Yes: perform Act(q.body); No: say("no"); }
+    Decision<R> d = decide c by boss;
+    endorse c by d {
+      Yes as e { perform Act(q.body); }
+      No as e  { say("no"); }
+    }
   }
 }
 spawn Desk d; awake d;

@@ -2,18 +2,21 @@
 //! section:   22_gate
 //! expect:    accept
 //! provider:  credence(A=0.5, B=0.5)
-//! contains:  Abstained(c)
+//! contains:  Abstained
 //! absent:    Note
-//! spec:      §20.3 (a reversible decide with no plurality and no default abstains; it never silently picks)
+//! spec:      §20.3 (a reversible decide with no singleton prediction set abstains; it never silently picks)
 //! ---
 enum R { A, B }
 reversible action Note(text body);
 agent Desk grants { perform Note } {
   on awake {
     Credence<R> c = self <- "choose A or B";
-    decide c {
-      A: perform Note("a");
-      B: perform Note("b");
+    Decision<R> d = decide c by conformal 0.1;
+    endorse c by d {
+      A as e { perform Note("a"); }
+      B as e { perform Note("b"); }
+    } abstain {
+      say("no plurality");
     }
   }
 }

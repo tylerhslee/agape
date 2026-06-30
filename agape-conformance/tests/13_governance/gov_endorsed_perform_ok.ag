@@ -1,15 +1,18 @@
 //! id:        gov_endorsed_perform_ok
 //! section:   13_governance
 //! expect:    accept
-//! spec:      §13 (a recorded gate may license a consequential perform)
+//! contains:  Endorsed
+//! spec:      §13 (a recorded subject endorsement may license a consequential perform in its commit arm)
 //! ---
+enum R { Fraud, Clean }
 action Flag(bool b);
 agent C grants { perform Flag } {
   on awake {
-    Credence<bool> c = self <- "is this fraud?";
-    endorse (c by confidence 0.9 margin 0.2) {
-      true: perform Flag(true);
-      false: ;
+    Credence<R> c = self <- "is this fraud?";
+    Decision<R> d = decide c by confidence 0.9 margin 0.2;
+    endorse c by d {
+      Fraud as e { perform Flag(true); }
+      Clean as e { }
     }
   }
 }

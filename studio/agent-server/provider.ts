@@ -35,6 +35,37 @@ export interface Embedder {
   embed(text: string): number[];
 }
 
+// ── Deterministic local cognition for offline Studio paths ──────────────────
+// This is not a real model. It keeps memory consultation, experience recording,
+// tests, and project inspection usable when no provider key is configured.
+export class MockCognition implements Cognition {
+  readonly model = "mock-local";
+
+  async complete(system: string, messages: ChatMessage[], maxTokens = 1024): Promise<string> {
+    const text = messages.map((m) => m.content).join("\n\n");
+    if (/summarize a knowledge artifact/i.test(system)) {
+      return `This artifact should guide future Agape work. ${firstSentence(text, 900)}`;
+    }
+    if (/distill one reusable lesson/i.test(system)) {
+      return "Use the checker feedback as a reusable constraint before retrying the Agape source.";
+    }
+    if (/you write agape source code/i.test(system)) {
+      return "event Note(text message);\nagent Main { on awake { emit Note(\"draft requires live cognition for task-specific source\"); } }\nspawn Main main;\nawake main;";
+    }
+    return firstSentence(text, Math.min(400, maxTokens * 3)) || "(mock cognition has no response)";
+  }
+
+  async decompose(text: string): Promise<Decomposition> {
+    const title = (text.match(/^#+\s+(.+)$/m)?.[1] || "artifact").trim();
+    const key = slug(title);
+    const terms = Array.from(new Set((text.toLowerCase().match(/[a-z][a-z0-9_-]{3,}/g) || []).slice(0, 12)));
+    return {
+      facts: [{ key, value: firstSentence(text, 500) || title }],
+      triples: terms.slice(0, 6).map((term) => ({ s: key, p: "mentions", o: term })),
+    };
+  }
+}
+
 // ── Anthropic cognition (haiku) ──────────────────────────────────────────────
 export class AnthropicCognition implements Cognition {
   readonly model: string;
@@ -177,4 +208,14 @@ function hash(s: string): number {
     h = Math.imul(h, 16777619);
   }
   return h >>> 0;
+}
+
+function firstSentence(s: string, n: number): string {
+  const flat = s.replace(/```(?:\w+)?\s*([\s\S]*?)```/g, "$1").replace(/\s+/g, " ").trim();
+  const sentence = flat.match(/^(.{40,}?[.!?])\s/)?.[1] || flat;
+  return sentence.length > n ? sentence.slice(0, n) + "..." : sentence;
+}
+
+function slug(s: string): string {
+  return (s.toLowerCase().match(/[a-z0-9_-]+/g) || ["artifact"]).slice(0, 4).join("-");
 }

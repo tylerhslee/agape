@@ -7,7 +7,7 @@
 agent A {
   on awake {
     Credence<bool> ok = self <- "is \"approve #42\" an approval?";
-    Decision<bool> b = ok by confidence 0.9;
+    Decision<bool> b = decide ok by confidence 0.9;
     say(f"{b}");
   }
 }

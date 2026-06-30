@@ -1,15 +1,20 @@
 //! id:        gate_reversible_action_accept
 //! section:   22_gate
 //! expect:    accept
-//! spec:      §20 (`reversible action` — reversibility annotates a perform sink)
+//! contains:  Endorsed
+//! spec:      §20.1 (`reversible action` — reversibility annotates a perform sink)
 //! ---
 enum R { A, B }
 event Ask(body: text);
-reversible action Note(body: text)
+reversible action Note(body: text);
 agent Desk grants { perform Note } {
   when (Ask q) {
     Credence<R> c = self <- q.body;
-    decide c { A: perform Note("a"); B: perform Note("b"); }
+    Decision<R> d = decide c by conformal 0.05;
+    endorse c by d {
+      A as e { perform Note("a"); }
+      B as e { perform Note("b"); }
+    }
   }
 }
 spawn Desk d; awake d;

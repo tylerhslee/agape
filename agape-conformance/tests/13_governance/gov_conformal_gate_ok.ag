@@ -7,11 +7,12 @@ enum Ticket { Billing, Bug, Feature }
 agent A {
   on awake {
     Credence<Ticket> k = self <- "classify: my card was charged twice";
-    endorse (k by conformal 0.1) {
-      Billing: ;
-      Bug: ;
-      Feature: ;
-    }
+    Decision<Ticket> d = decide k by conformal 0.1;
+    endorse k by d {
+      Billing as e { }
+      Bug as e { }
+      Feature as e { }
+    } abstain { emit Event("escalate"); }
   }
 }
 spawn A a; awake a;
