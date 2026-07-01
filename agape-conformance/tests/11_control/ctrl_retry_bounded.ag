@@ -7,7 +7,10 @@ agent A {
   on awake {
     {
       Credence<bool> still = self <- "are you ready?";
-      endorse (still by confidence 0.9) { true: ; false: ; }
+      decide still by confidence 0.9 {
+        true { say("ready"); }
+        false { say("wait"); }
+      }
     } retry(3)
   }
 }

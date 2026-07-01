@@ -8,9 +8,10 @@ action Flag(bool b);
 agent A grants { perform Flag } {
   on awake {
     Credence<bool> c = self <- "flag it?";
-    endorse (c by confidence 0.9) {
-      true: perform Flag(true);
-      false: ;
+    Decision<bool> d = decide c by confidence 0.9;
+    endorse true by d {
+      true as e { perform Flag(e); }
+      false { }
     }
   }
 }

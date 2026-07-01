@@ -7,10 +7,10 @@
 agent A {
   on awake {
     Credence<Entailment> j = self <- "does \"the sky is green\" entail \"the sky is blue\"?";
-    case (j by confidence 0.8) as d {
-      Entails: { say("e"); }
-      Contradicts: { say("c"); }
-      Neutral: { say("n"); }
+    decide j by confidence 0.8 {
+      Entails { say("e"); }
+      Contradicts { say("c"); }
+      Neutral { say("n"); }
     }
   }
 }

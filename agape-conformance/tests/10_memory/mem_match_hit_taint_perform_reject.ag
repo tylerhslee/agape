@@ -1,0 +1,14 @@
+//! id:        mem_match_hit_taint_perform_reject
+//! section:   10_memory
+//! expect:    reject
+//! error:     TaintViolation
+//! spec:      §10, §13 (vector match hits are graded/off-ledger and cannot drive a consequential sink without re-gating)
+//! ---
+action Publish(text body);
+agent A grants { perform Publish } {
+  on awake {
+    array<Hit> hits = match { hit: "draft text" } > 0.1;
+    perform Publish(hits[0].text);
+  }
+}
+spawn A a; awake a;

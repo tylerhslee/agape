@@ -1,0 +1,21 @@
+//! id:        gov_endorse_subject_scope_reject
+//! section:   13_governance
+//! expect:    reject
+//! error:     GateError
+//! spec:      §13, §20.3 (an endorsed subject must be in the decision's dependency scope; a decision about one subject cannot endorse another)
+//! ---
+enum Verdict { Approved, Rejected }
+action Publish(text body);
+agent Reviewer grants { perform Publish } {
+  on awake {
+    text first = self <- "draft the first memo";
+    text second = self <- "draft the second memo";
+    Credence<Verdict> c = self <- f"is this memo approved: {first}";
+    Decision<Verdict> d = decide c by confidence 0.9;
+    endorse second by d {
+      Approved as e { perform Publish(e); }
+      Rejected { }
+    }
+  }
+}
+spawn Reviewer r; awake r;

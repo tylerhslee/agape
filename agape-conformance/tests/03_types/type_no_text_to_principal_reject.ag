@@ -2,12 +2,13 @@
 //! section:   03_types
 //! expect:    reject
 //! error:     TypeError
-//! spec:      §3, §13 (a principal basis must be a declared `principal`, not a string; `decide c by "alice"` has no text -> Principal coercion)
+//! spec:      §3, §13 (a principal prefix must resolve to a declared `principal`, not an ordinary text value)
 //! ---
 agent Drafter {
   on awake {
+    text alice = "alice";
     Credence<bool> c = self <- "should we send the memo?";
-    Decision<bool> d = decide c by "alice";
+    Decision<bool> d = alice decide c by confidence 0.9;
   }
 }
 spawn Drafter dr; awake dr;

@@ -1,0 +1,15 @@
+//! id:        mem_recall_taint_perform_reject
+//! section:   10_memory
+//! expect:    reject
+//! error:     TaintViolation
+//! spec:      §10, §13, §16.7 (a value recalled from private memory is subjective/graded and cannot drive a consequential sink without a gate)
+//! ---
+action Publish(text body);
+agent A grants { perform Publish } {
+  on awake {
+    mem note <- "remembered draft";
+    text recalled = note -> "draft";
+    perform Publish(recalled);
+  }
+}
+spawn A a; awake a;

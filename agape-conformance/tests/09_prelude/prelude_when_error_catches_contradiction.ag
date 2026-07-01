@@ -7,10 +7,10 @@ when (Error e) { say("caught"); }
 agent J {
   on awake {
     Credence<Entailment> v = self <- "does \"sky is blue\" entail \"sky is green\"?";
-    case (v by confidence 0.8) as d {
-      Entails: { say("e"); }
-      Contradicts: { say("c"); }
-      Neutral: { say("n"); }
+    decide v by confidence 0.8 {
+      Entails { say("e"); }
+      Contradicts { say("c"); }
+      Neutral { say("n"); }
     }
   }
 }

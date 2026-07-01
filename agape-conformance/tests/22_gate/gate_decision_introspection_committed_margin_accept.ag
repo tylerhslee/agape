@@ -8,10 +8,7 @@ agent Desk {
   on awake {
     Credence<R> c = self <- "yes or no?";
     Decision<R> d = decide c by confidence 0.8;
-    case (d.committed) as r {
-      Yes: { say("yes"); }
-      No:  { say("no"); }
-    }
+    if (d.committed == Yes) { say("yes"); } else { say("no"); }
     if (d.margin > 0.1) { say("clear"); } else { say("close"); }
   }
 }

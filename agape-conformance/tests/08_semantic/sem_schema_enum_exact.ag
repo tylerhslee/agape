@@ -1,0 +1,13 @@
+//! id:        sem_schema_enum_exact
+//! section:   08_semantic
+//! expect:    accept
+//! schema:    event<Ticket> closed_enum(Billing,Bug)
+//! spec:      §8 (event<Enum> compiles to a closed enum structured-output schema)
+//! ---
+enum Ticket { Billing, Bug }
+agent A {
+  on awake {
+    event<Ticket> ticket = self <- "classify ticket";
+  }
+}
+spawn A a; awake a;

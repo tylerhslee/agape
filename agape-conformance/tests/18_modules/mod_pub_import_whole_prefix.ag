@@ -1,0 +1,8 @@
+//! id:        mod_pub_import_whole_prefix
+//! section:   18_modules
+//! expect:    accept
+//! modules:   facade.ag; internal.ag
+//! spec:      §19.2a (`pub import m;` re-exports the whole imported prefix)
+//! ---
+import facade;
+facade.internal.Shape s = facade.internal.Shape { sides: 4 };

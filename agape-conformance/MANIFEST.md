@@ -1,6 +1,6 @@
-# Agape v1.0.0-alpha.2026.6.29.0 — Conformance Test Index
+# Agape v1.0.0-alpha.2026.6.30.0 — Conformance Test Index
 
-**208 tests** — accept: 127, reject: 81
+**229 tests** — accept: 134, reject: 95
 
 A conformant implementation must satisfy every `accept`/`reject` test (rejects with the declared error class; accepts matching any asserted spine).
 
@@ -11,10 +11,13 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 |---|---|---|---|
 | `lex_comment_fstring` | accept | — | §2 (line comments; f-string interpolation; INT/FLOAT literals) |
 | `lex_contextual_word_as_identifier` | accept | — | §2 (contextual words `as`/`by`/`reach`/`use`/`origin` lex as identifiers out of position) |
+| `lex_reject_fstring_escaped_brace` | reject | ParseError | §2 (f-string braces introduce parsed expressions; escaped literal braces are not part of the grammar) |
 | `lex_reject_keyword_as_identifier` | reject | ParseError | §2 (reserved keywords may not be used as identifiers) |
+| `lex_reject_leading_dot_number` | reject | ParseError | §2 (Float is decimal digits with a point; `.5` is not a numeric literal) |
 | `lex_reject_malformed_fstring` | reject | ParseError | §2 (f-string interpolation braces must parse as expressions) |
 | `lex_reject_missing_semicolon` | reject | ParseError | §2 (statement terminator `;` is explicit and required) |
 | `lex_reject_tilde` | reject | ParseError | §2 (there is no similarity operator; `~` lexes to an Op but the parser rejects it — a ParseError, not a LexError) |
+| `lex_reject_trailing_dot_number` | reject | ParseError | §2 (Float is decimal digits with a point and digits; `1.` is not a numeric literal) |
 | `lex_reject_unknown_operator` | reject | LexError | §2 (operators outside the specified surface are rejected) |
 | `lex_string_escapes` | accept | — | §2 (string escapes \n \t \" \\ are recognized inside a string literal) |
 
@@ -38,13 +41,14 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 | `type_array_literal_and_type` | accept | — | §3, §15.2 (array<T> is the collection type; an array literal binds to an array<T> slot) |
 | `type_collapse_requires_rule_reject` | reject | ParseError | §3, §15.2 (a gate requires its rule; `c by` with no rule is a ParseError) |
 | `type_credence_only_from_seam_reject` | reject | TypeError | §3, §8 (Credence<E> is produced ONLY by a provider judgment, never constructed literally) |
-| `type_enum_decl_and_case` | accept | — | §3, §11 (enum declaration; a gated case exhaustive over all variants) |
+| `type_enum_decl_and_gate_arms` | accept | — | §3, §11, §13 (enum declaration; a gate arm block is exhaustive over all variants) |
 | `type_event_decl` | accept | — | §3 (custom ledger-event declaration with a typed payload) |
 | `type_event_multifield_arity_reject` | reject | TypeError | §3 (emit arity must match the declared event signature) |
 | `type_event_multifield_payload_ok` | accept | — | §3 (event invocation uses positional fields in declaration order) |
 | `type_event_multifield_type_reject` | reject | TypeError | §3 (emit arguments are type-checked positionally) |
 | `type_event_null_no_reply` | accept | — | §3 (event<null> = sent, no typed reply bound) |
-| `type_no_text_to_principal_reject` | reject | TypeError | §3, §13 (a principal basis must be a declared `principal`, not a string; `decide c by "alice"` has no text -> Principal coercion) |
+| `type_no_text_to_principal_reject` | reject | TypeError | §3, §13 (a principal prefix must resolve to a declared `principal`, not an ordinary text value) |
+| `type_rule_not_first_class_reject` | reject | TypeError | §3 (Rule is the gate parameter, not a first-class user-declared storage type) |
 | `type_scalars` | accept | — | §3 (scalars int/float/bool/text/null) |
 | `type_struct_decl_and_literal` | accept | — | §3 (struct declaration + struct literal supplying all fields) |
 | `type_struct_extra_field_reject` | reject | TypeError | §3, §8 (struct literals/schema objects are exact; extra fields are rejected) |
@@ -58,7 +62,7 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 | id | expect | error | spec |
 |---|---|---|---|
 | `fn_sync_calls_async_reject` | reject | ColorViolation | §4 (a sync fn may only call other sync fns) |
-| `fn_sync_decide_by_principal_reject` | reject | ColorViolation | §4, §13 (`decide c by p` for a principal reaches the identity dependency → async; a sync fn may not) |
+| `fn_sync_decide_by_principal_reject` | reject | ColorViolation | §4, §13 (`p decide c by R` for a principal reaches the identity dependency → async; a sync fn may not) |
 | `fn_sync_embed_reject` | reject | ColorViolation | §9, §10 (embed reaches the provider-backed memory substrate, so a sync function may not call it) |
 | `fn_sync_emit_ok` | accept | — | §4 (emit is a ledger append, permitted in sync; a plain event needs no power) |
 | `fn_sync_inhand_decide_ok` | accept | — | §4, §13 (policy-driven `decide` over an in-hand Credence is a pure collapse, no dependency reach → sync-permitted) |
@@ -66,6 +70,7 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 | `fn_sync_reaches_seam_reject` | reject | ColorViolation | §1 Axis A, §4 (a sync fn may not reach the provider via `<-`) |
 | `fn_sync_store_reject` | reject | ColorViolation | §9, §10 (store reaches the provider-backed memory substrate, so a sync function may not call it) |
 | `fn_sync_tool_call_reject` | reject | ColorViolation | §4, §6b (a tool call reaches the tool dependency → async) |
+| `fn_taint_flows_through_call_reject` | reject | TaintViolation | §15.3.3 (function calls are trust-transparent; taint flowing through a helper still cannot reach a consequential sink) |
 
 ## 05_agents
 
@@ -74,6 +79,7 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 | `agent_crash_contained` | accept | — | §5 (an unrecoverable seam failure — the provider returns nothing — crashes the agent: AgentCrashed is recorded, the on-crash hook runs, and state survives; a crash is contained, not a death) |
 | `agent_extend_inherits_when` | accept | — | §5, §7 (extend inherits fields + constructor + when blocks + hooks) |
 | `agent_first_awake_runs_constructor` | accept | — | §5 (first awake opens the mailbox and runs the on-awake hook) |
+| `agent_instruction_extend_append_accept` | accept | — | §5 (global, parent, and child instructions compose in order; extend appends behavior instead of weakening the parent) |
 | `agent_instruction_global_accept` | accept | — | §5 (a top-level `instruction` is the global compile-time system prompt) |
 | `agent_instruction_requires_string_reject` | reject | ParseError | §5 (`instruction` takes a string literal — the system prompt) |
 | `agent_instruction_scoped_accept` | accept | — | §5 (an agent-scoped `instruction` composes after the global block) |
@@ -115,6 +121,9 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 | `sem_credence_over_user_enum` | accept | — | §8 (a provider send bound to Credence<E> is a constrained classifier over E) |
 | `sem_entailment_three_valued` | accept | — | §8, §9 (Credence<Entailment> over {Entails, Contradicts, Neutral}) |
 | `sem_sample_unknown_reject` | reject | TypeError | §8 (there is no sampling combinator in the surface language; a use of `sample` is an unknown-identifier error) |
+| `sem_schema_array_nested_exact` | accept | — | §8 (event<array<T>> compiles to an array schema whose item schema is the exact schema for T) |
+| `sem_schema_enum_exact` | accept | — | §8 (event<Enum> compiles to a closed enum structured-output schema) |
+| `sem_schema_struct_exact` | accept | — | §8 (event<struct> compiles to an exact object schema with all fields required and no extra fields) |
 | `sem_schema_violation_array_typemismatch` | accept | — | §8 (event<array<T>> compiles to schema-constrained output; schema failure raises TypeMismatch) |
 | `sem_schema_violation_enum_typemismatch` | accept | — | §8 (event<Enum> compiles to a closed enum schema; schema failure raises TypeMismatch) |
 | `sem_schema_violation_typemismatch` | accept | — | §8 (structured output uses constrained decoding; on schema failure the runtime raises a clean TypeMismatch — catchable and retryable) |
@@ -139,10 +148,13 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 | `mem_find_graph_origin_ok` | accept | — | §10 (the relationship graph is queried with `find … where { triple+ }`, optionally projecting origin()) |
 | `mem_forget_accept` | accept | — | §10 (`forget` drops a memory handle — an audit-preserving tombstone) |
 | `mem_forget_records_tombstone` | accept | — | §10 (forget appends an audit-preserving Forgotten tombstone event) |
+| `mem_ledger_recall_reject` | reject | TypeError | §10 (the ledger is not private memory; `->` recall requires a `mem` handle, never `ledger`) |
+| `mem_match_hit_taint_perform_reject` | reject | TaintViolation | §10, §13 (vector match hits are graded/off-ledger and cannot drive a consequential sink without re-gating) |
 | `mem_match_is_gate` | accept | — | §10 (match > θ is a gate; yields a settled result off-ledger) |
 | `mem_queried_fact_taint_reject` | reject | TaintViolation | §10, §13 (queried facts default to `graded`; must be re-gated before a consequential perform) |
 | `mem_recall_after_forget_reject` | reject | TypeError | §10 (forget consumes the mem handle; the region is unrecallable going forward) |
 | `mem_recall_requires_mem_reject` | reject | TypeError | §10 (`->` recall requires a `mem` handle on the left; a non-`mem` LHS is a TypeError) |
+| `mem_recall_taint_perform_reject` | reject | TaintViolation | §10, §13, §16.7 (a value recalled from private memory is subjective/graded and cannot drive a consequential sink without a gate) |
 | `mem_select_boolean_ops_ok` | accept | — | §10 (select where conditions support comparison operators combined by boolean connectives) |
 | `mem_store_internalizes_ok` | accept | — | §9, §10 (store(x) is the explicit emphasis form of internalization, on top of the mandatory memory envelope that internalizes every reaction's experience anyway, §16.7) |
 | `mem_store_records_internalized` | accept | — | §9, §10 (store(x) explicitly internalizes a value and records Internalized) |
@@ -152,15 +164,15 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 
 | id | expect | error | spec |
 |---|---|---|---|
-| `ctrl_case_all_variants_ok` | accept | — | §11 (a gated case covering every enum variant is exhaustive) |
-| `ctrl_case_default_ok` | accept | — | §11 (a default arm makes a partial case exhaustive) |
-| `ctrl_case_nonexhaustive_reject` | reject | ExhaustivenessError | §11 (a case with no default must cover all variants) |
-| `ctrl_case_ungated_credence_reject` | reject | TypeError | §3, §11 (a Credence<E> is consumed only by a gate/combinator; an un-gated case is a TypeError — gate it first) |
 | `ctrl_credence_in_if_reject` | reject | TypeError | §3, §11 (a Credence<bool> is not a bool; a bare Credence in an if is a TypeError — gate it first) |
+| `ctrl_gate_abstain_ok` | accept | — | §11, §13 (an abstain block makes a partial gate arm block exhaustive) |
+| `ctrl_gate_all_variants_ok` | accept | — | §11, §13 (a gate arm block covering every enum variant is exhaustive) |
+| `ctrl_gate_nonexhaustive_reject` | reject | ExhaustivenessError | §11, §13 (a gate arm block with no abstain must cover all variants) |
 | `ctrl_if_else` | accept | — | §11 (if/else over a bool) |
 | `ctrl_retry_bounded` | accept | — | §11, §15.2 (the only loop is the bounded `{ block } retry(N)`) |
 | `ctrl_retry_exhausted` | accept | — | §11 (a `{ block } retry(N)` re-attempts on a fault; on exhaustion it emits RetryExhausted and the fault propagates) |
 | `ctrl_retry_unbounded_reject` | reject | ParseError | §11, §15.2 (retry's bound is mandatory — `retry ::= block "retry" "(" Int ")"`; an unbounded `retry` with no `(N)` is a ParseError, so every reaction terminates) |
+| `ctrl_ungated_credence_committed_reject` | reject | TypeError | §3, §11 (a Credence<E> is consumed only by a gate/combinator; testing `.committed` before a gate is a TypeError) |
 
 ## 12_aggregation
 
@@ -186,11 +198,15 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 | `gov_conformal_gate_ok` | accept | — | §13 (the conformal basis `by conformal α` is a distribution-free finite-sample gate calibrated from the ledger) |
 | `gov_consequential_bare_collapse_reject` | reject | TaintViolation | §13 (a sealed Decision may guide control flow but is not a subject endorsement → it may not license a perform) |
 | `gov_endorse_abstain_ok` | accept | — | §13 (the optional abstain clause runs when the gate cannot commit a singleton prediction set) |
+| `gov_endorse_abstain_sink_reject` | reject | TaintViolation | §13, §15.3.3 (an Endorsement is sink-admissible only in a committed-variant branch, not in abstain) |
 | `gov_endorse_artifact_allows_perform` | accept | — | §13 (artifact certification is ordinary subject endorsement — decide a Credence<Verification> and endorse the exact artifact; the artifact is settled only in the matching commit arm) |
 | `gov_endorse_records_endorsed_ok` | accept | — | §9, §13 (endorse records an Endorsed event on the ledger for the exact subject) |
+| `gov_endorse_subject_scope_reject` | reject | GateError | §13, §20.3 (an endorsed subject must be in the decision's dependency scope; a decision about one subject cannot endorse another) |
 | `gov_endorsed_perform_ok` | accept | — | §13 (a recorded subject endorsement may license a consequential perform in its commit arm) |
 | `gov_endorsed_subject_allows_perform` | accept | — | §13 (endorsing the exact subject by a sealed Decision settles it inside the matching commit arm, licensing a perform) |
+| `gov_endorsement_subject_collision_accept` | accept | — | §20.4 (Endorsement metadata accessors win name collisions; the subject field remains reachable through `.subject`) |
 | `gov_extend_use_subtractive_reject` | reject | AuthorityViolation | §5, §13 (capabilities, incl. `use`, are subtractive under extend) |
+| `gov_gate_unknown_arm_reject` | reject | TypeError | §13, §15.3.3 (gate arm heads must be variants of the gate enum, or true/false for bool) |
 | `gov_grants_star_ok` | accept | — | §13 (grants { * } is the explicit unconstrained opt-out — lattice top) |
 | `gov_margin_floor_abstains` | accept | — | §13 (a gated decision whose margin is below its policy `floor` m abstains — the typed trigger for escalation — even when the threshold is met) |
 | `gov_negative_arm_taint_reject` | reject | TaintViolation | §13 (endorse settles the subject only in its matching commit arm; a non-endorsing arm cannot launder the raw artifact into a perform) |
@@ -214,13 +230,14 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 | id | expect | error | spec |
 |---|---|---|---|
 | `repro_chain_head_equal` | accept | — | §15.4.2, §15.5 / T4 (a recorded run replays to an identical chain-head: every oracle/tool result is re-served from the journal in order and nothing is re-invoked) |
-| `repro_collapse_off_ledger` | accept | — | §15 (`c by R` is a pure projection of a Credence; off-ledger and synchronous) |
+| `repro_collapse_off_ledger` | accept | — | §13, §15 (`decide c by R` is a pure projection of a Credence; off-ledger and synchronous) |
 
 ## 16_config
 
 | id | expect | error | spec |
 |---|---|---|---|
 | `cfg_internalize_is_mandatory` | accept | — | §16.7 (the mandatory memory envelope internalizes every reaction's experience; consult+internalize is unconditional — there is no opt-in/opt-out config knob, and configuration tunes budget/fidelity, not whether memory is part of the turn) |
+| `cfg_manifest_decision_policy_reject` | reject | ConfigError | §17.1, §17.2 (decision policy lives in source, not the manifest; config cannot set gate thresholds) |
 | `cfg_missing_principal_binding_reject` | reject | ConfigError | §17.1 (each principal declaration resolves to an identity binding; an unbound declared dependency is ALWAYS a ConfigError, not a late runtime lookup — no opt-in flag) |
 | `cfg_missing_prompt_binding_reject` | reject | ConfigError | §17.1 (each prompt declaration resolves to a manifest binding; an unbound declared dependency is ALWAYS a ConfigError, not a late runtime lookup — no opt-in flag) |
 | `cfg_missing_tool_binding_reject` | reject | ConfigError | §17.1 (each tool declaration resolves to a configured world capability; an unbound declared dependency is ALWAYS a ConfigError, not a late runtime lookup — no opt-in flag) |
@@ -235,6 +252,7 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 |---|---|---|---|
 | `mod_ambiguous_name_reject` | reject | ModuleError | §19.2 (an ambiguous bare reference across imports is a ModuleError) |
 | `mod_etype_qualified_distinct` | accept | — | §19.2 (same event name in two modules are DISTINCT qualified etypes) |
+| `mod_explicit_header_accept` | accept | — | §15.2, §19.2 (an explicit module header overrides path-derived module naming) |
 | `mod_import_alias` | accept | — | §19.2 (import ... as alias rebinds the prefix) |
 | `mod_import_cycle_reject` | reject | ModuleError | §19.2 (imports are acyclic; a cycle is a ModuleError) |
 | `mod_import_qualified` | accept | — | §19.2 (module=file; whole-module import; qualified name use) |
@@ -243,6 +261,7 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 | `mod_package_path_dependency` | accept | — | §19.3 (a path dependency package exposes its [package] lib as an importable module root) |
 | `mod_pub_import_private_reject` | reject | VisibilityError | §19.2a (pub import of a non-pub name is a VisibilityError) |
 | `mod_pub_import_reexport` | accept | — | §19.2a (pub import re-exports a name through the importing module's public surface) |
+| `mod_pub_import_whole_prefix` | accept | — | §19.2a (`pub import m;` re-exports the whole imported prefix) |
 | `mod_selective_import_unknown_reject` | reject | ModuleError | §19.2 (selective import of a non-exported name is a ModuleError) |
 | `mod_unresolved_import_reject` | reject | ModuleError | §19.2 (an import resolving to no module is a ModuleError) |
 
@@ -286,6 +305,8 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 | `iface_multi_implement` | accept | — | §19.5 (an agent may implement multiple interfaces) |
 | `iface_not_instantiable_reject` | reject | TypeError | §19.5 (an interface is a type but not instantiable; spawn of one is a TypeError) |
 | `iface_outcome_mismatch_reject` | reject | InterfaceError | §19.5 (interface conformance checks the declared handled event and decided outcome) |
+| `iface_private_required_cap_reject` | reject | VisibilityError | §19.4, §19.5 (a public interface surface may not expose a private capability target) |
+| `iface_public_exposes_private_event_reject` | reject | VisibilityError | §19.4, §19.5 (a public interface surface may not expose a private event type) |
 | `iface_subtype_binding` | accept | — | §19.5 (agent <: interface; bind a concrete agent to an interface slot; reach over the interface) |
 | `iface_syntax_reject_arrow` | reject | ParseError | §19.5 (interface members use `when EVENT decide RESULT`, never `->`) |
 

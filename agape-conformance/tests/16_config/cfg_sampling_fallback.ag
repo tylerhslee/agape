@@ -3,7 +3,7 @@
 //! expect:    accept
 //! manifest:  provider.exposes_logprobs=false; provider.fallback_samples=10; provider.fallback_temperature=0.7
 //! provider:  credence(true=0.9, false=0.1)
-//! contains:  Decided(c)
+//! contains:  Endorsed(ready)
 //! spec:      §16.8, §17 (a text-only provider — no logprobs — is served by the sampling fallback: the credence is the empirical frequency of N forced draws; a confident judgment still commits)
 //! note:      the manifest sets only connector config; the decision policy is in source
 //! ---
@@ -11,7 +11,11 @@ policy Conf { threshold 0.8 }
 agent A {
   on awake {
     Credence<bool> c = self <- "ready?";
-    endorse (c by Conf) { true: ; false: ; }
+    Decision<bool> d = decide c by Conf;
+    endorse "ready" by d {
+      true { say("ready"); }
+      false { say("not-ready"); }
+    }
   }
 }
 spawn A a; awake a;

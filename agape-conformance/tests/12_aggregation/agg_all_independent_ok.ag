@@ -10,7 +10,10 @@ agent A {
     Credence<bool> c3 = self <- "would a user flag it?";
     independent c1, c2, c3;
     Credence<bool> fused = all(c1, c2, c3);
-    endorse (fused by confidence 0.9) { true: ; false: ; }
+    decide fused by confidence 0.9 {
+      true { say("spam"); }
+      false { say("clean"); }
+    }
   }
 }
 spawn A a; awake a;
