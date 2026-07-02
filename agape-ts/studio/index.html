@@ -2234,7 +2234,7 @@ function drawGraph(events, map) {
     epaths.push(`<g class="${v.cls}"><path d="${head}${tail}" stroke="${v.color}" ${v.marker}></path></g>`);
     if (v.label) {
       if (e._sideOut) putLabel(v, "start", s.x + s.w + 8, scy - 6, v.label); // beside the exit run
-      else putLabel(v, "start", dropX + 6, cy - 5, v.label); // at the elbow corner of its own lane
+      else putLabel(v, "start", endX + 6, cy - 5, v.label); // at the TARGET-side elbow of its lane
     }
   }
   for (const e of kindOf.up) {
