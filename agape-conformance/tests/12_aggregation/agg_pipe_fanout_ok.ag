@@ -1,0 +1,18 @@
+//! id:        agg_pipe_fanout_ok
+//! section:   12_aggregation
+//! expect:    accept
+//! spec:      §12, §15.2 (`xs |> f` is bounded fan-out over a finite collection)
+//! ---
+sync int inc(int x) {
+  return x + 1;
+}
+
+agent A {
+  on awake {
+    int[] xs = [1, 2, 3];
+    int[] ys = xs |> inc;
+    say(ys[0]);
+    say(ys[2]);
+  }
+}
+spawn A a; awake a;

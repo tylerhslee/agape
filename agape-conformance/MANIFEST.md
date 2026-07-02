@@ -1,6 +1,6 @@
 # Agape v1.0.0-alpha.2026.7.2.2 — Conformance Test Index
 
-**167 tests** — accept: 103, reject: 64
+**168 tests** — accept: 104, reject: 64
 
 A conformant implementation must satisfy every `accept`/`reject` test (rejects with the declared error class; accepts matching any asserted spine).
 
@@ -171,6 +171,7 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 | `agg_dependent_fuse_ok` | accept | — | §12 (a `dependent` declaration fuses conservatively; quorum(1, …) is the at-least-one reduction) |
 | `agg_mixed_clusters_fuse` | accept | — | §12 (mixed sets compose: each `dependent` cluster fuses conservatively first, then the cluster results combine by the independent rule; coverage must be total over every pair) |
 | `agg_partial_dep_coverage_reject` | reject | TypeError | §12 (dependence coverage must be TOTAL over every pair; declaring only the pair (c1,c2) leaves (c1,c3) and (c2,c3) uncovered → TypeError, even though one declaration is present) |
+| `agg_pipe_fanout_ok` | accept | — | §12, §15.2 (`xs |> f` is bounded fan-out over a finite collection) |
 | `agg_quorum_independent_ok` | accept | — | §12 (quorum over independent Credence<bool> judges fuses to one Credence<bool>) |
 | `agg_quorum_no_dep_decl_reject` | reject | TypeError | §12 (fusion — incl. quorum — requires a total independent/dependent declaration) |
 

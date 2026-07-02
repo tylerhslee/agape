@@ -283,6 +283,9 @@ class Interpreter {
   private prompts = new Map<string, A.PromptDecl>();
   // §6: sends that EXPIRED before their destination was awake — refused (DeliveryRefused) if it later awakes.
   private pendingExpired: { dest: string; subj: string }[] = [];
+  // §16.1: seam calls can be in flight concurrently, but their observable close events are applied in
+  // issue order so replay is independent of wall-clock promise resolution order.
+  private resolutionTail: Promise<void> = Promise.resolve();
   // §19.2 module resolution (erased from the linker): a bound bare name (selective import) → its
   // qualified name, and every companion module's simple decl names, so a bare name in a companion
   // agent's body resolves within that module (`emit Glitch` inside `m` → `m.Glitch`).
@@ -743,6 +746,27 @@ class Interpreter {
     this.ledger.append(name, agent?.name ?? "<top>", payload, agent?.name);
   }
 
+  private async inResolutionOrder<T>(work: Promise<T>, apply: (result: T) => void | Promise<void>): Promise<T> {
+    const previous = this.resolutionTail;
+    let release!: () => void;
+    this.resolutionTail = new Promise<void>((resolve) => { release = resolve; });
+    let result: T;
+    try {
+      result = await work;
+    } catch (err) {
+      await previous;
+      release();
+      throw err;
+    }
+    await previous;
+    try {
+      await apply(result);
+      return result;
+    } finally {
+      release();
+    }
+  }
+
   private sinkValue(v: Value, sink: string): Value {
     if (v.kind === "endorsement") {
       if (!v.committedNarrowed) throw taintViolation(`an abstained/un-narrowed Endorsement cannot reach sink '${sink}'`);
@@ -1170,10 +1194,13 @@ class Interpreter {
   // executing its body, and returning the `return`ed value. Used by `|>` (one element bound to the first
   // parameter, §12) and by a direct call `f(a, …)` (§15.2). Generics are monomorphized/erased before this
   // point (§19.5), so no type-parameter environment is needed — the body runs on the concrete values.
-  private async callFn(fnRef: A.IdentExpr, args: Value[], _scope: Scope): Promise<Value> {
+  private async callFn(fnRef: A.IdentExpr, args: Value[], scope: Scope): Promise<Value> {
     const fn = this.fns.get(fnRef.name);
     if (!fn) throw new RuntimeError(`unknown function '${fnRef.name}'`);
-    const local = new Scope();
+    // Functions are not closures over caller locals, but when an agent calls a function the function
+    // executes in that agent context. This lets async `coll |> fn` fan-out preserve `self`, grants,
+    // and private agent fields for each mapped path.
+    const local = new Scope(undefined, scope.currentAgent());
     fn.params.forEach((p, i) => { if (i < args.length) local.set(p.name, args[i]!); });
     let ret: Value = { kind: "null", trust: "settled" };
     for (const st of fn.body) {
@@ -1372,8 +1399,12 @@ class Interpreter {
     const payload = this.toolPayload(name, args);
     const startedPayload = { binding: this.bindingSummary(binding), args: args.map(valueSummary), payload };
     this.ledger.append("ToolStarted", name, startedPayload, agent?.name);
-    const result = await this.toolResult(tool, args, scope, binding, payload);
-    this.ledger.append("ToolResolved", name, { ...startedPayload, result: valueSummary(result) }, agent?.name);
+    const result = await this.inResolutionOrder(
+      this.toolResult(tool, args, scope, binding, payload),
+      (resolved) => {
+        this.ledger.append("ToolResolved", name, { ...startedPayload, result: valueSummary(resolved) }, agent?.name);
+      },
+    );
     return result;
   }
 
@@ -1710,16 +1741,21 @@ class Interpreter {
     if (expected?.kind === "credence") {
       const variants = this.variantsOf(expected.enumName);
       if (!variants) throw new RuntimeError(`unknown enum '${expected.enumName}'`);
-      const { scores } = await this.provider.judge(prompt, expected.enumName, variants);
+      const { scores } = await this.inResolutionOrder(
+        this.provider.judge(prompt, expected.enumName, variants),
+        ({ scores: resolvedScores }) => {
+          const resolvedValue: Value = { kind: "credence", enumName: expected.enumName, scores: resolvedScores, trust: "graded", derivedFrom: this.promptSources(e.message, scope) };
+          this.ledger.append("Resolved", subj, {
+            kind: "credence",
+            prompt,
+            reply: valueSummary(resolvedValue),
+            enum: expected.enumName,
+            rule: undefined,
+            ...scoreSummary(resolvedScores),
+          }, scope.currentAgent()?.name);
+        },
+      );
       const value: Value = { kind: "credence", enumName: expected.enumName, scores, trust: "graded", derivedFrom: this.promptSources(e.message, scope) };
-      this.ledger.append("Resolved", subj, {
-        kind: "credence",
-        prompt,
-        reply: valueSummary(value),
-        enum: expected.enumName,
-        rule: undefined,
-        ...scoreSummary(scores),
-      }, scope.currentAgent()?.name);
       // §13 dependency scope: record which in-scope values fed this credence's prompt, so a later
       // `endorse subject by (decide c)` can confirm the decision is ABOUT the subject (see evalGate).
       return value;
@@ -1727,39 +1763,53 @@ class Interpreter {
     const structuredType = this.structuredType(expected, scope);
     if (structuredType) {
       const schema = this.schemaOf(structuredType, scope)!;
-      let raw: unknown;
-      try {
-        raw = this.provider.structured
-          ? await this.provider.structured(prompt, schema, bindName ?? "Reply")
-          : JSON.parse(await this.provider.reply(`${prompt}\n\nReturn only JSON matching this schema:\n${JSON.stringify(schema)}`));
-        const value = this.valueFromStructured(raw, structuredType, scope);
-        const resolved = this.ledger.append("Resolved", subj, {
-          kind: "structured",
-          prompt,
-          schema,
-          reply: valueSummary(value),
-        }, scope.currentAgent()?.name);
-        // §16.7: a received typed reply is internalized into the agent's private memory — the mandatory
-        // memory envelope (consult+internalize is unconditional; no opt-in/opt-out config knob).
-        this.ledger.append("Internalized", subj, this.receivedReplyInternalizedPayload(prompt, value, resolved.tick), scope.currentAgent()?.name);
-        return value;
-      } catch (e) {
-        this.ledger.append("TypeMismatch", subj, {
-          schema,
-          raw,
-          error: (e as Error).message,
-        }, scope.currentAgent()?.name);
-        return { kind: "null", trust: "raw" };
-      }
+      const rawWork: Promise<{ raw?: unknown; error?: unknown }> = (this.provider.structured
+        ? this.provider.structured(prompt, schema, bindName ?? "Reply")
+        : this.provider.reply(`${prompt}\n\nReturn only JSON matching this schema:\n${JSON.stringify(schema)}`).then((reply) => JSON.parse(reply)))
+        .then((raw) => ({ raw }), (error) => ({ error }));
+      let value: Value = { kind: "null", trust: "raw" };
+      await this.inResolutionOrder(rawWork, ({ raw, error }) => {
+        if (error) {
+          this.ledger.append("TypeMismatch", subj, {
+            schema,
+            raw,
+            error: (error as Error).message,
+          }, scope.currentAgent()?.name);
+          value = { kind: "null", trust: "raw" };
+          return;
+        }
+        try {
+          value = this.valueFromStructured(raw, structuredType, scope);
+          const resolved = this.ledger.append("Resolved", subj, {
+            kind: "structured",
+            prompt,
+            schema,
+            reply: valueSummary(value),
+          }, scope.currentAgent()?.name);
+          // §16.7: a received typed reply is internalized into the agent's private memory — the mandatory
+          // memory envelope (consult+internalize is unconditional; no opt-in/opt-out config knob).
+          this.ledger.append("Internalized", subj, this.receivedReplyInternalizedPayload(prompt, value, resolved.tick), scope.currentAgent()?.name);
+        } catch (err) {
+          this.ledger.append("TypeMismatch", subj, {
+            schema,
+            raw,
+            error: (err as Error).message,
+          }, scope.currentAgent()?.name);
+          value = { kind: "null", trust: "raw" };
+        }
+      });
+      return value;
     }
-    const reply = await this.provider.reply(prompt);
-    const value: Value = { kind: "text", v: reply, trust: "raw" };
-    const resolved = this.ledger.append("Resolved", subj, { kind: "reply", prompt, reply: valueSummary(value) }, scope.currentAgent()?.name);
-    // §16.7: a received typed reply is internalized into the agent's private memory — the mandatory memory
-    // envelope (consult+internalize is unconditional; there is no opt-in/opt-out config knob). A typed
-    // binding slot (`text r = d <- …`) internalizes; a bare unbound send (`d <- …;`) records only its
-    // lifecycle. (Credence-slot judgments take the judge path above, not this reply path.)
-    if (expected !== undefined) this.ledger.append("Internalized", subj, this.receivedReplyInternalizedPayload(prompt, value, resolved.tick), scope.currentAgent()?.name);
+    let value: Value = { kind: "null", trust: "raw" };
+    await this.inResolutionOrder(this.provider.reply(prompt), (reply) => {
+      value = { kind: "text", v: reply, trust: "raw" };
+      const resolved = this.ledger.append("Resolved", subj, { kind: "reply", prompt, reply: valueSummary(value) }, scope.currentAgent()?.name);
+      // §16.7: a received typed reply is internalized into the agent's private memory — the mandatory memory
+      // envelope (consult+internalize is unconditional; there is no opt-in/opt-out config knob). A typed
+      // binding slot (`text r = d <- …`) internalizes; a bare unbound send (`d <- …;`) records only its
+      // lifecycle. (Credence-slot judgments take the judge path above, not this reply path.)
+      if (expected !== undefined) this.ledger.append("Internalized", subj, this.receivedReplyInternalizedPayload(prompt, value, resolved.tick), scope.currentAgent()?.name);
+    });
     return value;
   }
 
@@ -1798,15 +1848,19 @@ class Interpreter {
     if (expected?.kind === "credence") {
       const variants = this.variantsOf(expected.enumName);
       if (!variants) throw new RuntimeError(`unknown enum '${expected.enumName}'`);
-      const { scores } = await this.provider.judge(query, expected.enumName, variants);
-      this.ledger.append("MemoryConsulted", agent?.name ?? "<top>", {
-        query,
-        hits: region.writes.length,
-        candidates,
-        kind: "credence",
-        enum: expected.enumName,
-        ...scoreSummary(scores),
-      }, agent?.name);
+      const { scores } = await this.inResolutionOrder(
+        this.provider.judge(query, expected.enumName, variants),
+        ({ scores: resolvedScores }) => {
+          this.ledger.append("MemoryConsulted", agent?.name ?? "<top>", {
+            query,
+            hits: region.writes.length,
+            candidates,
+            kind: "credence",
+            enum: expected.enumName,
+            ...scoreSummary(resolvedScores),
+          }, agent?.name);
+        },
+      );
       return { kind: "credence", enumName: expected.enumName, scores, trust: "graded", derivedFrom: this.promptSources(e.query, scope) };
     }
     // raw recall text — never settled (a recalled value must be re-decided + endorsed before a sink).

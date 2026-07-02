@@ -847,6 +847,13 @@ spec = "§12 (dependence coverage must be TOTAL over every pair; declaring only 
 note = "the weak reject tests declare ZERO dependence; this pins the harder N>=3 partial-coverage case"
 
 [[test]]
+id = "agg_pipe_fanout_ok"
+section = "12_aggregation"
+path = "tests/12_aggregation/agg_pipe_fanout_ok.ag"
+expect = "accept"
+spec = "§12, §15.2 (`xs |> f` is bounded fan-out over a finite collection)"
+
+[[test]]
 id = "agg_quorum_independent_ok"
 section = "12_aggregation"
 path = "tests/12_aggregation/agg_quorum_independent_ok.ag"

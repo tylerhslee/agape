@@ -1,9 +1,11 @@
-// fact_checker.ag - prompt -> atomic claim plan -> verification -> publish decision.
+// fact_checker.ag - prompt -> atomic claim plan -> parallel verification -> publish decision.
 //
 // The first provider call returns a coherent structured claim plan: a single subject
 // plus an array of atomic claims that could have been extracted from one long draft.
-// Each claim is sent back through the same agent as a CheckClaim event, where a
-// dummy search-backed verification path emits a Verification object.
+// Each claim is verified by the same agent through `claims |> verifyClaim`. The pipe
+// runs one async path per claim: each path is sequential internally (search, then
+// judge), while the paths overlap. With n claims and k verification reaches per claim,
+// work is O(nk), and latency/span is O(k) — O(1) LLM rounds when k is fixed.
 //
 // The final publish/revise/abstain decision consumes the claim plan AND the recorded
 // verification rows. If the answer is published, the endorsed PublishedAnswer always
@@ -55,9 +57,58 @@ struct PublishedAnswer {
 }
 
 action PublishAnswer(PublishedAnswer answer);
-event CheckClaim(AtomicClaim claim);
 event ClaimVerified(Verification result);
 event FinalAnswer(text status, VerificationAudit verification);
+
+Verification verifyClaim(AtomicClaim claim) {
+  text evidence = search(f"fact check this claim: {claim.statement}");
+
+  Credence<Grounding> grounded =
+    self <- f"Dummy fact-check criteria: mark Grounded if the search evidence supports the claim, Weak if it is opinionated but plausibly grounded, Unsupported otherwise. Claim kind: {claim.kind}. Claim: {claim.statement}. Search evidence: {evidence}";
+  Decision<Grounding> d = decide grounded by confidence 0.75;
+
+  Verification result = Verification {
+    claim_id: claim.claim_id,
+    claim: claim.statement,
+    claim_kind: claim.kind,
+    verdict: Unsupported,
+    evidence: evidence,
+    note: "fact checker abstained, so the claim is treated as unsupported"
+  };
+
+  if (d.committed == Grounded) {
+    result = Verification {
+      claim_id: claim.claim_id,
+      claim: claim.statement,
+      claim_kind: claim.kind,
+      verdict: Grounded,
+      evidence: evidence,
+      note: "search evidence supports the claim under the dummy criteria"
+    };
+  } else if (d.committed == Weak) {
+    result = Verification {
+      claim_id: claim.claim_id,
+      claim: claim.statement,
+      claim_kind: claim.kind,
+      verdict: Weak,
+      evidence: evidence,
+      note: "claim is opinionated or only partially supported under the dummy criteria"
+    };
+  } else if (d.committed == Unsupported) {
+    result = Verification {
+      claim_id: claim.claim_id,
+      claim: claim.statement,
+      claim_kind: claim.kind,
+      verdict: Unsupported,
+      evidence: evidence,
+      note: "search evidence does not support the claim under the dummy criteria"
+    };
+  }
+
+  emit ClaimVerified(result);
+  say(f"verification: {result.claim} -> {result.verdict}");
+  return result;
+}
 
 agent FactChecker grants { use search, perform PublishAnswer } {
   when (Prompt p about question) {
@@ -66,14 +117,7 @@ agent FactChecker grants { use search, perform PublishAnswer } {
     ClaimBundle plan =
       self <- f"Create a coherent claim plan for one natural-language answer. Return a single subject and exactly three atomic claims. The claims array is the JSON-style extraction from the imagined long answer; first, second, and third must mirror those same three claims in order so this alpha kernel can fan them out as events. Each claim must be small, individually checkable, and tagged as Factual or Opinionated. User request: {user_prompt}";
 
-    // The current core has no for-each surface. These three fan-out slots mirror
-    // plan.claims[0..2], so the demo still sends one event per generated claim.
-    emit CheckClaim(plan.first);
-    emit CheckClaim(plan.second);
-    emit CheckClaim(plan.third);
-
-    Event[] verification_rows =
-      select * from ledger where { etype == "ClaimVerified" };
+    Verification[] verification_rows = plan.claims |> verifyClaim;
 
     PublishedAnswer answer =
       self <- f"Synthesize a user-facing answer from this atomic claim plan, not from a hidden draft. The prose must combine all three atomic claims into one coherent natural-language response about the plan subject. The verification field is a structured JSON object with the subject, a claims array, and first/second/third audit slots; include every generated claim with claim_id, claim, claim_kind, verdict, evidence, and note from the matching verification rows. Claim plan: {plan}. Verification rows: {verification_rows}";
@@ -93,61 +137,6 @@ agent FactChecker grants { use search, perform PublishAnswer } {
     } else {
       emit FinalAnswer("abstained", answer.verification);
       say(f"answer held for review\n{answer.verification}");
-    }
-  }
-
-  when (CheckClaim q about self) {
-    AtomicClaim claim = q.claim;
-    text evidence = search(f"fact check this claim: {claim.statement}");
-
-    Credence<Grounding> grounded =
-      self <- f"Dummy fact-check criteria: mark Grounded if the search evidence supports the claim, Weak if it is opinionated but plausibly grounded, Unsupported otherwise. Claim kind: {claim.kind}. Claim: {claim.statement}. Search evidence: {evidence}";
-    Decision<Grounding> d = decide grounded by confidence 0.75;
-
-    if (d.committed == Grounded) {
-      Verification result = Verification {
-        claim_id: claim.claim_id,
-        claim: claim.statement,
-        claim_kind: claim.kind,
-        verdict: Grounded,
-        evidence: evidence,
-        note: "search evidence supports the claim under the dummy criteria"
-      };
-      emit ClaimVerified(result);
-      say(f"verification: {result.claim} -> {result.verdict}");
-    } else if (d.committed == Weak) {
-      Verification result = Verification {
-        claim_id: claim.claim_id,
-        claim: claim.statement,
-        claim_kind: claim.kind,
-        verdict: Weak,
-        evidence: evidence,
-        note: "claim is opinionated or only partially supported under the dummy criteria"
-      };
-      emit ClaimVerified(result);
-      say(f"verification: {result.claim} -> {result.verdict}");
-    } else if (d.committed == Unsupported) {
-      Verification result = Verification {
-        claim_id: claim.claim_id,
-        claim: claim.statement,
-        claim_kind: claim.kind,
-        verdict: Unsupported,
-        evidence: evidence,
-        note: "search evidence does not support the claim under the dummy criteria"
-      };
-      emit ClaimVerified(result);
-      say(f"verification: {result.claim} -> {result.verdict}");
-    } else {
-      Verification result = Verification {
-        claim_id: claim.claim_id,
-        claim: claim.statement,
-        claim_kind: claim.kind,
-        verdict: Unsupported,
-        evidence: evidence,
-        note: "fact checker abstained, so the claim is treated as unsupported"
-      };
-      emit ClaimVerified(result);
-      say(f"verification: {result.claim} -> unresolved");
     }
   }
 }
