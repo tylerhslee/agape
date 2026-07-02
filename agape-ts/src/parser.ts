@@ -10,7 +10,91 @@ export class ParseError extends Error {}
 const CONTEXTUAL = new Set(["find", "where", "select", "from", "match", "all", "any", "quorum"]);
 
 export function parse(source: string): A.Program {
-  return new Parser(lex(source)).parseProgram();
+  const program = new Parser(lex(source)).parseProgram();
+  assertCore(program); // reject any construct outside the core kernel (§15.2) — full grammar lockstep
+  return program;
+}
+
+// The core kernel is the complete language with NO syntactic sugar and NO library layer. Constructs the
+// full surface once had — the arm block, all/any/pipe fusion, the policy declaration, retry, reversible
+// sinks, agent-memory queries (find/match/select-from-agent), and the whole library layer (modules,
+// imports, visibility, generics, interfaces) — are not part of the core grammar, so accepting one would
+// break lockstep with the stripped SPEC.md. This pass walks the parsed program and rejects each as a
+// ParseError, so agape-ts accepts EXACTLY the core grammar. (Kept from the surface: gates as plain
+// expressions branched with `if`, quorum fusion, store/recall memory, and the objective select-from-ledger.)
+function assertCore(p: A.Program): void {
+  const bad = (msg: string): never => { throw new ParseError(`${msg} is not part of the core kernel`); };
+
+  const walkType = (t: A.TypeRef): void => {
+    if (t.kind === "named" && t.typeArgs && t.typeArgs.length) bad("a generic type instantiation");
+    if (t.kind === "event" || t.kind === "array") walkType(t.inner);
+  };
+  const walkExpr = (e: A.Expr): void => {
+    switch (e.kind) {
+      case "agg": bad("`all`/`any` fusion (use `quorum`)");
+      case "pipe": bad("the `|>` pipe");
+      case "find": bad("a `find` graph query");
+      case "match": bad("a `match` similarity query");
+      case "select": if (e.target !== "ledger") bad("a `select` over agent memory (use recall, or `select … from ledger`)"); break;
+      case "member": walkExpr(e.obj); break;
+      case "index": walkExpr(e.obj); walkExpr(e.index); break;
+      case "call": walkExpr(e.callee); e.args.forEach(walkExpr); break;
+      case "binary": walkExpr(e.left); walkExpr(e.right); break;
+      case "unary": walkExpr(e.operand); break;
+      case "send": walkExpr(e.dest); walkExpr(e.message); break;
+      case "recall": walkExpr(e.mem); walkExpr(e.query); break;
+      case "decide": walkExpr(e.credence); break;
+      case "endorse": walkExpr(e.subject); walkExpr(e.decision); break;
+      case "quorum": walkExpr(e.source); break;
+      case "structlit": if (e.typeArgs && e.typeArgs.length) bad("a generic struct literal"); e.fields.forEach((f) => walkExpr(f.value)); break;
+      case "arraylit": e.items.forEach(walkExpr); break;
+      case "fstring": e.parts.forEach((pt) => { if (pt.kind === "expr") walkExpr(pt.expr); }); break;
+      default: break;
+    }
+  };
+  const walkStmt = (s: A.Stmt): void => {
+    switch (s.kind) {
+      case "dispatch": bad("a gate arm block (branch on `.committed` with `if`)");
+      case "retry": bad("`retry` (the core has no unbounded or bounded loop)");
+      case "var": walkType(s.type); if (s.init) walkExpr(s.init); break;
+      case "assign": walkExpr(s.target); walkExpr(s.value); break;
+      case "spawn": s.args.forEach(walkExpr); break;
+      case "emit": case "perform": s.args.forEach(walkExpr); break;
+      case "say": walkExpr(s.arg); break;
+      case "return": if (s.value) walkExpr(s.value); break;
+      case "if": walkExpr(s.cond); s.then.forEach(walkStmt); if (s.else) s.else.forEach(walkStmt); break;
+      case "when": if (s.about) walkExpr(s.about); if (s.guard) walkExpr(s.guard); s.body.forEach(walkStmt); break;
+      case "memdecl": if (s.init) walkExpr(s.init); break;
+      case "prompt": walkType(s.type); break;
+      case "exprstmt": walkExpr(s.expr); break;
+      default: break;
+    }
+  };
+  const walkDecl = (d: A.Decl): void => {
+    switch (d.kind) {
+      case "policydecl": bad("a `policy` declaration (put the rule inline on the gate)");
+      case "interface": bad("an `interface` (the library layer is deferred)");
+      case "struct": if (d.typarams && d.typarams.length) bad("a generic `struct`"); d.fields.forEach((f) => walkType(f.type)); break;
+      case "fn": if (d.typarams && d.typarams.length) bad("a generic `fn`"); d.params.forEach((f) => walkType(f.type)); d.body.forEach(walkStmt); break;
+      case "action": if (d.reversible) bad("a `reversible` action"); d.fields.forEach((f) => walkType(f.type)); break;
+      case "tool": if (d.reversible) bad("a `reversible` tool"); d.params.forEach((f) => walkType(f.type)); walkType(d.ret); break;
+      case "event": d.fields.forEach((f) => walkType(f.type)); break;
+      case "prompt": walkType(d.type); break;
+      case "agent":
+        if (d.ifaces && d.ifaces.length) bad("an `agent : Interface` implements-clause");
+        d.fields.forEach((f) => walkType(f.type));
+        d.ctor.forEach(walkStmt);
+        d.hooks.forEach((h) => h.body.forEach(walkStmt));
+        d.whens.forEach((w) => { if (w.about) walkExpr(w.about); if (w.guard) walkExpr(w.guard); w.body.forEach(walkStmt); });
+        break;
+      default: break;
+    }
+  };
+
+  if (p.module) bad("a `module` header");
+  if (p.imports.length) bad("an `import`");
+  p.decls.forEach(walkDecl);
+  p.stmts.forEach(walkStmt);
 }
 
 class Parser {

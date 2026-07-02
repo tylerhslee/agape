@@ -15,3 +15,9 @@ playwright-report/
 __pycache__/
 *.pyc
 .venv/
+
+# Editor swap files + local scratch
+*.swp
+*.swo
+.commitmsg
+KERNEL.md

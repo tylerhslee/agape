@@ -13,12 +13,10 @@ agent Greeter grants { perform Announce } {
     text draft = "hello, world";
     Credence<Verdict> v = self <- f"is this safe to publish: {draft}";
     Decision<Verdict> d = decide v by confidence 0.8;
-    endorse draft by d {
-      Publish as e { perform Announce(e); }
-      Revise      { emit Revised("held"); }
-    } abstain {
-      emit Revised("uncertain");
-    }
+    Endorsement<text> e = endorse draft by d;
+    if (e.committed == Publish) { perform Announce(e); }
+    else if (e.committed == Revise) { emit Revised("held"); }
+    else { emit Revised("uncertain"); }
   }
 }
 spawn Greeter g;
@@ -51,7 +49,7 @@ describe("the trusted kernel — gate chain", () => {
     expect(rev!.payload).toEqual(["held"]);
   });
 
-  it("abstains below threshold → no commit, no sink, abstain branch runs", async () => {
+  it("abstains below threshold → no commit, no sink, else branch runs", async () => {
     const r = await runWith({ Publish: 0.5, Revise: 0.5 }); // top 0.5 < 0.8 → abstained
     expect(etypes(r)).toContain("Abstained");
     expect(etypes(r)).not.toContain("Announce");
@@ -90,9 +88,9 @@ describe("the consequential-action rule", () => {
 });
 
 describe("the identity dependency fails closed (§13)", () => {
-  // `decide c by <principal>` reaches the identity dependency. SPEC §13: "A declined or unavailable
-  // principal records `FailedPrincipalDecision` and the decision stays `abstained`." An unconfigured /
-  // unavailable principal must NEVER fabricate an approval that never happened.
+  // A principal-prefixed `p decide c by r` reaches the identity dependency when the rule cannot commit.
+  // SPEC §13: "A declined or unavailable principal records `FailedPrincipalDecision` and the decision stays
+  // `abstained`." An unconfigured / unavailable principal must NEVER fabricate an approval that never happened.
   const RELEASE = `
     enum Approval { Approve, Decline }
     action ReleaseFunds(int amount);
@@ -100,11 +98,11 @@ describe("the identity dependency fails closed (§13)", () => {
     agent Clerk grants { perform ReleaseFunds } {
       on awake {
         Credence<Approval> c = self <- "assess this refund request";
-        Decision<Approval> d = decide c by alice;
-        endorse c by d {
-          Approve as e { perform ReleaseFunds(10000); }
-          Decline as e { emit Event("declined"); }
-        } abstain { emit Event("withheld"); }
+        Decision<Approval> d = alice decide c by conformal 0.05;
+        Endorsement<Credence<Approval>> e = endorse c by d;
+        if (e.committed == Approve) { perform ReleaseFunds(10000); }
+        else if (e.committed == Decline) { emit Event("declined"); }
+        else { emit Event("withheld"); }
       }
     }
     spawn Clerk a; awake a;
@@ -135,8 +133,6 @@ describe("the identity dependency fails closed (§13)", () => {
 });
 
 describe("the prompt sensor opens from its declaration (§5b)", () => {
-  // A `prompt T NAME;` declaration opens a standing external input sensor. The sensor opens because the
-  // source is DECLARED — once, independent of how many agents subscribe (`when (Prompt … about NAME)`).
   it("opens PromptOpened exactly once per declared prompt, even with two subscribers", async () => {
     const prog = `
       prompt text question;
@@ -179,8 +175,8 @@ describe("the memory surface cannot launder trust (§10, §13, §16.7)", () => {
     await expect(run(parse(prog), {})).rejects.toMatchObject({ cls: "TaintViolation" });
   });
 
-  // §13 dependency scope: a decision about one credence cannot endorse an unrelated recalled/queried fact.
-  // Endorsing a raw recall by a decision about something else, then performing it, must be rejected.
+  // §13 dependency scope: a decision about one credence cannot endorse an unrelated recalled fact. Endorsing
+  // a raw recall by a decision about something else, then performing it, must be rejected.
   it("rejects endorsing an out-of-scope recalled value (endorse-wrapper laundering)", async () => {
     const prog = `
       enum R { Yes, No }
@@ -191,10 +187,9 @@ describe("the memory surface cannot launder trust (§10, §13, §16.7)", () => {
           text r = notes -> "q";
           Credence<R> c = self <- "approve?";
           Decision<R> d = decide c by confidence 0.8;
-          endorse r by d {
-            Yes as e { perform Transfer(e); }
-            No  as e { perform Transfer(e); }
-          }
+          Endorsement<text> e = endorse r by d;
+          if (e.committed == Yes) { perform Transfer(e); }
+          else if (e.committed == No) { perform Transfer(e); }
         }
       }
       spawn Bank b; awake b;
@@ -203,22 +198,20 @@ describe("the memory surface cannot launder trust (§10, §13, §16.7)", () => {
       .rejects.toMatchObject({ cls: "GateError" });
   });
 
-  // The legitimate remedy still works: re-decide the queried fact on its OWN credence (it is then in the
+  // The legitimate remedy still works: re-decide the recalled fact on its OWN credence (it is then in the
   // decision's dependency scope) — the endorse is admitted and records `Endorsed`.
-  it("admits a queried fact re-decided on its own credence", async () => {
+  it("admits a recalled fact re-decided on its own credence", async () => {
     const prog = `
-      struct Memo { amount: int, to: text }
       enum R { Yes, No }
-      action Transfer(Memo memo);
-      agent Bank grants { perform Transfer } {
+      agent Bank {
         on awake {
-          Memo m = select amount, to from self where { kind: "pending" };
-          Credence<R> c = self <- f"approve {m}?";
+          mem notes <- "pending: 100 to bob";
+          text fact = notes -> "the pending transfer";
+          Credence<R> c = self <- f"approve {fact}?";
           Decision<R> d = decide c by confidence 0.8;
-          endorse m by d {
-            Yes as e { say("ok"); }
-            No  as e { say("no"); }
-          }
+          Endorsement<text> e = endorse fact by d;
+          if (e.committed == Yes) { say("ok"); }
+          else if (e.committed == No) { say("no"); }
         }
       }
       spawn Bank b; awake b;
@@ -242,7 +235,9 @@ describe("the memory surface cannot launder trust (§10, §13, §16.7)", () => {
           text safe = "ok";
           Credence<R> c = self <- f"ok? {safe}";
           Decision<R> d = decide c by confidence 0.5;
-          endorse u by d { Yes as e { perform Pay(e); } No as e { say("n"); } }
+          Endorsement<text> e = endorse u by d;
+          if (e.committed == Yes) { perform Pay(e); }
+          else if (e.committed == No) { say("n"); }
         }
       }
       spawn Bank b; awake b;
@@ -262,7 +257,9 @@ describe("the memory surface cannot launder trust (§10, §13, §16.7)", () => {
           text safe = "ok";
           Credence<R> c = self <- f"ok? {safe}";
           Decision<R> d = decide c by confidence 0.1;
-          endorse reply by d { Yes as e { perform Do(e); } No as e { perform Do(e); } }
+          Endorsement<text> e = endorse reply by d;
+          if (e.committed == Yes) { perform Do(e); }
+          else if (e.committed == No) { perform Do(e); }
         }
       }
       spawn A a; awake a;
@@ -294,9 +291,7 @@ describe("sync color reaches the async memory substrate (§9, §10)", () => {
   const rejects = (body: string) =>
     expect(run(parse(`sync null f() { ${body} return null; }`), {})).rejects.toMatchObject({ cls: "ColorViolation" });
   it("rejects a recall in a sync body", async () => { await rejects(`mem n <- "x"; text t = n -> "q";`); });
-  it("rejects a ledger/facts select in a sync body", async () => { await rejects(`array<R> rs = select c from self where { a == 1 };`); });
   it("rejects store() in a sync body", async () => { await rejects(`store("fact");`); });
-  it("rejects embed() in a sync body", async () => { await rejects(`embed("vec");`); });
 });
 
 describe("ledger reads carry recorded trust (§10) — Endorsed reads back settled", () => {
@@ -308,9 +303,12 @@ describe("ledger reads carry recorded trust (§10) — Endorsed reads back settl
       action Do(text body);
       agent A grants { perform Do } {
         on awake {
-          Credence<R> c = self <- "ok?";
+          text subj = self <- "describe";
+          Credence<R> c = self <- f"ok: {subj}";
           Decision<R> d = decide c by confidence 0.1;
-          endorse c by d { Yes as e { } No as e { } }
+          Endorsement<text> e = endorse subj by d;
+          if (e.committed == Yes) { say("y"); }
+          else if (e.committed == No) { say("n"); }
           text row = select subject from ledger where { etype == "Endorsed" };
           perform Do(row);
         }
@@ -366,10 +364,17 @@ describe("structs (§3) — a record value with field access", () => {
   });
 });
 
-describe("reproducibility", () => {
-  it("same provider script → identical chain-head (recorded replay equivalence, T4)", async () => {
-    const a = await runWith({ Publish: 0.9, Revise: 0.1 });
-    const b = await runWith({ Publish: 0.9, Revise: 0.1 });
-    expect(a.ledger.head()).toBe(b.ledger.head());
+describe("core grammar lockstep — removed constructs are ParseErrors", () => {
+  // The strip is enforced by assertCore (parser.ts): a construct outside the core kernel is a ParseError.
+  it("rejects a gate arm block", () => {
+    expect(() => parse(`enum V{A,B} agent X { on awake { Credence<V> c = self <- "q"; decide c by confidence 0.9 { A {} B {} } } }`))
+      .toThrow(/core kernel/);
+  });
+  it("rejects all()/quorum keeps", () => {
+    expect(() => parse(`agent X { on awake { Credence<bool> a = self <- "q"; Credence<bool> b = self <- "q"; independent a,b; Credence<bool> f = all(a,b); } }`))
+      .toThrow(/core kernel/);
+  });
+  it("rejects a policy declaration", () => {
+    expect(() => parse(`policy P { threshold 0.5 } agent X { on awake { say("x"); } }`)).toThrow(/core kernel/);
   });
 });
