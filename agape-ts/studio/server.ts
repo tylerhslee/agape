@@ -14,6 +14,8 @@ import { readFileSync, readdirSync, statSync, existsSync, writeFileSync } from "
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse } from "../src/parser.js";
+import { check } from "../src/check.js";
+import { buildGraph } from "../src/graph.js";
 import { createSession, run, type ConsultRequest, type PrincipalAttestation, type PromptInput, type RuntimeSession } from "../src/interp.js";
 import { createProvider, loadManifest } from "../src/config.js";
 import type * as A from "../src/ast.js";
@@ -656,7 +658,7 @@ export function startStudio(opts: StudioOptions): Promise<{ close: () => void }>
       if (req.method === "GET" && url.pathname === "/api/meta") {
         return json(res, 200, {
           dir: opts.dir,
-          version: "1.0.0-alpha.2026.7.2.1",
+          version: "1.0.0-alpha.2026.7.2.2",
           providers: providerStatuses(opts.allowLive),
           access: { liveEnabled: opts.allowLive, tokenRequired: Boolean(accessToken) },
         });
@@ -674,6 +676,21 @@ export function startStudio(opts: StudioOptions): Promise<{ close: () => void }>
         let map: ProgramMap | undefined;
         try { map = mapProgram(parse(program.source)); } catch { /* source may be mid-edit; run will show parse errors */ }
         return json(res, 200, { ...program, map });
+      }
+      if (req.method === "GET" && url.pathname === "/api/graph") {
+        // the statically DERIVED orchestration graph (GRAPH.md): parse + check, then extract.
+        // A program that fails the front end gets its rejection back, not a graph of unverified code.
+        const name = url.searchParams.get("name") ?? "";
+        const program = readProgramSource(opts.dir, name);
+        if (!program) return json(res, 404, { error: "unknown program" });
+        try {
+          const ast = parse(program.source);
+          check(ast);
+          return json(res, 200, { ok: true, graph: buildGraph(ast, name) });
+        } catch (e) {
+          const cls = (e as { cls?: string }).cls ?? "ParseError";
+          return json(res, 200, { ok: false, error: { cls, message: (e as Error).message } });
+        }
       }
       if (req.method === "GET" && url.pathname === "/api/spec") {
         const spec = readSpecSource();

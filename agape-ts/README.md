@@ -1,11 +1,11 @@
 # agape-ts — a TypeScript compiler + runtime for Agape
 
 A from-scratch implementation of the Agape **core kernel** (per `../SPEC.md`,
-v1.0.0-alpha.2026.7.2.1), written in TypeScript so it can live inside Agape Studio. It lexes,
+v1.0.0-alpha.2026.7.2.2), written in TypeScript so it can live inside Agape Studio. It lexes,
 parses, statically checks, and runs the complete core language, with the trusted kernel
 (`decide` → `Decided` → committed `endorse` → granted sink → ledger) enforced both statically and at runtime.
 
-**Conformance: 164/164 (100%)** against `../agape-conformance` — see [CONFORMANCE.md](CONFORMANCE.md).
+**Conformance: 167/167 (100%)** against `../agape-conformance` — see [CONFORMANCE.md](CONFORMANCE.md).
 
 ## Run
 
@@ -47,7 +47,8 @@ testimony  ->  Credence<Verdict>  ->  Decided Decision<Verdict>  ->  Endorsement
 | runtime core | `src/runtime.ts` | values + the trust lattice, the **provider seam**, the ledger |
 | interpreter | `src/interp.ts` | discrete-event runtime (§15.4/§16); the gate; the consequential-action rule |
 | config | `src/config.ts` | binds the provider/identity/tool dependencies to backends (§17) |
-| cli | `src/cli.ts` | `run <file.ag>` · `studio [--port N]` |
+| cli | `src/cli.ts` | `run <file.ag>` · `graph <file.ag>` · `studio [--port N]` |
+| graph | `src/graph.ts` | the statically derived orchestration graph — see `GRAPH.md` |
 | studio | `studio/` | the execution-inspection web UI (see below) |
 | conformance | `conformance/run.mts` | runs the suite against this impl — see [CONFORMANCE.md](CONFORMANCE.md) |
 
@@ -58,6 +59,10 @@ was launched from, runs them through this interpreter, and visualizes the execut
 timeline (every event, tick by tick), the trusted-kernel chain (Credence → Decision → Endorsement →
 sink), gate outcomes with basis/margin, say output, and the chain-head. A rejected program shows its
 error class and message — it is a quality-control lens over Agape runs, not an editor.
+
+The **Orchestration graph** panel shows the statically derived agent graph (`GRAPH.md`) —
+agents, handlers, gates, principals, and sinks with their typed edges — and a run’s ledger
+events light up the witnessed path through it. Click a node to jump to its source line.
 
 ## Providers are configurable (not mock-locked)
 

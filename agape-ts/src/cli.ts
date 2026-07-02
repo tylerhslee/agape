@@ -48,8 +48,26 @@ async function main(argv: string[]): Promise<number> {
     await startStudio({ dir: process.cwd(), port, allowLive, token });
     return await new Promise<number>(() => {}); // serve until killed
   }
+  // `graph` — the statically derived orchestration graph (GRAPH.md): parse + check, then emit.
+  if (cmd === "graph") {
+    let file = "";
+    let format: "json" | "dot" = "json";
+    for (let i = 0; i < rest.length; i++) {
+      if (rest[i] === "--format") format = rest[++i] === "dot" ? "dot" : "json";
+      else file = rest[i]!;
+    }
+    if (!file) { console.error("usage: agape-ts graph <file.ag> [--format json|dot]"); return 2; }
+    const { check } = await import("./check.js");
+    const { buildGraph, toDot } = await import("./graph.js");
+    const program = parse(readFileSync(file, "utf8"));
+    check(program); // a rejected program reports the rejection, not a graph of unverified code
+    const graph = buildGraph(program, file);
+    console.log(format === "dot" ? toDot(graph) : JSON.stringify(graph, null, 2));
+    return 0;
+  }
   if (cmd !== "run" || rest.length === 0) {
     console.error("usage: agape-ts run <file.ag> [--manifest agape.toml] [--provider mock|anthropic|openai|gemini]");
+    console.error("       agape-ts graph <file.ag> [--format json|dot]                      # derived orchestration graph");
     console.error("       agape-ts studio [--port 4317] [--share|--live] [--token secret]   # execution-inspection UI over the cwd");
     return 2;
   }

@@ -343,6 +343,41 @@
   .empty { color: var(--faint); text-align: center; padding: 60px 20px; font-size: 13px; }
   .meta { font: 11px var(--mono); color: var(--faint); margin-top: 6px; }
 
+  /* ---- orchestration graph (derived from source; GRAPH.md) ---- */
+  .graphWrap { overflow: auto; -webkit-overflow-scrolling: touch; }
+  .graphWrap svg { display: block; }
+  .gcluster > rect { fill: rgba(255,255,255,.02); stroke: var(--line); }
+  .gcluster > text { fill: var(--dim); font: 600 10.5px var(--mono); }
+  .gnode { cursor: pointer; }
+  .gnode rect { fill: var(--panel2); stroke: var(--faint); stroke-width: 1.1; transition: stroke .15s; }
+  .gnode text { fill: #c3ccdf; font: 10.5px var(--mono); pointer-events: none; }
+  .gnode text.sub { fill: var(--faint); font-size: 9px; }
+  .gnode:hover rect { stroke: var(--accent); }
+  .gnode.k-gate rect { stroke: var(--violet); }
+  .gnode.k-sink rect { stroke: var(--gold); }
+  .gnode.k-tool rect { stroke: var(--orange); }
+  .gnode.k-principal rect { stroke: var(--amber); }
+  .gnode.k-prompt rect { stroke: var(--green); }
+  .gnode.k-mem rect, .gnode.k-ledger rect { stroke: var(--teal); stroke-dasharray: 4 3; }
+  .gnode.k-event rect { stroke: var(--faint); stroke-dasharray: 4 3; }
+  .gnode.k-agent rect { fill: transparent; stroke: none; }
+  .gnode.k-agent text { fill: var(--text); font-weight: 600; }
+  .gedge path { fill: none; stroke-width: 1.3; opacity: .8; }
+  .gedge text { font: 9.5px var(--mono); opacity: .9; }
+  .gedge.dashed path { stroke-dasharray: 4 3; }
+  .gnode.lit rect { stroke: var(--green); stroke-width: 1.8; filter: drop-shadow(0 0 5px rgba(52,211,153,.55)); }
+  .gedge.lit path { stroke: var(--green) !important; stroke-width: 2.2; opacity: 1; }
+  .gedge.lit text { fill: var(--green) !important; }
+  .gnode.fail rect { stroke: var(--red); stroke-width: 1.8; filter: drop-shadow(0 0 5px rgba(248,113,113,.55)); }
+  .gnode.pend rect, .gedge.pend path { animation: pulse 1.4s ease-in-out infinite; }
+  .gnode.pend rect { stroke: var(--amber); stroke-width: 1.8; }
+  .gedge.pend path { stroke: var(--amber) !important; stroke-width: 2.2; }
+  .graphLegend { display: flex; gap: 4px 14px; flex-wrap: wrap; font: 10px var(--mono); color: var(--faint); margin-top: 10px; }
+  .graphLegend span { display: inline-flex; align-items: center; gap: 5px; }
+  .graphLegend i { width: 14px; height: 0; border-top: 2px solid var(--c, var(--faint)); }
+  .flashLine { animation: flashbg 1.6s ease-out; }
+  @keyframes flashbg { 0% { background: rgba(124,108,246,.35); } 100% { background: transparent; } }
+
   /* ---- mobile ---- */
   @media (max-width: 900px), (orientation: portrait) {
     html, body { height: auto; min-height: 100%; }
@@ -475,7 +510,7 @@ const CATS = {
 };
 
 let state = {
-  programs: [], selected: null, view: "program", meta: {}, source: "", sourceOrigin: null, map: null,
+  programs: [], selected: null, view: "program", meta: {}, source: "", sourceOrigin: null, map: null, graph: null,
   configSource: "", configExists: false, configEditing: false, configDirty: false, configValues: {},
   editing: false, dirty: false, sessionId: null, listening: false, awaitingAttest: false,
   pollTimer: null, collapsed: {}, currentProject: null,
@@ -1190,6 +1225,12 @@ async function select(name) {
   state.sourceOrigin = origin;
   state.map = map || null;
   $("source").innerHTML = renderCode(state.source);
+  // the statically derived orchestration graph (GRAPH.md) — shown before any run.
+  state.graph = null;
+  try {
+    const gr = await api(`/api/graph?name=${encodeURIComponent(name)}`);
+    state.graph = gr.ok ? gr.graph : null;
+  } catch { /* the graph is a lens, never a blocker */ }
   renderInputControls(state.map);
   $("workspace").classList.remove("specMode");
   renderAttestationControls(null);
@@ -1201,8 +1242,11 @@ async function select(name) {
   persist(); // the selection survives a refresh
   updateRunControls();
   updateSourceButtons();
-  const note = origin === "example" ? "This bundled example is not written into the project directory." : "Press Run to inspect the ledger.";
-  $("results").innerHTML = `<div class="empty"><b>${esc(name)}</b><br><br>${esc(note)}</div>`;
+  const note = origin === "example" ? "This bundled example is not written into the project directory." : "Press Run to inspect the ledger — the graph below is derived statically from the source.";
+  $("results").innerHTML = (state.graph ? graphPanelHtml() : "") +
+    `<div class="empty"><b>${esc(name)}</b><br><br>${esc(note)}</div>`;
+  applyAllPanelStates($("results"));
+  if (state.graph) drawGraph([], state.map);
 }
 
 $("specNav").onclick = () => showSpec();
@@ -1819,6 +1863,282 @@ function renderRunDetails(r) {
   return parts.join("");
 }
 
+// ---- the orchestration graph (GRAPH.md): statically DERIVED from source, overlaid live ----------
+// Layout: units (agent clusters + standalone nodes) ranked left→right by longest path over the
+// unit-level edges; sources (prompts/top) hug the left, effects (sinks/tools/principals) the right.
+// The static graph is the proof shape; a run's ledger events light up the witnessed path.
+
+const EDGE_COLORS = {
+  event: "#86efac", prompt: "#34d399", send: "#7dd3fc", flow: "#c4b5fd", escalate: "#fbbf24",
+  sink: "#fde047", tool: "#fdba74", store: "#5eead4", recall: "#5eead4", query: "#5eead4", spawn: "#5b6478",
+};
+
+function graphUnits(g) {
+  const members = new Map();
+  for (const n of g.nodes) if (n.parent) {
+    if (!members.has(n.parent)) members.set(n.parent, []);
+    members.get(n.parent).push(n);
+  }
+  const units = [], unitOf = new Map();
+  for (const n of g.nodes) {
+    if (n.parent) continue;
+    if (members.has(n.id)) {
+      const ms = members.get(n.id);
+      const roots = ms.filter((m) => m.kind === "hook" || m.kind === "handler");
+      const gates = ms.filter((m) => m.kind === "gate");
+      const mems = ms.filter((m) => m.kind === "mem");
+      const ordered = [];
+      for (const r of roots) {
+        ordered.push(r);
+        for (const gt of gates) if (gt.id.startsWith("gate:" + r.id)) ordered.push(gt);
+      }
+      for (const gt of gates) if (!ordered.includes(gt)) ordered.push(gt);
+      ordered.push(...mems);
+      units.push({ id: n.id, head: n, members: ordered });
+      unitOf.set(n.id, n.id);
+      for (const m of ordered) unitOf.set(m.id, n.id);
+    } else {
+      units.push({ id: n.id, head: n, members: [] });
+      unitOf.set(n.id, n.id);
+    }
+  }
+  return { units, unitOf };
+}
+
+function rankUnits(units, unitOf, edges) {
+  const rank = new Map(units.map((u) => [u.id, 0]));
+  const uedges = [];
+  for (const e of edges) {
+    const a = unitOf.get(e.from), b = unitOf.get(e.to);
+    if (a && b && a !== b) uedges.push([a, b]);
+  }
+  for (let pass = 0; pass <= units.length + 1; pass++) {
+    let moved = false;
+    for (const [a, b] of uedges) {
+      const next = rank.get(a) + 1;
+      if (next > rank.get(b) && next <= units.length) { rank.set(b, next); moved = true; }
+    }
+    if (!moved) break;
+  }
+  const EFFECT = new Set(["sink", "tool", "principal", "ledger", "event"]);
+  let maxR = 0;
+  for (const v of rank.values()) maxR = Math.max(maxR, v);
+  for (const u of units) {
+    if (EFFECT.has(u.head.kind)) rank.set(u.id, Math.max(rank.get(u.id), maxR));
+    if (u.head.kind === "prompt" || u.head.kind === "top") rank.set(u.id, 0);
+  }
+  return rank;
+}
+
+function graphOverlay(g, events, map) {
+  const ln = new Set(), le = new Set(), fail = new Set();
+  const ids = new Set(g.nodes.map((n) => n.id));
+  const litNode = (id) => { if (ids.has(id)) ln.add(id); };
+  // variant-guarded edges light only when a Decided event committed that variant (first pass below).
+  const committed = new Set();
+  for (const ev of events || []) {
+    if (ev.etype !== "Decided") continue;
+    const p = ev.payload || {};
+    const d = p.decision && typeof p.decision === "object" ? p.decision : p; // flat or nested payload
+    const v = typeof p.decision === "string" ? p.decision : (d.effectiveCommitted || d.committed);
+    if (v && v !== "abstained") committed.add(v);
+  }
+  const variantOk = (e) => !e.variant || committed.has(e.variant);
+  const litEdges = (pred) => { for (const e of g.edges) if (pred(e) && variantOk(e)) le.add(e.id); };
+  const gatesOf = (agent, en) => new Set(g.nodes.filter((n) =>
+    n.kind === "gate" && (!agent || n.parent === "agent:" + agent) && (!en || (n.meta || {}).enum === en)
+  ).map((n) => n.id));
+  for (const ev of events || []) {
+    const t = ev.etype, p = ev.payload || {}, ag = ev.agent;
+    if (map?.actions?.includes(t)) { litNode("sink:" + t); litEdges((e) => e.kind === "sink" && e.to === "sink:" + t); continue; }
+    if (map?.events?.includes(t)) { litNode("event:" + t); litEdges((e) => e.kind === "event" && e.label === t); continue; }
+    switch (t) {
+      case "Decided": case "Endorsed": {
+        const en = (p.decision && typeof p.decision === "object" ? p.decision.enum : p.enum) || p.credence;
+        const gates = gatesOf(ag, en).size ? gatesOf(ag, en) : gatesOf(ag);
+        for (const id of gates) ln.add(id);
+        litEdges((e) => e.kind === "flow" && gates.has(e.to));
+        break;
+      }
+      case "PrincipalDecision": case "FailedPrincipalDecision":
+        litNode("principal:" + ev.subject);
+        litEdges((e) => e.kind === "escalate" && e.to === "principal:" + ev.subject);
+        if (t === "FailedPrincipalDecision") fail.add("principal:" + ev.subject);
+        break;
+      case "Prompt": case "PromptOpened":
+        litNode("prompt:" + ev.subject);
+        if (t === "Prompt") litEdges((e) => e.kind === "prompt" && e.from === "prompt:" + ev.subject);
+        break;
+      case "Sent": if (p.to) { litNode("agent:" + p.to); litEdges((e) => e.kind === "send" && e.to === "agent:" + p.to); } break;
+      case "Spawned": litNode("agent:" + ev.subject); litEdges((e) => e.kind === "spawn" && e.to === "agent:" + ev.subject); break;
+      case "AgentAwake": litNode("agent:" + ev.subject); break;
+      case "ToolStarted": case "ToolResolved": litNode("tool:" + ev.subject); litEdges((e) => e.kind === "tool" && e.to === "tool:" + ev.subject); break;
+      case "Internalized": if (ag && ids.has(`mem:${ag}/${ev.subject}`)) { litNode(`mem:${ag}/${ev.subject}`); litEdges((e) => e.kind === "store" && e.to === `mem:${ag}/${ev.subject}`); } break;
+      case "MemoryConsulted": if (ag) litEdges((e) => e.kind === "recall" && e.from.startsWith(`mem:${ag}/`)); break;
+      case "QueryResult": litNode("ledger"); litEdges((e) => e.kind === "query"); break;
+    }
+  }
+  return { ln, le, fail };
+}
+
+function gtext(x, y, cls, s, max) {
+  const label = s.length > max ? s.slice(0, max - 1) + "…" : s;
+  return `<text x="${x}" y="${y}" class="${cls}">${esc(label)}</text>`;
+}
+
+function drawGraph(events, map) {
+  const host = $("graphWrap");
+  if (!host) return;
+  const g = state.graph;
+  if (!g || !g.nodes.length) { host.innerHTML = `<div class="empty">no graph — the program has no declared topology</div>`; return; }
+  const { units, unitOf } = graphUnits(g);
+  const rank = rankUnits(units, unitOf, g.edges);
+  const over = graphOverlay(g, events, map);
+  const pend = state.pendingAttestation;
+
+  // ---- geometry ----
+  const UW = 216, PADX = 10, HEADH = 24, VGAP = 24, CGAP = 84, M = 14;
+  const rowH = (n) => (n.kind === "gate" ? 40 : 28);
+  const cols = new Map();
+  for (const u of units) {
+    const r = rank.get(u.id);
+    if (!cols.has(r)) cols.set(r, []);
+    cols.get(r).push(u);
+  }
+  const KIND_ORDER = { top: 0, prompt: 1, agent: 2, handler: 3, gate: 4, sink: 5, tool: 6, event: 7, principal: 8, mem: 9, ledger: 10, hook: 3 };
+  const pos = new Map(); // nodeId -> {x,y,w,h}
+  let maxR = 0, svgH = 0;
+  for (const r of cols.keys()) maxR = Math.max(maxR, r);
+  for (const [r, list] of [...cols.entries()].sort((a, b) => a[0] - b[0])) {
+    list.sort((a, b) => (KIND_ORDER[a.head.kind] ?? 9) - (KIND_ORDER[b.head.kind] ?? 9) || a.head.line - b.head.line);
+    const x = M + r * (UW + CGAP);
+    let y = M;
+    for (const u of list) {
+      if (u.members.length) {
+        let h = HEADH + 8;
+        pos.set(u.head.id, { x, y, w: UW, h: HEADH, cluster: true, frameY: y });
+        for (const m of u.members) {
+          const ind = m.kind === "gate" ? 12 : 0;
+          pos.set(m.id, { x: x + PADX + ind, y: y + h, w: UW - 2 * PADX - ind, h: rowH(m) });
+          h += rowH(m) + 8;
+        }
+        u.frame = { x, y, w: UW, h: h + 4 };
+        y += h + 4 + VGAP;
+      } else {
+        const h = 30;
+        pos.set(u.head.id, { x, y, w: UW, h });
+        y += h + VGAP;
+      }
+      svgH = Math.max(svgH, y);
+    }
+  }
+  const svgW = M * 2 + (maxR + 1) * UW + maxR * CGAP;
+
+  // ---- edges ----
+  // parallel edges (same endpoints) fan out vertically; labels stagger along the path so edges
+  // that converge on one node keep readable labels.
+  const pairCount = new Map(), pairSeen = new Map();
+  for (const e of g.edges) {
+    const k = e.from + "→" + e.to;
+    pairCount.set(k, (pairCount.get(k) || 0) + 1);
+  }
+  const intoCount = new Map();
+  const epaths = [];
+  for (const e of g.edges) {
+    const s = pos.get(e.from), t = pos.get(e.to);
+    if (!s || !t) continue;
+    const pk = e.from + "→" + e.to;
+    const pi = pairSeen.get(pk) || 0;
+    pairSeen.set(pk, pi + 1);
+    const fan = (pi - (pairCount.get(pk) - 1) / 2) * 10;
+    const li = intoCount.get(e.to) || 0; // stagger labels per target node
+    intoCount.set(e.to, li + 1);
+    const color = EDGE_COLORS[e.kind] || "var(--faint)";
+    let d, lx, ly;
+    const sy = s.y + s.h / 2 + fan, ty = t.y + t.h / 2 + fan;
+    if (t.x >= s.x + s.w) { // forward
+      const x1 = s.x + s.w, x2 = t.x, dx = Math.max(28, (x2 - x1) / 2);
+      d = `M ${x1} ${sy} C ${x1 + dx} ${sy}, ${x2 - dx} ${ty}, ${x2 - 5} ${ty}`;
+      const f = 0.32 + ((li % 3) * 0.22);
+      lx = x1 + (x2 - x1) * f; ly = sy + (ty - sy) * f - 5;
+    } else if (t.x + t.w <= s.x) { // backward
+      const x1 = s.x, x2 = t.x + t.w, dx = Math.max(28, (x1 - x2) / 2);
+      d = `M ${x1} ${sy} C ${x1 - dx} ${sy}, ${x2 + dx} ${ty}, ${x2 + 5} ${ty}`;
+      const f = 0.32 + ((li % 3) * 0.22);
+      lx = x1 + (x2 - x1) * f; ly = sy + (ty - sy) * f - 5;
+    } else { // same column — bulge right
+      const x1 = s.x + s.w, x2 = t.x + t.w, bx = Math.max(x1, x2) + 36;
+      d = `M ${x1} ${sy} C ${bx} ${sy}, ${bx} ${ty}, ${x2 + 5} ${ty}`;
+      lx = bx - 6; ly = (sy + ty) / 2 - 5;
+    }
+    const lit = over.le.has(e.id);
+    const pendEdge = pend && e.kind === "escalate" && e.to === "principal:" + pend.principal;
+    const cls = `gedge${e.kind === "recall" || e.kind === "store" ? " dashed" : ""}${lit ? " lit" : ""}${pendEdge ? " pend" : ""}`;
+    const label = e.label ? (e.variant ? `${e.label} · ${e.variant}` : e.label) : (e.variant || "");
+    epaths.push(`<g class="${cls}">
+      <path d="${d}" stroke="${color}" marker-end="url(#ar-${lit ? "lit" : pendEdge ? "pend" : e.kind})"></path>
+      ${label ? gtext(lx - label.length * 2.6, ly, "", label, 26).replace("<text ", `<text fill="${color}" `) : ""}
+    </g>`);
+  }
+
+  // ---- nodes ----
+  const nparts = [];
+  for (const u of units) {
+    if (u.frame) nparts.push(`<g class="gcluster"><rect x="${u.frame.x}" y="${u.frame.y}" width="${u.frame.w}" height="${u.frame.h}" rx="9"></rect></g>`);
+  }
+  for (const n of g.nodes) {
+    const p = pos.get(n.id);
+    if (!p) continue;
+    const lit = over.ln.has(n.id), failed = over.fail.has(n.id);
+    const pendNode = pend && n.id === "principal:" + pend.principal;
+    const cls = `gnode k-${n.kind}${lit && !failed ? " lit" : ""}${failed ? " fail" : ""}${pendNode ? " pend" : ""}`;
+    const maxChars = Math.floor((p.w - 14) / 6.4);
+    let body;
+    if (p.cluster) {
+      body = `${gtext(p.x + 9, p.y + 16, "", n.label, maxChars)}`;
+    } else {
+      body = `<rect x="${p.x}" y="${p.y}" width="${p.w}" height="${p.h}" rx="6"></rect>
+        ${gtext(p.x + 7, p.y + (n.kind === "gate" ? 15 : p.h / 2 + 3.5), "", n.label, maxChars)}
+        ${n.kind === "gate" && n.meta?.rule ? gtext(p.x + 7, p.y + 29, "sub", String(n.meta.rule) + (n.meta.principal ? ` · by ${n.meta.principal}` : ""), maxChars + 4) : ""}`;
+    }
+    nparts.push(`<g class="${cls}" data-node="${esc(n.id)}" data-line="${n.line || 1}"><title>${esc(n.label + (n.meta?.rule ? ` — ${n.meta.rule}` : ""))}</title>${body}</g>`);
+  }
+
+  const markers = [...Object.entries(EDGE_COLORS), ["lit", "var(--green)"], ["pend", "var(--amber)"]].map(([k, c]) =>
+    `<marker id="ar-${k}" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+      <path d="M 0 0 L 8 4 L 0 8 z" fill="${c}"></path></marker>`).join("");
+
+  host.innerHTML = `<svg viewBox="0 0 ${svgW} ${Math.max(svgH + M, 80)}" width="${svgW}" height="${Math.max(svgH + M, 80)}" xmlns="http://www.w3.org/2000/svg">
+    <defs>${markers}</defs>${epaths.join("")}${nparts.join("")}</svg>`;
+
+  const legend = $("graphLegend");
+  if (legend) {
+    const kinds = [...new Set(g.edges.map((e) => e.kind))];
+    legend.innerHTML = kinds.map((k) => `<span><i style="--c:${EDGE_COLORS[k]}"></i>${k}</span>`).join("") +
+      `<span style="margin-left:auto">derived from source · click a node to jump to its line</span>`;
+  }
+  host.onclick = (e) => {
+    const gn = e.target.closest?.("[data-node]");
+    if (gn) jumpToLine(Number(gn.dataset.line || 1));
+  };
+}
+
+function jumpToLine(line) {
+  state.collapsed.source = false;
+  applyPanelState($("sourceCard"));
+  const el = document.querySelector(`#source .codeLine:nth-child(${line})`);
+  if (!el) return;
+  el.scrollIntoView({ behavior: "smooth", block: "center" });
+  el.classList.remove("flashLine");
+  void el.offsetWidth;
+  el.classList.add("flashLine");
+}
+
+function graphPanelHtml() {
+  return panel("graph", "Orchestration graph — derived, not drawn",
+    `<div class="graphWrap" id="graphWrap"></div><div class="graphLegend" id="graphLegend"></div>`);
+}
+
 function render(r) {
   const out = [];
   state.pendingAttestation = r.pendingAttestation || null;
@@ -1856,6 +2176,9 @@ function render(r) {
     stages.map((s, i) => `${i ? '<div class="arrow">→</div>' : ""}<div class="stage ${s.cls}"><div class="dot"></div><div class="lbl">${s.lbl}</div><div class="sub">${s.sub}</div></div>`).join("")
   }</div>`));
 
+  // the derived orchestration graph, with this run's ledger events lighting the witnessed path.
+  if (state.graph) out.push(graphPanelHtml());
+
   const detailHtml = renderRunDetails(r);
   if (detailHtml) out.push(panel("run-details", "Run details", `<div class="details">${detailHtml}</div>`));
 
@@ -1880,6 +2203,7 @@ function render(r) {
 
   $("results").innerHTML = out.join("");
   applyAllPanelStates($("results"));
+  if (state.graph) drawGraph(ev, r.map || state.map);
 }
 
 init();
