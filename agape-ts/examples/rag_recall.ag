@@ -1,0 +1,52 @@
+// rag_recall.ag — hello world for Agape's built-in RAG loop.
+//
+// Agape's memory IS a retrieval-augmented system: `store` internalizes each value across the
+// region's three views (fact table, relationship graph, vector store) via cognition, and
+// recall (`mem -> "query"`) is a cognition-mediated retrieval FUSED across those views.
+// The kernel twist vs ordinary RAG: a recall is ALWAYS tainted — retrieved knowledge can
+// inform an answer, but nothing acts on the world until the answer is re-judged, decided,
+// and endorsed. Retrieval can never launder trust.
+//
+//   store ×3 ─► [facts | graph | vectors] ─► recall (tainted) ─► generate (tainted)
+//                                             └► judge ─► decide ─► endorse ─► sink
+
+enum Verdict { Grounded, Ungrounded }
+
+event  Answered(text note);
+action Publish(text body);        // the consequential sink
+
+agent Librarian grants { perform Publish } {
+  on awake {
+    // INGEST — three knowledge writes; each is decomposed across facts/graph/vectors
+    // (watch the Internalized events on the ledger).
+    mem notes <- "Agape's ledger is append-only and hash-chained; the chain-head proves replay.";
+    notes <- "The gate has two operations: decide collapses a Credence, endorse settles a subject.";
+    notes <- "A recall from private memory is always tainted and must be re-gated before a sink.";
+
+    // RETRIEVE — the RAG query; fused across the three views, and TAINTED by design
+    // (the MemoryConsulted event is the retrieval trace).
+    text context = notes -> "what makes an Agape run trustworthy?";
+
+    // AUGMENTED GENERATION — draft an answer grounded in the retrieved context (still tainted).
+    text answer = self <- f"answer in one sentence using this context: {context}";
+
+    // JUDGE + GATE — is the generated answer grounded? Collapse, endorse the exact answer.
+    Credence<Verdict> c = self <- f"is this answer grounded in the retrieved context: {answer}";
+    Decision<Verdict>  d = decide c by confidence 0.8;
+    Endorsement<text>  e = endorse answer by d;
+
+    if (e.committed == Grounded) {
+      perform Publish(e);              // only the endorsed answer may reach the world
+      emit Answered("published");
+    } else if (e.committed == Ungrounded) {
+      emit Answered("revise");
+    } else {
+      emit Answered("uncertain — needs review");
+    }
+  }
+}
+
+when (Answered a) { say(f"outcome: {a.note}"); }
+
+spawn Librarian lib;
+awake lib;

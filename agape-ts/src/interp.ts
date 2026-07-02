@@ -355,7 +355,11 @@ class Interpreter {
     const agent = scope.currentAgent();
     if (!agent) throw new RuntimeError("`mem` declared outside an agent");
     const region: MemRegion = { writes: [], forgotten: false };
-    if (s.init) region.writes.push(await this.evalExpr(s.init, scope));
+    if (s.init) {
+      region.writes.push(await this.evalExpr(s.init, scope));
+      // E-Store (§15.4.2): the declare-with-init form is a store too — it internalizes and traces.
+      this.ledger.append("Internalized", s.name, undefined, agent.name);
+    }
     agent.mems.set(s.name, region);
     scope.set(s.name, { kind: "memref", name: s.name, trust: "settled" });
   }
@@ -1123,7 +1127,12 @@ class Interpreter {
       const agent = scope.currentAgent();
       const region = agent?.mems.get(dest.name);
       const v = await this.evalExpr(e.message, scope);
-      if (region && !region.forgotten) region.writes.push(v);
+      if (region && !region.forgotten) {
+        region.writes.push(v);
+        // E-Store (§15.4.2): a mem write internalizes across the region's views and appends
+        // Internalized(m) — the incidental memory-write trace (§15.5.1), replay-stable.
+        this.ledger.append("Internalized", dest.name, undefined, agent?.name);
+      }
       return v;
     }
     // The DESTINATION MUST BE AN ADDRESS (§6: "A send `dest <- p` goes to the agent at `dest`" / "the

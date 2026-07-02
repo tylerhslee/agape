@@ -36,13 +36,15 @@ async function main(argv: string[]): Promise<number> {
   if (cmd === "studio") {
     let port = 4317;
     let allowLive = false;
+    let token: string | undefined;
     for (let i = 0; i < rest.length; i++) {
       if (rest[i] === "--port") port = Number(rest[++i]);
       else if (rest[i] === "--live") allowLive = true;
+      else if (rest[i] === "--token") token = rest[++i];
     }
     loadEnv();
     const { startStudio } = await import("../studio/server.js");
-    await startStudio({ dir: process.cwd(), port, allowLive });
+    await startStudio({ dir: process.cwd(), port, allowLive, token });
     return await new Promise<number>(() => {}); // serve until killed
   }
   if (cmd !== "run" || rest.length === 0) {

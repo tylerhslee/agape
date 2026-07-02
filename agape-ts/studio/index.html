@@ -188,19 +188,38 @@ function highlight(src) {
   return h;
 }
 
-async function api(path, opts) { const r = await fetch(path, opts); return r.json(); }
+// the access token (if this studio is token-gated) rides in from the page URL and onto every API call.
+const TOKEN = new URLSearchParams(location.search).get("token");
+async function api(path, opts) {
+  const sep = path.includes("?") ? "&" : "?";
+  const r = await fetch(TOKEN ? `${path}${sep}token=${encodeURIComponent(TOKEN)}` : path, opts);
+  if (!r.ok && r.headers.get("content-type")?.includes("json")) {
+    const b = await r.json();
+    throw new Error(b.error || `HTTP ${r.status}`);
+  }
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return r.json();
+}
 
 async function init() {
-  state.meta = await api("/api/meta");
-  $("dir").textContent = state.meta.dir;
-  $("provider").innerHTML = state.meta.providers.map((p) => `<option>${p}</option>`).join("");
-  const { programs } = await api("/api/programs");
-  state.programs = programs;
-  $("programs").innerHTML = programs.length
-    ? programs.map((p) => `<button class="prog" data-name="${esc(p.name)}">${esc(p.name)}<small>${p.bytes} bytes</small></button>`).join("")
-    : `<div class="empty">no .ag programs here</div>`;
-  for (const b of document.querySelectorAll(".prog")) b.onclick = () => select(b.dataset.name);
-  if (programs.length) select(programs[0].name);
+  // a cold tunnel edge can drop the first request — surface failures and retry instead of dying silent.
+  $("programs").innerHTML = `<div class="empty">loading…</div>`;
+  try {
+    state.meta = await api("/api/meta");
+    $("dir").textContent = state.meta.dir;
+    $("provider").innerHTML = state.meta.providers.map((p) => `<option>${p}</option>`).join("");
+    const { programs } = await api("/api/programs");
+    state.programs = programs;
+    $("programs").innerHTML = programs.length
+      ? programs.map((p) => `<button class="prog" data-name="${esc(p.name)}">${esc(p.name)}<small>${p.bytes} bytes</small></button>`).join("")
+      : `<div class="empty">no .ag programs here</div>`;
+    for (const b of document.querySelectorAll(".prog")) b.onclick = () => select(b.dataset.name);
+    if (programs.length) select(programs[0].name);
+  } catch (e) {
+    $("programs").innerHTML = `<div class="empty" style="color:var(--red)">couldn't reach the studio server<br>
+      <span style="font:11px var(--mono)">${esc(e.message)}</span><br><br>
+      <button class="prog" style="text-align:center" onclick="init()">retry</button></div>`;
+  }
 }
 
 async function select(name) {
@@ -222,6 +241,9 @@ $("run").onclick = async () => {
       body: JSON.stringify({ program: state.selected, provider: $("provider").value }),
     });
     render(r);
+  } catch (e) {
+    $("results").innerHTML = `<div class="verdict bad"><div class="light"></div><b>Request failed</b>
+      <span class="msg">${esc(e.message)} — a live-provider run can take a while; retry if the tunnel timed out.</span></div>`;
   } finally { $("run").disabled = false; $("run").textContent = "Run ▸"; }
 };
 

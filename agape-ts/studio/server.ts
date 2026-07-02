@@ -21,6 +21,7 @@ export interface StudioOptions {
   dir: string;        // the served directory (the cwd `agape studio` was launched in)
   port: number;
   allowLive: boolean; // permit non-mock providers (off by default: the tunnel may be public)
+  token?: string;     // when set, every request must carry ?token=… or Authorization: Bearer …
 }
 
 const UI_PATH = join(dirname(fileURLToPath(import.meta.url)), "index.html");
@@ -143,6 +144,19 @@ export function startStudio(opts: StudioOptions): Promise<{ close: () => void }>
   const server = createServer(async (req, res) => {
     try {
       const url = new URL(req.url ?? "/", "http://localhost");
+      // access guard — a shared-secret token for short-lived public exposure (a quick tunnel). The UI
+      // carries the token from its own URL into every API call, so one tokened link is all you share.
+      if (opts.token) {
+        const supplied = url.searchParams.get("token") ?? (req.headers.authorization ?? "").replace(/^Bearer\s+/i, "");
+        if (supplied !== opts.token) {
+          if (url.pathname === "/") {
+            res.writeHead(401, { "content-type": "text/html; charset=utf-8" });
+            res.end("<body style='background:#0b0e14;color:#dbe2f0;font-family:system-ui;display:grid;place-items:center;height:100vh'><div>agape studio — this link requires its access token (<code>?token=…</code>)</div></body>");
+            return;
+          }
+          return json(res, 401, { error: "missing or invalid access token" });
+        }
+      }
       if (req.method === "GET" && url.pathname === "/") {
         res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
         res.end(readFileSync(UI_PATH, "utf8"));
@@ -177,8 +191,9 @@ export function startStudio(opts: StudioOptions): Promise<{ close: () => void }>
   return new Promise((resolvePromise) => {
     server.listen(opts.port, () => {
       console.log(`agape studio — inspecting ${opts.dir}`);
-      console.log(`  local:  http://localhost:${opts.port}`);
+      console.log(`  local:  http://localhost:${opts.port}${opts.token ? `/?token=${opts.token}` : ""}`);
       console.log(`  providers: ${opts.allowLive ? "mock + live (anthropic/openai/gemini)" : "mock only (start with --live to enable live providers)"}`);
+      if (opts.token) console.log(`  access: token-gated (share the tokened URL only)`);
       resolvePromise({ close: () => server.close() });
     });
   });
