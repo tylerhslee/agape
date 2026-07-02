@@ -69,14 +69,10 @@
 
   main {
     flex: 1; display: grid; min-width: 0; min-height: 0;
-    grid-template-columns: minmax(340px, 40%) minmax(360px, 1fr) minmax(280px, 340px);
+    grid-template-columns: minmax(340px, 40%) minmax(360px, 1fr);
   }
-  main.noInputs { grid-template-columns: minmax(360px, 46%) minmax(0, 1fr); }
-  .col, .inputRail { min-width: 0; overflow-y: auto; padding: 16px; }
+  .col { min-width: 0; overflow-y: auto; padding: 16px; }
   .col.source { border-right: 1px solid var(--line); }
-  .col.results { border-right: 1px solid var(--line); }
-  .inputRail { background: rgba(255,255,255,.012); }
-  .inputRail[hidden] { display: none; }
   .card {
     background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
     padding: 14px 16px; margin-bottom: 14px;
@@ -306,10 +302,9 @@
     .prog { width: auto; white-space: nowrap; margin-bottom: 0; flex-shrink: 0; padding: 7px 12px; }
     .prog small { display: none; }
     main { display: flex; flex-direction: column; }
-    .col, .inputRail { overflow: visible; padding: 12px; }
-    .inputRail { order: 1; border-bottom: 1px solid var(--line); }
+    .col { overflow: visible; padding: 12px; }
     .col.source { border-right: none; order: 2; }
-    .col.results { border-right: none; order: 3; }
+    .col.results { order: 1; border-bottom: 1px solid var(--line); }
     .verdict { flex-wrap: wrap; padding: 12px; }
     .verdict .head { margin-left: 0; flex-basis: 100%; }
     .verdict .msg { flex-basis: 100%; }
@@ -344,7 +339,7 @@
     <h3>Programs</h3>
     <div id="programs"></div>
   </nav>
-  <main id="workspace" class="noInputs">
+  <main id="workspace">
     <div class="col source">
       <div class="card collapsible" id="sourceCard" data-panel="source">
         <div class="cardHead sourceHead">
@@ -394,21 +389,11 @@
       </div>
     </div>
     <div class="col results">
+      <div id="topControls"></div>
       <div id="results"><div class="empty">Run a program to inspect its execution.<br><br>
         Every run is parsed, statically checked (type · trust · color · authority · the gate),
         then executed on the ledger. What you see here is the complete, hash-chained record.</div></div>
     </div>
-    <aside class="inputRail" id="inputRail" hidden>
-      <div class="card inputCard collapsible" id="inputsCard" data-panel="inputs">
-        <div class="cardHead">
-          <h2>Inputs</h2>
-          <button class="collapseToggle" type="button" aria-label="Collapse inputs" aria-expanded="true" title="Collapse">▾</button>
-        </div>
-        <div class="cardBody">
-          <div class="inputList" id="inputControls"></div>
-        </div>
-      </div>
-    </aside>
   </main>
 </div>
 
@@ -666,26 +651,54 @@ function promptPlaceholder(prompt) {
   return "Enter JSON matching this prompt type";
 }
 
+function topHost(id) {
+  let host = $(id);
+  if (!host) {
+    $("topControls").insertAdjacentHTML("beforeend", `<div id="${esc(id)}"></div>`);
+    host = $(id);
+  }
+  return host;
+}
+
 function renderInputControls(map) {
   const prompts = map?.prompts || [];
   const principals = map?.principals || [];
   const hasInputs = prompts.length > 0 || principals.length > 0;
-  $("inputRail").hidden = !hasInputs;
-  $("workspace").classList.toggle("noInputs", !hasInputs);
-  $("inputControls").innerHTML = [
+  const host = topHost("inputPanelHost");
+  if (!hasInputs) { host.innerHTML = ""; return; }
+  const body = `<div class="inputList" id="inputControls">${[
     ...prompts.map((p) => `<div class="inputRow">
       <label>${esc(p.name)}<span>${esc(p.type)}</span></label>
       <textarea id="${esc(inputId("prompt", p.name))}" data-prompt="${esc(p.name)}" data-type="${esc(p.type)}" placeholder="${esc(promptPlaceholder(p))}">${esc(defaultPromptValue(p))}</textarea>
     </div>`),
     // §13/§16.4: a principal is NOT a pre-run toggle — it is consulted LIVE when a gate escalates,
-    // and the ruling is a manual choice of one of the gate enum's variants (or a decline). The row
+    // and the ruling is a manual choice of one of the enum's variants (or a decline). The row
     // below is informational only; the actual attestation panel appears when the run pauses.
     ...principals.map((name) => `<div class="inputRow">
       <label>${esc(name)}<span>principal</span></label>
       <div class="principalNote">⚖ consulted live when a gate escalates — you will rule by choosing one of the enum's variants (or declining)</div>
     </div>`),
-  ].join("");
-  applyPanelState($("inputsCard"));
+  ].join("")}</div>`;
+  host.innerHTML = panel("inputs", "Inputs", body, "inputCard");
+  applyPanelState(host.querySelector("[data-panel='inputs']"));
+}
+
+function renderAttestationControls(p) {
+  const host = topHost("attestationPanelHost");
+  const wasEmpty = !host.innerHTML.trim();
+  if (!p) { host.innerHTML = ""; return; }
+  if (wasEmpty) state.collapsed.attestation = false;
+  const body = `<div class="attestHead"><b>Principal ${esc(p.principal)}</b>
+      <span class="msg">the run is paused at <span class="mono">Credence&lt;${esc(p.enumName)}&gt;</span>${p.agent ? ` · agent <span class="mono">${esc(p.agent)}</span>` : ""}</span></div>
+    <div class="attestScores">${scoreBars({ scores: p.scores })}</div>
+    <div class="attestActions">
+      ${p.variants.map((v) => `<button class="rule" onclick="attest(${JSON.stringify(v).replace(/"/g, "&quot;")})">${esc(v)}</button>`).join("")}
+      <button class="declineRule" onclick="attest(null)">Decline to rule</button>
+    </div>
+    <div class="attestNote">choosing a variant records <span class="mono">PrincipalDecision</span> (basis Principal) and becomes a calibration label;
+    declining records <span class="mono">FailedPrincipalDecision</span> — the decision stays abstained, the sink never fires (fail closed), and NO calibration label is recorded — a refusal to rule is not evidence and never enters the conformal dataset</div>`;
+  host.innerHTML = panel("attestation", "Attestation required", body, "attest");
+  applyPanelState(host.querySelector("[data-panel='attestation']"));
 }
 
 function collectInputs() {
@@ -705,6 +718,8 @@ function validateInputs() {
     return !String(el?.value ?? "").trim();
   });
   if (!missing) return true;
+  state.collapsed.inputs = false;
+  applyPanelState(document.querySelector("[data-panel='inputs']"));
   const id = inputId("prompt", missing.name);
   const el = $(id);
   $("results").innerHTML = `<div class="verdict bad"><div class="light"></div><b>Input needed</b>
@@ -913,6 +928,9 @@ async function select(name) {
   state.map = map || null;
   $("source").innerHTML = renderCode(state.source);
   renderInputControls(state.map);
+  renderAttestationControls(null);
+  state.pendingAttestation = null;
+  state.awaitingAttest = false;
   applyPanelState($("sourceCard"));
   state.sessionId = null;
   state.listening = false;
@@ -1114,12 +1132,18 @@ $("saveConfig").onclick = async () => {
 async function stopSession(silent = false) {
   if (!state.sessionId) {
     state.listening = false;
+    state.pendingAttestation = null;
+    state.awaitingAttest = false;
+    renderAttestationControls(null);
     updateRunControls();
     return;
   }
   const id = state.sessionId;
   state.sessionId = null;
   state.listening = false;
+  state.pendingAttestation = null;
+  state.awaitingAttest = false;
+  renderAttestationControls(null);
   updateRunControls();
   try {
     await api("/api/stop", {
@@ -1170,7 +1194,7 @@ async function pollSession() {
 async function attest(decision) {
   const pending = state.pendingAttestation;
   if (!pending || !state.sessionId) return;
-  for (const b of document.querySelectorAll(".attest button")) b.disabled = true;
+  for (const b of document.querySelectorAll(".attestActions button")) b.disabled = true;
   try {
     const r = await api("/api/attest", {
       method: "POST", headers: { "content-type": "application/json" },
@@ -1534,24 +1558,7 @@ function render(r) {
   const out = [];
   state.pendingAttestation = r.pendingAttestation || null;
 
-  // §13/§16.4 — the attestation panel: the run is PAUSED at the identity dependency. The principal
-  // rules by choosing ONE of the gate enum's variants ("the human's reply arrives as one of E's
-  // variants"), or declines → FailedPrincipalDecision and the decision stays abstained (fail closed).
-  if (r.pendingAttestation) {
-    const p = r.pendingAttestation;
-    out.push(`<div class="attest">
-      <div class="attestHead">⚖ <b>Attestation required</b>
-        <span class="msg">the run is paused — principal <b>${esc(p.principal)}</b> must rule on
-        <span class="mono">Credence&lt;${esc(p.enumName)}&gt;</span>${p.agent ? ` (agent <span class="mono">${esc(p.agent)}</span>)` : ""}</span></div>
-      <div class="attestScores">${scoreBars({ scores: p.scores })}</div>
-      <div class="attestActions">
-        ${p.variants.map((v) => `<button class="rule" onclick="attest(${JSON.stringify(v).replace(/"/g, "&quot;")})">${esc(v)}</button>`).join("")}
-        <button class="declineRule" onclick="attest(null)">Decline to rule</button>
-      </div>
-      <div class="attestNote">choosing a variant records <span class="mono">PrincipalDecision</span> (basis Principal) and becomes a calibration label;
-      declining records <span class="mono">FailedPrincipalDecision</span> — the decision stays abstained, the sink never fires (fail closed), and NO calibration label is recorded — a refusal to rule is not evidence and never enters the conformal dataset</div>
-    </div>`);
-  }
+  renderAttestationControls(r.pendingAttestation);
 
   // verdict
   if (r.runState === "waiting") {
