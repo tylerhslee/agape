@@ -242,7 +242,7 @@ The grammar terminal `Number` = `Int | Float` (so `conformal α` accepts either;
 requires an `Int`).
 - **Identifiers:** `Ident` = `[A-Za-z_][A-Za-z0-9_]`*. Type names are conventionally capitalized;
 values and instances are lowercase.
-- **Operators (multi-char first):** `<-  ->  &&  ||  >=  <=  ==  !=  { } ( ) [ ] ; , . : =
+- **Operators (multi-char first):** `<-  ->  |>  &&  ||  >=  <=  ==  !=  { } ( ) [ ] ; , . : =
   +  -  *  /  <  >  !`
 - **The two arrows:** `<-` is the one communication/write arrow (send a message, write a
   `mem`, §6, §10); `->` is the memory-recall operator (`mem -> "query"`, §10). `->` is **not**
@@ -1147,6 +1147,11 @@ Credence<bool> agreed = quorum(2, [j1, j2, j3]); // graded "at least 2 of 3 comm
 Decision<bool> d = decide agreed by confidence 0.9;  // gate the fused quorum once
 ```
 
+- `xs |> f` maps async function `f` over every element of finite collection `xs`, issuing the
+  independent paths before joining their returned values in source collection order. Work scales with
+  the number of elements times the work per element; span is the longest single element path plus the
+  join, not a serial chain over the collection. A path remains sequential internally: `search` then
+  `judge` inside one mapped function is ordered, while other mapped elements may overlap.
 - `**independent v…**` — fusion is log-odds addition (Good's weight of evidence; naive-Bayes
 combination): confidence accumulates — several independent confirmations fuse higher than any one.
 - `**dependent v…**` — fusion takes the conservative Fréchet bound (`min` for conjunction, `max` for
@@ -1625,6 +1630,7 @@ rule       ::= "confidence" Number ("margin" Number)? ("floor" Number)?     // t
 
 expr       ::= expr "<-" expr ("expires" Number)?        // send (agent on left); or STORE into a `mem` (mem on left, §10)
              | expr "->" expr                            // RECALL from a `mem` (always tainted, §10)
+             | expr "|>" Ident                           // bounded fan-out: map async fn over a finite collection (§12)
              | gate                                      // a gate as an expression: decide → Decision<E>, endorse → Endorsement<T>
              | "quorum" "(" Int "," expr ")"             // at least k of a Credence<bool>[] (§12)
              | ledgerquery                               // objective ledger read → LedgerEntry<E>[] / Record[]
@@ -1648,7 +1654,7 @@ primary    ::= Int|Float|String|FString|"true"|"false"|"null"|"abstained"|"self"
 surface `event<T>` reply wrapper.
 
 **Collections.** `T[]` is the collection type *produced* by the ledger query (which may bind
-many results) and *consumed* by fan-out (`quorum`, §12). It is a value to map and reduce over — not
+many results) and *consumed* by fan-out (`|>`) and fusion (`quorum`, §12). It is a value to map and reduce over — not
 an imperative data structure. Agape has no general-purpose imperative substrate of its own; heavy or
 world-affecting computation is imported as a tool (§6b) and governed at the tool dependency, never
 reimplemented in the language.

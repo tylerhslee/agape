@@ -8,9 +8,9 @@ Runtime conformance is tested separately in `../agape-runtime-conformance` with 
 
 ## Current Status
 
-- Language suite: `.ag` accept/reject tests under `tests/` — currently `164` tests (`101` accept, `63` reject).
+- Language suite: `.ag` accept/reject tests under `tests/` — currently `168` tests (`104` accept, `64` reject).
 - Runtime suite: TypeScript adapter tests under `../agape-runtime-conformance`.
-- Core kernel only: the suite exercises the core kernel with no syntactic sugar. Gate branching is an ordinary `if` over `.committed` (no arm block); fusion is `quorum` with `independent`/`dependent` (no `all`/`any`/pipe); memory is store/recall over the `mem` handle plus the objective `select … from ledger` query (no `find`/`match`); rules carry inline `floor`/`readiness` (no `policy` declaration). The deferred library layer (modules, visibility, generics, interfaces), `retry`, and §20 ergonomics (reversible sinks) are not exercised.
+- Core kernel only: the suite exercises the core kernel with no syntactic sugar. Gate branching is an ordinary `if` over `.committed` (no arm block); bounded fan-out is `|>`; fusion is `quorum` with `independent`/`dependent` (no `all`/`any`); memory is store/recall over the `mem` handle plus the objective `select … from ledger` query (no `find`/`match`); rules carry inline `floor`/`readiness` (no `policy` declaration). The deferred library layer (modules, visibility, generics, interfaces), `retry`, and §20 ergonomics (reversible sinks) are not exercised.
 - Manifest freshness is enforced by `python3 build_manifests.py --check`.
 
 ## Coverage Standard

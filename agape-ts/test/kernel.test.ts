@@ -401,6 +401,98 @@ describe("manifest dependency bindings", () => {
   });
 });
 
+describe("async fan-out", () => {
+  it("runs `|>` mapped dependency paths concurrently while preserving the caller agent context", async () => {
+    const prog = `
+      read tool text search(text q);
+      enum Grounding { Grounded, Unsupported }
+      struct Verification {
+        claim: text,
+        evidence: text,
+        verdict: Grounding
+      }
+
+      Verification verify(text claim) {
+        text evidence = search(claim);
+        Credence<Grounding> c = self <- f"judge this claim using evidence: {claim} / {evidence}";
+        Decision<Grounding> d = decide c by confidence 0.5;
+        Verification result = Verification {
+          claim: claim,
+          evidence: evidence,
+          verdict: Unsupported
+        };
+        if (d.committed == Grounded) {
+          result = Verification {
+            claim: claim,
+            evidence: evidence,
+            verdict: Grounded
+          };
+        }
+        return result;
+      }
+
+      agent A grants { use search } {
+        on awake {
+          text[] claims = ["alpha", "beta", "gamma"];
+          Verification[] rows = claims |> verify;
+          say(rows);
+        }
+      }
+      spawn A a; awake a;
+    `;
+    let activeSearches = 0;
+    let maxActiveSearches = 0;
+    let activeJudges = 0;
+    let maxActiveJudges = 0;
+    const order: string[] = [];
+    class SlowJudgeProvider extends MockProvider {
+      override async judge(prompt: string, enumName: string, variants: string[]) {
+        activeJudges++;
+        maxActiveJudges = Math.max(maxActiveJudges, activeJudges);
+        order.push(`judge-start:${prompt}`);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        order.push(`judge-end:${prompt}`);
+        activeJudges--;
+        return super.judge(prompt, enumName, variants);
+      }
+    }
+
+    const r = await run(parse(prog), {
+      provider: new SlowJudgeProvider(() => ({ Grounded: 0.9, Unsupported: 0.1 })),
+      manifest: { provider: { backend: "mock" }, tools: { search: { driver: "host" } } },
+      toolHandlers: {
+        search: async ({ args }) => {
+          const q = args[0]?.kind === "text" ? args[0].v : "";
+          const delay = q === "alpha" ? 30 : q === "beta" ? 5 : 1;
+          activeSearches++;
+          maxActiveSearches = Math.max(maxActiveSearches, activeSearches);
+          order.push(`search-start:${q}`);
+          await new Promise((resolve) => setTimeout(resolve, delay));
+          order.push(`search-end:${q}`);
+          activeSearches--;
+          return `evidence:${q}`;
+        },
+      },
+    });
+
+    expect(maxActiveSearches).toBeGreaterThan(1);
+    expect(maxActiveJudges).toBeGreaterThan(1);
+    expect(order.filter((x) => x.startsWith("search-start:")).length).toBe(3);
+    expect(order.filter((x) => x.startsWith("judge-start:")).length).toBe(3);
+    expect(r.ledger.events.filter((e) => e.etype === "ToolStarted").length).toBe(3);
+    expect(r.ledger.events.filter((e) => e.etype === "Resolved").length).toBe(3);
+    expect(r.ledger.events.filter((e) => e.etype === "ToolResolved").map((e) => (e.payload as any).payload))
+      .toEqual(["search|alpha", "search|beta", "search|gamma"]);
+    expect(r.ledger.events.filter((e) => e.etype === "Resolved").map((e) => (e.payload as any).prompt))
+      .toEqual([
+        "judge this claim using evidence: alpha / evidence:alpha",
+        "judge this claim using evidence: beta / evidence:beta",
+        "judge this claim using evidence: gamma / evidence:gamma",
+      ]);
+    expect(r.stdout[0]).toContain("Verification");
+  });
+});
+
 describe("the memory surface cannot launder trust (§10, §13, §16.7)", () => {
   // §16.7: a queried value carries the trust of its provenance event — `graded` by default, never a
   // blanket `settled`. A `select … from ledger` result reaching a consequential sink must be withheld.

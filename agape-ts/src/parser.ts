@@ -16,7 +16,7 @@ export function parse(source: string): A.Program {
 }
 
 // The core kernel is the complete language with NO syntactic sugar and NO library layer. Constructs the
-// full surface once had — the arm block, all/any/pipe fusion, the policy declaration, retry, reversible
+// full surface once had — the arm block, all/any fusion, the policy declaration, retry, reversible
 // sinks, agent-memory queries (find/match/select-from-agent), and the whole library layer (modules,
 // imports, visibility, generics, interfaces) — are not part of the core grammar, so accepting one would
 // break lockstep with the stripped SPEC.md. This pass walks the parsed program and rejects each as a
@@ -35,7 +35,7 @@ function assertCore(p: A.Program): void {
   const walkExpr = (e: A.Expr): void => {
     switch (e.kind) {
       case "agg": return bad("`all`/`any` fusion (use `quorum`)");
-      case "pipe": return bad("the `|>` pipe");
+      case "pipe": walkExpr(e.source); walkExpr(e.fn); break;
       case "find": return bad("a `find` graph query");
       case "match": return bad("a `match` similarity query");
       case "select": if (e.target !== "ledger") bad("a `select` over agent memory (use recall, or `select … from ledger`)"); break;
