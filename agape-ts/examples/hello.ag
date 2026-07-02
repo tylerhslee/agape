@@ -1,11 +1,11 @@
-// hello.ag — the Agape "hello world".
+// hello.ag — the Agape "hello world" (core kernel).
 //
-// A Greeter agent drafts a greeting, asks the provider to judge whether it is
-// safe to publish, collapses that judgment with `decide`, and — only inside the
-// committed `Publish` arm, where the draft is settled — performs the consequential
-// `Announce` action. This is the whole trusted kernel in one screen:
+// A Greeter agent drafts a greeting, asks the provider to judge whether it is safe
+// to publish, collapses that judgment with `decide`, endorses the exact draft, and —
+// only inside the committed `Publish` branch, where the endorsement is the settled
+// draft — performs the consequential `Announce` action. The whole trusted kernel:
 //
-//     testimony  ->  Credence<Verdict>  ->  Decision<Verdict>  ->  Endorsement<text>  ->  granted sink  ->  ledger
+//   testimony -> Credence<Verdict> -> Decision<Verdict> -> Endorsement<text> -> granted sink -> ledger
 
 enum Verdict { Publish, Revise }
 
@@ -19,15 +19,17 @@ agent Greeter grants { perform Announce } {
     // Cognition: a graded judgment over the closed enum `Verdict`.
     Credence<Verdict> v = self <- f"is this greeting safe to publish: {draft}";
 
-    // Collapse the judgment to a sealed Decision by a local rule.
-    Decision<Verdict> d = decide v by confidence 0.8;
+    // Collapse the judgment to a sealed Decision by a local rule, then endorse the exact draft.
+    Decision<Verdict>  d = decide v by confidence 0.8;
+    Endorsement<text>  e = endorse draft by d;
 
-    // Apply the decision to the exact subject `draft`. Inside the `Publish` arm the
-    // endorsement `e` is the settled draft, so it may drive the `Announce` sink.
-    endorse draft by d {
-      Publish as e { perform Announce(e); }
-      Revise      { emit Revised("held for revision"); }
-    } abstain {
+    // Branch on the committed verdict. `e` is the settled draft, sink-admissible only in the
+    // committed `Publish` branch; the raw `draft` never becomes settled.
+    if (e.committed == Publish) {
+      perform Announce(e);
+    } else if (e.committed == Revise) {
+      emit Revised("held for revision");
+    } else {
       emit Revised("uncertain — escalated");
     }
 

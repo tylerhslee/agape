@@ -72,6 +72,10 @@ class Scope {
   // committed variant; in the abstain branch it is settled but not committed-narrowed, so the endorsed
   // subject cannot itself reach a consequential sink. A `perform` of such a binder is a TaintViolation.
   nonCommittedEndorsements = new Set<string>();
+  // Endorsement binders NARROWED committed in this (child) branch via `if (e.committed == V)` for a real
+  // variant V — sink-admissible here even though an ancestor marked them non-committed at binding
+  // (Model-A flow narrowing, §13/§15.3.3, W-Endorse).
+  committedNarrowed = new Set<string>();
   // The `decide` expression a `Decision<E>` binding was produced from, when statically known (a
   // `Decision<E> d = decide c by R`). Used by the §20.3 deference check to ask whether the decision
   // endorsing a consequential path is principal-driven (a prefix `p decide …` or a `by <principal>` rule).
@@ -82,7 +86,9 @@ class Scope {
     return this.decideOf.get(name) ?? this.parent?.getDecide(name);
   }
   markNonCommittedEndorsement(name: string) { this.nonCommittedEndorsements.add(name); }
+  markCommittedNarrowed(name: string) { this.committedNarrowed.add(name); }
   isNonCommittedEndorsement(name: string): boolean {
+    if (this.committedNarrowed.has(name)) return false; // narrowed committed in this branch → sink-admissible
     return this.nonCommittedEndorsements.has(name) || (this.parent?.isNonCommittedEndorsement(name) ?? false);
   }
   getAgentType(name: string): string | undefined {
@@ -634,6 +640,7 @@ export function check(program: A.Program, modules?: ModuleInput[], manifest?: Ma
     else if (d.kind === "struct") c.checkStructExport(d);
   }
   c.checkBody(program.stmts, new Scope());
+  c.checkDeferenceFlow(program.stmts, new Scope());
 }
 
 function declClass(t: A.TypeRef): Cls {
@@ -802,11 +809,12 @@ class Checker {
 
   checkAgent(a: A.AgentDecl): void {
     if (a.extends) this.checkSubtractiveGrants(a);
-    for (const h of a.hooks) this.checkBody(h.body, new Scope());
+    for (const h of a.hooks) { this.checkBody(h.body, new Scope()); this.checkDeferenceFlow(h.body, new Scope()); }
     for (const w of a.whens) {
       const s = new Scope();
       if (w.binder) s.set(w.binder, "unknown"); // the matched event payload
       this.checkBody(w.body, s);
+      this.checkDeferenceFlow(w.body, new Scope());
     }
     this.checkNominalConformance(a);
     this.checkAgentExport(a);
@@ -1061,6 +1069,7 @@ class Checker {
     this.checkFnExport(f);
     if (f.sync) this.assertSyncBody(f.body);
     this.checkBody(f.body, new Scope());
+    this.checkDeferenceFlow(f.body, new Scope());
   }
 
   private assertSyncBody(stmts: A.Stmt[]): void {
@@ -1201,7 +1210,13 @@ class Checker {
         if (cond !== "bool" && cond !== "unknown") {
           throw typeError(`an 'if' condition must be a bool, not ${cond} (gate a Credence first)`);
         }
-        this.checkBody(s.then, scope.child());
+        const thenScope = scope.child();
+        // Model-A flow narrowing (§13/§15.3.3, W-Endorse): inside the TRUE branch of `if (e.committed == V)`
+        // for a real variant V, the endorsement `e` is committed-narrowed and becomes sink-admissible. The
+        // else branch leaves it non-committed (the abstained / other-variant case).
+        const narrowed = this.committedNarrowIdent(s.cond);
+        if (narrowed) thenScope.markCommittedNarrowed(narrowed);
+        this.checkBody(s.then, thenScope);
         if (s.else) this.checkBody(s.else, scope.child());
         return;
       }
@@ -1395,6 +1410,40 @@ class Checker {
       `principal: the endorsing decision carries no escalation prefix and no \`by <principal>\` rule, and no ` +
       `\`abstain\` fallback defers to one — autonomy on a consequential leg is earned via labels, so a cold ` +
       `gate must escalate. Add a \`principal\` prefix (\`p decide c by r\`) or an abstain principal path (§20.3)`,
+    );
+  }
+
+  // §13/§20.3 deference requirement for the if-flow (no arm block): a consequential handler that settles on a
+  // COLD CONFORMAL, non-principal, non-policy endorsement — reaching a non-reversible sink — with NO reachable
+  // principal escalation anywhere in the handler is a GateError. A principal-driven decision, a named policy, a
+  // reachable principal fallback (an else branch that re-decides `p decide c by r`), or a non-consequential
+  // handler (no non-reversible sink) all satisfy it. Threshold gates are exempt (they may commit a cold winner).
+  checkDeferenceFlow(body: A.Stmt[], scope: Scope): void {
+    const inner = scope.child();
+    const endorses: A.EndorseExpr[] = [];
+    const collect = (stmts: A.Stmt[]): void => {
+      for (const st of stmts) {
+        if (st.kind === "var" && st.init) {
+          if (st.init.kind === "decide") inner.setDecide(st.name, st.init); // track decisions for resolution
+          if (st.init.kind === "endorse") endorses.push(st.init);
+        }
+        if (st.kind === "exprstmt" && st.expr.kind === "endorse") endorses.push(st.expr);
+        if (st.kind === "if") { collect(st.then); if (st.else) collect(st.else); }
+        else if (st.kind === "when") collect(st.body);
+        else if (st.kind === "dispatch") { for (const a of st.arms) collect(a.body); if (st.abstain) collect(st.abstain.body); }
+      }
+    };
+    collect(body);
+    const cold = endorses.some((g) =>
+      this.endorseIsConformal(g, inner) && !this.endorseIsPrincipalDriven(g, inner) && !this.endorseUsesNamedPolicy(g, inner));
+    if (!cold) return;
+    if (this.hasReachablePrincipalEscalation(body, inner)) return;
+    if (!this.reachesNonReversibleSink(body, inner)) return;
+    throw gateError(
+      `a consequential path settles on a cold conformal gate with no reachable principal: the endorsing ` +
+      `decision carries no escalation prefix and no principal fallback, yet reaches a non-reversible sink — ` +
+      `autonomy on a consequential leg is earned via labels, so a cold gate must escalate. Add a \`principal\` ` +
+      `prefix (\`p decide c by r\`) or a principal fallback in the else branch (§13/§20.3)`,
     );
   }
 
@@ -1749,6 +1798,22 @@ class Checker {
   //  - a `decide c by R` records NAME's scope = c's own scope ∪ { c } (the decision inherits the credence's
   //    dependency scope), so endorsing any subject in that scope is in-scope.
   // Taint flows through to any binding derived from a tainted binding (contagious, §15.3.1).
+  // Model-A narrowing target: if `cond` is `IDENT.committed == VARIANT` with VARIANT a real (non-`abstained`)
+  // enum variant or bool literal, return IDENT so the TRUE branch can mark it committed-narrowed. Any other
+  // condition narrows nothing.
+  private committedNarrowIdent(cond: A.Expr): string | undefined {
+    if (cond.kind !== "binary" || cond.op !== "==") return undefined;
+    const committedIdent = (e: A.Expr): string | undefined =>
+      e.kind === "member" && e.field === "committed" && e.obj.kind === "ident" ? e.obj.name : undefined;
+    const leftName = committedIdent(cond.left);
+    const name = leftName ?? committedIdent(cond.right);
+    if (!name) return undefined;
+    const other = leftName ? cond.right : cond.left;
+    const variant = other.kind === "ident" ? other.name : other.kind === "bool" ? String(other.value) : undefined;
+    if (!variant || variant === "abstained") return undefined;
+    return name;
+  }
+
   private trackProvenance(name: string, init: A.Expr, scope: Scope, declared?: Cls): void {
     const free = this.freeIdents(init);
     // set-or-clear so a reassignment refreshes provenance to the new value (not sticky per name).
@@ -1758,7 +1823,15 @@ class Checker {
     // send-reply binding is tracked as tainted for the endorse dependency-scope check.
     const rawSendReply = init.kind === "send" && declared !== "credence";
     scope.setTaintedTo(name, this.isTaintedExpr(init, scope) || rawSendReply);
-    if (init.kind === "decide") {
+    if (init.kind === "endorse") {
+      // Model A (§13/§15.3.3, W-Endorse): an endorsement is the SETTLED form of its subject — bind it
+      // UN-tainted — but it is sink-admissible only when committed-narrowed, so mark it non-committed until an
+      // `if (e.committed == V)` narrows it (checkStmt `if`, below). The raw SUBJECT (e.g. `draft`) keeps its
+      // own taint, so performing the raw subject directly is still a TaintViolation.
+      scope.setTaintedTo(name, false);
+      scope.markNonCommittedEndorsement(name);
+      scope.setScope(name, free);
+    } else if (init.kind === "decide") {
       scope.setScope(name, this.scopeOfDecision(init, scope));
       // §13: a sealed Decision about a credence puts the ARTIFACTS that fed that credence's prompt UNDER
       // JUDGMENT — the Decision alone does not settle them, so performing the RAW artifact (bypassing an

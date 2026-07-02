@@ -761,7 +761,10 @@ class Parser {
     let els: A.Stmt[] | undefined;
     if (this.at("else")) {
       this.next();
-      els = this.parseBlock();
+      // `else if …` is an else-body containing a single nested `if` statement (the standard chain);
+      // a plain `else { … }` is a block. Both land as the `else` statement list.
+      if (this.at("if")) els = [this.parseIf()];
+      else els = this.parseBlock();
     }
     return { kind: "if", cond, then, else: els, pos };
   }
@@ -1002,13 +1005,29 @@ class Parser {
         this.next();
         margin = this.number();
       }
-      return { kind: "confidence", theta, margin };
+      let floor: number | undefined;
+      if (this.atIdent("floor")) {
+        this.next();
+        floor = this.number();
+      }
+      return { kind: "confidence", theta, margin, floor };
     }
     if (this.atIdent("conformal")) {
       this.next();
       let alpha: number | undefined;
       if (this.at("int") || this.at("float")) alpha = this.number();
-      return { kind: "conformal", alpha };
+      // conformal carries optional `readiness N` (labelled-case minimum) then optional `floor m`.
+      let readiness: number | undefined;
+      if (this.atIdent("readiness")) {
+        this.next();
+        readiness = this.number();
+      }
+      let floor: number | undefined;
+      if (this.atIdent("floor")) {
+        this.next();
+        floor = this.number();
+      }
+      return { kind: "conformal", alpha, readiness, floor };
     }
     if (this.at("(")) {
       this.next();

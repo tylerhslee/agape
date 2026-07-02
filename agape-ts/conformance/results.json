@@ -1,6 +1,6 @@
 {
-  "passed": 229,
-  "total": 229,
+  "passed": 164,
+  "total": 164,
   "bySection": {
     "00_lexical": {
       "pass": 11,
@@ -15,8 +15,8 @@
       "total": 22
     },
     "04_functions": {
-      "pass": 10,
-      "total": 10
+      "pass": 9,
+      "total": 9
     },
     "05_agents": {
       "pass": 12,
@@ -39,20 +39,20 @@
       "total": 6
     },
     "10_memory": {
-      "pass": 16,
-      "total": 16
+      "pass": 11,
+      "total": 11
     },
     "11_control": {
-      "pass": 9,
-      "total": 9
+      "pass": 5,
+      "total": 5
     },
     "12_aggregation": {
-      "pass": 10,
-      "total": 10
+      "pass": 5,
+      "total": 5
     },
     "13_governance": {
-      "pass": 31,
-      "total": 31
+      "pass": 30,
+      "total": 30
     },
     "15_reproducibility": {
       "pass": 2,
@@ -62,25 +62,9 @@
       "pass": 9,
       "total": 9
     },
-    "18_modules": {
+    "22_gate": {
       "pass": 14,
       "total": 14
-    },
-    "19_visibility": {
-      "pass": 12,
-      "total": 12
-    },
-    "20_generics": {
-      "pass": 8,
-      "total": 8
-    },
-    "21_interfaces": {
-      "pass": 10,
-      "total": 10
-    },
-    "22_gate": {
-      "pass": 19,
-      "total": 19
     }
   },
   "rows": [
@@ -318,7 +302,7 @@
       "directives": []
     },
     {
-      "id": "type_enum_decl_and_gate_arms",
+      "id": "type_enum_decl_and_gate",
       "section": "03_types",
       "expect": "accept",
       "pass": true,
@@ -489,17 +473,6 @@
     },
     {
       "id": "fn_sync_decide_by_principal_reject",
-      "section": "04_functions",
-      "expect": "reject",
-      "pass": true,
-      "reason": "rejected with ColorViolation",
-      "errorClass": "ColorViolation",
-      "phase": "run",
-      "hadMatchers": false,
-      "directives": []
-    },
-    {
-      "id": "fn_sync_embed_reject",
       "section": "04_functions",
       "expect": "reject",
       "pass": true,
@@ -1018,16 +991,6 @@
       "directives": []
     },
     {
-      "id": "mem_embed_internalizes_ok",
-      "section": "10_memory",
-      "expect": "accept",
-      "pass": true,
-      "reason": "accepted + ledger ok",
-      "phase": "run",
-      "hadMatchers": true,
-      "directives": []
-    },
-    {
       "id": "mem_expr_query_no_ledger_event",
       "section": "10_memory",
       "expect": "accept",
@@ -1035,16 +998,6 @@
       "reason": "accepted + ledger ok",
       "phase": "run",
       "hadMatchers": true,
-      "directives": []
-    },
-    {
-      "id": "mem_find_graph_origin_ok",
-      "section": "10_memory",
-      "expect": "accept",
-      "pass": true,
-      "reason": "accepted",
-      "phase": "run",
-      "hadMatchers": false,
       "directives": []
     },
     {
@@ -1074,38 +1027,6 @@
       "pass": true,
       "reason": "rejected with TypeError",
       "errorClass": "TypeError",
-      "phase": "run",
-      "hadMatchers": false,
-      "directives": []
-    },
-    {
-      "id": "mem_match_hit_taint_perform_reject",
-      "section": "10_memory",
-      "expect": "reject",
-      "pass": true,
-      "reason": "rejected with TaintViolation",
-      "errorClass": "TaintViolation",
-      "phase": "run",
-      "hadMatchers": false,
-      "directives": []
-    },
-    {
-      "id": "mem_match_is_gate",
-      "section": "10_memory",
-      "expect": "accept",
-      "pass": true,
-      "reason": "accepted",
-      "phase": "run",
-      "hadMatchers": false,
-      "directives": []
-    },
-    {
-      "id": "mem_queried_fact_taint_reject",
-      "section": "10_memory",
-      "expect": "reject",
-      "pass": true,
-      "reason": "rejected with TaintViolation",
-      "errorClass": "TaintViolation",
       "phase": "run",
       "hadMatchers": false,
       "directives": []
@@ -1215,17 +1136,6 @@
       "directives": []
     },
     {
-      "id": "ctrl_gate_nonexhaustive_reject",
-      "section": "11_control",
-      "expect": "reject",
-      "pass": true,
-      "reason": "rejected with ExhaustivenessError",
-      "errorClass": "ExhaustivenessError",
-      "phase": "run",
-      "hadMatchers": false,
-      "directives": []
-    },
-    {
       "id": "ctrl_if_else",
       "section": "11_control",
       "expect": "accept",
@@ -1236,82 +1146,8 @@
       "directives": []
     },
     {
-      "id": "ctrl_retry_bounded",
-      "section": "11_control",
-      "expect": "accept",
-      "pass": true,
-      "reason": "accepted",
-      "phase": "run",
-      "hadMatchers": false,
-      "directives": []
-    },
-    {
-      "id": "ctrl_retry_exhausted",
-      "section": "11_control",
-      "expect": "accept",
-      "pass": true,
-      "reason": "accepted + ledger ok",
-      "phase": "run",
-      "hadMatchers": true,
-      "directives": [
-        "provider"
-      ]
-    },
-    {
-      "id": "ctrl_retry_unbounded_reject",
-      "section": "11_control",
-      "expect": "reject",
-      "pass": true,
-      "reason": "rejected with ParseError",
-      "errorClass": "ParseError",
-      "phase": "parse",
-      "hadMatchers": false,
-      "directives": []
-    },
-    {
       "id": "ctrl_ungated_credence_committed_reject",
       "section": "11_control",
-      "expect": "reject",
-      "pass": true,
-      "reason": "rejected with TypeError",
-      "errorClass": "TypeError",
-      "phase": "run",
-      "hadMatchers": false,
-      "directives": []
-    },
-    {
-      "id": "agg_all_bool_conjunction",
-      "section": "12_aggregation",
-      "expect": "accept",
-      "pass": true,
-      "reason": "accepted",
-      "phase": "run",
-      "hadMatchers": false,
-      "directives": []
-    },
-    {
-      "id": "agg_all_independent_ok",
-      "section": "12_aggregation",
-      "expect": "accept",
-      "pass": true,
-      "reason": "accepted",
-      "phase": "run",
-      "hadMatchers": false,
-      "directives": []
-    },
-    {
-      "id": "agg_any_bool_disjunction",
-      "section": "12_aggregation",
-      "expect": "accept",
-      "pass": true,
-      "reason": "accepted",
-      "phase": "run",
-      "hadMatchers": false,
-      "directives": []
-    },
-    {
-      "id": "agg_any_no_dep_decl_reject",
-      "section": "12_aggregation",
       "expect": "reject",
       "pass": true,
       "reason": "rejected with TypeError",
@@ -1347,16 +1183,6 @@
       "pass": true,
       "reason": "rejected with TypeError",
       "errorClass": "TypeError",
-      "phase": "run",
-      "hadMatchers": false,
-      "directives": []
-    },
-    {
-      "id": "agg_pipe_fanout_ok",
-      "section": "12_aggregation",
-      "expect": "accept",
-      "pass": true,
-      "reason": "accepted",
       "phase": "run",
       "hadMatchers": false,
       "directives": []
@@ -1518,17 +1344,6 @@
       "directives": []
     },
     {
-      "id": "gov_gate_unknown_arm_reject",
-      "section": "13_governance",
-      "expect": "reject",
-      "pass": true,
-      "reason": "rejected with TypeError",
-      "errorClass": "TypeError",
-      "phase": "run",
-      "hadMatchers": false,
-      "directives": []
-    },
-    {
       "id": "gov_grants_star_ok",
       "section": "13_governance",
       "expect": "accept",
@@ -1549,17 +1364,6 @@
       "directives": [
         "provider"
       ]
-    },
-    {
-      "id": "gov_negative_arm_taint_reject",
-      "section": "13_governance",
-      "expect": "reject",
-      "pass": true,
-      "reason": "rejected with TaintViolation",
-      "errorClass": "TaintViolation",
-      "phase": "run",
-      "hadMatchers": false,
-      "directives": []
     },
     {
       "id": "gov_perform_reach_subtractive_reject",
@@ -1618,6 +1422,17 @@
       "directives": [
         "principal"
       ]
+    },
+    {
+      "id": "gov_raw_subject_to_sink_reject",
+      "section": "13_governance",
+      "expect": "reject",
+      "pass": true,
+      "reason": "rejected with TaintViolation",
+      "errorClass": "TaintViolation",
+      "phase": "run",
+      "hadMatchers": false,
+      "directives": []
     },
     {
       "id": "gov_reach_ungranted_reject",
@@ -1845,524 +1660,7 @@
       ]
     },
     {
-      "id": "mod_ambiguous_name_reject",
-      "section": "18_modules",
-      "expect": "reject",
-      "pass": true,
-      "reason": "rejected with ModuleError",
-      "errorClass": "ModuleError",
-      "phase": "run",
-      "hadMatchers": false,
-      "directives": [
-        "modules"
-      ]
-    },
-    {
-      "id": "mod_etype_qualified_distinct",
-      "section": "18_modules",
-      "expect": "accept",
-      "pass": true,
-      "reason": "accepted",
-      "phase": "run",
-      "hadMatchers": false,
-      "directives": [
-        "modules"
-      ]
-    },
-    {
-      "id": "mod_explicit_header_accept",
-      "section": "18_modules",
-      "expect": "accept",
-      "pass": true,
-      "reason": "accepted",
-      "phase": "run",
-      "hadMatchers": false,
-      "directives": []
-    },
-    {
-      "id": "mod_import_alias",
-      "section": "18_modules",
-      "expect": "accept",
-      "pass": true,
-      "reason": "accepted",
-      "phase": "run",
-      "hadMatchers": false,
-      "directives": [
-        "modules"
-      ]
-    },
-    {
-      "id": "mod_import_cycle_reject",
-      "section": "18_modules",
-      "expect": "reject",
-      "pass": true,
-      "reason": "rejected with ModuleError",
-      "errorClass": "ModuleError",
-      "phase": "run",
-      "hadMatchers": false,
-      "directives": [
-        "modules"
-      ]
-    },
-    {
-      "id": "mod_import_qualified",
-      "section": "18_modules",
-      "expect": "accept",
-      "pass": true,
-      "reason": "accepted",
-      "phase": "run",
-      "hadMatchers": false,
-      "directives": [
-        "modules"
-      ]
-    },
-    {
-      "id": "mod_import_selective",
-      "section": "18_modules",
-      "expect": "accept",
-      "pass": true,
-      "reason": "accepted",
-      "phase": "run",
-      "hadMatchers": false,
-      "directives": [
-        "modules"
-      ]
-    },
-    {
-      "id": "mod_no_header_is_root",
-      "section": "18_modules",
-      "expect": "accept",
-      "pass": true,
-      "reason": "accepted",
-      "phase": "run",
-      "hadMatchers": false,
-      "directives": []
-    },
-    {
-      "id": "mod_package_path_dependency",
-      "section": "18_modules",
-      "expect": "accept",
-      "pass": true,
-      "reason": "accepted",
-      "phase": "run",
-      "hadMatchers": false,
-      "directives": [
-        "packages"
-      ]
-    },
-    {
-      "id": "mod_pub_import_private_reject",
-      "section": "18_modules",
-      "expect": "reject",
-      "pass": true,
-      "reason": "rejected with VisibilityError",
-      "errorClass": "VisibilityError",
-      "phase": "run",
-      "hadMatchers": false,
-      "directives": [
-        "modules"
-      ]
-    },
-    {
-      "id": "mod_pub_import_reexport",
-      "section": "18_modules",
-      "expect": "accept",
-      "pass": true,
-      "reason": "accepted",
-      "phase": "run",
-      "hadMatchers": false,
-      "directives": [
-        "modules"
-      ]
-    },
-    {
-      "id": "mod_pub_import_whole_prefix",
-      "section": "18_modules",
-      "expect": "accept",
-      "pass": true,
-      "reason": "accepted",
-      "phase": "run",
-      "hadMatchers": false,
-      "directives": [
-        "modules"
-      ]
-    },
-    {
-      "id": "mod_selective_import_unknown_reject",
-      "section": "18_modules",
-      "expect": "reject",
-      "pass": true,
-      "reason": "rejected with ModuleError",
-      "errorClass": "ModuleError",
-      "phase": "run",
-      "hadMatchers": false,
-      "directives": [
-        "modules"
-      ]
-    },
-    {
-      "id": "mod_unresolved_import_reject",
-      "section": "18_modules",
-      "expect": "reject",
-      "pass": true,
-      "reason": "rejected with ModuleError",
-      "errorClass": "ModuleError",
-      "phase": "run",
-      "hadMatchers": false,
-      "directives": []
-    },
-    {
-      "id": "vis_private_agent_not_spawnable_reject",
-      "section": "19_visibility",
-      "expect": "reject",
-      "pass": true,
-      "reason": "rejected with VisibilityError",
-      "errorClass": "VisibilityError",
-      "phase": "run",
-      "hadMatchers": false,
-      "directives": [
-        "modules"
-      ]
-    },
-    {
-      "id": "vis_private_default_same_module_ok",
-      "section": "19_visibility",
-      "expect": "accept",
-      "pass": true,
-      "reason": "accepted",
-      "phase": "run",
-      "hadMatchers": false,
-      "directives": []
-    },
-    {
-      "id": "vis_private_emit_reject",
-      "section": "19_visibility",
-      "expect": "reject",
-      "pass": true,
-      "reason": "rejected with VisibilityError",
-      "errorClass": "VisibilityError",
-      "phase": "run",
-      "hadMatchers": false,
-      "directives": [
-        "modules"
-      ]
-    },
-    {
-      "id": "vis_private_event_still_on_ledger",
-      "section": "19_visibility",
-      "expect": "accept",
-      "pass": true,
-      "reason": "accepted + ledger ok",
-      "phase": "run",
-      "hadMatchers": true,
-      "directives": [
-        "modules"
-      ]
-    },
-    {
-      "id": "vis_private_extend_reject",
-      "section": "19_visibility",
-      "expect": "reject",
-      "pass": true,
-      "reason": "rejected with VisibilityError",
-      "errorClass": "VisibilityError",
-      "phase": "run",
-      "hadMatchers": false,
-      "directives": [
-        "modules"
-      ]
-    },
-    {
-      "id": "vis_private_not_importable_reject",
-      "section": "19_visibility",
-      "expect": "reject",
-      "pass": true,
-      "reason": "rejected with VisibilityError",
-      "errorClass": "VisibilityError",
-      "phase": "run",
-      "hadMatchers": false,
-      "directives": [
-        "modules"
-      ]
-    },
-    {
-      "id": "vis_private_perform_reject",
-      "section": "19_visibility",
-      "expect": "reject",
-      "pass": true,
-      "reason": "rejected with VisibilityError",
-      "errorClass": "VisibilityError",
-      "phase": "run",
-      "hadMatchers": false,
-      "directives": [
-        "modules"
-      ]
-    },
-    {
-      "id": "vis_private_qualified_reference_reject",
-      "section": "19_visibility",
-      "expect": "reject",
-      "pass": true,
-      "reason": "rejected with VisibilityError",
-      "errorClass": "VisibilityError",
-      "phase": "run",
-      "hadMatchers": false,
-      "directives": [
-        "modules"
-      ]
-    },
-    {
-      "id": "vis_private_reach_reject",
-      "section": "19_visibility",
-      "expect": "reject",
-      "pass": true,
-      "reason": "rejected with VisibilityError",
-      "errorClass": "VisibilityError",
-      "phase": "run",
-      "hadMatchers": false,
-      "directives": [
-        "modules"
-      ]
-    },
-    {
-      "id": "vis_private_when_reject",
-      "section": "19_visibility",
-      "expect": "reject",
-      "pass": true,
-      "reason": "rejected with VisibilityError",
-      "errorClass": "VisibilityError",
-      "phase": "run",
-      "hadMatchers": false,
-      "directives": [
-        "modules"
-      ]
-    },
-    {
-      "id": "vis_pub_importable",
-      "section": "19_visibility",
-      "expect": "accept",
-      "pass": true,
-      "reason": "accepted",
-      "phase": "run",
-      "hadMatchers": false,
-      "directives": [
-        "modules"
-      ]
-    },
-    {
-      "id": "vis_shallow_export_reject",
-      "section": "19_visibility",
-      "expect": "reject",
-      "pass": true,
-      "reason": "rejected with VisibilityError",
-      "errorClass": "VisibilityError",
-      "phase": "run",
-      "hadMatchers": false,
-      "directives": []
-    },
-    {
-      "id": "gen_agent_not_generic_reject",
-      "section": "20_generics",
-      "expect": "reject",
-      "pass": true,
-      "reason": "rejected with ParseError",
-      "errorClass": "ParseError",
-      "phase": "parse",
-      "hadMatchers": false,
-      "directives": []
-    },
-    {
-      "id": "gen_enum_not_generic_reject",
-      "section": "20_generics",
-      "expect": "reject",
-      "pass": true,
-      "reason": "rejected with ParseError",
-      "errorClass": "ParseError",
-      "phase": "parse",
-      "hadMatchers": false,
-      "directives": []
-    },
-    {
-      "id": "gen_fn_identity",
-      "section": "20_generics",
-      "expect": "accept",
-      "pass": true,
-      "reason": "accepted",
-      "phase": "run",
-      "hadMatchers": false,
-      "directives": []
-    },
-    {
-      "id": "gen_interface_not_generic_reject",
-      "section": "20_generics",
-      "expect": "reject",
-      "pass": true,
-      "reason": "rejected with ParseError",
-      "errorClass": "ParseError",
-      "phase": "parse",
-      "hadMatchers": false,
-      "directives": []
-    },
-    {
-      "id": "gen_monomorphize_two_instances",
-      "section": "20_generics",
-      "expect": "accept",
-      "pass": true,
-      "reason": "accepted",
-      "phase": "run",
-      "hadMatchers": false,
-      "directives": []
-    },
-    {
-      "id": "gen_multi_param",
-      "section": "20_generics",
-      "expect": "accept",
-      "pass": true,
-      "reason": "accepted",
-      "phase": "run",
-      "hadMatchers": false,
-      "directives": []
-    },
-    {
-      "id": "gen_struct_box",
-      "section": "20_generics",
-      "expect": "accept",
-      "pass": true,
-      "reason": "accepted",
-      "phase": "run",
-      "hadMatchers": false,
-      "directives": []
-    },
-    {
-      "id": "gen_typearg_on_nongeneric_reject",
-      "section": "20_generics",
-      "expect": "reject",
-      "pass": true,
-      "reason": "rejected with TypeError",
-      "errorClass": "TypeError",
-      "phase": "run",
-      "hadMatchers": false,
-      "directives": []
-    },
-    {
-      "id": "iface_decl_and_conformance",
-      "section": "21_interfaces",
-      "expect": "accept",
-      "pass": true,
-      "reason": "accepted",
-      "phase": "run",
-      "hadMatchers": false,
-      "directives": []
-    },
-    {
-      "id": "iface_missing_handler_reject",
-      "section": "21_interfaces",
-      "expect": "reject",
-      "pass": true,
-      "reason": "rejected with InterfaceError",
-      "errorClass": "InterfaceError",
-      "phase": "run",
-      "hadMatchers": false,
-      "directives": []
-    },
-    {
-      "id": "iface_missing_required_grant_reject",
-      "section": "21_interfaces",
-      "expect": "reject",
-      "pass": true,
-      "reason": "rejected with InterfaceError",
-      "errorClass": "InterfaceError",
-      "phase": "run",
-      "hadMatchers": false,
-      "directives": []
-    },
-    {
-      "id": "iface_multi_implement",
-      "section": "21_interfaces",
-      "expect": "accept",
-      "pass": true,
-      "reason": "accepted",
-      "phase": "run",
-      "hadMatchers": false,
-      "directives": []
-    },
-    {
-      "id": "iface_not_instantiable_reject",
-      "section": "21_interfaces",
-      "expect": "reject",
-      "pass": true,
-      "reason": "rejected with TypeError",
-      "errorClass": "TypeError",
-      "phase": "run",
-      "hadMatchers": false,
-      "directives": []
-    },
-    {
-      "id": "iface_outcome_mismatch_reject",
-      "section": "21_interfaces",
-      "expect": "reject",
-      "pass": true,
-      "reason": "rejected with InterfaceError",
-      "errorClass": "InterfaceError",
-      "phase": "run",
-      "hadMatchers": false,
-      "directives": []
-    },
-    {
-      "id": "iface_private_required_cap_reject",
-      "section": "21_interfaces",
-      "expect": "reject",
-      "pass": true,
-      "reason": "rejected with VisibilityError",
-      "errorClass": "VisibilityError",
-      "phase": "run",
-      "hadMatchers": false,
-      "directives": []
-    },
-    {
-      "id": "iface_public_exposes_private_event_reject",
-      "section": "21_interfaces",
-      "expect": "reject",
-      "pass": true,
-      "reason": "rejected with VisibilityError",
-      "errorClass": "VisibilityError",
-      "phase": "run",
-      "hadMatchers": false,
-      "directives": []
-    },
-    {
-      "id": "iface_subtype_binding",
-      "section": "21_interfaces",
-      "expect": "accept",
-      "pass": true,
-      "reason": "accepted",
-      "phase": "run",
-      "hadMatchers": false,
-      "directives": []
-    },
-    {
-      "id": "iface_syntax_reject_arrow",
-      "section": "21_interfaces",
-      "expect": "reject",
-      "pass": true,
-      "reason": "rejected with ParseError",
-      "errorClass": "ParseError",
-      "phase": "parse",
-      "hadMatchers": false,
-      "directives": []
-    },
-    {
-      "id": "gate_all_reversible_no_principal_accept",
-      "section": "22_gate",
-      "expect": "accept",
-      "pass": true,
-      "reason": "accepted + ledger ok",
-      "phase": "run",
-      "hadMatchers": true,
-      "directives": []
-    },
-    {
-      "id": "gate_cold_nonreversible_defers_to_principal",
+      "id": "gate_cold_consequential_defers_to_principal",
       "section": "22_gate",
       "expect": "accept",
       "pass": true,
@@ -2375,28 +1673,15 @@
       ]
     },
     {
-      "id": "gate_cold_reversible_no_defer",
+      "id": "gate_consequential_no_principal_reject",
       "section": "22_gate",
-      "expect": "accept",
+      "expect": "reject",
       "pass": true,
-      "reason": "accepted + ledger ok",
+      "reason": "rejected with GateError",
+      "errorClass": "GateError",
       "phase": "run",
-      "hadMatchers": true,
-      "directives": [
-        "provider"
-      ]
-    },
-    {
-      "id": "gate_decide_defer_clause_accept",
-      "section": "22_gate",
-      "expect": "accept",
-      "pass": true,
-      "reason": "accepted + ledger ok",
-      "phase": "run",
-      "hadMatchers": true,
-      "directives": [
-        "principal"
-      ]
+      "hadMatchers": false,
+      "directives": []
     },
     {
       "id": "gate_decide_principal_subject_accept",
@@ -2453,6 +1738,18 @@
       "directives": []
     },
     {
+      "id": "gate_deference_in_else_accept",
+      "section": "22_gate",
+      "expect": "accept",
+      "pass": true,
+      "reason": "accepted + ledger ok",
+      "phase": "run",
+      "hadMatchers": true,
+      "directives": [
+        "principal"
+      ]
+    },
+    {
       "id": "gate_endorsement_expr_type_accept",
       "section": "22_gate",
       "expect": "accept",
@@ -2507,17 +1804,6 @@
       ]
     },
     {
-      "id": "gate_nonreversible_no_principal_reject",
-      "section": "22_gate",
-      "expect": "reject",
-      "pass": true,
-      "reason": "rejected with GateError",
-      "errorClass": "GateError",
-      "phase": "run",
-      "hadMatchers": false,
-      "directives": []
-    },
-    {
       "id": "gate_per_gate_conformal_accept",
       "section": "22_gate",
       "expect": "accept",
@@ -2525,40 +1811,8 @@
       "reason": "accepted + ledger ok",
       "phase": "run",
       "hadMatchers": true,
-      "directives": []
-    },
-    {
-      "id": "gate_reversible_action_accept",
-      "section": "22_gate",
-      "expect": "accept",
-      "pass": true,
-      "reason": "accepted + ledger ok",
-      "phase": "run",
-      "hadMatchers": true,
-      "directives": []
-    },
-    {
-      "id": "gate_reversible_tie_abstains",
-      "section": "22_gate",
-      "expect": "accept",
-      "pass": true,
-      "reason": "accepted + ledger ok",
-      "phase": "run",
-      "hadMatchers": true,
       "directives": [
-        "provider"
-      ]
-    },
-    {
-      "id": "gate_reversible_tie_default",
-      "section": "22_gate",
-      "expect": "accept",
-      "pass": true,
-      "reason": "accepted + ledger ok",
-      "phase": "run",
-      "hadMatchers": true,
-      "directives": [
-        "provider"
+        "principal"
       ]
     }
   ]

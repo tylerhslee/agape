@@ -395,8 +395,10 @@ export interface Triple {
 export type GateExpr = DecideExpr | EndorseExpr;
 
 export type Rule =
-  | { kind: "confidence"; theta: number; margin?: number }
-  | { kind: "conformal"; alpha?: number }
+  // inline rules carry their optional consequential `floor m` (the runtime margin floor, §13) and,
+  // for conformal, an optional `readiness N` (the labelled-case minimum before autonomous commit).
+  | { kind: "confidence"; theta: number; margin?: number; floor?: number }
+  | { kind: "conformal"; alpha?: number; readiness?: number; floor?: number }
   | { kind: "policy"; name: string }
   | { kind: "expr"; expr: Expr };
 

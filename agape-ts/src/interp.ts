@@ -301,8 +301,16 @@ class Interpreter {
       case "if": {
         const c = await this.evalExpr(s.cond, scope);
         if (c.kind !== "bool") throw typeError("an 'if' condition must be a bool");
-        const branch = c.v ? s.then : s.else ?? [];
+        const taken = c.v;
+        const branch = taken ? s.then : s.else ?? [];
         const inner = new Scope(scope);
+        // Model-A flow narrowing (§13/§15.3.3, W-Endorse): inside the TRUE branch of
+        // `if (e.committed == V)` for a real variant V, the endorsement `e` is committed-narrowed and
+        // becomes sink-admissible. The else branch leaves it un-narrowed (the abstained / other-variant case).
+        if (taken) {
+          const n = this.committedNarrowingOf(s.cond, scope);
+          if (n) inner.set(n.name, this.narrow(n.value, true));
+        }
         for (const st of branch) await this.execStmt(st, inner);
         return;
       }
@@ -565,6 +573,24 @@ class Interpreter {
   private narrow(value: Value, committedBranch: boolean): Value {
     if (value.kind === "endorsement") return { ...value, committedNarrowed: committedBranch };
     return value;
+  }
+
+  // Model-A narrowing target: if `cond` is `IDENT.committed == VARIANT` with VARIANT a real (non-`abstained`)
+  // enum variant or bool literal, and IDENT bound to an Endorsement, return that binding so the TRUE branch
+  // can re-bind it committed-narrowed (§13/§15.3.3, W-Endorse). Any other condition narrows nothing.
+  private committedNarrowingOf(cond: A.Expr, scope: Scope): { name: string; value: Value } | undefined {
+    if (cond.kind !== "binary" || cond.op !== "==") return undefined;
+    const committedIdent = (e: A.Expr): string | undefined =>
+      e.kind === "member" && e.field === "committed" && e.obj.kind === "ident" ? e.obj.name : undefined;
+    const leftName = committedIdent(cond.left);
+    const name = leftName ?? committedIdent(cond.right);
+    if (!name) return undefined;
+    const other = leftName ? cond.right : cond.left;
+    const variant = other.kind === "ident" ? other.name : other.kind === "bool" ? String(other.value) : undefined;
+    if (!variant || variant === "abstained") return undefined;
+    const v = scope.get(name);
+    if (!v || v.kind !== "endorsement") return undefined;
+    return { name, value: v };
   }
 
   // ---- the gate ----
