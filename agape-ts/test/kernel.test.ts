@@ -54,6 +54,20 @@ describe("the trusted kernel — gate chain", () => {
     expect(etypes(r)).not.toContain("Revised");
   });
 
+  it("records additive per-event latency metadata outside the canonical hash", async () => {
+    const r = await runWith({ Publish: 0.95, Revise: 0.05 });
+    expect(r.ledger.events.length).toBeGreaterThan(0);
+    const sum = r.ledger.events.reduce((acc, e) => acc + e.latency_ms, 0);
+    const last = r.ledger.events[r.ledger.events.length - 1]!;
+    for (const e of r.ledger.events) {
+      expect(Number.isFinite(e.latency_ms)).toBe(true);
+      expect(Number.isFinite(e.elapsed_ms)).toBe(true);
+      expect(e.latency_ms).toBeGreaterThanOrEqual(0);
+      expect(e.elapsed_ms).toBeGreaterThanOrEqual(0);
+    }
+    expect(sum).toBe(last.elapsed_ms);
+  });
+
   it("commits to Revise → the Announce sink does NOT fire", async () => {
     const r = await runWith({ Publish: 0.05, Revise: 0.95 });
     expect(etypes(r)).not.toContain("Announce");

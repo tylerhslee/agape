@@ -247,7 +247,7 @@
   /* ---- timeline ---- */
   .tl { border-left: 2px solid var(--line); margin-left: 8px; padding-left: 0; }
   .ev {
-    display: grid; grid-template-columns: 34px 128px minmax(0, 1fr) auto;
+    display: grid; grid-template-columns: 44px 128px minmax(0, 1fr) 72px auto;
     align-items: baseline; gap: 6px 10px; padding: 6px 6px 6px 14px;
     position: relative; border-radius: 6px;
   }
@@ -256,14 +256,15 @@
     content: ""; position: absolute; left: -6px; top: 12px; width: 10px; height: 10px;
     border-radius: 50%; background: var(--cat, var(--faint)); border: 2px solid var(--bg);
   }
-  .ev .tick { font: 11px var(--mono); color: var(--faint); text-align: right; }
+  .ev .tick { font: 11px var(--mono); color: #c3ccdf; text-align: right; white-space: nowrap; }
   .ev .etype { font: 600 12.5px var(--mono); color: var(--cat, var(--text)); white-space: nowrap; }
+  .ev .latency { font: 11px var(--mono); color: var(--teal); text-align: right; white-space: nowrap; }
   .ev .subj {
     min-width: 0; font: 12px var(--mono); color: #c3ccdf;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
   .ev .pay {
-    grid-column: 3 / 5; min-width: 0; font: 11.5px/1.45 var(--mono); color: var(--faint);
+    grid-column: 3 / 6; min-width: 0; font: 11.5px/1.45 var(--mono); color: var(--faint);
     overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3;
     word-break: break-word;
   }
@@ -277,10 +278,19 @@
   .console:empty::after { content: "(no say output)"; color: var(--faint); }
   .details { display: grid; gap: 10px; }
   .detail {
-    border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px;
-    background: rgba(255,255,255,.018);
+    border: 1px solid var(--line); border-radius: 8px; background: rgba(255,255,255,.018);
+    overflow: hidden;
   }
-  .detail h3 { font-size: 12px; margin-bottom: 6px; color: var(--text); }
+  .detailHead {
+    display: flex; align-items: center; gap: 8px; padding: 9px 10px 8px 12px;
+  }
+  .detail h3 {
+    min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-size: 12px; color: var(--text);
+  }
+  .detail .collapseToggle { width: 24px; height: 24px; font-size: 13px; }
+  .detailBody { padding: 0 12px 10px; }
+  .detail.collapsed .detailBody { display: none; }
   .kv { display: grid; grid-template-columns: 104px minmax(0,1fr); gap: 5px 10px; font: 11.5px/1.45 var(--mono); }
   .kv b { color: var(--faint); font-weight: 500; }
   .kv span { min-width: 0; overflow-wrap: anywhere; color: #c3ccdf; white-space: pre-wrap; }
@@ -404,12 +414,13 @@
     .verdict { flex-wrap: wrap; padding: 12px; }
     .verdict .head { margin-left: 0; flex-basis: 100%; }
     .verdict .msg { flex-basis: 100%; }
-    .ev { grid-template-columns: 30px minmax(0, 1fr) auto; row-gap: 2px; }
+    .ev { grid-template-columns: 44px minmax(0, 1fr) 64px auto; row-gap: 2px; }
     .ev .tick { grid-column: 1; grid-row: 1; }
     .ev .etype { grid-column: 2; grid-row: 1; }
-    .ev .tag { grid-column: 3; grid-row: 1; }
-    .ev .subj { grid-column: 2 / 4; grid-row: 2; }
-    .ev .pay { grid-column: 2 / 4; }
+    .ev .latency { grid-column: 3; grid-row: 1; }
+    .ev .tag { grid-column: 4; grid-row: 1; }
+    .ev .subj { grid-column: 2 / 5; grid-row: 2; }
+    .ev .pay { grid-column: 2 / 5; }
     .stage { min-width: 84px; padding: 6px 6px; }
     pre.code { font-size: 11.5px; }
     .codeLine { grid-template-columns: 3.5ch minmax(0, 1fr); gap: 8px; }
@@ -478,7 +489,7 @@
         </div>
         <div class="cardBody">
           <div id="configForm" class="configForm"></div>
-          <div class="rawHead">agape.toml — the source of truth · for inspection &amp; direct edits</div>
+          <div class="rawHead">agape.toml — project-root config · applies to every visible program</div>
           <pre class="code" id="configSource">Loading config.</pre>
           <div class="editorWrap">
             <div class="editLines" id="configEditLines"></div>
@@ -514,15 +525,15 @@ const CATS = {
 
 let state = {
   programs: [], selected: null, view: "program", meta: {}, source: "", sourceOrigin: null, map: null, graph: null,
-  configSource: "", configExists: false, configEditing: false, configDirty: false, configValues: {},
+  configSource: "", configExists: false, configEditing: false, configDirty: false, configValues: {}, configName: "agape.toml",
   editing: false, dirty: false, sessionId: null, listening: false, awaitingAttest: false,
-  pollTimer: null, collapsed: {}, currentProject: null,
+  pollTimer: null, collapsed: {},
   spec: null, specSearch: "",
 };
 
 // ---- persistence: the current view and settings survive a refresh -------------------------------
 // localStorage, keyed per served directory: selected program, current view, and panel collapse states.
-// The manifest itself lives in agape.toml (the source of truth) — never here.
+// The manifest itself lives in root agape.toml (the source of truth) — never here.
 function storeKey() { return `agape-studio:${state.meta.dir || ""}`; }
 function loadPersisted() {
   try { return JSON.parse(localStorage.getItem(storeKey()) || "{}") || {}; } catch { return {}; }
@@ -1023,29 +1034,29 @@ function providers() {
 }
 
 
-function projectOfName(name) {
-  const i = (name || "").indexOf("/");
+function folderOfName(name) {
+  const i = (name || "").lastIndexOf("/");
   return i === -1 ? "" : name.slice(0, i);
 }
 
 function fileOfName(name) {
-  const i = (name || "").indexOf("/");
+  const i = (name || "").lastIndexOf("/");
   return i === -1 ? name : name.slice(i + 1);
 }
 
 function renderProgramList(programs) {
   if (!programs.length) { $("programs").innerHTML = `<div class="empty">no .ag programs here</div>`; return; }
-  // each subdirectory is its own PROJECT with its own agape.toml (§17); root files share the root manifest.
+  // Group by folder for readability. Every program still uses the same project-root agape.toml.
   const groups = new Map();
   for (const p of programs) {
-    const g = p.project ?? projectOfName(p.name);
+    const g = p.folder ?? folderOfName(p.name);
     if (!groups.has(g)) groups.set(g, []);
     groups.get(g).push(p);
   }
   $("programs").innerHTML = [...groups.entries()].map(([proj, list]) =>
     list.map((p) => {
-      const proj2 = p.project ?? projectOfName(p.name);
-      const meta = p.origin === "example" ? "bundled example" : `${proj2 ? proj2 + "/ · " : ""}${p.bytes} bytes`;
+      const folder = p.folder ?? folderOfName(p.name);
+      const meta = p.origin === "example" ? "bundled example" : `${folder ? folder + "/ · " : ""}${p.bytes} bytes`;
       const cls = p.origin === "example" ? "prog example" : "prog";
       return `<button class="${cls}" data-name="${esc(p.name)}">${esc(fileOfName(p.name))}<small>${esc(meta)}</small></button>`;
     }).join("")
@@ -1061,13 +1072,13 @@ async function loadPrograms(selectName) {
   if (programs.length) await select(selectName && programs.some((p) => p.name === selectName) ? selectName : programs[0].name);
 }
 
-async function loadConfig(project = state.currentProject || "") {
-  state.currentProject = project;
-  const cfg = await api(`/api/config?project=${encodeURIComponent(project)}`);
+async function loadConfig() {
+  const cfg = await api("/api/config");
   state.configSource = cfg.source || "";
   state.configExists = Boolean(cfg.exists);
   state.configValues = cfg.values || {};
-  $("configTitle").textContent = `Config · ${cfg.name || "agape.toml"}${state.configExists ? "" : " · not saved"}`;
+  state.configName = cfg.name || "agape.toml";
+  $("configTitle").textContent = `Config · ${state.configName}${state.configExists ? "" : " · not saved"}`;
   $("configSource").innerHTML = renderCode(state.configSource, highlightToml);
   renderConfigForm();
   applyPanelState($("configCard"));
@@ -1174,11 +1185,11 @@ async function applyConfigForm() {
   try {
     await api("/api/config/patch", {
       method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ project: state.currentProject || "", sets }),
+      body: JSON.stringify({ sets }),
     });
     state.meta = await api("/api/meta"); // provider availability may change with the backend
     await loadConfig();
-    $("results").innerHTML = `<div class="verdict ok"><div class="light"></div><b>Config applied</b><span class="msg">${sets.length} key(s) written to agape.toml — used on the next run.</span></div>`;
+    $("results").innerHTML = `<div class="verdict ok"><div class="light"></div><b>Config applied</b><span class="msg">${sets.length} key(s) written to root agape.toml — used by every program on the next run.</span></div>`;
   } catch (e) {
     $("results").innerHTML = `<div class="verdict bad"><div class="light"></div><b>Config write failed</b><span class="msg">${esc(e.message)}</span></div>`;
     $("applyConfig").disabled = false;
@@ -1220,9 +1231,7 @@ async function select(name) {
   state.selected = name;
   for (const b of document.querySelectorAll("#programs .prog")) b.classList.toggle("active", b.dataset.name === name);
   const info = state.programs.find((p) => p.name === name);
-  $("srcTitle").textContent = info?.origin === "example" ? `${fileOfName(name)} · bundled example` : fileOfName(name);
-  const proj = projectOfName(name);
-  if (proj !== state.currentProject) await loadConfig(proj);
+  $("srcTitle").textContent = info?.origin === "example" ? `${fileOfName(name)} · bundled example` : name;
   const { source, origin, map } = await api(`/api/source?name=${encodeURIComponent(name)}`);
   state.source = source;
   state.sourceOrigin = origin;
@@ -1427,16 +1436,16 @@ $("saveConfig").onclick = async () => {
     const source = $("configEditor").value;
     await api("/api/config", {
       method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ project: state.currentProject || "", source }),
+      body: JSON.stringify({ source }),
     });
     state.configSource = source;
     state.configExists = true;
-    $("configTitle").textContent = "Config · agape.toml";
+    $("configTitle").textContent = `Config · ${state.configName || "agape.toml"}`;
     $("configSource").innerHTML = renderCode(state.configSource, highlightToml);
     setConfigEditing(false);
     await loadConfig(); // re-parse values → refresh the form + the effective provider
     state.meta = await api("/api/meta");
-    $("results").innerHTML = `<div class="verdict ok"><div class="light"></div><b>Config saved</b><span class="msg">agape.toml will be used on the next run.</span></div>`;
+    $("results").innerHTML = `<div class="verdict ok"><div class="light"></div><b>Config saved</b><span class="msg">Root agape.toml will be used by every program on the next run.</span></div>`;
   } catch (e) {
     $("results").innerHTML = `<div class="verdict bad"><div class="light"></div><b>Config save failed</b><span class="msg">${esc(e.message)}</span></div>`;
   } finally {
@@ -1738,22 +1747,61 @@ function timelinePayload(e, map) {
   return p && Object.keys(p).length ? fmt(p) : "";
 }
 
-function detail(title, rows, body = "") {
-  return `<div class="detail"><h3>${esc(title)}</h3>${kvRows(rows)}${body}</div>`;
+function msValue(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : undefined;
 }
 
-function renderRunDetails(r) {
-  const ev = r.events || [];
-  const parts = [];
+function formatMs(v, signed = false) {
+  const n = msValue(v);
+  if (n === undefined) return "";
+  const sign = signed && n >= 0 ? "+" : "";
+  if (Math.abs(n) < 1000) return `${sign}${Math.round(n)} ms`;
+  return `${sign}${(n / 1000).toFixed(2)} s`;
+}
 
-  for (const e of ev.filter((x) => ["Internalized", "MemoryConsulted", "Prompt", "PromptOpened"].includes(x.etype))) {
-    const p = e.payload || {};
+function eventLatencySum(events = []) {
+  return events.reduce((sum, e) => sum + (msValue(e.latency_ms) ?? 0), 0);
+}
+
+function eventMetaRows(e) {
+  return [
+    ["tick", e.tick !== undefined ? `#${e.tick}` : ""],
+    ["latency", formatMs(e.latency_ms, true)],
+    ["elapsed", formatMs(e.elapsed_ms)],
+  ];
+}
+
+function detail(title, rows, body = "", id = "") {
+  if (!id) return `<div class="detail"><div class="detailHead"><h3>${esc(title)}</h3></div><div class="detailBody">${kvRows(rows)}${body}</div></div>`;
+  const collapsed = Boolean(state.collapsed[id]);
+  return `<div class="detail collapsible ${collapsed ? "collapsed" : ""}" data-panel="${esc(id)}">
+    <div class="detailHead">
+      <h3>${esc(title)}</h3>
+      <button class="collapseToggle" type="button" aria-label="${collapsed ? "Expand" : "Collapse"} ${esc(title)}" aria-expanded="${String(!collapsed)}" title="${collapsed ? "Expand" : "Collapse"}">${collapsed ? "▸" : "▾"}</button>
+    </div>
+    <div class="detailBody">${kvRows(rows)}${body}</div>
+  </div>`;
+}
+
+function payloadValue(payload) {
+  if (payload === undefined || payload === null) return "";
+  if (Array.isArray(payload)) return payload.length ? payload : "";
+  if (typeof payload === "object") return Object.keys(payload).length ? payload : "";
+  return payload;
+}
+
+function runDetailForEvent(e, r) {
+  const p = e.payload || {};
+  const eventDetail = (title, rows, body = "") => detail(title, rows, body, `run-detail-${e.tick}`);
+  if (["Internalized", "MemoryConsulted", "Prompt", "PromptOpened"].includes(e.etype)) {
     if (e.etype === "Internalized") {
       const v = p.reply || p.value;
       const title = p.reply
         ? `Internalized reply · ${e.subject} ⇐ event #${p.source_event ?? "?"}`
         : `Memory write · ${eventValue(e, r.map)}`;
-      parts.push(detail(title, [
+      return eventDetail(title, [
+        ...eventMetaRows(e),
         ["binding", e.subject],
         ["memory", p.memory],
         [p.reply ? "reply" : "value", renderedValue(v)],
@@ -1765,9 +1813,10 @@ function renderRunDetails(r) {
         ["policy", p.policy],
         ["trust", v?.trust],
         ["kind", v?.kind],
-      ]));
+      ]);
     } else if (e.etype === "Prompt") {
-      parts.push(detail(`Prompt · ${eventValue(e, r.map)}`, [
+      return eventDetail(`Prompt · ${eventValue(e, r.map)}`, [
+        ...eventMetaRows(e),
         ["source", e.subject],
         ["input", renderedValue(p.input)],
         ["kind", p.input?.kind],
@@ -1775,38 +1824,40 @@ function renderRunDetails(r) {
         ["attester", p.attestation?.attester],
         ["payload hash", p.attestation?.payload_hash],
         ["signature", p.attestation?.signature],
-      ]));
+      ]);
     } else if (e.etype === "PromptOpened") {
-      parts.push(detail(`Prompt opened · ${e.subject}`, [
+      return eventDetail(`Prompt opened · ${e.subject}`, [
+        ...eventMetaRows(e),
         ["source", e.subject],
-      ]));
+      ]);
     } else {
       const candidates = (p.candidates || []).map((c, i) => `${i + 1}. ${renderedValue(c)}`).join("\n");
-      parts.push(detail(`Retrieval · ${e.subject}`, [
+      return eventDetail(`Retrieval · ${e.subject}`, [
+        ...eventMetaRows(e),
         ["query", p.query],
         ["hits", p.hits],
         ["recalled", p.recalled],
         ["candidates", candidates],
-      ], scoreBars(p)));
+      ], scoreBars(p));
     }
   }
 
-  for (const e of ev.filter((x) => x.etype === "Forgotten")) {
-    const p = e.payload || {};
-    parts.push(detail(`Memory forget · ${eventValue(e, r.map)}`, [
+  if (e.etype === "Forgotten") {
+    return eventDetail(`Memory forget · ${eventValue(e, r.map)}`, [
+      ...eventMetaRows(e),
       ["binding", e.subject],
       ["mode", p.mode],
       ["effects", p.effects],
       ["refs", p.refs],
       ["policy", p.policy],
-    ]));
+    ]);
   }
 
-  for (const e of ev.filter((x) => x.etype === "Resolved")) {
-    const p = e.payload || {};
+  if (e.etype === "Resolved") {
     const reply = resolvedReply(p);
     if (p.kind === "credence") {
-      parts.push(detail(credenceValue(e.subject, p), [
+      return eventDetail(credenceValue(e.subject, p), [
+        ...eventMetaRows(e),
         ["variable", e.subject],
         ["reply", credenceValue(e.subject, p)],
         ["prompt", p.prompt],
@@ -1814,9 +1865,10 @@ function renderRunDetails(r) {
         ["top", p.top ? `${p.top.variant} (${(p.top.score * 100).toFixed(1)}%)` : ""],
         ["runner-up", p.runnerUp ? `${p.runnerUp.variant} (${(p.runnerUp.score * 100).toFixed(1)}%)` : ""],
         ["margin", p.margin],
-      ], scoreBars(p)));
+      ], scoreBars(p));
     } else if (p.kind === "structured") {
-      parts.push(detail(`${e.subject} = ${renderedValue(reply)}`, [
+      return eventDetail(`${e.subject} = ${renderedValue(reply)}`, [
+        ...eventMetaRows(e),
         ["variable", e.subject],
         ["reply", renderedValue(reply)],
         ...valueFieldRows(reply),
@@ -1824,22 +1876,23 @@ function renderRunDetails(r) {
         ["schema", p.schema],
         ["trust", reply?.trust],
         ["kind", reply?.kind],
-      ]));
+      ]);
     } else {
-      parts.push(detail(`${e.subject} = ${renderedValue(reply)}`, [
+      return eventDetail(`${e.subject} = ${renderedValue(reply)}`, [
+        ...eventMetaRows(e),
         ["variable", e.subject],
         ["reply", renderedValue(reply)],
         ["prompt", p.prompt],
         ["kind", p.kind],
-      ]));
+      ]);
     }
   }
 
-  for (const e of ev.filter((x) => ["Decided","Endorsed","PrincipalDecision","FailedPrincipalDecision"].includes(x.etype))) {
-    const p = e.payload || {};
+  if (["Decided","Endorsed","PrincipalDecision","FailedPrincipalDecision"].includes(e.etype)) {
     const d = p.decision ? hydrateDecisionPayload(e, r.map) : p;
     const endorsement = p.endorsement || {};
-    parts.push(detail(`${e.etype} · ${eventValue(e, r.map)}`, [
+    return eventDetail(`${e.etype} · ${eventValue(e, r.map)}`, [
+      ...eventMetaRows(e),
       ["decision value", p.decision ? decisionValue(d) : ""],
       ["endorsement value", p.endorsement ? endorsementValue(p.endorsement) : ""],
       ["decision id", d.decision_id ?? p.decision_id ?? ""],
@@ -1855,19 +1908,27 @@ function renderRunDetails(r) {
       ["payload hash", p.attestation?.payload_hash || d.attestation?.payload_hash],
       ["signature", p.attestation?.signature || d.attestation?.signature],
       ["top", d.source?.top ? `${d.source.top.variant} (${(d.source.top.score * 100).toFixed(1)}%)` : p.top ? `${p.top.variant} (${(p.top.score * 100).toFixed(1)}%)` : ""],
-    ], scoreBars(d.source || p)));
+    ], scoreBars(d.source || p));
   }
 
-  if (r.map?.actions) {
-    for (const e of ev.filter((x) => r.map.actions.includes(x.etype))) {
-      parts.push(detail(`Sink · ${e.etype}`, [
-        ["agent", e.subject],
-        ["payload", e.payload],
-      ]));
-    }
+  if (r.map?.actions?.includes(e.etype)) {
+    return eventDetail(`Sink · ${e.etype}`, [
+      ...eventMetaRows(e),
+      ["agent", e.subject],
+      ["payload", e.payload],
+    ]);
   }
 
-  return parts.join("");
+  return eventDetail(`${e.etype} · ${timelineSubject(e, r.map) || e.subject}`, [
+    ...eventMetaRows(e),
+    ["subject", e.subject],
+    ["agent", e.agent],
+    ["payload", payloadValue(e.payload)],
+  ]);
+}
+
+function renderRunDetails(r) {
+  return (r.events || []).map((e) => runDetailForEvent(e, r)).join("");
 }
 
 // ---- the orchestration graph (GRAPH.md): statically DERIVED from source, overlaid live ----------
@@ -2366,6 +2427,8 @@ function graphPanelHtml() {
 
 function render(r) {
   const out = [];
+  const ev = r.events || [];
+  const latencySum = eventLatencySum(ev);
   state.pendingAttestation = r.pendingAttestation || null;
 
   renderAttestationControls(r.pendingAttestation);
@@ -2373,10 +2436,10 @@ function render(r) {
   // verdict
   if (r.runState === "waiting") {
     out.push(`<div class="verdict wait"><div class="light"></div><b>Paused — awaiting attestation</b>
-      <span class="msg">${(r.events || []).length} ledger events so far · provider ${esc(r.provider?.backend ?? "")}</span></div>`);
+      <span class="msg">${ev.length} ledger events so far · Σ event latency ${esc(formatMs(latencySum))} · provider ${esc(r.provider?.backend ?? "")}</span></div>`);
   } else if (r.ok) {
     out.push(`<div class="verdict ok"><div class="light"></div><b>Accepted &amp; executed</b>
-      <span class="msg">${r.events.length} ledger events · ${r.ms} ms · provider ${esc(r.provider.backend)}</span>
+      <span class="msg">${ev.length} ledger events · ${esc(formatMs(r.ms))} total · Σ events ${esc(formatMs(latencySum))} · provider ${esc(r.provider.backend)}</span>
       <span class="head">chain-head <b>${esc(r.chainHead)}</b></span></div>`);
   } else {
     out.push(`<div class="verdict bad"><div class="light"></div><b>Rejected</b>
@@ -2385,7 +2448,6 @@ function render(r) {
   }
 
   // kernel chain
-  const ev = r.events || [];
   const has = (t) => ev.some((e) => e.etype === t);
   const count = (t) => ev.filter((e) => e.etype === t).length;
   const sinks = r.map ? ev.filter((e) => r.map.actions.includes(e.etype)) : [];
@@ -2414,8 +2476,11 @@ function render(r) {
         const c = catOf(e.etype, r.map);
         const subj = timelineSubject(e, r.map);
         const pay = timelinePayload(e, r.map);
-        return `<div class="ev" style="--cat:${c.color}"><span class="tick">${e.tick}</span>
+        const latency = formatMs(e.latency_ms, true);
+        const elapsed = formatMs(e.elapsed_ms);
+        return `<div class="ev" style="--cat:${c.color}"><span class="tick">#${esc(e.tick)}</span>
           <span class="etype">${esc(e.etype)}</span><span class="subj" title="${esc(subj)}">${esc(subj)}</span>
+          <span class="latency" title="${elapsed ? `elapsed ${esc(elapsed)}` : ""}">${esc(latency)}</span>
           <span class="tag">${c.name}</span>${pay ? `<span class="pay">${esc(pay)}</span>` : ""}</div>`;
       }).join("")
     }</div><div class="meta">every event is hash-chained; the chain-head is the proof of replay-equivalence (T4)</div>`));

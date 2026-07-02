@@ -172,6 +172,9 @@ function mockStructured(schema: StructuredSchema): unknown {
 // ---- The ledger (append-only, totally ordered within the runtime) ----
 export interface LedgerEvent {
   tick: number;
+  // Runtime inspection metadata, deliberately excluded from head(): `tick` is the canonical ledger order.
+  latency_ms: number;
+  elapsed_ms: number;
   etype: string;
   subject: string;
   payload?: unknown;
@@ -180,8 +183,24 @@ export interface LedgerEvent {
 
 export class Ledger {
   readonly events: LedgerEvent[] = [];
+  private lastMs: number;
+
+  constructor(private originMs = Date.now()) {
+    this.lastMs = originMs;
+  }
+
   append(etype: string, subject: string, payload?: unknown, agent?: string): LedgerEvent {
-    const ev: LedgerEvent = { tick: this.events.length, etype, subject, payload, agent };
+    const now = Date.now();
+    const ev: LedgerEvent = {
+      tick: this.events.length,
+      latency_ms: Math.max(0, now - this.lastMs),
+      elapsed_ms: Math.max(0, now - this.originMs),
+      etype,
+      subject,
+      payload,
+      agent,
+    };
+    this.lastMs = now;
     this.events.push(ev);
     return ev;
   }
