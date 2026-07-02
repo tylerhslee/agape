@@ -2045,6 +2045,7 @@ function drawGraph(events, map) {
   const sideW = hasUp ? 96 : 0;
   const svgW = M * 2 + maxRowW + sideW;
   const pos = new Map(), unitRect = new Map(), rowTop = new Map(), rowBottom = new Map();
+  const firstMem = new Set(), lastMem = new Set();
   let y = M;
   for (const r of sortedRanks) {
     const list = rows.get(r);
@@ -2056,6 +2057,8 @@ function drawGraph(events, map) {
       const h = unitH(u);
       if (u.members.length) {
         pos.set(u.head.id, { x, y, w: UW, h: HEADH, cluster: true });
+        firstMem.add(u.members[0].id);
+        lastMem.add(u.members[u.members.length - 1].id);
         let my = y + HEADH + 8;
         for (const m of u.members) {
           const ind = m.kind === "gate" || m.kind === "ask" ? 14 : 0;
@@ -2086,8 +2089,9 @@ function drawGraph(events, map) {
   const drawable = g.edges.filter((e) => pos.get(e.from) && pos.get(e.to));
   const rankOfNode = (id) => rank.get(unitOf.get(id));
   const frameOf = (id) => unitRect.get(unitOf.get(id));
-  const rowsBelow = (id) => { const f = frameOf(id), p = pos.get(id); return parentOf.get(id) && f && p.y + p.h < f.y + f.h - 18; };
-  const rowsAbove = (id) => { const f = frameOf(id), p = pos.get(id); return parentOf.get(id) && f && p.y > f.y + HEADH + 12; };
+  // structural, not geometric: a node side-exits only if another member row is genuinely below it.
+  const rowsBelow = (id) => Boolean(parentOf.get(id)) && !lastMem.has(id);
+  const rowsAbove = (id) => Boolean(parentOf.get(id)) && !firstMem.has(id);
   const kindOf = { intra: [], down: [], up: [], flat: [] };
   for (const e of drawable) {
     if (parentOf.get(e.from) && parentOf.get(e.from) === parentOf.get(e.to)) kindOf.intra.push(e);
@@ -2203,9 +2207,9 @@ function drawGraph(events, map) {
       endX = tx;
     }
     epaths.push(`<g class="${v.cls}"><path d="${head}${tail}" stroke="${v.color}" ${v.marker}></path></g>`);
-    if (v.label) { // on the channel run — box-free by construction
-      const lx = Math.abs(endX - dropX) > 56 ? (dropX + endX) / 2 : endX + 10;
-      putLabel(v, Math.abs(endX - dropX) > 56 ? "middle" : "start", lx, cy - 5, v.label);
+    if (v.label) {
+      if (e._sideOut) putLabel(v, "start", s.x + s.w + 8, scy - 6, v.label); // beside the exit run
+      else putLabel(v, "start", dropX + 6, s.y + s.h + 17, v.label);         // at the fork, beside its own drop
     }
   }
   for (const e of kindOf.up) {
