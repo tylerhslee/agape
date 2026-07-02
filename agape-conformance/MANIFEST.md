@@ -1,6 +1,6 @@
 # Agape v1.0.0-alpha.2026.7.2.0 — Conformance Test Index
 
-**164 tests** — accept: 101, reject: 63
+**167 tests** — accept: 103, reject: 64
 
 A conformant implementation must satisfy every `accept`/`reject` test (rejects with the declared error class; accepts matching any asserted spine).
 
@@ -229,6 +229,9 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 | `cfg_sampling_fallback` | accept | — | §16.8, §17 (a text-only provider is served by the sampling fallback: the credence is the empirical frequency of N forced draws; a confident judgment still commits) |
 | `cfg_sampling_fallback_disabled_defers` | accept | — | §13, §17 (without logprobs or the sampling fallback, a conformal gate has no distribution and degrades to deferral/abstain) |
 | `cfg_strict_bindings_ok` | accept | — | §17.1 (declared dependencies pass configuration binding when every dependency has a manifest entry) |
+| `cfg_tool_binding_missing_driver_reject` | reject | ConfigError | §17.1 (a tool binding table must name a driver; connector-specific fields are not enough) |
+| `cfg_tool_host_binding_accept` | accept | — | §17.1 ([tools.NAME] can bind a declared tool to implementation-defined host functions, scripts, processes, or skills) |
+| `cfg_tool_mcp_binding_accept` | accept | — | §17.1 ([tools.NAME] binds a declared tool dependency; MCP is one supported tool transport) |
 
 ## 22_gate
 

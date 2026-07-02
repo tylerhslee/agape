@@ -1,7 +1,7 @@
 //! id:        cfg_strict_bindings_ok
 //! section:   16_config
 //! expect:    accept
-//! manifest:  identity.alice=local; prompts.question=stdin; tools.search=mock
+//! manifest:  identity.alice.driver=local_keyring; prompts.question.driver=stdin; tools.search.driver=mock
 //! spec:      §17.1 (declared dependencies pass configuration binding when every dependency has a manifest entry)
 //! ---
 principal alice;

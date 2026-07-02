@@ -1,0 +1,11 @@
+//! id:        cfg_tool_mcp_binding_accept
+//! section:   16_config
+//! expect:    accept
+//! manifest:  tools.search.driver=mcp; tools.search.server=stdio:local-search
+//! spec:      §17.1 ([tools.NAME] binds a declared tool dependency; MCP is one supported tool transport)
+//! ---
+read tool text search(text q);
+agent A {
+  on awake { say("configured"); }
+}
+spawn A a; awake a;

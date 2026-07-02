@@ -69,7 +69,7 @@ async function main(argv: string[]): Promise<number> {
   const provider = createProvider(manifest);
 
   const program = parse(source);
-  const { ledger, stdout } = await run(program, { provider });
+  const { ledger, stdout } = await run(program, { provider, manifest });
 
   const modelNote = manifest.provider.model ? ` / ${manifest.provider.model}` : "";
   console.log(`# agape-ts — ran ${file}  (provider: ${manifest.provider.backend}${modelNote})\n`);

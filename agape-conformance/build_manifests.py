@@ -16,7 +16,7 @@ spine|contains|absent|order (matchers; `; `-separated), schema (compiler schema 
 `; `-separated), question (iff blocked), spec, note.
 Run directives (the §17.5 harness contract): provider (empty|schema_violation|credence(...)),
 principal (grant|deny — the identity-dependency ruling for `decide c by p`), manifest
-(key=value; `; `-separated), replay (chain_head_equal),
+(key=value; `; `-separated; e.g. `tools.search.driver=mcp`), replay (chain_head_equal),
 modules (companion module filenames; `; `-separated; live in a sibling <id>.d/ dir — v1.1.0),
 packages (name=path/to/lib.ag package roots under <id>.d/).
 Error classes: LexError ParseError TypeError ColorViolation TaintViolation

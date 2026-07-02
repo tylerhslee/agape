@@ -29,6 +29,8 @@ const UI_PATH = join(dirname(fileURLToPath(import.meta.url)), "index.html");
 const EXAMPLES_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "../examples");
 const SAFE_NAME = /^[\w][\w.-]*\.ag$/; // basename-only, .ag-only — no traversal, no dotfiles
 const MAX_SOURCE_BYTES = 256 * 1024;
+const CONFIG_NAME = "agape.toml";
+const MAX_CONFIG_BYTES = 128 * 1024;
 
 const SECURITY_HEADERS = {
   "cache-control": "no-store",
@@ -214,6 +216,43 @@ function saveProgramSource(dir: string, name: string, source: string) {
   };
 }
 
+function configPath(dir: string): string {
+  return resolve(dir, CONFIG_NAME);
+}
+
+function defaultConfigSource(): string {
+  return `[provider]
+backend = "mock"
+
+[memory]
+blob_store = "archive"
+background_reindex = true
+forget_policy = "cascade"
+archive_retention = "forever"
+`;
+}
+
+function readConfigSource(dir: string): { source: string; exists: boolean; name: string } {
+  const path = configPath(dir);
+  if (existsSync(path)) return { source: readFileSync(path, "utf8"), exists: true, name: CONFIG_NAME };
+  return { source: defaultConfigSource(), exists: false, name: CONFIG_NAME };
+}
+
+function saveConfigSource(dir: string, source: string) {
+  const path = configPath(dir);
+  if (!path.startsWith(resolve(dir))) return { status: 400 as const, body: { error: "invalid config path" } };
+  const bytes = Buffer.byteLength(source, "utf8");
+  if (bytes > MAX_CONFIG_BYTES) return { status: 413 as const, body: { error: "config is too large" } };
+  writeFileSync(path, source, "utf8");
+  const st = statSync(path);
+  return { status: 200 as const, body: { ok: true, config: { name: CONFIG_NAME, bytes: st.size, modified: st.mtime.toISOString(), exists: true } } };
+}
+
+function loadProjectManifest(dir: string, providerName: string) {
+  const path = configPath(dir);
+  return loadManifest(existsSync(path) ? path : undefined, providerName);
+}
+
 async function readBody(req: IncomingMessage, limit = MAX_SOURCE_BYTES + 4096): Promise<string> {
   const chunks: Buffer[] = [];
   let bytes = 0;
@@ -265,10 +304,10 @@ async function runProgram(
   const map = mapProgram(program);
 
   // phase 3: check + run (the interpreter runs the static checker first).
-  const manifest = loadManifest(undefined, providerName);
+  const manifest = loadProjectManifest(opts.dir, providerName);
   const provider = createProvider(manifest);
   try {
-    const { ledger, stdout } = await run(program, { provider, promptInputs, principalAttestations });
+    const { ledger, stdout } = await run(program, { provider, manifest, promptInputs, principalAttestations });
     return {
       status: 200 as const,
       body: {
@@ -386,7 +425,7 @@ async function startRunSession(
   }
 
   const map = mapProgram(program);
-  const manifest = loadManifest(undefined, providerName);
+  const manifest = loadProjectManifest(opts.dir, providerName);
   const provider = createProvider(manifest);
   try {
     const session: StudioRunSession = {
@@ -405,6 +444,7 @@ async function startRunSession(
     // pendingAttestation for the UI; POST /api/attest resolves it with the ruling (or a decline).
     session.runtime = createSession(program, {
       provider,
+      manifest,
       principalAttestations,
       onConsult: (req) => new Promise<PrincipalAttestation | undefined>((resolveConsult) => {
         session.pending = { ...req, id: randomBytes(8).toString("base64url") };
@@ -496,10 +536,19 @@ export function startStudio(opts: StudioOptions): Promise<{ close: () => void }>
         try { map = mapProgram(parse(program.source)); } catch { /* source may be mid-edit; run will show parse errors */ }
         return json(res, 200, { ...program, map });
       }
+      if (req.method === "GET" && url.pathname === "/api/config") {
+        return json(res, 200, readConfigSource(opts.dir));
+      }
       if (req.method === "POST" && url.pathname === "/api/source") {
         const body = JSON.parse((await readBody(req)) || "{}") as { name?: string; source?: string };
         if (typeof body.source !== "string") return json(res, 400, { error: "missing source" });
         const r = saveProgramSource(opts.dir, body.name ?? "", body.source);
+        return json(res, r.status, r.body);
+      }
+      if (req.method === "POST" && url.pathname === "/api/config") {
+        const body = JSON.parse((await readBody(req)) || "{}") as { source?: string };
+        if (typeof body.source !== "string") return json(res, 400, { error: "missing config source" });
+        const r = saveConfigSource(opts.dir, body.source);
         return json(res, r.status, r.body);
       }
       if (req.method === "POST" && url.pathname === "/api/run") {

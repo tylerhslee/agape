@@ -1,0 +1,12 @@
+//! id:        cfg_tool_binding_missing_driver_reject
+//! section:   16_config
+//! expect:    reject
+//! error:     ConfigError
+//! manifest:  tools.search.provider=tavily
+//! spec:      §17.1 (a tool binding table must name a driver; connector-specific fields are not enough)
+//! ---
+read tool text search(text q);
+agent A {
+  on awake { say("configured"); }
+}
+spawn A a; awake a;

@@ -1,6 +1,6 @@
 {
-  "passed": 164,
-  "total": 164,
+  "passed": 167,
+  "total": 167,
   "bySection": {
     "00_lexical": {
       "pass": 11,
@@ -59,8 +59,8 @@
       "total": 2
     },
     "16_config": {
-      "pass": 9,
-      "total": 9
+      "pass": 12,
+      "total": 12
     },
     "22_gate": {
       "pass": 14,
@@ -1649,6 +1649,43 @@
     },
     {
       "id": "cfg_strict_bindings_ok",
+      "section": "16_config",
+      "expect": "accept",
+      "pass": true,
+      "reason": "accepted",
+      "phase": "run",
+      "hadMatchers": false,
+      "directives": [
+        "manifest"
+      ]
+    },
+    {
+      "id": "cfg_tool_binding_missing_driver_reject",
+      "section": "16_config",
+      "expect": "reject",
+      "pass": true,
+      "reason": "rejected with ConfigError",
+      "errorClass": "ConfigError",
+      "phase": "run",
+      "hadMatchers": false,
+      "directives": [
+        "manifest"
+      ]
+    },
+    {
+      "id": "cfg_tool_host_binding_accept",
+      "section": "16_config",
+      "expect": "accept",
+      "pass": true,
+      "reason": "accepted",
+      "phase": "run",
+      "hadMatchers": false,
+      "directives": [
+        "manifest"
+      ]
+    },
+    {
+      "id": "cfg_tool_mcp_binding_accept",
       "section": "16_config",
       "expect": "accept",
       "pass": true,
