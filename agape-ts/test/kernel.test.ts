@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { parse } from "../src/parser.js";
 import { run } from "../src/interp.js";
 import { MockProvider, type StructuredSchema } from "../src/runtime.js";
+import { parseManifestDirective } from "../src/config.js";
 
 const HELLO = `
 enum Verdict { Publish, Revise }
@@ -341,6 +342,47 @@ describe("the prompt sensor opens from its declaration (§5b)", () => {
     expect((principal?.payload as any)?.attestation?.attester).toBe("local-user");
     const notify = r.ledger.events.find((e) => e.etype === "NotifyUser");
     expect(notify?.payload).toEqual(["send a notification"]);
+  });
+});
+
+describe("manifest dependency bindings", () => {
+  it("parses table-shaped conformance fixture bindings and the old flat shorthand", () => {
+    const manifest = parseManifestDirective(
+      "identity.alice.driver=local_keyring; prompts.question.driver=stdin; " +
+      "tools.search.driver=mcp; tools.search.server=local-search; tools.legacy=mock",
+    );
+    expect(manifest.identity?.alice).toMatchObject({ driver: "local_keyring" });
+    expect(manifest.prompts?.question).toMatchObject({ driver: "stdin" });
+    expect(manifest.tools?.search).toMatchObject({ driver: "mcp", server: "local-search" });
+    expect(manifest.tools?.legacy).toMatchObject({ driver: "mock" });
+  });
+
+  it("routes a configured non-mock tool through the host adapter and validates the declared return type", async () => {
+    const prog = `
+      read tool text search(text q);
+      agent A grants { use search } {
+        on awake {
+          text hit = search("northwind");
+          say(hit);
+        }
+      }
+      spawn A a; awake a;
+    `;
+    const calls: string[] = [];
+    const r = await run(parse(prog), {
+      manifest: { provider: { backend: "mock" }, tools: { search: { driver: "host", provider: "fixture" } } },
+      toolHandlers: {
+        search: ({ args, binding }) => {
+          calls.push(`${binding.provider}:${args[0]?.kind === "text" ? args[0].v : ""}`);
+          return "northwind receipt";
+        },
+      },
+    });
+    expect(calls).toEqual(["fixture:northwind"]);
+    expect(r.stdout).toEqual(["northwind receipt"]);
+    const resolved = r.ledger.events.find((e) => e.etype === "ToolResolved");
+    expect((resolved?.payload as any)?.binding).toMatchObject({ driver: "host", provider: "fixture" });
+    expect((resolved?.payload as any)?.result).toMatchObject({ kind: "text", value: "northwind receipt" });
   });
 });
 

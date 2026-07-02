@@ -17,22 +17,33 @@ export interface ProviderConfig {
   fallback_samples?: number; // min 10
   fallback_temperature?: number;
 }
+export type ManifestAtom = string | number | boolean;
+export type ManifestValue = ManifestAtom | ManifestAtom[] | Record<string, ManifestAtom>;
+export interface BindingConfig {
+  driver?: string;
+  [key: string]: ManifestValue | undefined;
+}
+export interface ToolBindingConfig extends BindingConfig {}
 export interface Manifest {
   provider: ProviderConfig;
+  project?: Record<string, ManifestValue>;
   // §17.1 dependency BINDINGS — the manifest binds each declared `principal`/`prompt`/`tool` dependency
   // to a configured world capability (identity for a principal, a prompt source, a tool implementation).
   // A declared dependency with no binding is a ConfigError (checked statically, §17.1). Keyed by the
-  // dependency's simple name (`identity.alice=local` → identity.alice).
-  identity?: Record<string, string>;
-  prompts?: Record<string, string>;
-  tools?: Record<string, string>;
+  // dependency's simple name (`[identity.alice] driver="local"` → identity.alice).
+  identity?: Record<string, BindingConfig>;
+  prompts?: Record<string, BindingConfig>;
+  tools?: Record<string, ToolBindingConfig>;
+  memory?: Record<string, ManifestValue>;
+  runtime?: Record<string, ManifestValue>;
   // §17.2 — decision policy lives in SOURCE, never the manifest; any `policy.*` key here is a ConfigError.
-  policy?: Record<string, string>;
+  policy?: Record<string, ManifestValue>;
 }
 
 export function loadManifest(path?: string, backendOverride?: string): Manifest {
   const resolved = path ?? (existsSync("agape.toml") ? "agape.toml" : undefined);
-  const raw: ProviderConfig = resolved ? readProviderTable(readFileSync(resolved, "utf8")) : { backend: "mock" };
+  const manifest = resolved ? readManifestToml(readFileSync(resolved, "utf8")) : { provider: { backend: "mock" } };
+  const raw = manifest.provider;
   const fileBackend = raw.backend;
   if (backendOverride) {
     raw.backend = backendOverride;
@@ -43,6 +54,12 @@ export function loadManifest(path?: string, backendOverride?: string): Manifest 
       raw.exposes_logprobs = undefined;
     }
   }
+  applyProviderDefaults(raw);
+  return manifest;
+}
+
+function applyProviderDefaults(raw: ProviderConfig): void {
+  if (typeof raw.backend !== "string" || !raw.backend) raw.backend = "mock";
   // derive exposes_logprobs from the backend unless the manifest set it explicitly
   if (raw.exposes_logprobs === undefined) {
     raw.exposes_logprobs = raw.backend === "openai" || raw.backend === "gemini";
@@ -50,35 +67,27 @@ export function loadManifest(path?: string, backendOverride?: string): Manifest 
   raw.sampling_fallback ??= true;
   raw.fallback_samples = Math.max(10, raw.fallback_samples ?? 10);
   raw.fallback_temperature ??= 0.7;
-  return { provider: raw };
 }
 
 // Parse the conformance harness `manifest:` directive — a `;`-separated list of dotted `table.key=value`
-// bindings (e.g. `identity.alice=local; prompts.question=stdin; provider.exposes_logprobs=false`) — into a
-// structured Manifest. Provider values are parsed but NOT defaulted here: a §17 ConfigError check must be
-// able to see that e.g. `fallback_temperature` was OMITTED, which the loadManifest defaulting would mask.
+// bindings (e.g. `identity.alice.driver=local; tools.search.driver=mock;
+// provider.exposes_logprobs=false`) — into a structured Manifest. The old fixture shorthand
+// `tools.search=mock` is still accepted and normalized to `{ driver: "mock" }`. Provider values are parsed
+// but NOT defaulted here: a §17 ConfigError check must be able to see that e.g. `fallback_temperature` was
+// OMITTED, which the loadManifest defaulting would mask.
 export function parseManifestDirective(s: string): Manifest {
-  const provider: Record<string, unknown> = { backend: "mock" };
-  const identity: Record<string, string> = {}, prompts: Record<string, string> = {};
-  const tools: Record<string, string> = {}, policy: Record<string, string> = {};
+  const manifest: Manifest = { provider: { backend: "mock" } };
   for (const entry of s.split(";").map((e) => e.trim()).filter(Boolean)) {
     const eq = entry.indexOf("=");
     if (eq < 0) continue;
-    const key = entry.slice(0, eq).trim();
-    const val = entry.slice(eq + 1).trim();
-    const dot = key.indexOf(".");
-    const table = dot < 0 ? "" : key.slice(0, dot);
-    const rest = dot < 0 ? key : key.slice(dot + 1);
-    switch (table) {
-      case "identity": identity[rest] = val; break;
-      case "prompts": prompts[rest] = val; break;
-      case "tools": tools[rest] = val; break;
-      case "policy": policy[rest] = val; break;
-      case "provider": provider[rest] = parseTomlValue(val); break;
-      default: break;
-    }
+    setManifestValue(manifest, [], entry.slice(0, eq).trim().split("."), parseTomlValue(entry.slice(eq + 1).trim()));
   }
-  return { provider: provider as unknown as ProviderConfig, identity, prompts, tools, policy };
+  return manifest;
+}
+
+export function hasConfiguredBinding(bindings: Record<string, BindingConfig> | undefined, name: string): boolean {
+  const binding = bindings?.[name];
+  return typeof binding?.driver === "string" && binding.driver.trim().length > 0;
 }
 
 export function createProvider(m: Manifest): Provider {
@@ -92,28 +101,128 @@ export function createProvider(m: Manifest): Provider {
   }
 }
 
-// ---- a minimal `[provider]` TOML reader (the manifest subset the runtime needs) ----
-function readProviderTable(toml: string): ProviderConfig {
-  const cfg: Record<string, unknown> = {};
-  let inProvider = false;
+// ---- a small TOML reader for the manifest subset the runtime needs ----
+function readManifestToml(toml: string): Manifest {
+  const manifest: Manifest = { provider: { backend: "mock" } };
+  let tablePath: string[] = [];
   for (const line of toml.split(/\r?\n/)) {
-    const s = line.replace(/#.*$/, "").trim();
+    const s = stripTomlComment(line).trim();
     if (!s) continue;
-    if (s.startsWith("[")) { inProvider = s === "[provider]"; continue; }
-    if (!inProvider) continue;
-    const m = s.match(/^([A-Za-z_]+)\s*=\s*(.+)$/);
+    const table = s.match(/^\[([A-Za-z0-9_.-]+)\]$/);
+    if (table) {
+      tablePath = table[1]!.split(".");
+      continue;
+    }
+    const m = s.match(/^([A-Za-z0-9_.-]+)\s*=\s*(.+)$/);
     if (!m) continue;
     const [, key, valRaw] = m;
-    cfg[key!] = parseTomlValue(valRaw!.trim());
+    setManifestValue(manifest, tablePath, key!.split("."), parseTomlValue(valRaw!.trim()));
   }
-  if (typeof cfg.backend !== "string") cfg.backend = "mock";
-  return cfg as unknown as ProviderConfig;
+  return manifest;
 }
+
+function stripTomlComment(line: string): string {
+  let quote: "'" | "\"" | undefined;
+  let escaped = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (quote) {
+      if (quote === "\"" && c === "\\" && !escaped) { escaped = true; continue; }
+      if (c === quote && !escaped) quote = undefined;
+      escaped = false;
+      continue;
+    }
+    if (c === "'" || c === "\"") { quote = c; continue; }
+    if (c === "#") return line.slice(0, i);
+  }
+  return line;
+}
+
+function setManifestValue(manifest: Manifest, tablePath: string[], keyPath: string[], value: unknown): void {
+  const table = tablePath[0] ?? keyPath[0] ?? "";
+  const path = tablePath.length ? keyPath : keyPath.slice(1);
+  const first = path[0];
+  if (!first) return;
+  if (table === "provider") {
+    (manifest.provider as unknown as Record<string, unknown>)[first] = value;
+    return;
+  }
+  if (table === "project" || table === "memory" || table === "runtime" || table === "policy") {
+    const group = manifest[table] ?? (manifest[table] = {});
+    group[first] = value as ManifestValue;
+    return;
+  }
+  if (table === "identity" || table === "prompts" || table === "tools") {
+    const group = manifest[table] ?? (manifest[table] = {});
+    const name = tablePath.length > 1 ? tablePath[1]! : first;
+    const rest = tablePath.length > 1 ? path : path.slice(1);
+    if (rest.length === 0) {
+      group[name] = bindingFromValue(value);
+    } else {
+      const binding = group[name] ?? (group[name] = {});
+      binding[rest.join(".")] = value as ManifestValue;
+    }
+  }
+}
+
+function bindingFromValue(value: unknown): BindingConfig {
+  if (typeof value === "string") return { driver: value };
+  if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+    return { ...(value as Record<string, ManifestValue>) };
+  }
+  return { driver: String(value ?? "") };
+}
+
 function parseTomlValue(v: string): unknown {
   if (v === "true") return true;
   if (v === "false") return false;
   if (/^-?\d+(\.\d+)?$/.test(v)) return Number(v);
-  return v.replace(/^["']|["']$/g, "");
+  if (v.startsWith("[") && v.endsWith("]")) {
+    const inner = v.slice(1, -1).trim();
+    return inner ? splitTopLevel(inner, ",").map((part) => parseTomlValue(part.trim())) : [];
+  }
+  if (v.startsWith("{") && v.endsWith("}")) {
+    const out: Record<string, ManifestAtom> = {};
+    const inner = v.slice(1, -1).trim();
+    for (const part of inner ? splitTopLevel(inner, ",") : []) {
+      const eq = part.indexOf("=");
+      if (eq < 0) continue;
+      const key = part.slice(0, eq).trim();
+      const val = parseTomlValue(part.slice(eq + 1).trim());
+      if (typeof val === "string" || typeof val === "number" || typeof val === "boolean") out[key] = val;
+    }
+    return out;
+  }
+  if (v.startsWith("\"") && v.endsWith("\"")) {
+    try { return JSON.parse(v); } catch { return v.slice(1, -1); }
+  }
+  if (v.startsWith("'") && v.endsWith("'")) return v.slice(1, -1);
+  return v;
+}
+
+function splitTopLevel(s: string, sep: string): string[] {
+  const out: string[] = [];
+  let start = 0, depth = 0;
+  let quote: "'" | "\"" | undefined;
+  let escaped = false;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i]!;
+    if (quote) {
+      if (quote === "\"" && c === "\\" && !escaped) { escaped = true; continue; }
+      if (c === quote && !escaped) quote = undefined;
+      escaped = false;
+      continue;
+    }
+    if (c === "'" || c === "\"") { quote = c; continue; }
+    if (c === "{" || c === "[") depth++;
+    else if (c === "}" || c === "]") depth--;
+    else if (c === sep && depth === 0) {
+      out.push(s.slice(start, i));
+      start = i + 1;
+    }
+  }
+  out.push(s.slice(start));
+  return out;
 }
 
 // match a model's free-text answer back onto one of the enum's variants (case-insensitive).

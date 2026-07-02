@@ -1,0 +1,11 @@
+//! id:        cfg_tool_host_binding_accept
+//! section:   16_config
+//! expect:    accept
+//! manifest:  tools.search.driver=host; tools.search.adapter=localSearch
+//! spec:      §17.1 ([tools.NAME] can bind a declared tool to implementation-defined host functions, scripts, processes, or skills)
+//! ---
+read tool text search(text q);
+agent A {
+  on awake { say("configured"); }
+}
+spawn A a; awake a;

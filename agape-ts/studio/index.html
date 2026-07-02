@@ -150,8 +150,6 @@
   }
   .inputRow textarea { min-height: 76px; resize: vertical; }
   .inputRow textarea:focus, .inputRow input[type="text"]:focus { border-color: var(--accent); }
-  .checkLine { display: flex; align-items: center; gap: 8px; color: var(--text); font: 12px var(--mono); }
-  .checkLine input { accent-color: var(--accent); }
   .k  { color: #c792ea; }              /* keywords */
   .t  { color: #82aaff; }              /* types */
   .s  { color: #c3e88d; }              /* strings */
@@ -211,16 +209,27 @@
 
   /* ---- timeline ---- */
   .tl { border-left: 2px solid var(--line); margin-left: 8px; padding-left: 0; }
-  .ev { display: flex; align-items: baseline; gap: 10px; padding: 5px 4px 5px 14px; position: relative; border-radius: 6px; }
+  .ev {
+    display: grid; grid-template-columns: 34px 128px minmax(0, 1fr) auto;
+    align-items: baseline; gap: 6px 10px; padding: 6px 6px 6px 14px;
+    position: relative; border-radius: 6px;
+  }
   .ev:hover { background: var(--panel2); }
   .ev::before {
     content: ""; position: absolute; left: -6px; top: 12px; width: 10px; height: 10px;
     border-radius: 50%; background: var(--cat, var(--faint)); border: 2px solid var(--bg);
   }
-  .ev .tick { font: 11px var(--mono); color: var(--faint); min-width: 30px; text-align: right; }
-  .ev .etype { font: 600 12.5px var(--mono); color: var(--cat, var(--text)); }
-  .ev .subj { font: 12px var(--mono); color: var(--dim); }
-  .ev .pay { font: 11.5px var(--mono); color: var(--faint); overflow-wrap: anywhere; }
+  .ev .tick { font: 11px var(--mono); color: var(--faint); text-align: right; }
+  .ev .etype { font: 600 12.5px var(--mono); color: var(--cat, var(--text)); white-space: nowrap; }
+  .ev .subj {
+    min-width: 0; font: 12px var(--mono); color: #c3ccdf;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .ev .pay {
+    grid-column: 3 / 5; min-width: 0; font: 11.5px/1.45 var(--mono); color: var(--faint);
+    overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3;
+    word-break: break-word;
+  }
   .ev .tag {
     font: 9px/1 var(--mono); text-transform: uppercase; letter-spacing: .08em;
     color: var(--cat); border: 1px solid var(--cat); border-radius: 4px; padding: 2px 5px; opacity: .8;
@@ -237,7 +246,7 @@
   .detail h3 { font-size: 12px; margin-bottom: 6px; color: var(--text); }
   .kv { display: grid; grid-template-columns: 104px minmax(0,1fr); gap: 5px 10px; font: 11.5px/1.45 var(--mono); }
   .kv b { color: var(--faint); font-weight: 500; }
-  .kv span { min-width: 0; overflow-wrap: anywhere; color: #c3ccdf; }
+  .kv span { min-width: 0; overflow-wrap: anywhere; color: #c3ccdf; white-space: pre-wrap; }
   .scorebar { display: grid; grid-template-columns: 88px minmax(0,1fr) 46px; align-items: center; gap: 8px; margin: 4px 0; font: 11px var(--mono); }
   .scorebar .bar { height: 7px; border-radius: 999px; background: var(--line); overflow: hidden; }
   .scorebar .fill { height: 100%; background: var(--accent2); }
@@ -269,8 +278,12 @@
     .verdict { flex-wrap: wrap; padding: 12px; }
     .verdict .head { margin-left: 0; flex-basis: 100%; }
     .verdict .msg { flex-basis: 100%; }
-    .ev { flex-wrap: wrap; row-gap: 2px; }
-    .ev .pay { flex-basis: 100%; padding-left: 40px; }
+    .ev { grid-template-columns: 30px minmax(0, 1fr) auto; row-gap: 2px; }
+    .ev .tick { grid-column: 1; grid-row: 1; }
+    .ev .etype { grid-column: 2; grid-row: 1; }
+    .ev .tag { grid-column: 3; grid-row: 1; }
+    .ev .subj { grid-column: 2 / 4; grid-row: 2; }
+    .ev .pay { grid-column: 2 / 4; }
     .stage { min-width: 84px; padding: 6px 6px; }
     pre.code { font-size: 11.5px; }
     .codeLine { grid-template-columns: 3.5ch minmax(0, 1fr); gap: 8px; }
@@ -320,6 +333,24 @@
           </div>
         </div>
       </div>
+      <div class="card collapsible" id="configCard" data-panel="config">
+        <div class="cardHead sourceHead">
+          <h2 id="configTitle">Config · agape.toml</h2>
+          <div class="sourceTools">
+            <button class="mini" id="editConfig" disabled>Edit</button>
+            <button class="mini primary" id="saveConfig" hidden>Save</button>
+            <button class="mini" id="cancelConfigEdit" hidden>Cancel</button>
+            <button class="collapseToggle" type="button" aria-label="Collapse config" aria-expanded="true" title="Collapse">▾</button>
+          </div>
+        </div>
+        <div class="cardBody">
+          <pre class="code" id="configSource">Loading config.</pre>
+          <div class="editorWrap">
+            <div class="editLines" id="configEditLines"></div>
+            <textarea class="editor" id="configEditor" spellcheck="false"></textarea>
+          </div>
+        </div>
+      </div>
     </div>
     <div class="col results">
       <div id="results"><div class="empty">Run a program to inspect its execution.<br><br>
@@ -354,6 +385,7 @@ const CATS = {
 
 let state = {
   programs: [], selected: null, meta: {}, source: "", sourceOrigin: null, map: null,
+  configSource: "", configExists: false, configEditing: false, configDirty: false,
   editing: false, dirty: false, sessionId: null, listening: false, awaitingAttest: false,
   pollTimer: null, collapsed: {},
 };
@@ -425,6 +457,11 @@ function updateEditLines() {
   $("editLines").textContent = Array.from({ length: count }, (_, i) => i + 1).join("\n");
 }
 
+function updateConfigEditLines() {
+  const count = Math.max(1, $("configEditor").value.split("\n").length);
+  $("configEditLines").textContent = Array.from({ length: count }, (_, i) => i + 1).join("\n");
+}
+
 function setEditing(on) {
   state.editing = on;
   state.dirty = false;
@@ -441,11 +478,33 @@ function setEditing(on) {
   updateSourceButtons();
 }
 
+function setConfigEditing(on) {
+  state.configEditing = on;
+  state.configDirty = false;
+  $("configCard").classList.toggle("editing", on);
+  $("editConfig").hidden = on;
+  $("saveConfig").hidden = !on;
+  $("cancelConfigEdit").hidden = !on;
+  updateRunControls();
+  if (on) {
+    $("configEditor").value = state.configSource;
+    updateConfigEditLines();
+    $("configEditor").focus();
+  }
+  updateConfigButtons();
+}
+
 function updateSourceButtons() {
   const hasSource = Boolean(state.selected);
-  $("editSource").disabled = !hasSource || state.listening;
+  $("editSource").disabled = !hasSource || state.listening || state.configEditing;
   $("saveSource").disabled = !state.editing;
   $("saveSource").textContent = state.sourceOrigin === "example" ? "Save copy" : "Save";
+}
+
+function updateConfigButtons() {
+  $("editConfig").disabled = state.listening || state.editing;
+  $("saveConfig").disabled = !state.configEditing;
+  $("saveConfig").textContent = state.configExists ? "Save" : "Create";
 }
 
 function hasPromptInputs() {
@@ -463,13 +522,14 @@ function sessionMode() {
 }
 
 function updateRunControls() {
-  const canRun = Boolean(state.selected) && !state.editing && !state.awaitingAttest;
+  const canRun = Boolean(state.selected) && !state.editing && !state.configEditing && !state.awaitingAttest;
   $("run").disabled = !canRun;
   $("stop").hidden = !state.listening;
   $("run").textContent = state.awaitingAttest ? "Awaiting ruling…"
     : state.listening ? (hasPromptInputs() ? "Send prompt" : "Waiting…")
     : hasPromptInputs() ? "Listen ▸" : "Run ▸";
   updateSourceButtons();
+  updateConfigButtons();
 }
 
 function applyPanelState(card) {
@@ -538,7 +598,6 @@ function renderInputControls(map) {
     ...prompts.map((p) => `<div class="inputRow">
       <label>${esc(p.name)}<span>${esc(p.type)}</span></label>
       <textarea id="${esc(inputId("prompt", p.name))}" data-prompt="${esc(p.name)}" data-type="${esc(p.type)}" placeholder="${esc(promptPlaceholder(p))}">${esc(defaultPromptValue(p))}</textarea>
-      <div class="checkLine"><input id="${esc(inputId("prompt_attest", p.name))}" type="checkbox" checked><label for="${esc(inputId("prompt_attest", p.name))}">attest as local user</label></div>
     </div>`),
     // §13/§16.4: a principal is NOT a pre-run toggle — it is consulted LIVE when a gate escalates,
     // and the ruling is a manual choice of one of the gate enum's variants (or a decline). The row
@@ -554,11 +613,9 @@ function renderInputControls(map) {
 function collectInputs() {
   const promptInputs = (state.map?.prompts || []).map((p) => {
     const el = $(inputId("prompt", p.name));
-    const attest = $(inputId("prompt_attest", p.name));
     return {
       name: p.name,
       value: el?.value ?? "",
-      attestation: attest?.checked ? { attester: "studio-user" } : { attester: "unattested" },
     };
   }).filter((p) => String(p.value).trim() !== "");
   return { promptInputs };
@@ -648,6 +705,16 @@ async function loadPrograms(selectName) {
   if (programs.length) await select(selectName && programs.some((p) => p.name === selectName) ? selectName : programs[0].name);
 }
 
+async function loadConfig() {
+  const cfg = await api("/api/config");
+  state.configSource = cfg.source || "";
+  state.configExists = Boolean(cfg.exists);
+  $("configTitle").textContent = state.configExists ? "Config · agape.toml" : "Config · agape.toml · not saved";
+  $("configSource").innerHTML = renderCode(state.configSource);
+  applyPanelState($("configCard"));
+  updateConfigButtons();
+}
+
 async function init() {
   // a cold tunnel edge can drop the first request — surface failures and retry instead of dying silent.
   $("programs").innerHTML = `<div class="empty">loading…</div>`;
@@ -655,6 +722,7 @@ async function init() {
     state.meta = await api("/api/meta");
     $("dir").textContent = state.meta.dir;
     renderProviders();
+    await loadConfig();
     await loadPrograms();
   } catch (e) {
     $("programs").innerHTML = `<div class="empty" style="color:var(--red)">couldn't reach the studio server<br>
@@ -669,6 +737,7 @@ async function select(name) {
     await stopSession(true);
   }
   if (state.editing && state.dirty && !confirm("Discard unsaved edits?")) return;
+  if (state.configEditing && state.configDirty && !confirm("Discard unsaved config edits?")) return;
   setEditing(false);
   state.selected = name;
   for (const b of document.querySelectorAll(".prog")) b.classList.toggle("active", b.dataset.name === name);
@@ -691,9 +760,14 @@ async function select(name) {
 
 $("provider").onchange = updateProviderNote;
 $("editSource").onclick = () => setEditing(true);
+$("editConfig").onclick = () => setConfigEditing(true);
 $("cancelEdit").onclick = () => {
   setEditing(false);
   $("source").innerHTML = renderCode(state.source);
+};
+$("cancelConfigEdit").onclick = () => {
+  setConfigEditing(false);
+  $("configSource").innerHTML = renderCode(state.configSource);
 };
 $("saveSource").onclick = async () => {
   if (!state.selected) return;
@@ -728,6 +802,45 @@ $("editor").onkeydown = (e) => {
     el.selectionStart = el.selectionEnd = start + 2;
     state.dirty = true;
     updateEditLines();
+  }
+};
+$("saveConfig").onclick = async () => {
+  $("saveConfig").disabled = true;
+  $("saveConfig").textContent = "Saving...";
+  try {
+    const source = $("configEditor").value;
+    await api("/api/config", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ source }),
+    });
+    state.configSource = source;
+    state.configExists = true;
+    $("configTitle").textContent = "Config · agape.toml";
+    $("configSource").innerHTML = renderCode(state.configSource);
+    setConfigEditing(false);
+    state.meta = await api("/api/meta");
+    const selectedProvider = $("provider").value;
+    renderProviders();
+    if (providers().some((p) => p.name === selectedProvider && p.enabled)) $("provider").value = selectedProvider;
+    updateProviderNote();
+    $("results").innerHTML = `<div class="verdict ok"><div class="light"></div><b>Config saved</b><span class="msg">agape.toml will be used on the next run.</span></div>`;
+  } catch (e) {
+    $("results").innerHTML = `<div class="verdict bad"><div class="light"></div><b>Config save failed</b><span class="msg">${esc(e.message)}</span></div>`;
+  } finally {
+    updateConfigButtons();
+  }
+};
+$("configEditor").oninput = () => { state.configDirty = true; updateConfigEditLines(); };
+$("configEditor").onscroll = () => { $("configEditLines").scrollTop = $("configEditor").scrollTop; };
+$("configEditor").onkeydown = (e) => {
+  if (e.key === "Tab") {
+    e.preventDefault();
+    const el = $("configEditor");
+    const start = el.selectionStart, end = el.selectionEnd;
+    el.value = el.value.slice(0, start) + "  " + el.value.slice(end);
+    el.selectionStart = el.selectionEnd = start + 2;
+    state.configDirty = true;
+    updateConfigEditLines();
   }
 };
 
@@ -874,24 +987,33 @@ function scoreText(scores) {
   ).join(", ");
 }
 
-function renderedValue(v) {
+function valueJson(v) {
+  if (!v) return null;
+  if (v.kind === "text") return v.value ?? v.rendered ?? "";
+  if (v.kind === "int" || v.kind === "float" || v.kind === "bool") return v.value;
+  if (v.kind === "null") return null;
+  if (v.kind === "enumval") return v.variant ?? v.rendered ?? "";
+  if (v.kind === "struct") {
+    const out = {};
+    for (const [name, value] of Object.entries(v.fields || {})) out[name] = valueJson(value);
+    return out;
+  }
+  if (v.kind === "array") return (v.items || []).map(valueJson);
+  return v.rendered ?? fmt(v);
+}
+
+function renderedValue(v, pretty = true) {
   if (!v) return "";
   if (v.kind === "text") return JSON.stringify(v.value ?? v.rendered ?? "");
   if (v.kind === "int" || v.kind === "float" || v.kind === "bool") return String(v.value);
   if (v.kind === "null") return "null";
-  if (v.kind === "enumval") return v.enum ? `${v.enum}.${v.variant}` : String(v.variant);
-  if (v.kind === "struct") return structValue(v);
-  if (v.kind === "array") return `[${(v.items || []).map(renderedValue).join(", ")}]`;
+  if (v.kind === "enumval") return v.enum && !pretty ? `${v.enum}.${v.variant}` : String(v.variant);
+  if (v.kind === "struct" || v.kind === "array") return JSON.stringify(valueJson(v), null, pretty ? 2 : 0);
   if (v.kind === "agentref") return v.rendered || `&${v.name}:${v.agentType}`;
   if (v.kind === "credence") return `Credence<${v.enum}>{${scoreText(v.scores)}}`;
   if (v.kind === "decision") return decisionValue(v);
   if (v.kind === "endorsement") return endorsementValue(v);
   return v.rendered ?? fmt(v);
-}
-
-function structValue(v) {
-  const fields = Object.entries(v.fields || {}).map(([name, value]) => `${name}: ${renderedValue(value)}`).join(", ");
-  return `${v.type || ""}{${fields}}`;
 }
 
 function valueFieldRows(v) {
@@ -923,7 +1045,7 @@ function decisionValue(d) {
 
 function endorsementValue(e) {
   const name = e.binding || "endorsement";
-  const subject = renderedValue(e.subject);
+  const subject = renderedValue(e.subject, false);
   const id = e.decision_id ?? e.decisionId;
   return `${name} = Endorsement#${id ?? "?"}{subject:${subject}, committed:${e.committed || e.branch || "?"}}`;
 }
@@ -948,13 +1070,13 @@ function eventValue(e, map) {
   if (e.etype === "Resolved") {
     const reply = resolvedReply(p);
     if (p.kind === "credence") return credenceValue(e.subject, p);
-    if (reply) return `${e.subject} = ${renderedValue(reply)}`;
+    if (reply) return `${e.subject} = ${renderedValue(reply, false)}`;
     return `${e.subject} = (resolved; reply not recorded by this Studio server)`;
   }
-  if (e.etype === "Prompt") return `${e.subject} = ${renderedValue(p.input)}`;
+  if (e.etype === "Prompt") return `${e.subject} = ${renderedValue(p.input, false)}`;
   if (e.etype === "PromptOpened") return `${e.subject} opened`;
-  if (e.etype === "Internalized" && p.reply) return `${e.subject} ⇐ ${renderedValue(p.reply)}`;
-  if (p.value) return `${e.subject} = ${renderedValue(p.value)}`;
+  if (e.etype === "Internalized" && p.reply) return `${e.subject} ⇐ ${renderedValue(p.reply, false)}`;
+  if (p.value) return `${e.subject} = ${renderedValue(p.value, false)}`;
   if (e.etype === "Forgotten") return `${e.subject} forgotten (${p.mode || "recorded"})`;
   if (e.etype === "MemoryConsulted") return `${e.subject} recalled ${JSON.stringify(p.recalled || "")}`;
   if (e.etype === "Decided" || e.etype === "Endorsed") {
@@ -965,6 +1087,48 @@ function eventValue(e, map) {
   }
   if (Array.isArray(p)) return `${e.subject} payload = ${fmt(p)}`;
   return e.subject ?? "";
+}
+
+function valueKindLabel(v) {
+  if (!v) return "value";
+  if (v.kind === "struct") return v.type || "struct";
+  if (v.kind === "array") return `${(v.items || []).length} item${(v.items || []).length === 1 ? "" : "s"}`;
+  if (v.kind === "credence") return `Credence<${v.enum || "?"}>`;
+  if (v.kind === "decision") return `Decision<${v.enum || "?"}>`;
+  if (v.kind === "endorsement") return "Endorsement";
+  return v.kind || "value";
+}
+
+function timelineSubject(e, map) {
+  const p = e.payload || {};
+  if (e.etype === "Sent") return `${e.subject} ⇐ prompt`;
+  if (e.etype === "Resolved") {
+    const reply = resolvedReply(p);
+    if (p.kind === "credence") return `${e.subject} = Credence<${p.enum || "?"}>`;
+    if (reply) return `${e.subject} = ${valueKindLabel(reply)}`;
+    return `${e.subject} resolved`;
+  }
+  if (e.etype === "Internalized") return `${e.subject} ⇐ ${p.source_event !== undefined ? `event #${p.source_event}` : "memory"}`;
+  if (e.etype === "Prompt") return `${e.subject} input`;
+  if (e.etype === "PromptOpened") return `${e.subject} opened`;
+  if (e.etype === "Decided" || e.etype === "Endorsed") return eventValue(e, map);
+  if (p.value) return `${e.subject} = ${valueKindLabel(p.value)}`;
+  return e.subject ?? "";
+}
+
+function timelinePayload(e, map) {
+  const p = e.payload || {};
+  if (e.etype === "Sent" && p.prompt) return p.prompt;
+  if (e.etype === "Resolved") {
+    const reply = resolvedReply(p);
+    if (p.kind === "credence") return scoreText(p.scores);
+    return reply ? renderedValue(reply, false) : "";
+  }
+  if (e.etype === "Internalized") return renderedValue(p.reply || p.value, false);
+  if (e.etype === "Prompt") return renderedValue(p.input, false);
+  if (e.etype === "Decided" || e.etype === "Endorsed") return eventValue(e, map);
+  if (Array.isArray(p)) return fmt(p);
+  return p && Object.keys(p).length ? fmt(p) : "";
 }
 
 function detail(title, rows, body = "") {
@@ -979,7 +1143,10 @@ function renderRunDetails(r) {
     const p = e.payload || {};
     if (e.etype === "Internalized") {
       const v = p.reply || p.value;
-      parts.push(detail(`Memory write · ${eventValue(e, r.map)}`, [
+      const title = p.reply
+        ? `Internalized reply · ${e.subject} ⇐ event #${p.source_event ?? "?"}`
+        : `Memory write · ${eventValue(e, r.map)}`;
+      parts.push(detail(title, [
         ["binding", e.subject],
         [p.reply ? "reply" : "value", renderedValue(v)],
         ["source event", p.source_event],
@@ -1155,10 +1322,11 @@ function render(r) {
     out.push(panel("ledger-timeline", `Ledger timeline — ${ev.length} events`, `<div class="tl">${
       ev.map((e) => {
         const c = catOf(e.etype, r.map);
-        const pay = e.payload === undefined || e.payload === null ? "" : esc(JSON.stringify(e.payload));
+        const subj = timelineSubject(e, r.map);
+        const pay = timelinePayload(e, r.map);
         return `<div class="ev" style="--cat:${c.color}"><span class="tick">${e.tick}</span>
-          <span class="etype">${esc(e.etype)}</span><span class="subj">${esc(eventValue(e, r.map))}</span>
-          <span class="tag">${c.name}</span><span class="pay">${pay}</span></div>`;
+          <span class="etype">${esc(e.etype)}</span><span class="subj" title="${esc(subj)}">${esc(subj)}</span>
+          <span class="tag">${c.name}</span>${pay ? `<span class="pay">${esc(pay)}</span>` : ""}</div>`;
       }).join("")
     }</div><div class="meta">every event is hash-chained; the chain-head is the proof of replay-equivalence (T4)</div>`));
   }

@@ -9,9 +9,9 @@ import {
   type Provider, type StructuredSchema, type Value, type Committed, type Variant, type Trust,
 } from "./runtime.js";
 import { check, linkModules, type ModuleInput, type Resolution } from "./check.js";
-import type { Manifest } from "./config.js";
+import type { Manifest, ToolBindingConfig } from "./config.js";
 import { parse } from "./parser.js";
-import { typeError, taintViolation, authorityViolation } from "./errors.js";
+import { typeError, taintViolation, authorityViolation, configError } from "./errors.js";
 
 export class RuntimeError extends Error {}
 // §5: an unrecoverable seam failure (the provider returns nothing) crashes the agent — CONTAINED, not a
@@ -115,6 +115,23 @@ function valueSummary(v: Value): Record<string, unknown> {
   return base;
 }
 
+function isRuntimeValue(raw: unknown): raw is Value {
+  return raw !== null && typeof raw === "object" && typeof (raw as { kind?: unknown }).kind === "string" && "trust" in raw;
+}
+
+function typeLabel(t: A.TypeRef): string {
+  switch (t.kind) {
+    case "scalar": return t.name;
+    case "event": return `event<${typeLabel(t.inner)}>`;
+    case "array": return `${typeLabel(t.inner)}[]`;
+    case "credence": return `Credence<${t.enumName}>`;
+    case "decision": return `Decision<${t.enumName}>`;
+    case "endorsement": return `Endorsement<${typeLabel(t.inner)}>`;
+    case "named": return t.typeArgs?.length ? `${t.name}<${t.typeArgs.map(typeLabel).join(", ")}>` : t.name;
+    case "mem": return "mem";
+  }
+}
+
 function ruleSummary(rule: A.Rule): Record<string, unknown> {
   switch (rule.kind) {
     case "confidence": return { kind: "confidence", threshold: rule.theta, margin: rule.margin, floor: rule.floor };
@@ -195,6 +212,15 @@ export interface ConsultRequest {
   agent?: string;
 }
 
+export interface ToolCallContext {
+  name: string;
+  declaration: A.ToolDecl;
+  binding: ToolBindingConfig;
+  args: Value[];
+  payload: string;
+}
+export type ToolHandler = (call: ToolCallContext) => unknown | Promise<unknown>;
+
 type RunOptions = {
   provider?: Provider;
   modules?: ModuleInput[];
@@ -203,6 +229,7 @@ type RunOptions = {
   promptInputs?: PromptInput[];
   principalAttestations?: PrincipalAttestation[];
   onConsult?: (req: ConsultRequest) => Promise<PrincipalAttestation | undefined>;
+  toolHandlers?: Record<string, ToolHandler>;
   strictConfig?: boolean;
 };
 
@@ -225,6 +252,8 @@ export function createSession(program: A.Program, opts: RunOptions = {}): Runtim
     opts.principal,
     opts.principalAttestations ?? [],
     opts.onConsult,
+    opts.manifest,
+    opts.toolHandlers ?? {},
   );
 }
 
@@ -274,6 +303,8 @@ class Interpreter {
     private principalOutcome?: string,
     private principalAttestations: PrincipalAttestation[] = [],
     private onConsult?: (req: ConsultRequest) => Promise<PrincipalAttestation | undefined>,
+    private manifest?: Manifest,
+    private toolHandlers: Record<string, ToolHandler> = {},
   ) {
     // §3: register the declared principal names so a `decide c by p` (the parser's {policy} rule form)
     // can be reinterpreted as a principal escalation by evalGate.
@@ -1335,19 +1366,51 @@ class Interpreter {
       for (const v of args) this.sinkValue(v, name);
     }
 
-    // LEDGER (E-Tool): the correlated ToolStarted/ToolResolved pair, keyed on the tool name.
-    this.ledger.append("ToolStarted", name, undefined, agent?.name);
-    const result = this.toolResult(tool, args);
-    this.ledger.append("ToolResolved", name, this.toolPayload(name, args), agent?.name);
+    // LEDGER (E-Tool): the correlated ToolStarted/ToolResolved pair, keyed on the tool name. The manifest
+    // selects the driver; the host supplies non-mock adapters (MCP, HTTP, process, in-process function, skill).
+    const binding = this.toolBinding(name);
+    const payload = this.toolPayload(name, args);
+    const startedPayload = { binding: this.bindingSummary(binding), args: args.map(valueSummary), payload };
+    this.ledger.append("ToolStarted", name, startedPayload, agent?.name);
+    const result = await this.toolResult(tool, args, scope, binding, payload);
+    this.ledger.append("ToolResolved", name, { ...startedPayload, result: valueSummary(result) }, agent?.name);
     return result;
+  }
+
+  private toolBinding(name: string): ToolBindingConfig {
+    const tools = this.manifest?.tools;
+    const simple = name.includes(".") ? name.slice(name.lastIndexOf(".") + 1) : name;
+    return tools?.[name] ?? tools?.[simple] ?? { driver: "mock" };
+  }
+
+  private bindingSummary(binding: ToolBindingConfig): Record<string, unknown> {
+    const secretish = /(api[_-]?key|token|secret|password|credential|auth)/i;
+    return Object.fromEntries(Object.entries(binding)
+      .filter(([k]) => !secretish.test(k))
+      .sort(([a], [b]) => a.localeCompare(b)));
+  }
+
+  // Tool invocation is an adapter boundary. `mock` is built in for demos/replay-stable tests; every other
+  // driver is supplied by the embedding runtime via `toolHandlers`, so MCP is one supported transport, not a
+  // semantic requirement of the language.
+  private async toolResult(tool: A.ToolDecl, args: Value[], scope: Scope, binding: ToolBindingConfig, payload: string): Promise<Value> {
+    const driver = binding.driver ?? "mock";
+    if (driver === "mock") return this.mockToolResult(tool, args, payload);
+    const simple = tool.name.includes(".") ? tool.name.slice(tool.name.lastIndexOf(".") + 1) : tool.name;
+    const handler = this.toolHandlers[tool.name] ?? this.toolHandlers[simple];
+    if (!handler) {
+      throw configError(`tool '${tool.name}' is configured with driver '${driver}', but this runtime has no adapter registered for it (§17.1)`);
+    }
+    const raw = await handler({ name: tool.name, declaration: tool, binding, args, payload });
+    return this.toolValue(raw, tool.ret, tool.effect === "read" ? trustJoin(args) : "settled", scope);
   }
 
   // a deterministic mock tool result, typed by the tool's declared return; its trust is the join of the
   // inputs' trust (read tool) — a write tool returns settled bool (its inputs were already gated).
-  private toolResult(tool: A.ToolDecl, args: Value[]): Value {
+  private mockToolResult(tool: A.ToolDecl, args: Value[], seed?: string): Value {
     const trust = tool.effect === "read" ? trustJoin(args) : "settled";
     const ret = tool.ret;
-    const seed = this.toolPayload(tool.name, args);
+    seed ??= this.toolPayload(tool.name, args);
     switch (ret.kind) {
       case "scalar":
         switch (ret.name) {
@@ -1361,6 +1424,15 @@ class Interpreter {
     }
     // any other declared return collapses to a settled-by-origin text observation.
     return { kind: "text", v: `tool:${tool.name}(${seed})`, trust };
+  }
+
+  private toolValue(raw: unknown, ret: A.TypeRef, trust: Trust, scope: Scope): Value {
+    if (isRuntimeValue(raw)) return this.withTrust(raw, trust);
+    try {
+      return this.withTrust(this.valueFromStructured(raw, ret, scope), trust);
+    } catch (e) {
+      throw configError(`tool adapter returned a value that does not satisfy '${typeLabel(ret)}': ${(e as Error).message}`);
+    }
   }
 
   // the deterministic correlation payload: a pure function of (name, rendered args), so two runs of the

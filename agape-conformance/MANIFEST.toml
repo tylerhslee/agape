@@ -1199,8 +1199,33 @@ id = "cfg_strict_bindings_ok"
 section = "16_config"
 path = "tests/16_config/cfg_strict_bindings_ok.ag"
 expect = "accept"
-manifest = ["identity.alice=local", "prompts.question=stdin", "tools.search=mock"]
+manifest = ["identity.alice.driver=local_keyring", "prompts.question.driver=stdin", "tools.search.driver=mock"]
 spec = "§17.1 (declared dependencies pass configuration binding when every dependency has a manifest entry)"
+
+[[test]]
+id = "cfg_tool_binding_missing_driver_reject"
+section = "16_config"
+path = "tests/16_config/cfg_tool_binding_missing_driver_reject.ag"
+expect = "reject"
+error = "ConfigError"
+manifest = ["tools.search.provider=tavily"]
+spec = "§17.1 (a tool binding table must name a driver; connector-specific fields are not enough)"
+
+[[test]]
+id = "cfg_tool_host_binding_accept"
+section = "16_config"
+path = "tests/16_config/cfg_tool_host_binding_accept.ag"
+expect = "accept"
+manifest = ["tools.search.driver=host", "tools.search.adapter=localSearch"]
+spec = "§17.1 ([tools.NAME] can bind a declared tool to implementation-defined host functions, scripts, processes, or skills)"
+
+[[test]]
+id = "cfg_tool_mcp_binding_accept"
+section = "16_config"
+path = "tests/16_config/cfg_tool_mcp_binding_accept.ag"
+expect = "accept"
+manifest = ["tools.search.driver=mcp", "tools.search.server=stdio:local-search"]
+spec = "§17.1 ([tools.NAME] binds a declared tool dependency; MCP is one supported tool transport)"
 
 [[test]]
 id = "gate_cold_consequential_defers_to_principal"

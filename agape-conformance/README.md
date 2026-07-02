@@ -143,7 +143,11 @@ these header directives. A test with no directives runs under the default record
   string is intentionally transport-neutral; implementations map it to their internal schema
   representation. Example: `event<Ticket> closed_enum(Billing,Bug)`.
 - `manifest:` — connector/dependency fixture config, `; `-separated, e.g.
-  `manifest: provider.exposes_logprobs=false` — to exercise the sampling fallback (§16.8).
+  `manifest: provider.exposes_logprobs=false` or
+  `manifest: tools.search.driver=mcp; tools.search.server=stdio:local-search`.
+  The old shorthand `tools.search=mock` is accepted as `{ driver = "mock" }`.
+  Provider fixtures exercise the sampling fallback (§16.8); dependency fixtures exercise
+  manifest bindings (§17.1).
   Decision rules are in the test's own source (an inline rule on the gate, §13), never the manifest.
 - `replay:` — `chain_head_equal`: record the run's journal, replay it, and assert the ledger's
   terminal hash is identical (§15.4.2 / T4). Replay re-serves every oracle/tool result from the

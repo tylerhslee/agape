@@ -26,7 +26,7 @@ struct AtomicClaim {
 
 struct ClaimBundle {
   subject: text,
-  claims: array<AtomicClaim>,
+  claims: AtomicClaim[],
   first: AtomicClaim,
   second: AtomicClaim,
   third: AtomicClaim
@@ -43,7 +43,7 @@ struct Verification {
 
 struct VerificationAudit {
   subject: text,
-  claims: array<Verification>,
+  claims: Verification[],
   first: Verification,
   second: Verification,
   third: Verification
@@ -72,7 +72,7 @@ agent FactChecker grants { use search, perform PublishAnswer } {
     emit CheckClaim(plan.second);
     emit CheckClaim(plan.third);
 
-    array<Event> verification_rows =
+    Event[] verification_rows =
       select * from ledger where { etype == "ClaimVerified" };
 
     PublishedAnswer answer =

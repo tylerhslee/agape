@@ -7,7 +7,7 @@
 import type * as A from "./ast.js";
 import { parse } from "./parser.js";
 import { typeError, exhaustivenessError, colorViolation, authorityViolation, taintViolation, interfaceError, visibilityError, moduleError, configError, gateError } from "./errors.js";
-import type { Manifest } from "./config.js";
+import { hasConfiguredBinding, type Manifest, type BindingConfig } from "./config.js";
 
 // a coarse type class — enough to catch shape mismatches without a full type system.
 // `credarray` narrowly tracks an `array<Credence<…>>` (a credence collection produced by a query or an
@@ -549,17 +549,37 @@ export function check(program: A.Program, modules?: ModuleInput[], manifest?: Ma
   // section in configured/strict mode, where every declared `principal`/`prompt`/`tool` dependency MUST have a
   // manifest binding; elsewhere a declared dependency is auto-bound to a mock default (the compiler stays
   // general — only the harness maps the config section to strict mode).
-  if (strictConfig) {
-    for (const d of program.decls) {
-      if (d.kind === "principal" && !(manifest?.identity && Object.prototype.hasOwnProperty.call(manifest.identity, d.name))) {
-        throw configError(`principal '${d.name}' is a declared dependency (§3) with no configured identity binding — an unbound declared dependency is a ConfigError (§17.1)`);
-      }
-      if (d.kind === "prompt" && !(manifest?.prompts && Object.prototype.hasOwnProperty.call(manifest.prompts, d.name))) {
-        throw configError(`prompt '${d.name}' is a declared dependency (§5b) with no configured binding — an unbound declared dependency is a ConfigError (§17.1)`);
-      }
-      if (d.kind === "tool" && !(manifest?.tools && Object.prototype.hasOwnProperty.call(manifest.tools, d.name))) {
-        throw configError(`tool '${d.name}' is a declared dependency (§6b) with no configured binding — an unbound declared dependency is a ConfigError (§17.1)`);
-      }
+  const requireBinding = (kind: "principal" | "prompt" | "tool", bindings: Record<string, BindingConfig> | undefined, name: string, missingMsg: string): void => {
+    const hasEntry = bindings && Object.prototype.hasOwnProperty.call(bindings, name);
+    if (strictConfig && !hasEntry) throw configError(missingMsg);
+    if (hasEntry && !hasConfiguredBinding(bindings, name)) {
+      throw configError(`${kind} '${name}' has a manifest binding but no required driver field (§17.1)`);
+    }
+  };
+  for (const d of program.decls) {
+    if (d.kind === "principal") {
+      requireBinding(
+        "principal",
+        manifest?.identity,
+        d.name,
+        `principal '${d.name}' is a declared dependency (§3) with no configured identity binding — an unbound declared dependency is a ConfigError (§17.1)`,
+      );
+    }
+    if (d.kind === "prompt") {
+      requireBinding(
+        "prompt",
+        manifest?.prompts,
+        d.name,
+        `prompt '${d.name}' is a declared dependency (§5b) with no configured binding — an unbound declared dependency is a ConfigError (§17.1)`,
+      );
+    }
+    if (d.kind === "tool") {
+      requireBinding(
+        "tool",
+        manifest?.tools,
+        d.name,
+        `tool '${d.name}' is a declared dependency (§6b) with no configured binding — an unbound declared dependency is a ConfigError (§17.1)`,
+      );
     }
   }
   if (manifest?.policy && Object.keys(manifest.policy).length > 0) {
