@@ -60,7 +60,10 @@ async function main(argv: string[]): Promise<number> {
     const { check } = await import("./check.js");
     const { buildGraph, toDot } = await import("./graph.js");
     const program = parse(readFileSync(file, "utf8"));
-    check(program); // a rejected program reports the rejection, not a graph of unverified code
+    // the graph is syntactic; a static-check rejection is reported alongside it, not instead of it.
+    try { check(program); } catch (e) {
+      console.error(`note: static check rejects this program — ${(e as { cls?: string }).cls ?? "TypeError"}: ${(e as Error).message}`);
+    }
     const graph = buildGraph(program, file);
     console.log(format === "dot" ? toDot(graph) : JSON.stringify(graph, null, 2));
     return 0;

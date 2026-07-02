@@ -58,11 +58,20 @@ describe("graph: the gated-sink chain", () => {
     expect(String(gate?.meta?.rule)).toContain("margin 0.1");
   });
 
-  it("draws the credence flow into the gate", () => {
+  it("shows both model asks and chains them by dataflow into the gate", () => {
+    const asks = g.nodes.filter((n) => n.kind === "ask");
+    expect(asks.map((a) => a.label).sort()).toEqual(["ask Claim", "ask Credence<Verdict>"]);
+    for (const a of asks) expect(a.parent).toBe("agent:desk");
     const flow = edges(g, "flow");
-    expect(flow.length).toBe(1);
-    expect(flow[0]!.from).toBe("hook:desk/awake");
-    expect(flow[0]!.label).toBe("Credence<Verdict>");
+    const gate = g.nodes.find((n) => n.kind === "gate")!;
+    const askClaim = asks.find((a) => a.label === "ask Claim")!;
+    const askCred = asks.find((a) => a.label === "ask Credence<Verdict>")!;
+    // hook -> ask Claim; ask Claim -> ask Credence (the prompt references `claim`);
+    // ask Credence -> gate (the credence); ask Claim -> gate (the endorsed subject).
+    expect(flow.some((e) => e.from === "hook:desk/awake" && e.to === askClaim.id)).toBe(true);
+    expect(flow.some((e) => e.from === askClaim.id && e.to === askCred.id)).toBe(true);
+    expect(flow.some((e) => e.from === askCred.id && e.to === gate.id)).toBe(true);
+    expect(flow.some((e) => e.from === askClaim.id && e.to === gate.id)).toBe(true);
   });
 
   it("guards the sink edge with the committed variant", () => {

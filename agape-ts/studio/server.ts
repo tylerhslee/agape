@@ -678,19 +678,24 @@ export function startStudio(opts: StudioOptions): Promise<{ close: () => void }>
         return json(res, 200, { ...program, map });
       }
       if (req.method === "GET" && url.pathname === "/api/graph") {
-        // the statically DERIVED orchestration graph (GRAPH.md): parse + check, then extract.
-        // A program that fails the front end gets its rejection back, not a graph of unverified code.
+        // the statically DERIVED orchestration graph (GRAPH.md). The graph is syntactic — a program
+        // that PARSES always has one. A static-check rejection rides along as `check` (shown as a
+        // badge), so a deliberately-rejected demo still shows the topology the checker refused.
         const name = url.searchParams.get("name") ?? "";
         const program = readProgramSource(opts.dir, name);
         if (!program) return json(res, 404, { error: "unknown program" });
+        let ast: A.Program;
         try {
-          const ast = parse(program.source);
-          check(ast);
-          return json(res, 200, { ok: true, graph: buildGraph(ast, name) });
+          ast = parse(program.source);
         } catch (e) {
           const cls = (e as { cls?: string }).cls ?? "ParseError";
           return json(res, 200, { ok: false, error: { cls, message: (e as Error).message } });
         }
+        let checkError: { cls: string; message: string } | undefined;
+        try { check(ast); } catch (e) {
+          checkError = { cls: (e as { cls?: string }).cls ?? "TypeError", message: (e as Error).message };
+        }
+        return json(res, 200, { ok: true, graph: buildGraph(ast, name), ...(checkError ? { check: checkError } : {}) });
       }
       if (req.method === "GET" && url.pathname === "/api/spec") {
         const spec = readSpecSource();

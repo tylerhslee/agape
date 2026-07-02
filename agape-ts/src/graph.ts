@@ -8,7 +8,7 @@ import type * as A from "./ast.js";
 export interface GraphNode {
   id: string;
   kind:
-    | "top" | "agent" | "handler" | "hook" | "gate" | "sink" | "tool"
+    | "top" | "agent" | "handler" | "hook" | "ask" | "gate" | "sink" | "tool"
     | "principal" | "prompt" | "mem" | "event" | "ledger";
   label: string;
   parent?: string; // cluster (an agent instance, or "top")
@@ -189,9 +189,10 @@ export function buildGraph(program: A.Program, programName = ""): ProgramGraph {
   // ---- walk each context body ------------------------------------------------------------------
   interface GateInfo { nodeId: string; enumName?: string; vars: Set<string> }
   for (const ctx of ctxs) {
-    let gateSeq = 0;
+    let siteSeq = 0; // shared ask/gate sequence, so the UI can order the chain within a context
     const gates = new Map<string, GateInfo>(); // decision-binding name -> gate
     const replyTypes = new Map<string, string>(); // binding name -> declared type label (for send labels)
+    const bindingNode = new Map<string, string>(); // binding name -> the ask node that produced it
 
     // the node a produced effect attributes to: the active gate (+variant) or the context itself.
     type Attribution = { nodeId: string; variant?: string };
@@ -204,6 +205,31 @@ export function buildGraph(program: A.Program, programName = ""): ProgramGraph {
       }
       if (e.kind === "quorum") return enumOfCredence(e.source);
       return undefined;
+    };
+
+    // idents referenced by an expression that were bound by earlier asks — the dataflow chain.
+    const identRefs = (e: A.Expr, out: Set<string>): Set<string> => {
+      switch (e.kind) {
+        case "ident": out.add(e.name); break;
+        case "member": identRefs(e.obj, out); break;
+        case "index": identRefs(e.obj, out); identRefs(e.index, out); break;
+        case "binary": identRefs(e.left, out); identRefs(e.right, out); break;
+        case "unary": identRefs(e.operand, out); break;
+        case "fstring": for (const p of e.parts) if (p.kind === "expr") identRefs(p.expr, out); break;
+        case "call": identRefs(e.callee, out); for (const a of e.args) identRefs(a, out); break;
+        case "structlit": for (const f of e.fields) identRefs(f.value, out); break;
+        case "arraylit": for (const i of e.items) identRefs(i, out); break;
+        case "quorum": identRefs(e.source, out); break;
+        case "agg": for (const o of e.operands) identRefs(o, out); break;
+        case "pipe": identRefs(e.source, out); identRefs(e.fn, out); break;
+        default: break;
+      }
+      return out;
+    };
+    // the nodes a value flows FROM: any ask that bound a referenced ident, else the context.
+    const flowSources = (e: A.Expr, at: Attribution): string[] => {
+      const srcs = [...identRefs(e, new Set<string>())].map((n) => bindingNode.get(n)).filter((x): x is string => Boolean(x));
+      return srcs.length ? [...new Set(srcs)] : [at.nodeId];
     };
 
     const resolveDest = (e: A.Expr): { instName?: string; label: string } => {
@@ -226,7 +252,7 @@ export function buildGraph(program: A.Program, programName = ""): ProgramGraph {
       switch (e.kind) {
         case "decide": {
           const enumName = declType?.kind === "decision" ? declType.enumName : enumOfCredence(e.credence);
-          const gid = `gate:${ctx.nodeId}#${gateSeq++}`;
+          const gid = `gate:${ctx.nodeId}#${siteSeq++}`;
           addNode({
             id: gid, kind: "gate", parent: ctx.instance ? `agent:${ctx.instance.name}` : undefined,
             label: `decide${enumName ? ` Credence<${enumName}>` : ""}`, line: line(e),
@@ -237,7 +263,11 @@ export function buildGraph(program: A.Program, programName = ""): ProgramGraph {
               ...(e.credence.kind === "quorum" ? { quorum: e.credence.k } : {}),
             },
           });
-          addEdge({ from: at.nodeId, to: gid, kind: "flow", label: enumName ? `Credence<${enumName}>` : "credence", variant: at.variant, line: line(e) });
+          // the credence flows in from the ask(s) that produced it — real dataflow, no label
+          // needed (the gate node itself names the Credence type).
+          for (const src of flowSources(e.credence, at)) {
+            addEdge({ from: src, to: gid, kind: "flow", variant: at.variant, line: line(e) });
+          }
           if (e.principal && principals.has(e.principal)) {
             addEdge({ from: gid, to: `principal:${e.principal}`, kind: "escalate", label: "escalate", line: line(e) });
           }
@@ -251,6 +281,16 @@ export function buildGraph(program: A.Program, programName = ""): ProgramGraph {
             const g = gates.get(e.decision.name);
             const gn = g && nodes.get(g.nodeId);
             if (gn) gn.meta = { ...gn.meta, endorses: exprLabel(e.subject) };
+            // the endorsed SUBJECT flows from the ask that produced it into the gate that settles it.
+            if (g) {
+              const subjectAsks = [...identRefs(e.subject, new Set<string>())]
+                .map((n) => bindingNode.get(n)).filter((x): x is string => Boolean(x));
+              for (const src of new Set(subjectAsks)) {
+                if (!edgeList.some((ed) => ed.from === src && ed.to === g.nodeId && ed.kind === "flow")) {
+                  addEdge({ from: src, to: g.nodeId, kind: "flow", line: line(e) });
+                }
+              }
+            }
           }
           visitExpr(e.subject, at); visitExpr(e.decision, at);
           return;
@@ -264,7 +304,22 @@ export function buildGraph(program: A.Program, programName = ""): ProgramGraph {
             return;
           }
           const selfSend = e.dest.kind === "self" || dest.instName === ctx.instance?.name;
-          if (!selfSend) {
+          if (selfSend) {
+            // a self-send is the agent's own cognition: a TESTIMONY step, visible as an ask node
+            // labelled by the typed reply it produces, chained from the asks its prompt references.
+            const aid = `ask:${ctx.nodeId}#${siteSeq++}`;
+            addNode({
+              id: aid, kind: "ask", parent: ctx.instance ? `agent:${ctx.instance.name}` : undefined,
+              label: `ask ${declType ? typeLabel(declType) : "text"}`, line: line(e),
+              // `binding` lets the live overlay match a Resolved ledger event (subjected by the
+              // binding name) back to this ask.
+              meta: { reply: declType ? typeLabel(declType) : "text", ...(bindName ? { binding: bindName } : {}) },
+            });
+            for (const src of flowSources(e.message, at)) {
+              addEdge({ from: src, to: aid, kind: "flow", variant: at.variant, line: line(e) });
+            }
+            if (bindName) bindingNode.set(bindName, aid);
+          } else {
             const to = dest.instName ? `agent:${dest.instName}` : addNode({ id: `agent:?${dest.label}`, kind: "agent", label: `${dest.label} (unresolved)`, line: line(e), meta: { resolved: false } }).id;
             addEdge({ from: at.nodeId, to, kind: "send", label: declType ? typeLabel(declType) : undefined, variant: at.variant, line: line(e), resolved: Boolean(dest.instName) });
           }
@@ -365,7 +420,9 @@ export function buildGraph(program: A.Program, programName = ""): ProgramGraph {
             break;
           }
           case "when": break;    // hoisted; already a context of its own
-          case "spawn": break;   // handled globally
+          case "spawn":          // a ctor/handler spawn draws from its own context (top-level ones are pre-wired)
+            if (ctx.nodeId !== "top") addEdge({ from: at.nodeId, to: `agent:${s.name}`, kind: "spawn", label: "spawn", variant: at.variant, line: line(s) });
+            break;
           case "retry": visitStmts(s.body, at); break;
           case "say": visitExpr(s.arg, at); break;
           case "return": if (s.value) visitExpr(s.value, at); break;
@@ -431,7 +488,7 @@ function exprLabel(e: A.Expr): string {
 export function toDot(g: ProgramGraph): string {
   const q = (s: string) => JSON.stringify(s);
   const shape: Record<GraphNode["kind"], string> = {
-    top: "box", agent: "box", handler: "box", hook: "box", gate: "diamond", sink: "doubleoctagon",
+    top: "box", agent: "box", handler: "box", hook: "box", ask: "ellipse", gate: "diamond", sink: "doubleoctagon",
     tool: "component", principal: "house", prompt: "cds", mem: "cylinder", event: "note", ledger: "cylinder",
   };
   const lines: string[] = [`digraph ${q(g.program || "agape")} {`, `  rankdir=LR;`, `  node [fontname="monospace", fontsize=10];`];

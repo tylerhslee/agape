@@ -18,6 +18,7 @@ validates; a program that parses and checks always has a graph.
 | `agent`     | statically spawned instance                | `name: AgentType`        | `agentType`, `grants`, `spawnLine` |
 | `handler`   | `when` clause (in an agent or top-level)   | `when EventType`         | `guard`, `about` |
 | `hook`      | `on awake/sleep/crash` hook                | `on awake`               | — |
+| `ask`       | self-send (`self <- …`) — a testimony step | `ask Credence<E>`        | `reply` |
 | `gate`      | `decide` site                              | `decide Credence<E>`     | `enum`, `rule`, `principal`, `quorum`, `endorses` |
 | `sink`      | action that some `perform` targets         | action name              | `reversible`, `fields` |
 | `tool`      | tool that some call targets                | tool name                | `effect`, `reversible` |
@@ -42,7 +43,7 @@ agent node labelled with the binding name — the edge is still drawn, marked `r
 | `event`    | emitting site's node → each subscribing `handler`      | event type |
 | `prompt`   | `prompt` sensor → `when (Prompt p about NAME)` handler | `Prompt` |
 | `send`     | sending context → destination `agent`                  | expected reply type (when bound `T x = dest <- …`) |
-| `flow`     | handler/hook → its `gate` (the credence chain)         | `Credence<E>` |
+| `flow`     | the ask/gate dataflow chain: hook/handler → `ask` → … → `gate` (unlabelled — the target node names the type). An ask's in-edges come from the asks whose bindings its prompt references; a gate's from the asks that produced its credence **and** its endorsed subject. |
 | `escalate` | `gate` → `principal` (a principal-prefixed decide)     | `escalate` |
 | `sink`     | gate (or context) → `sink`                             | action; `variant` = the committed branch guarding it |
 | `tool`     | context → `tool`                                       | tool name |
@@ -56,8 +57,8 @@ agent node labelled with the binding name — the edge is still drawn, marked `r
 attributed to the *gate node* with `variant: V`. This is exactly the §13 story made visible: the
 sink edge exists only out of a committed branch, and the graph shows which variant arms it.
 
-Self-sends (`self <- …`, the agent's own cognition) do not draw an edge; the resulting gate node's
-`flow` edge carries the credence type, which is the informative part.
+Self-sends (`self <- …`, the agent's own cognition) are `ask` nodes — each one is a model call
+producing a typed reply, i.e. a TESTIMONY step in the §13 chain, so it is part of the topology.
 
 ## JSON shape
 
@@ -78,9 +79,10 @@ Stable ids: `agent:<inst>`, `handler:<inst>/when:<i>`, `hook:<inst>/awake`,
 ## Surfaces
 
 - **CLI**: `agape-ts graph <file.ag> [--format json|dot]`. `dot` emits Graphviz with agent
-  clusters as subgraphs. The program is parsed **and checked** first — a rejected program
-  reports the rejection, not a graph of unverified code.
-- **Studio**: `GET /api/graph?name=<program>` returns `{ ok, graph }` (or the parse/check error).
+  clusters as subgraphs. The graph is **syntactic**: a program that parses always has one. A
+  static-check rejection is reported alongside it (stderr note / `check` field / a UI badge) —
+  a deliberately-rejected demo still shows the topology the checker refused to run.
+- **Studio**: `GET /api/graph?name=<program>` returns `{ ok, graph, check? }` (or the parse error).
   The Graph panel renders it as layered SVG — sources (prompts) left, agent clusters ranked by
   message depth, effects (sinks/tools/principals/ledger) right. Clicking a node jumps the source
   view to its line.

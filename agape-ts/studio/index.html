@@ -363,8 +363,13 @@
   .gnode.k-agent rect { fill: transparent; stroke: none; }
   .gnode.k-agent text { fill: var(--text); font-weight: 600; }
   .gedge path { fill: none; stroke-width: 1.3; opacity: .8; }
-  .gedge text { font: 9.5px var(--mono); opacity: .9; }
+  .gedge text {
+    font: 9.5px var(--mono); opacity: .95;
+    paint-order: stroke; stroke: var(--bg); stroke-width: 3px; stroke-linejoin: round;
+  }
   .gedge.dashed path { stroke-dasharray: 4 3; }
+  .gnode.k-ask rect { stroke: #7dd3fc; }
+  .gnode.k-ask text { fill: #a8c7e8; font-style: italic; }
   .gnode.lit rect { stroke: var(--green); stroke-width: 1.8; filter: drop-shadow(0 0 5px rgba(52,211,153,.55)); }
   .gedge.lit path { stroke: var(--green) !important; stroke-width: 2.2; opacity: 1; }
   .gedge.lit text { fill: var(--green) !important; }
@@ -1227,9 +1232,11 @@ async function select(name) {
   $("source").innerHTML = renderCode(state.source);
   // the statically derived orchestration graph (GRAPH.md) — shown before any run.
   state.graph = null;
+  state.graphCheck = null;
   try {
     const gr = await api(`/api/graph?name=${encodeURIComponent(name)}`);
     state.graph = gr.ok ? gr.graph : null;
+    state.graphCheck = gr.check || null; // a rejected-by-design program still shows its topology
   } catch { /* the graph is a lens, never a blocker */ }
   renderInputControls(state.map);
   $("workspace").classList.remove("specMode");
@@ -1885,14 +1892,16 @@ function graphUnits(g) {
     if (members.has(n.id)) {
       const ms = members.get(n.id);
       const roots = ms.filter((m) => m.kind === "hook" || m.kind === "handler");
-      const gates = ms.filter((m) => m.kind === "gate");
+      const sites = ms.filter((m) => m.kind === "ask" || m.kind === "gate"); // the ask/gate chain, in source order
       const mems = ms.filter((m) => m.kind === "mem");
+      const seqOf = (id) => Number(id.slice(id.lastIndexOf("#") + 1)) || 0;
+      const ctxOf = (id) => id.slice(id.indexOf(":") + 1, id.lastIndexOf("#"));
       const ordered = [];
       for (const r of roots) {
         ordered.push(r);
-        for (const gt of gates) if (gt.id.startsWith("gate:" + r.id)) ordered.push(gt);
+        ordered.push(...sites.filter((x) => ctxOf(x.id) === r.id).sort((a, b) => seqOf(a.id) - seqOf(b.id)));
       }
-      for (const gt of gates) if (!ordered.includes(gt)) ordered.push(gt);
+      for (const st of sites) if (!ordered.includes(st)) ordered.push(st);
       ordered.push(...mems);
       units.push({ id: n.id, head: n, members: ordered });
       unitOf.set(n.id, n.id);
@@ -1970,6 +1979,12 @@ function graphOverlay(g, events, map) {
         if (t === "Prompt") litEdges((e) => e.kind === "prompt" && e.from === "prompt:" + ev.subject);
         break;
       case "Sent": if (p.to) { litNode("agent:" + p.to); litEdges((e) => e.kind === "send" && e.to === "agent:" + p.to); } break;
+      case "Resolved": { // a typed reply landed — light the ask that produced it, and its in-flows
+        const asks = new Set(g.nodes.filter((n) => n.kind === "ask" && (n.meta || {}).binding === ev.subject && (!ag || n.parent === "agent:" + ag)).map((n) => n.id));
+        for (const id of asks) ln.add(id);
+        litEdges((e) => e.kind === "flow" && asks.has(e.to));
+        break;
+      }
       case "Spawned": litNode("agent:" + ev.subject); litEdges((e) => e.kind === "spawn" && e.to === "agent:" + ev.subject); break;
       case "AgentAwake": litNode("agent:" + ev.subject); break;
       case "ToolStarted": case "ToolResolved": litNode("tool:" + ev.subject); litEdges((e) => e.kind === "tool" && e.to === "tool:" + ev.subject); break;
@@ -1997,8 +2012,8 @@ function drawGraph(events, map) {
   const pend = state.pendingAttestation;
 
   // ---- geometry ----
-  const UW = 216, PADX = 10, HEADH = 24, VGAP = 24, CGAP = 84, M = 14;
-  const rowH = (n) => (n.kind === "gate" ? 40 : 28);
+  const UW = 216, PADX = 10, HEADH = 24, VGAP = 24, CGAP = 96, M = 14;
+  const rowH = (n) => (n.kind === "gate" ? 40 : n.kind === "ask" ? 26 : 28);
   const cols = new Map();
   for (const u of units) {
     const r = rank.get(u.id);
@@ -2018,7 +2033,7 @@ function drawGraph(events, map) {
         let h = HEADH + 8;
         pos.set(u.head.id, { x, y, w: UW, h: HEADH, cluster: true, frameY: y });
         for (const m of u.members) {
-          const ind = m.kind === "gate" ? 12 : 0;
+          const ind = m.kind === "gate" || m.kind === "ask" ? 12 : 0;
           pos.set(m.id, { x: x + PADX + ind, y: y + h, w: UW - 2 * PADX - ind, h: rowH(m) });
           h += rowH(m) + 8;
         }
@@ -2034,51 +2049,79 @@ function drawGraph(events, map) {
   }
   const svgW = M * 2 + (maxR + 1) * UW + maxR * CGAP;
 
-  // ---- edges ----
-  // parallel edges (same endpoints) fan out vertically; labels stagger along the path so edges
-  // that converge on one node keep readable labels.
-  const pairCount = new Map(), pairSeen = new Map();
-  for (const e of g.edges) {
-    const k = e.from + "→" + e.to;
-    pairCount.set(k, (pairCount.get(k) || 0) + 1);
+  // ---- edges: slot-spread anchors (no shared convergence point), vertical connectors inside a
+  // cluster (the ask→gate chain), labels near their TARGET, staggered per in-slot, with a halo.
+  const parentOf = new Map(g.nodes.map((n) => [n.id, n.parent || null]));
+  const drawable = g.edges.filter((e) => pos.get(e.from) && pos.get(e.to));
+  const outLists = new Map(), inLists = new Map();
+  for (const e of drawable) {
+    if (!outLists.has(e.from)) outLists.set(e.from, []);
+    outLists.get(e.from).push(e);
+    if (!inLists.has(e.to)) inLists.set(e.to, []);
+    inLists.get(e.to).push(e);
   }
-  const intoCount = new Map();
-  const epaths = [];
-  for (const e of g.edges) {
+  for (const list of outLists.values()) list.sort((a, b) => pos.get(a.to).y - pos.get(b.to).y || a.id.localeCompare(b.id));
+  for (const list of inLists.values()) list.sort((a, b) => pos.get(a.from).y - pos.get(b.from).y || a.id.localeCompare(b.id));
+  const slot = (p, i, k) => p.y + p.h * ((i + 1) / (k + 1));
+  const trim = (sTxt) => sTxt.length > 26 ? sTxt.slice(0, 25) + "…" : sTxt;
+  const epaths = [], elabels = [];
+  const putLabel = (cls, color, anchor, x, y, text) => elabels.push({ cls, color, anchor, x, y, text });
+  for (const e of drawable) {
     const s = pos.get(e.from), t = pos.get(e.to);
-    if (!s || !t) continue;
-    const pk = e.from + "→" + e.to;
-    const pi = pairSeen.get(pk) || 0;
-    pairSeen.set(pk, pi + 1);
-    const fan = (pi - (pairCount.get(pk) - 1) / 2) * 10;
-    const li = intoCount.get(e.to) || 0; // stagger labels per target node
-    intoCount.set(e.to, li + 1);
+    const outL = outLists.get(e.from), inL = inLists.get(e.to);
+    const sy = slot(s, outL.indexOf(e), outL.length);
+    const tIdx = inL.indexOf(e), ty = slot(t, tIdx, inL.length);
     const color = EDGE_COLORS[e.kind] || "var(--faint)";
-    let d, lx, ly;
-    const sy = s.y + s.h / 2 + fan, ty = t.y + t.h / 2 + fan;
-    if (t.x >= s.x + s.w) { // forward
-      const x1 = s.x + s.w, x2 = t.x, dx = Math.max(28, (x2 - x1) / 2);
-      d = `M ${x1} ${sy} C ${x1 + dx} ${sy}, ${x2 - dx} ${ty}, ${x2 - 5} ${ty}`;
-      const f = 0.32 + ((li % 3) * 0.22);
-      lx = x1 + (x2 - x1) * f; ly = sy + (ty - sy) * f - 5;
-    } else if (t.x + t.w <= s.x) { // backward
-      const x1 = s.x, x2 = t.x + t.w, dx = Math.max(28, (x1 - x2) / 2);
-      d = `M ${x1} ${sy} C ${x1 - dx} ${sy}, ${x2 + dx} ${ty}, ${x2 + 5} ${ty}`;
-      const f = 0.32 + ((li % 3) * 0.22);
-      lx = x1 + (x2 - x1) * f; ly = sy + (ty - sy) * f - 5;
-    } else { // same column — bulge right
-      const x1 = s.x + s.w, x2 = t.x + t.w, bx = Math.max(x1, x2) + 36;
-      d = `M ${x1} ${sy} C ${bx} ${sy}, ${bx} ${ty}, ${x2 + 5} ${ty}`;
-      lx = bx - 6; ly = (sy + ty) / 2 - 5;
-    }
     const lit = over.le.has(e.id);
     const pendEdge = pend && e.kind === "escalate" && e.to === "principal:" + pend.principal;
     const cls = `gedge${e.kind === "recall" || e.kind === "store" ? " dashed" : ""}${lit ? " lit" : ""}${pendEdge ? " pend" : ""}`;
-    const label = e.label ? (e.variant ? `${e.label} · ${e.variant}` : e.label) : (e.variant || "");
-    epaths.push(`<g class="${cls}">
-      <path d="${d}" stroke="${color}" marker-end="url(#ar-${lit ? "lit" : pendEdge ? "pend" : e.kind})"></path>
-      ${label ? gtext(lx - label.length * 2.6, ly, "", label, 26).replace("<text ", `<text fill="${color}" `) : ""}
-    </g>`);
+    const marker = `marker-end="url(#ar-${lit ? "lit" : pendEdge ? "pend" : e.kind})"`;
+    const label = e.label ? (e.variant ? `${e.label} · ${e.variant}` : e.label) : (e.variant ? `· ${e.variant}` : "");
+    let d;
+    if (parentOf.get(e.from) && parentOf.get(e.from) === parentOf.get(e.to)) {
+      // two rows of one cluster: a short vertical connector down (or up) the chain
+      const down = t.y >= s.y;
+      const x1 = s.x + Math.min(28, s.w / 2), x2 = t.x + Math.min(20, t.w / 2);
+      const y1 = down ? s.y + s.h : s.y, y2 = down ? t.y - 2 : t.y + t.h + 2;
+      d = `M ${x1} ${y1} C ${x1} ${(y1 + y2) / 2}, ${x2} ${(y1 + y2) / 2}, ${x2} ${y2}`;
+      if (label) putLabel(cls, color, "start", x2 + 10, (y1 + y2) / 2 + 3, trim(label));
+    } else if (t.x >= s.x + s.w) { // forward
+      const x1 = s.x + s.w, x2 = t.x, dx = Math.max(28, (x2 - x1) / 2.2);
+      d = `M ${x1} ${sy} C ${x1 + dx} ${sy}, ${x2 - dx} ${ty}, ${x2 - 5} ${ty}`;
+      if (label) {
+        const lx = Math.max(x1 + 12, x2 - 14 - (tIdx % 4) * 52);
+        const f = Math.min(0.92, Math.max(0.1, (lx - x1) / (x2 - x1)));
+        putLabel(cls, color, "end", lx, sy + (ty - sy) * f - 5, trim(label));
+      }
+    } else if (t.x + t.w <= s.x) { // backward
+      const x1 = s.x, x2 = t.x + t.w, dx = Math.max(28, (x1 - x2) / 2.2);
+      d = `M ${x1} ${sy} C ${x1 - dx} ${sy}, ${x2 + dx} ${ty}, ${x2 + 5} ${ty}`;
+      if (label) {
+        const lx = Math.min(x1 - 12, x2 + 14 + (tIdx % 4) * 52);
+        const f = Math.min(0.92, Math.max(0.1, (x1 - lx) / (x1 - x2)));
+        putLabel(cls, color, "start", lx, sy + (ty - sy) * f - 5, trim(label));
+      }
+    } else { // same column — bulge right
+      const x1 = s.x + s.w, x2 = t.x + t.w, bx = Math.max(x1, x2) + 40;
+      d = `M ${x1} ${sy} C ${bx} ${sy}, ${bx} ${ty}, ${x2 + 5} ${ty}`;
+      if (label) putLabel(cls, color, "start", bx - 30, (sy + ty) / 2 - 5, trim(label));
+    }
+    epaths.push(`<g class="${cls}"><path d="${d}" stroke="${color}" ${marker}></path></g>`);
+  }
+  // greedy de-collision: estimate each label's box, nudge later ones vertically until clear.
+  {
+    const placed = [];
+    for (const l of elabels) {
+      const w = l.text.length * 5.8, h = 11, baseY = l.y;
+      const box = () => ({ x: l.anchor === "end" ? l.x - w : l.x, y: l.y - 9, w, h });
+      for (const off of [0, 11, -11, 22, -22, 33, -33]) {
+        l.y = baseY + off;
+        const b = box();
+        if (!placed.some((p) => b.x < p.x + p.w && p.x < b.x + b.w && b.y < p.y + p.h && p.y < b.y + b.h)) break;
+      }
+      placed.push(box());
+      epaths.push(`<g class="${l.cls}"><text fill="${l.color}" text-anchor="${l.anchor}" x="${l.x}" y="${l.y}">${esc(l.text)}</text></g>`);
+    }
   }
 
   // ---- nodes ----
@@ -2114,8 +2157,11 @@ function drawGraph(events, map) {
   const legend = $("graphLegend");
   if (legend) {
     const kinds = [...new Set(g.edges.map((e) => e.kind))];
+    const checkNote = state.graphCheck
+      ? `<span style="color:var(--red)">⚠ static check rejects this program — ${esc(state.graphCheck.cls)}: this topology never runs</span>`
+      : "";
     legend.innerHTML = kinds.map((k) => `<span><i style="--c:${EDGE_COLORS[k]}"></i>${k}</span>`).join("") +
-      `<span style="margin-left:auto">derived from source · click a node to jump to its line</span>`;
+      checkNote + `<span style="margin-left:auto">derived from source · click a node to jump to its line</span>`;
   }
   host.onclick = (e) => {
     const gn = e.target.closest?.("[data-node]");
