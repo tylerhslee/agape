@@ -60,6 +60,35 @@ These ideas form Agape's **trusted kernel**: `Credence`, sealed `Decision`, subj
 ordinary computation over already-settled values, or a reactive primitive over the ledger. No
 feature may introduce a new path from model testimony to world effect.
 
+The whole of it in one small program — a judgment graded, decided, endorsed, and only then
+allowed to act, every step on the ledger:
+
+```agape
+enum Verdict { Ship, Hold }
+
+event  Reviewed(text note);
+action Release(text build);          // a consequential sink (needs a grant)
+
+agent Gatekeeper grants { perform Release } {
+  on awake {
+    text build = self <- "name the release candidate";           // testimony (raw)
+    Credence<Verdict> c = self <- f"is {build} safe to ship?";   // graded judgment
+    Decision<Verdict> d = decide c by confidence 0.9;            // sealed; ledgered as Decided
+    if (d.committed == Ship) {
+      Endorsement<text> e = endorse build by d;                  // the settled subject
+      perform Release(e);                                        // the granted sink
+    } else if (d.committed == Hold) {
+      emit Reviewed("held");
+    } else {
+      emit Reviewed("abstained — no action");                    // fail closed
+    }
+  }
+}
+
+spawn Gatekeeper g;
+awake g;
+```
+
 ### 0.1 Scope and layering
 
 Agape is a domain language for the cognitive/agentic layer; it is not a general-purpose
@@ -181,6 +210,24 @@ prefixed with a `principal`.
 - A `Credence` is produced by binding a send to a `Credence<E>`-typed slot (§3, §8), whatever
 the destination.
 
+The three axes, one per comment, in a single agent:
+
+```agape
+sync int fee(int cents) { return cents / 10; }   // color S: provably no dependency reach
+
+agent Teller {
+  on awake {
+    text note = self <- "describe the request";              // async · raw · lifecycle events
+    Credence<bool> ok = self <- f"is this routine: {note}";  // async · graded · lifecycle events
+    Decision<bool> d = decide ok by confidence 0.8;           // sync collapse · settled · Decided
+    if (d.committed == true) { emit Event("routine"); }      // branch on a settled fact
+    else if (d.committed == false) { emit Event("escalate"); }
+    say(f"fee: {fee(1250)}");                                // sync call · settled · no events
+  }
+}
+spawn Teller t; awake t;
+```
+
 ---
 
 ## 2. Lexical structure
@@ -240,6 +287,23 @@ identifier) doubles as the only permitted user-event supertype in `event Foo(..)
 `Forgotten`, `ToolStarted`, `ToolResolved`, `TypeMismatch`, `MarginFloorViolation`;
 the built-in function `say`; and the generic ledger row type `LedgerEntry<E>`. (`Rule` is
 the gate's parameter, not a type — §3.)
+
+Most of the lexical surface in a few lines — comments, the two arrows, f-strings, numbers,
+and the explicit terminator:
+
+```agape
+// a line comment; every statement ends in ;
+agent Notes {
+  on awake {
+    mem log <- "the first note";                     // <- writes into a mem region
+    text hit = log -> "what was noted?";             // -> recalls (always tainted)
+    Credence<bool> b = self <- f"useful? {hit}";     // an f-string interpolates {expr}
+    Decision<bool> d = decide b by confidence 0.75;  // Number literals: 0.75, 42
+    if (d.committed == true) { say("kept"); } else { say("dropped"); }
+  }
+}
+spawn Notes n; awake n;
+```
 
 ---
 
@@ -577,6 +641,23 @@ being produced — so a send logs its lifecycle, not its content (§15.4).
 lifecycle (below) and may be lost or expire — `self` included. A send is a send; the
 destination is only an address.
 
+```agape
+agent Analyst {}
+agent Desk(Analyst quant) grants { reach Analyst } {
+  on awake {
+    text view = quant <- "one-line view on the filing" expires 5;  // Sent → Delivered → Resolved
+    Credence<bool> agree = self <- f"do we agree: {view}";        // graded when Credence-bound
+    Decision<bool> d = decide agree by confidence 0.8;
+    if (d.committed == true) { emit Event("aligned"); }
+    else { emit Event("review"); }
+  }
+}
+spawn Analyst a;
+spawn Desk desk(a);
+awake a;
+awake desk;
+```
+
 ### The message lifecycle — `Sent → Delivered → Resolved`
 
 Every send moves through three phases, each an event on the ledger, correlated by `corr`:
@@ -883,6 +964,17 @@ adds a *leaf* under `Error` so `when (Error e)` catches it too; the only permitt
 the built-in `Error` (no user intermediate supertypes), and `action` may not extend it (only
 `event` may).
 
+```agape
+event AuditGap(text what) : Error;   // a user leaf under the built-in Error root
+
+when (Error e) { say("caught an error subtype"); }   // catches AuditGap by subtype
+
+agent Auditor {
+  on awake { emit AuditGap("missing receipt"); }
+}
+spawn Auditor a; awake a;
+```
+
 `**say(x)`** prints its argument; it is not a ledger operation. Private-memory internalization is
 spelled with the memory write seam, `mem <- value` (§10), not a prelude `store()` call.
 
@@ -1023,6 +1115,20 @@ the kernel form of verdict branching. Branching on a gate's outcome is an ordina
 `.committed`, with the `abstained` sentinel as the case no committed variant matched. `if`, the
 reactive `when` (§7), bounded fan-out over a finite collection (§12), and function call are the whole
 of Agape's control vocabulary; there is no unbounded loop (§0.2).
+
+```agape
+enum Grade { Pass, Fail }
+agent Marker {
+  on awake {
+    Credence<Grade> g = self <- "grade this submission";
+    Decision<Grade> d = decide g by confidence 0.85 margin 0.1;
+    if      (d.committed == Pass) { emit Event("pass"); }
+    else if (d.committed == Fail) { emit Event("fail"); }
+    else                          { emit Event("abstained — needs a human"); }  // == abstained
+  }
+}
+spawn Marker m; awake m;
+```
 
 ---
 
@@ -1196,7 +1302,10 @@ provenance for the source `Credence`, profile, or principal. An `Endorsement<T>`
 subject: it carries the underlying value of type `T` (reachable explicitly as **`e.subject : T`**,
 and the whole `Endorsement<T>` coerces to `T` at a consequential sink), exposes `T`'s own fields
 directly (`e.some_field`), and adds the read-only gate metadata `.decision_id` / `.committed` /
-`.basis` / `.margin` plus the endorsement's subject hash and ledger tick. Where a field of `T`
+`.basis` / `.margin`. The `.decision_id` is the endorsement's single ledger join key: the
+recorded subject, tick, and chain position live on its `Endorsed` row (and the `Decided` row it
+references), reached by the ledger query — `select Endorsed as r from ledger where { … }`, then
+`r._meta.tick` (§10); a gate value carries no `_meta` of its own. Where a field of `T`
 collides with a reserved metadata accessor, the metadata name wins and the shadowed field is reached
 through `e.subject` (e.g. `e.subject.committed`). This is Agape's reflection surface over gate
 metadata, not general structural `typeof`.
@@ -1387,6 +1496,39 @@ dependencies journal their oracle/tool results to the ledger for replay (§15.4.
 re-serves recorded dependency results (including memory decomposition/embedding) and never
 re-invokes a write sink; the margin floor `m`
 is enforced at the consequential sink.
+
+The invariants, exercised — default-deny authority, the one legal trust path, human escalation,
+and fail-closed abstention:
+
+```agape
+enum Approval { Approve, Deny }
+
+struct Payout { amount_cents: int, payee: text }
+
+event  Held(text why);
+action Pay(int cents);
+
+principal treasurer;
+
+agent Clerk grants { perform Pay } {            // authority: exactly one power
+  on awake {
+    Payout req = self <- "extract the payout request";         // raw cognition
+    Credence<Approval> c = self <- f"approve {req.amount_cents} to {req.payee}?";
+    Decision<Approval> d = treasurer decide c by conformal 0.05;  // cold → escalates to a human
+    if (d.committed == Approve) {
+      Endorsement<Payout> e = endorse req by d;                // the only path to settlement
+      perform Pay(e.amount_cents);                             // the sink admits only the endorsed datum
+    } else if (d.committed == Deny) {
+      emit Held("denied");
+    } else {
+      emit Held("no ruling — withheld");                       // fail closed
+    }
+  }
+}
+
+spawn Clerk k;
+awake k;
+```
 
 ---
 
@@ -2375,78 +2517,163 @@ belongs in configuration, not in `.ag` source.
 
 ### 17.1 The manifest
 
-Configuration is the binding of declared dependencies (§3) to concrete resources, plus connector
-and runtime defaults that are not autonomous decision policy. Each `principal` / `tool` / `prompt`
-declaration in source resolves to a manifest entry; an undeclared-in-config dependency is a
-configuration error.
+The manifest is the normative deployment configuration. Its canonical portable serialization is
+TOML in a project-root `agape.toml`. A host UI, build system, or service manager may generate the
+same manifest data model from another source, but conformance fixtures and portable projects use
+the TOML shape below.
 
-```toml
-[project]   name = "my-app"   entry = "main.ag"   version = "0.1.0"
+The manifest is an integration contract, not a second programming language. Source declares *what*
+exists:
 
-# the cognition dependency
-[provider]  backend = "anthropic"   model = "claude-…"   temperature = 0
-            exposes_logprobs = false      # DERIVED from backend (anthropic=false, openai/gemini=true); set only to force fallback
-            sampling_fallback = true      # may the sampling fallback run when logprobs are absent? (default true; set false to disable)
-            fallback_samples = 10         # samples to estimate one judgment's distribution (min 10)
-            fallback_temperature = 0.7    # REQUIRED when temperature = 0 and exposes_logprobs = false
-
-# the identity dependency (`principal NAME;`)
-[identity]  backend = "local-keyring"
-
-# memory — mandatory per-agent envelope (§10, §16.7); settings tune budget/fidelity, not bypass
-[memory]    max_internalize_chars = 12000
-
-# conformal needs no manifest entry: it calibrates from the ledger, and a gate's readiness
-# floor and default α live in the gate's rule in source (§13)
-
-# world capabilities (the `tool NAME;` dependencies)
-[tools]
-search   = { mcp = "stdio:mcp-server-brave" }
-transfer = { mcp = "https://payments.internal/mcp" }
-
-# decision rules are NOT in the manifest — thresholds, margins, the consequential floor,
-# conformal α, and readiness all live in the gate's inline rule in source (§13),
-# e.g. `decide c by confidence 0.9 margin 0.2 floor 0.1`.
+```agape
+prompt text question;
+principal reviewer;
+read tool text search(text q);
+write tool bool create_ticket(text body);
 ```
 
-The manifest is an integration contract, not a second programming language. A deployment that
-uses OpenAI for logprob-backed judgments, a local keyring for principal decisions, and an MCP
-tool server for payments still runs the same `.ag` source:
+The manifest binds those dependency names to concrete backends:
 
 ```toml
+[project]
+name = "fact-checker"
+entry = "main.ag"
+version = "0.1.0"
+spec = "1.0.0-alpha.2026.7.2.0"
+
 [provider]
 backend = "openai"
-model = "gpt-4.1-mini"
+model = "gpt-4o-mini"
 temperature = 0
+sampling_fallback = true
+fallback_samples = 10
+fallback_temperature = 0.7
 
-[identity]
-backend = "local-keyring"
+[prompts.question]
+driver = "studio"
 
-[tools]
-payments = { mcp = "https://payments.internal/mcp" }
+[identity.reviewer]
+driver = "studio_local"
 
-[prompts]
-request = { source = "http", path = "/requests" }
+[tools.search]
+driver = "web_search"
+provider = "tavily"
+api_key_env = "TAVILY_API_KEY"
+timeout_ms = 10000
+
+[tools.create_ticket]
+driver = "http"
+url = "https://tickets.internal/create"
+method = "POST"
+auth_env = "TICKET_API_TOKEN"
+timeout_ms = 10000
+
+[memory]
+facts_driver = "sqlite"
+graph_driver = "sqlite"
+vector_driver = "sqlite-vec"
+blob_store = "archive"
+indexing = "incremental"
+background_reindex = true
+forget_policy = "cascade"
+archive_retention = "forever"
+max_internalize_chars = 12000
 ```
 
-Connector-specific keys may vary by backend, but the stable Agape-level interface is fixed:
-provider, identity, tools, prompts, and memory policy. If source declares
-one of these dependencies and config does not bind it, the result is a `ConfigError`, not a late
-runtime lookup.
+Required stable tables:
 
-- `**exposes_logprobs**` is a **capability of the chosen backend — derived, not a knob to
-hand-set**: `anthropic` ⇒ `false` (the Messages API exposes no token logprobs), `openai`/`gemini` ⇒
-`true` (the per-variant mass is read from token logprobs). When the capability is `false`, a graded
-gate is served by the **sampling fallback**: the judgment is drawn `fallback_samples` times (minimum
-10) and its distribution is the empirical frequency; sampling needs variation, so
-`fallback_temperature` is **required when `temperature = 0`**. The manifest may **override** the
-derived value only to force the fallback path for testing or cost control; a custom local connector
-reading logits declares `true`.
-- **Decision rules live in source, not the manifest.** A gate's rule and floor are written inline on
-the gate (`decide c by confidence θ margin δ floor m`, §13); the manifest binds only the dependencies
-(provider, identity, tools) and the connector's transport config. A threshold is never a hidden global
-(§17.2).
-- Swapping a dependency's backend changes no source.
+| table | purpose | required when |
+| --- | --- | --- |
+| `[project]` | project metadata and entrypoint | portable project |
+| `[provider]` | cognition backend for every `<-` to an agent | program reaches cognition |
+| `[prompts.NAME]` | external input source for `prompt T NAME;` | source declares that prompt |
+| `[identity.NAME]` | principal backend for `principal NAME;` | source declares that principal |
+| `[tools.NAME]` | tool implementation for `read/write tool ... NAME(...)` | source declares that tool |
+| `[memory]` | private-memory storage, indexing, and archival policy | runtime has private memory |
+
+Resolution rules:
+
+- The key `NAME` in `[prompts.NAME]`, `[identity.NAME]`, and `[tools.NAME]` is the source
+  declaration's dependency name. A declared dependency with no binding is a `ConfigError` before
+  execution. A binding for a name not declared in source is ignored or warned by default; strict mode
+  may reject it as a `ConfigError`.
+- Source owns type, effect, and authority. For a tool, `read`/`write`, parameter types, and return
+  type come from the `.ag` declaration, never the manifest. The manifest chooses only the driver and
+  transport. If a driver cannot satisfy the declared shape, configuration fails.
+- Secrets are references, not values. API keys, signing keys, OAuth tokens, and MCP credentials live
+  in the environment, OS keychain, or host secret manager. The manifest may name them with fields
+  such as `api_key_env`, `auth_env`, or `secret_ref`; it must not contain secret material.
+- Connector-specific extension keys are allowed inside the binding's own table. They are ignored by
+  other drivers unless the driver declares them. Portable meaning comes from the stable table name,
+  `driver`, and the source declaration.
+- TOML table form is canonical. Inline tables are acceptable shorthand only when they are equivalent
+  to the table form; conformance tests use table form.
+
+Provider fields:
+
+- `backend` names the provider connector (`mock`, `openai`, `anthropic`, `gemini`, or an
+  implementation-defined connector).
+- `model`, `temperature`, and connector-specific fields configure the backend, not Agape semantics.
+- `exposes_logprobs` is a backend capability, normally derived: `anthropic` is `false`,
+  `openai`/`gemini` are `true` for connectors that expose per-token scores. A custom connector may
+  declare either value.
+- When `exposes_logprobs = false`, a `Credence<E>` judgment uses the sampling fallback if
+  `sampling_fallback = true`: the forced categorical judgment is drawn `fallback_samples` times
+  (minimum 10) and the distribution is the empirical frequency. Sampling needs variation, so
+  `fallback_temperature` is required when the main `temperature = 0`. If fallback is disabled and
+  no distribution is available, consequential gates defer/abstain rather than fabricating confidence.
+
+Prompt bindings:
+
+- `driver = "studio"` means Studio/user input supplies `Prompt` arrivals.
+- `driver = "stdin"`, `"http"`, `"queue"`, `"webhook"`, `"timer"`, or implementation-defined
+  drivers may be used by runtimes that support them.
+- The manifest does not restate the prompt type; the source declaration `prompt T NAME;` is
+  authoritative. The driver must coerce or reject incoming payloads against `T`.
+
+Identity bindings:
+
+- `driver = "studio_local"` is an interactive local attestation flow.
+- `driver = "local_keyring"`, `"oidc"`, `"webauthn"`, `"kms"`, or implementation-defined drivers
+  may back production principals.
+- A principal decision must return a variant of the gated enum plus an attestation/signature payload
+  recorded in `PrincipalDecision` or `FailedPrincipalDecision` (§13, §16.4).
+
+Tool bindings:
+
+- `driver = "mcp"` binds a tool to an MCP server and issues `tools/call`.
+- `driver = "http"` binds a tool to an HTTP endpoint; args marshal by declared parameter names,
+  and the result must validate against the declared return type.
+- `driver = "web_search"` is a standardized read-tool class for search connectors; provider-specific
+  fields (`provider`, `region`, `max_results`, etc.) live in the same `[tools.NAME]` table.
+- `driver = "host"` binds a tool to an in-process function supplied by the embedding runtime.
+- `driver = "process"` or `"script"` may spawn a configured local command under the host's sandbox
+  policy; args still marshal by declared parameter names and results validate against the declared
+  return type.
+- `driver = "skill"` may bind a tool to a host-discovered skill/capability. The skill system is
+  outside the core kernel; the Agape contract is still the declared tool signature, authority,
+  effect, journaling, and replay behavior.
+- A conformant runtime may support additional drivers, but every invocation is still governed by
+  `use NAME`, `read`/`write` effect, typed marshalling, `ToolStarted`/`ToolResolved` journaling, and
+  replay from the recorded result (§6b, §16.4, §16.5).
+
+Memory bindings:
+
+- `facts_driver`, `graph_driver`, `vector_driver`, and `blob_store` select private-memory storage
+  implementations. They do not change memory trust: recall remains tainted (§10).
+- `indexing = "incremental"` and `background_reindex = true` express the default contract:
+  `mem <- value` mutates live views incrementally, while compaction/full re-indexing is
+  runtime-managed in the background.
+- `forget_policy = "cascade"` is the core default for active private memory. If an implementation
+  tombstones or deletes per modality, the ledger payload must say exactly which happened (§10).
+- `archive_retention = "forever"` means blob refs in ledger payloads are recoverable by hash, though
+  the runtime may move old bytes to cold storage.
+
+Decision rules are not in the manifest. A gate's threshold, margin, floor, conformal alpha, and
+readiness are written inline in source (`decide c by confidence θ margin δ floor m`, §13). The
+manifest binds dependencies and runtime storage/transport only; it is never a hidden policy layer.
+Swapping a dependency backend changes no source, but it does change the `(source, manifest)` program
+being run (§17.3).
 
 ### 17.2 Scopes and precedence (lowest → highest)
 
