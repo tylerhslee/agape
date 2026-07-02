@@ -31,10 +31,10 @@ function assertCore(p: A.Program): void {
   };
   const walkExpr = (e: A.Expr): void => {
     switch (e.kind) {
-      case "agg": bad("`all`/`any` fusion (use `quorum`)");
-      case "pipe": bad("the `|>` pipe");
-      case "find": bad("a `find` graph query");
-      case "match": bad("a `match` similarity query");
+      case "agg": return bad("`all`/`any` fusion (use `quorum`)");
+      case "pipe": return bad("the `|>` pipe");
+      case "find": return bad("a `find` graph query");
+      case "match": return bad("a `match` similarity query");
       case "select": if (e.target !== "ledger") bad("a `select` over agent memory (use recall, or `select … from ledger`)"); break;
       case "member": walkExpr(e.obj); break;
       case "index": walkExpr(e.obj); walkExpr(e.index); break;
@@ -54,8 +54,8 @@ function assertCore(p: A.Program): void {
   };
   const walkStmt = (s: A.Stmt): void => {
     switch (s.kind) {
-      case "dispatch": bad("a gate arm block (branch on `.committed` with `if`)");
-      case "retry": bad("`retry` (the core has no unbounded or bounded loop)");
+      case "dispatch": return bad("a gate arm block (branch on `.committed` with `if`)");
+      case "retry": return bad("`retry` (the core has no unbounded or bounded loop)");
       case "var": walkType(s.type); if (s.init) walkExpr(s.init); break;
       case "assign": walkExpr(s.target); walkExpr(s.value); break;
       case "spawn": s.args.forEach(walkExpr); break;
@@ -65,15 +65,14 @@ function assertCore(p: A.Program): void {
       case "if": walkExpr(s.cond); s.then.forEach(walkStmt); if (s.else) s.else.forEach(walkStmt); break;
       case "when": if (s.about) walkExpr(s.about); if (s.guard) walkExpr(s.guard); s.body.forEach(walkStmt); break;
       case "memdecl": if (s.init) walkExpr(s.init); break;
-      case "prompt": walkType(s.type); break;
       case "exprstmt": walkExpr(s.expr); break;
       default: break;
     }
   };
   const walkDecl = (d: A.Decl): void => {
     switch (d.kind) {
-      case "policydecl": bad("a `policy` declaration (put the rule inline on the gate)");
-      case "interface": bad("an `interface` (the library layer is deferred)");
+      case "policydecl": return bad("a `policy` declaration (put the rule inline on the gate)");
+      case "interface": return bad("an `interface` (the library layer is deferred)");
       case "struct": if (d.typarams && d.typarams.length) bad("a generic `struct`"); d.fields.forEach((f) => walkType(f.type)); break;
       case "fn": if (d.typarams && d.typarams.length) bad("a generic `fn`"); d.params.forEach((f) => walkType(f.type)); d.body.forEach(walkStmt); break;
       case "action": if (d.reversible) bad("a `reversible` action"); d.fields.forEach((f) => walkType(f.type)); break;
@@ -92,7 +91,7 @@ function assertCore(p: A.Program): void {
   };
 
   if (p.module) bad("a `module` header");
-  if (p.imports.length) bad("an `import`");
+  if (p.imports?.length) bad("an `import`");
   p.decls.forEach(walkDecl);
   p.stmts.forEach(walkStmt);
 }
