@@ -1,0 +1,3 @@
+module util;
+sync int secretFn(int x) { return x + 1; }
+pub sync int pubFn(int x) { return x + 2; }

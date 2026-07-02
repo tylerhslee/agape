@@ -1,0 +1,23 @@
+# Example Agape project manifest (SPEC.md §17). Source declares the `provider` dependency
+# (reached through `self <- …`); this manifest binds it to a concrete backend. Swapping the
+# backend changes no `.ag` source. Secrets (API keys) come from the environment, never here.
+
+[project]
+name  = "hello"
+entry = "examples/hello.ag"
+
+# The cognition dependency. `backend = "mock"` is the deterministic in-box provider used for the
+# demo and for conformance replay. Switch to a real model by changing `backend` + `model`:
+#
+#   [provider] backend = "anthropic"  model = "claude-…"           (no token logprobs → sampling fallback)
+#   [provider] backend = "openai"     model = "gpt-…"              (token top_logprobs → graded scores)
+#   [provider] backend = "gemini"     model = "gemini-…"           (enum-mode responseLogprobs)
+#
+[provider]
+backend = "mock"
+model   = "in-box"
+temperature = 0
+# exposes_logprobs is DERIVED from backend (anthropic=false, openai/gemini=true); set only to force fallback.
+sampling_fallback   = true
+fallback_samples    = 10
+fallback_temperature = 0.7

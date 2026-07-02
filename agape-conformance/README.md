@@ -76,6 +76,7 @@ sync text find(text q) { return search(q); }
 | `contains` | optional | events the ledger must contain (order-free) |
 | `absent` | optional | events the ledger must **not** contain |
 | `order` | optional | events that must appear in this relative order (others may interleave) |
+| `schema` | optional | compiler structured-output schema assertions; `; `-separated |
 | `provider` | optional | stub-provider behavior for the run (§17.5 fault / credence scripting) |
 | `principal` | optional | identity-dependency ruling for `decide c by p` (`grant` / `deny`) |
 | `manifest` | optional | `[runtime]`/policy fixture values for the run (`; `-separated) |
@@ -140,6 +141,9 @@ these header directives. A test with no directives runs under the default record
     margin, e.g. `credence(true=0.62, false=0.38)`.
 - `principal:` — the identity dependency's ruling for `decide c by p`: `grant` (default) or
   `deny` (→ `FailedPrincipalDecision`, §13).
+- `schema:` — compiler assertion for generated structured-output schemas (§8). The assertion
+  string is intentionally transport-neutral; implementations map it to their internal schema
+  representation. Example: `event<Ticket> closed_enum(Billing,Bug)`.
 - `manifest:` — connector/dependency fixture config, `; `-separated, e.g.
   `manifest: provider.exposes_logprobs=false` — to exercise the sampling fallback (§16.8).
   Decision policy is in the test's own source (a `policy` declaration, §13), never the manifest.

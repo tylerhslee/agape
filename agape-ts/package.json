@@ -1,0 +1,27 @@
+{
+  "name": "agape-ts",
+  "private": true,
+  "type": "module",
+  "version": "1.0.0-alpha.2026.6.30.0",
+  "description": "A TypeScript compiler + runtime for the Agape language (SPEC.md v1.0.0-alpha.2026.6.30.0). Eventually embedded in Agape Studio.",
+  "bin": {
+    "agape-ts": "src/cli.ts"
+  },
+  "scripts": {
+    "run": "tsx src/cli.ts",
+    "hello": "tsx src/cli.ts run examples/hello.ag",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "latest",
+    "@google/genai": "latest",
+    "openai": "latest"
+  },
+  "devDependencies": {
+    "tsx": "latest",
+    "typescript": "latest",
+    "vitest": "^2.1.9",
+    "@types/node": "latest"
+  }
+}

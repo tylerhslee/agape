@@ -11,10 +11,7 @@ agent Desk {
     endorse c by d {
       Yes as e {
         say(f"{e.committed}");
-        case (e.basis) as b {
-          Threshold: { say("threshold"); }
-          default:   { say("other"); }
-        }
+        if (e.basis == Threshold) { say("threshold"); } else { say("other"); }
         if (e.margin > 0.1) { say("clear"); } else { say("close"); }
       }
       No as e { say("no"); }

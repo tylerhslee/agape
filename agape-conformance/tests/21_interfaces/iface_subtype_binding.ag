@@ -3,7 +3,7 @@
 //! expect:    accept
 //! spec:      §19.5 (agent <: interface; bind a concrete agent to an interface slot; reach over the interface)
 //! ---
-event Query(ask: text);
+event Query(text ask);
 struct Plan { steps: int }
 interface Planner { when Query decide Plan; }
 agent PM : Planner {

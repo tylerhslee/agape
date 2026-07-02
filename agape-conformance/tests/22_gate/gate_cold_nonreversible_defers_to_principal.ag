@@ -12,7 +12,7 @@ principal boss;
 agent Desk grants { perform Commit } {
   on awake {
     Credence<R> c = self <- "approve?";
-    Decision<R> d = decide c by boss;
+    Decision<R> d = boss decide c by conformal 0.05;
     endorse c by d {
       Approve as e { perform Commit("approved"); }
       Reject as e { say("rejected"); }

@@ -3,7 +3,7 @@
 //! expect:    accept
 //! spec:      §19.5 (interface decl; an agent nominally conforms via : Iface)
 //! ---
-event Query(ask: text);
+event Query(text ask);
 struct Plan { steps: int }
 pub interface Planner { when Query decide Plan; }
 agent PM : Planner {

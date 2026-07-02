@@ -1,2 +1,2 @@
 module m;
-action Secret(body: text);
+action Secret(text body);

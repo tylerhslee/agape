@@ -1,0 +1,7 @@
+//! id:        lex_reject_leading_dot_number
+//! section:   00_lexical
+//! expect:    reject
+//! error:     ParseError
+//! spec:      §2 (Float is decimal digits with a point; `.5` is not a numeric literal)
+//! ---
+float x = .5;

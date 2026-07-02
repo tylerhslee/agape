@@ -3,6 +3,6 @@
 //! expect:    accept
 //! spec:      §7 (a `when … if (guard)` filters by an ordinary predicate over the bound event's fields)
 //! ---
-event Refund(amount: int);
+event Refund(int amount);
 when (Refund r) if (r.amount > 1000) { say("big refund"); }
 emit Refund(5000);

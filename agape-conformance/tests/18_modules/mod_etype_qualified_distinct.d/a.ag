@@ -1,2 +1,2 @@
 module a;
-pub event Tick(n: int);
+pub event Tick(int n);

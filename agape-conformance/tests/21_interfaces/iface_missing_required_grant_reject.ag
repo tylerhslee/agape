@@ -4,7 +4,7 @@
 //! error:     InterfaceError
 //! spec:      §19.5 (an interface `requires` a capability the implementor lacks)
 //! ---
-event Query(ask: text);
+event Query(text ask);
 struct Plan { steps: int }
 agent Engineer { on awake { say("eng"); } }
 interface Cognition { when Query decide Plan; requires reach Engineer; }

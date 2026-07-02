@@ -1,0 +1,13 @@
+//! id:        sem_schema_struct_exact
+//! section:   08_semantic
+//! expect:    accept
+//! schema:    event<Memo> object(amount:int,to:text,required:amount|to,additionalProperties:false)
+//! spec:      §8 (event<struct> compiles to an exact object schema with all fields required and no extra fields)
+//! ---
+struct Memo { amount: int, to: text }
+agent A {
+  on awake {
+    event<Memo> memo = self <- "extract the memo";
+  }
+}
+spawn A a; awake a;

@@ -4,7 +4,7 @@
 //! error:     ParseError
 //! spec:      §19.5 (interface members use `when EVENT decide RESULT`, never `->`)
 //! ---
-event Ask(body: text);
+event Ask(text body);
 enum R { Yes, No }
 interface Bad {
   when Ask -> R;

@@ -3,8 +3,8 @@
 //! expect:    accept
 //! spec:      §19.5 (an agent may implement multiple interfaces)
 //! ---
-event Query(ask: text);
-event Audit(what: text);
+event Query(text ask);
+event Audit(text what);
 struct Plan { steps: int }
 struct Report { ok: bool }
 interface Planner { when Query decide Plan; }

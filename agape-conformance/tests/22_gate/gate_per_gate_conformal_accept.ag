@@ -5,8 +5,8 @@
 //! spec:      §20 (per-gate conformal α override on a decide expression)
 //! ---
 enum R { Yes, No }
-event Ask(body: text);
-reversible action Act(body: text);
+event Ask(text body);
+reversible action Act(text body);
 agent Desk grants { perform Act } {
   when (Ask q) {
     Credence<R> c = self <- q.body;
@@ -16,5 +16,6 @@ agent Desk grants { perform Act } {
       No as e  { say("no"); }
     }
   }
+  on awake { emit Ask("go"); }
 }
 spawn Desk d; awake d;

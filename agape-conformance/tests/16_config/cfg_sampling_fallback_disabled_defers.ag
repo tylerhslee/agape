@@ -3,14 +3,20 @@
 //! expect:    accept
 //! manifest:  provider.exposes_logprobs=false; provider.sampling_fallback=false
 //! contains:  Abstained(c)
-//! absent:    Decided(c)
+//! absent:    Endorsed(c)
 //! spec:      §20.3, §17 (without logprobs or sampling fallback, conformal degrades to deferral/abstain)
 //! ---
 enum R { Yes, No }
 agent A {
   on awake {
     Credence<R> c = self <- "yes?";
-    endorse (c by conformal 0.05) { Yes: ; No: ; }
+    Decision<R> d = decide c by conformal 0.05;
+    endorse c by d {
+      Yes { say("yes"); }
+      No { say("no"); }
+    } abstain {
+      say("defer");
+    }
   }
 }
 spawn A a; awake a;

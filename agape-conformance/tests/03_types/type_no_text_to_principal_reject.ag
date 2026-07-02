@@ -7,7 +7,7 @@
 agent Drafter {
   on awake {
     Credence<bool> c = self <- "should we send the memo?";
-    Decision<bool> d = decide c by "alice";
+    Decision<bool> d = "alice" decide c by conformal 0.05;
   }
 }
 spawn Drafter dr; awake dr;

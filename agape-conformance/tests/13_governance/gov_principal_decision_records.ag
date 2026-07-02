@@ -11,7 +11,7 @@ principal alice;
 agent Drafter grants { perform ReleaseFunds } {
   on awake {
     Credence<Approval> c = self <- "draft the refund memo: approve?";
-    Decision<Approval> d = decide c by alice;
+    Decision<Approval> d = alice decide c by conformal 0.05;
     endorse c by d {
       Approve as e { perform ReleaseFunds(5000); }
       Decline as e { say("declined"); }

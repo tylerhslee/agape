@@ -1,0 +1,11 @@
+//! id:        cfg_manifest_decision_policy_reject
+//! section:   16_config
+//! expect:    reject
+//! error:     ConfigError
+//! manifest:  policy.threshold=0.5
+//! spec:      §17.1, §17.2 (decision policy lives in source, not the manifest; config cannot set gate thresholds)
+//! ---
+agent A {
+  on awake { say("policy is source"); }
+}
+spawn A a; awake a;

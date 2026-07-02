@@ -1,0 +1,39 @@
+// hello.ag — the Agape "hello world".
+//
+// A Greeter agent drafts a greeting, asks the provider to judge whether it is
+// safe to publish, collapses that judgment with `decide`, and — only inside the
+// committed `Publish` arm, where the draft is settled — performs the consequential
+// `Announce` action. This is the whole trusted kernel in one screen:
+//
+//     testimony  ->  Credence<Verdict>  ->  Decision<Verdict>  ->  Endorsement<text>  ->  granted sink  ->  ledger
+
+enum Verdict { Publish, Revise }
+
+action Announce(text body);     // a consequential sink (needs the `perform Announce` power)
+event  Revised(text note);      // a plain event (no power needed)
+
+agent Greeter grants { perform Announce } {
+  on awake {
+    text draft = "hello, world";
+
+    // Cognition: a graded judgment over the closed enum `Verdict`.
+    Credence<Verdict> v = self <- f"is this greeting safe to publish: {draft}";
+
+    // Collapse the judgment to a sealed Decision by a local rule.
+    Decision<Verdict> d = decide v by confidence 0.8;
+
+    // Apply the decision to the exact subject `draft`. Inside the `Publish` arm the
+    // endorsement `e` is the settled draft, so it may drive the `Announce` sink.
+    endorse draft by d {
+      Publish as e { perform Announce(e); }
+      Revise      { emit Revised("held for revision"); }
+    } abstain {
+      emit Revised("uncertain — escalated");
+    }
+
+    say("greeter finished");
+  }
+}
+
+spawn Greeter g;
+awake g;

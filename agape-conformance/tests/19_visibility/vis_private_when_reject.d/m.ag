@@ -1,2 +1,2 @@
 module m;
-event Secret(body: text);
+event Secret(text body);

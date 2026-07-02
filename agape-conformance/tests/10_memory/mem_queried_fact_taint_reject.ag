@@ -5,7 +5,7 @@
 //! spec:      §10, §13 (queried facts default to `graded`; must be re-gated before a consequential perform)
 //! ---
 struct Memo { amount: int, to: text }
-action Transfer(memo: Memo);
+action Transfer(Memo memo);
 agent Bank grants { perform Transfer } {
   Memo m = select amount, to from self where { kind: "pending" };
   perform Transfer(m);

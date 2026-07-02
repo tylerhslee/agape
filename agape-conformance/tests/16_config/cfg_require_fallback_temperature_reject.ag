@@ -8,7 +8,10 @@
 agent A {
   on awake {
     Credence<bool> c = self <- "true?";
-    endorse (c by confidence 0.8) { true: ; false: ; }
+    decide c by confidence 0.8 {
+      true { say("true"); }
+      false { say("false"); }
+    }
   }
 }
 spawn A a; awake a;

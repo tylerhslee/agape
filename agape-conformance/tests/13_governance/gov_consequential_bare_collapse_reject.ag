@@ -6,15 +6,13 @@
 //! note:      only a recorded subject endorsement (endorse) may license a consequential action.
 //! ---
 enum R { Fraud, Clean }
-action Flag(bool b);
+action Flag(text body);
 agent C grants { perform Flag } {
   on awake {
-    Credence<R> c = self <- "is this fraud?";
+    text body = self <- "draft the report body";
+    Credence<R> c = self <- f"is this fraud: {body}";
     Decision<R> d = decide c by confidence 0.9;
-    case (d.committed) as r {
-      Fraud: { perform Flag(true); }
-      Clean: { }
-    }
+    if (d.committed == Fraud) { perform Flag(body); }
   }
 }
 spawn C c; awake c;

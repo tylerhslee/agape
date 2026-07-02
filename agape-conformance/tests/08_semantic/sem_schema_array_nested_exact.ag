@@ -1,0 +1,13 @@
+//! id:        sem_schema_array_nested_exact
+//! section:   08_semantic
+//! expect:    accept
+//! schema:    event<array<Memo>> array(object(body:text,required:body,additionalProperties:false))
+//! spec:      §8 (event<array<T>> compiles to an array schema whose item schema is the exact schema for T)
+//! ---
+struct Memo { body: text }
+agent A {
+  on awake {
+    event<array<Memo>> memos = self <- "return memos";
+  }
+}
+spawn A a; awake a;

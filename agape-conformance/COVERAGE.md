@@ -1,68 +1,31 @@
 # Agape Conformance Coverage
 
-This file tracks spec-to-suite lockstep work. The `.ag` files remain the source
-of truth; this document is the audit map for deciding which tests still need to
-be added when the spec grows or a gap is found.
+Target spec: `../SPEC.md` `v1.0.0-alpha.2026.6.30.0`.
 
-## Current status
+This directory is the black-box language conformance suite. Expected behavior is derived only from `SPEC.md`; implementation behavior is not an authority. The `.ag` files are the source of truth, and `MANIFEST.toml` / `MANIFEST.md` are generated from their headers.
 
-- Indexed tests: 206
-- Manifest freshness: `python3 build_manifests.py --check` passes
-- Spec audited against: `../SPEC.md` (v1.0.0-alpha.2026.6.30.0), runtime contract included (§16/§17)
+Runtime conformance is tested separately in `../agape-runtime-conformance` with TypeScript black-box adapter tests for SPEC sections 16 and 17. UI-specific Studio tests and hosted-runtime tests are additional suites, not substitutes.
 
-> **See [`AUDIT.md`](AUDIT.md)** for the full 2026-06-29 spec↔suite lockstep audit — the
-> authoritative gap/drift worklist. Headline: the suite lags the `decide`/`endorse` gate-syntax
-> migration (~45 stale tests using removed `certify`/`attest`/`decide c { arms }` forms), the
-> runtime contract (§16/§17) is essentially untested, and the §15.5 probabilistic layer needs a
-> multi-run harness mode that was never built. The "Remaining lockstep gaps" below predate that
-> audit and are subsumed by it.
+## Current Status
 
-## Recently closed gaps
+- Language suite: `.ag` accept/reject tests under `tests/` — currently `229` tests (`134` accept, `95` reject).
+- Runtime suite: TypeScript adapter tests under `../agape-runtime-conformance`.
+- Finalized gate surface: tests have been moved off removed `case`, subjectless `endorse (...)`, bare `c by R`, `certify`, `attest`, and removed `Decided`/`Attestation` event names.
+- Manifest freshness is enforced by `python3 build_manifests.py --check`.
 
-- Exact `ledger:` assertions are now preserved in `MANIFEST.toml` and matched as
-  exact event spines, not loose subsequences.
-- `emit`/`perform` now have conformance coverage for undeclared names, strict
-  single-field and multi-field payload type checks, and multi-field arity.
-- `forget` now has conformance coverage for the `Forgotten` tombstone.
-- `store` and `embed` now have color tests and `Internalized` ledger tests.
-- `any` now has both bool-disjunction and missing-dependence coverage.
-- `attest` now asserts that successful identity gating records `Attestation`.
-- `pub import` now has re-export and private-name rejection coverage.
-- Visibility now covers private qualified references, not only import/spawn.
-- Generics now cover non-generic `enum` and `interface`.
-- `Decision` provenance now covers `.committed` and `.margin`, not only `.basis`.
-- Readable `decide` now covers reversible tie default/abstain behavior.
-- Package path dependencies, required config bindings, fallback-temperature
-  config, `sampling_fallback = false`, late `DeliveryRefused`, expression query
-  append-nothing behavior, `select` boolean operators, recall-after-forget,
-  decision read-only fields, private `reach`/`extend`/`emit`/`perform`/`when`,
-  interface outcome mismatch, malformed f-strings, unknown operators, and
-  non-generic type-argument rejection are now pinned.
+## Coverage Standard
 
-## Remaining lockstep gaps
+The suite is complete only when every normative SPEC behavior is covered by at least one of:
 
-These are spec-defined behaviors that still need first-class conformance tests
-before the suite can honestly be called exhaustive.
+- a positive `.ag` language test;
+- a negative `.ag` language test proving the correct boundary/error class;
+- a runtime TypeScript test where the behavior is not expressible as one source file;
+- an explicit out-of-scope note for implementation freedom allowed by the spec.
 
-- Trusted-kernel bypass matrix: every new surface feature should have negative
-  tests proving it cannot bypass taint, endorsement, default-deny grants,
-  write-tool settling, or replay. The matrix should be tracked explicitly per
-  feature instead of inferred from happy-path coverage.
-- Package resolution: pinned dependency identity beyond local path roots.
-- Configuration binding: provider-derived `exposes_logprobs` and full manifest
-  precedence across project/package/runtime layers.
-- Replay depth: replay of write tools must prove the tool is not re-invoked,
-  not only that the chain-head matches.
-- Counterfactual replay/forking is described as optional; the suite should mark
-  whether it is intentionally out of conformance scope.
-- Prompt/tool standing sensors: long-running open-source behavior is only lightly
-  covered through prompt opening.
-- Structured-output schema generation: exact JSON Schema forms for scalars,
-  enums, structs with `additionalProperties:false`, arrays, and nested event
-  payloads are not directly asserted by the harness.
-- Memory query surface: settled provenance from already-endorsed events.
-- Gate calibration: warm conformal behavior, calibration pool scoping per gate
-  site, manifest default conformal precedence, deference label re-entry, and
-  mixed reversible/non-reversible arm behavior.
-- Interfaces: private names in public interface surfaces.
-- Lexer/parser: invalid numeric forms and escaped brace behavior.
+Every surface feature above the trusted kernel needs bypass tests for taint, endorsement, grants, write-tool gating, replay, and memory trust laundering.
+
+## Runtime/Adapter Coverage
+
+- Section-by-section compiler coverage accounting is tracked in `SPEC_COVERAGE.md`.
+- TypeScript runtime conformance tests now cover scheduler/FIFO, illegal communication traces, canonical ledger behavior, replay/no-oracle-reinvocation, memory envelope, artifact ingestion, learning from experience, projection staleness/conflicts, config precedence, sampling fallback, warm conformal behavior, profile staling, and runtime API surfaces.
+- Remaining implementation work is adapter work: each runtime must provide an `AGAPE_RUNTIME_ADAPTER` implementation so these tests execute instead of skip.

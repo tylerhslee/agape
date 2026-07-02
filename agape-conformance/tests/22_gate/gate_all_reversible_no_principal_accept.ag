@@ -5,8 +5,8 @@
 //! spec:      §20.1 (all arms reach reversible sinks -> no principal fallback required)
 //! ---
 enum R { Ping, Pong }
-event Ask(body: text);
-reversible write tool bool send(text m)
+event Ask(text body);
+reversible write tool bool send(text m);
 agent Desk grants { use send } {
   when (Ask q) {
     Credence<R> c = self <- q.body;
@@ -16,5 +16,6 @@ agent Desk grants { use send } {
       Pong as e { send("pong"); }
     }
   }
+  on awake { emit Ask("go"); }
 }
 spawn Desk d; awake d;

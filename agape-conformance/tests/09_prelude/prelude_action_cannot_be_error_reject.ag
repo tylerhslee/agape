@@ -4,4 +4,4 @@
 //! error:     ParseError
 //! spec:      §19.5 (only `event` may extend Error; an action supertype is a ParseError)
 //! ---
-action Pay(amount: int) : Error;
+action Pay(int amount) : Error;

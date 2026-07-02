@@ -5,4 +5,4 @@
 //! spec:      §19.5 (the only permitted user supertype is the built-in Error)
 //! ---
 struct Thing { n: int }
-event Bad(x: int) : Thing;
+event Bad(int x) : Thing;

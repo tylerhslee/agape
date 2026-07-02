@@ -274,10 +274,12 @@ as a nullable union field. A struct literal is `NAME { field: v, … }` and must
 every field; a missing field is a `TypeError`.
 - `**enum NAME { A, B, … }**` — a closed set of named variants; a gate's arm block (§13)
 dispatches them with compile-time exhaustiveness, and `if`/`==` branches on a committed variant (§11).
-- `**event NAME(field: T, …);**` — a plain record (assertive); anyone may `emit` it, no power
-needed. `**action NAME(field: T, …);**` — a performative: `perform NAME(v, …)` is a consequential
-act that needs the `perform NAME` power (§13) and only `settled` values. Event/action invocation
-is positional in declaration order: `emit E(a, b)` / `perform A(a, b)` must supply exactly one
+- `**event NAME(T field, …);**` — a plain record (assertive); anyone may `emit` it, no power
+needed. `**action NAME(T field, …);**` — a performative: `perform NAME(v, …)` is a consequential
+act that needs the `perform NAME` power (§13) and only `settled` values. Event/action/tool/function
+parameters are declared **type-first** (`T name`, like a `var`); a **struct** field is the sole
+exception and is declared **name-first** (`name: T`, mirroring the struct literal `NAME { name: v }`).
+Event/action invocation is positional in declaration order: `emit E(a, b)` / `perform A(a, b)` must supply exactly one
 argument per declared field, and each argument must match the corresponding field type. The field
 names remain part of the declared event/action schema and canonical payload. An undeclared
 `emit`/`perform` is a `TypeError`. Explicit declaration is what lets `grants { perform NAME }` be

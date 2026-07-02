@@ -7,17 +7,18 @@
 //! ---
 conformal 0.02;
 enum R { Yes, No }
-event Ask(body: text);
-action Act(body: text);
+event Ask(text body);
+action Act(text body);
 principal boss;
 agent Desk grants { perform Act } {
   when (Ask q) {
     Credence<R> c = self <- q.body;
-    Decision<R> d = decide c by boss;
+    Decision<R> d = boss decide c by conformal 0.02;
     endorse c by d {
       Yes as e { perform Act(q.body); }
       No as e  { say("no"); }
     }
   }
+  on awake { emit Ask("go"); }
 }
 spawn Desk d; awake d;

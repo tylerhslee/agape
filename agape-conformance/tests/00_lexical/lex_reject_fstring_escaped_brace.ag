@@ -1,0 +1,10 @@
+//! id:        lex_reject_fstring_escaped_brace
+//! section:   00_lexical
+//! expect:    reject
+//! error:     ParseError
+//! spec:      §2 (f-string braces introduce parsed expressions; escaped literal braces are not part of the grammar)
+//! ---
+agent A {
+  on awake { say(f"literal {{brace}}"); }
+}
+spawn A a; awake a;

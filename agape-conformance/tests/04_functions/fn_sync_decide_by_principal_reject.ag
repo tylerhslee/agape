@@ -5,4 +5,4 @@
 //! spec:      §4, §13 (`decide c by p` for a principal reaches the identity dependency → async; a sync fn may not)
 //! ---
 principal alice;
-sync null ok(Credence<bool> c) { decide c by alice; return null; }
+sync null ok(Credence<bool> c) { alice decide c by conformal 0.05; return null; }

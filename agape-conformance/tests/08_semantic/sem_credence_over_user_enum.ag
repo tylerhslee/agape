@@ -7,10 +7,10 @@ enum Sentiment { Pos, Neg, Neutral }
 agent A {
   on awake {
     Credence<Sentiment> s = self <- "sentiment of: I love this";
-    case (s by confidence 0.8) as v {
-      Pos: { say("pos"); }
-      Neg: { say("neg"); }
-      Neutral: { say("neu"); }
+    decide s by confidence 0.8 {
+      Pos { say("pos"); }
+      Neg { say("neg"); }
+      Neutral { say("neu"); }
     }
   }
 }

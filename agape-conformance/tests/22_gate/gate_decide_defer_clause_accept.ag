@@ -7,8 +7,8 @@
 //! ---
 conformal 0.05;
 enum R { Approve, Reject }
-event Ask(body: text);
-action Commit(body: text);
+event Ask(text body);
+action Commit(text body);
 principal boss;
 agent Desk grants { perform Commit } {
   when (Ask q) {
@@ -18,12 +18,13 @@ agent Desk grants { perform Commit } {
       Approve as e { perform Commit(q.body); }
       Reject as e { say("rejected"); }
     } abstain {
-      Decision<R> h = decide c by boss;
+      Decision<R> h = boss decide c by conformal 0.05;
       endorse c by h {
         Approve as e { perform Commit(q.body); }
         Reject as e { say("rejected"); }
       }
     }
   }
+  on awake { emit Ask("go"); }
 }
 spawn Desk d; awake d;

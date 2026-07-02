@@ -4,7 +4,7 @@
 //! error:     TypeError
 //! spec:      §19.5 (an interface is a type but not instantiable; spawn of one is a TypeError)
 //! ---
-event Query(ask: text);
+event Query(text ask);
 struct Plan { steps: int }
 interface Planner { when Query decide Plan; }
 spawn Planner p;

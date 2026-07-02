@@ -1,0 +1,11 @@
+//! id:        iface_public_exposes_private_event_reject
+//! section:   21_interfaces
+//! expect:    reject
+//! error:     VisibilityError
+//! spec:      §19.4, §19.5 (a public interface surface may not expose a private event type)
+//! ---
+event SecretAsk(text body);
+struct Plan { steps: int }
+pub interface PublicPlanner {
+  when SecretAsk decide Plan;
+}

@@ -4,15 +4,12 @@
 //! spec:      §20.4, §9 (Decision provenance: .basis over the Basis enum)
 //! ---
 enum R { Yes, No }
-event Ask(body: text);
+event Ask(text body);
 agent Desk {
   when (Ask q) {
     Credence<R> c = self <- q.body;
     Decision<R> d = decide c by conformal 0.05;
-    case (d.basis) as b {
-      Conformal: { say("conformal"); }
-      default:   { say("other"); }
-    }
+    if (d.basis == Conformal) { say("conformal"); } else { say("other"); }
   }
 }
 spawn Desk d; awake d;

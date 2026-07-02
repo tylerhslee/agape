@@ -9,7 +9,10 @@ agent A {
     Credence<bool> c2 = self <- "is this unsolicited?";
     dependent c1, c2;
     Credence<bool> fused = any(c1, c2);
-    endorse (fused by confidence 0.9) { true: ; false: ; }
+    decide fused by confidence 0.9 {
+      true { say("spam"); }
+      false { say("clean"); }
+    }
   }
 }
 spawn A a; awake a;

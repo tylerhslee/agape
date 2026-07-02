@@ -19,6 +19,14 @@ spec = "§2 (contextual words `as`/`by`/`reach`/`use`/`origin` lex as identifier
 note = "`by` outside a gate position is an ordinary identifier."
 
 [[test]]
+id = "lex_reject_fstring_escaped_brace"
+section = "00_lexical"
+path = "tests/00_lexical/lex_reject_fstring_escaped_brace.ag"
+expect = "reject"
+error = "ParseError"
+spec = "§2 (f-string braces introduce parsed expressions; escaped literal braces are not part of the grammar)"
+
+[[test]]
 id = "lex_reject_keyword_as_identifier"
 section = "00_lexical"
 path = "tests/00_lexical/lex_reject_keyword_as_identifier.ag"
@@ -26,6 +34,14 @@ expect = "reject"
 error = "ParseError"
 spec = "§2 (reserved keywords may not be used as identifiers)"
 note = "`agent` is reserved."
+
+[[test]]
+id = "lex_reject_leading_dot_number"
+section = "00_lexical"
+path = "tests/00_lexical/lex_reject_leading_dot_number.ag"
+expect = "reject"
+error = "ParseError"
+spec = "§2 (Float is decimal digits with a point; `.5` is not a numeric literal)"
 
 [[test]]
 id = "lex_reject_malformed_fstring"
@@ -51,6 +67,14 @@ expect = "reject"
 error = "ParseError"
 spec = "§2 (there is no similarity operator; `~` lexes to an Op but the parser rejects it — a ParseError, not a LexError)"
 note = "similarity is reached only through `match` (§10), never a `~` operator"
+
+[[test]]
+id = "lex_reject_trailing_dot_number"
+section = "00_lexical"
+path = "tests/00_lexical/lex_reject_trailing_dot_number.ag"
+expect = "reject"
+error = "ParseError"
+spec = "§2 (Float is decimal digits with a point and digits; `1.` is not a numeric literal)"
 
 [[test]]
 id = "lex_reject_unknown_operator"
@@ -154,11 +178,11 @@ error = "TypeError"
 spec = "§3, §8 (Credence<E> is produced ONLY by a provider judgment, never constructed literally)"
 
 [[test]]
-id = "type_enum_decl_and_case"
+id = "type_enum_decl_and_gate_arms"
 section = "03_types"
-path = "tests/03_types/type_enum_decl_and_case.ag"
+path = "tests/03_types/type_enum_decl_and_gate_arms.ag"
 expect = "accept"
-spec = "§3, §11 (enum declaration; a gated case exhaustive over all variants)"
+spec = "§3, §11, §13 (enum declaration; a gate arm block is exhaustive over all variants)"
 note = "a user enum, judged, gated, and matched exhaustively."
 
 [[test]]
@@ -205,7 +229,15 @@ section = "03_types"
 path = "tests/03_types/type_no_text_to_principal_reject.ag"
 expect = "reject"
 error = "TypeError"
-spec = "§3, §13 (a principal basis must be a declared `principal`, not a string; `decide c by \"alice\"` has no text -> Principal coercion)"
+spec = "§3, §13 (a principal prefix must resolve to a declared `principal`, not an ordinary text value)"
+
+[[test]]
+id = "type_rule_not_first_class_reject"
+section = "03_types"
+path = "tests/03_types/type_rule_not_first_class_reject.ag"
+expect = "reject"
+error = "TypeError"
+spec = "§3 (Rule is the gate parameter, not a first-class user-declared storage type)"
 
 [[test]]
 id = "type_scalars"
@@ -277,7 +309,7 @@ section = "04_functions"
 path = "tests/04_functions/fn_sync_decide_by_principal_reject.ag"
 expect = "reject"
 error = "ColorViolation"
-spec = "§4, §13 (`decide c by p` for a principal reaches the identity dependency → async; a sync fn may not)"
+spec = "§4, §13 (`p decide c by R` for a principal reaches the identity dependency → async; a sync fn may not)"
 
 [[test]]
 id = "fn_sync_embed_reject"
@@ -334,6 +366,14 @@ error = "ColorViolation"
 spec = "§4, §6b (a tool call reaches the tool dependency → async)"
 
 [[test]]
+id = "fn_taint_flows_through_call_reject"
+section = "04_functions"
+path = "tests/04_functions/fn_taint_flows_through_call_reject.ag"
+expect = "reject"
+error = "TaintViolation"
+spec = "§15.3.3 (function calls are trust-transparent; taint flowing through a helper still cannot reach a consequential sink)"
+
+[[test]]
 id = "agent_crash_contained"
 section = "05_agents"
 path = "tests/05_agents/agent_crash_contained.ag"
@@ -357,6 +397,13 @@ path = "tests/05_agents/agent_first_awake_runs_constructor.ag"
 expect = "accept"
 contains = ["Spawned(a)", "AgentAwake(a)"]
 spec = "§5 (first awake opens the mailbox and runs the on-awake hook)"
+
+[[test]]
+id = "agent_instruction_extend_append_accept"
+section = "05_agents"
+path = "tests/05_agents/agent_instruction_extend_append_accept.ag"
+expect = "accept"
+spec = "§5 (global, parent, and child instructions compose in order; extend appends behavior instead of weakening the parent)"
 
 [[test]]
 id = "agent_instruction_global_accept"
@@ -564,6 +611,30 @@ error = "TypeError"
 spec = "§8 (there is no sampling combinator in the surface language; a use of `sample` is an unknown-identifier error)"
 
 [[test]]
+id = "sem_schema_array_nested_exact"
+section = "08_semantic"
+path = "tests/08_semantic/sem_schema_array_nested_exact.ag"
+expect = "accept"
+schema = ["event<array<Memo>> array(object(body:text,required:body,additionalProperties:false))"]
+spec = "§8 (event<array<T>> compiles to an array schema whose item schema is the exact schema for T)"
+
+[[test]]
+id = "sem_schema_enum_exact"
+section = "08_semantic"
+path = "tests/08_semantic/sem_schema_enum_exact.ag"
+expect = "accept"
+schema = ["event<Ticket> closed_enum(Billing,Bug)"]
+spec = "§8 (event<Enum> compiles to a closed enum structured-output schema)"
+
+[[test]]
+id = "sem_schema_struct_exact"
+section = "08_semantic"
+path = "tests/08_semantic/sem_schema_struct_exact.ag"
+expect = "accept"
+schema = ["event<Memo> object(amount:int,to:text,required:amount|to,additionalProperties:false)"]
+spec = "§8 (event<struct> compiles to an exact object schema with all fields required and no extra fields)"
+
+[[test]]
 id = "sem_schema_violation_array_typemismatch"
 section = "08_semantic"
 path = "tests/08_semantic/sem_schema_violation_array_typemismatch.ag"
@@ -677,6 +748,22 @@ contains = ["Forgotten"]
 spec = "§10 (forget appends an audit-preserving Forgotten tombstone event)"
 
 [[test]]
+id = "mem_ledger_recall_reject"
+section = "10_memory"
+path = "tests/10_memory/mem_ledger_recall_reject.ag"
+expect = "reject"
+error = "TypeError"
+spec = "§10 (the ledger is not private memory; `->` recall requires a `mem` handle, never `ledger`)"
+
+[[test]]
+id = "mem_match_hit_taint_perform_reject"
+section = "10_memory"
+path = "tests/10_memory/mem_match_hit_taint_perform_reject.ag"
+expect = "reject"
+error = "TaintViolation"
+spec = "§10, §13 (vector match hits are graded/off-ledger and cannot drive a consequential sink without re-gating)"
+
+[[test]]
 id = "mem_match_is_gate"
 section = "10_memory"
 path = "tests/10_memory/mem_match_is_gate.ag"
@@ -708,6 +795,14 @@ error = "TypeError"
 spec = "§10 (`->` recall requires a `mem` handle on the left; a non-`mem` LHS is a TypeError)"
 
 [[test]]
+id = "mem_recall_taint_perform_reject"
+section = "10_memory"
+path = "tests/10_memory/mem_recall_taint_perform_reject.ag"
+expect = "reject"
+error = "TaintViolation"
+spec = "§10, §13, §16.7 (a value recalled from private memory is subjective/graded and cannot drive a consequential sink without a gate)"
+
+[[test]]
 id = "mem_select_boolean_ops_ok"
 section = "10_memory"
 path = "tests/10_memory/mem_select_boolean_ops_ok.ag"
@@ -737,42 +832,34 @@ expect = "accept"
 spec = "§10 (a `mem` handle into private memory: write with `<-`, recall with `->`)"
 
 [[test]]
-id = "ctrl_case_all_variants_ok"
-section = "11_control"
-path = "tests/11_control/ctrl_case_all_variants_ok.ag"
-expect = "accept"
-spec = "§11 (a gated case covering every enum variant is exhaustive)"
-
-[[test]]
-id = "ctrl_case_default_ok"
-section = "11_control"
-path = "tests/11_control/ctrl_case_default_ok.ag"
-expect = "accept"
-spec = "§11 (a default arm makes a partial case exhaustive)"
-
-[[test]]
-id = "ctrl_case_nonexhaustive_reject"
-section = "11_control"
-path = "tests/11_control/ctrl_case_nonexhaustive_reject.ag"
-expect = "reject"
-error = "ExhaustivenessError"
-spec = "§11 (a case with no default must cover all variants)"
-
-[[test]]
-id = "ctrl_case_ungated_credence_reject"
-section = "11_control"
-path = "tests/11_control/ctrl_case_ungated_credence_reject.ag"
-expect = "reject"
-error = "TypeError"
-spec = "§3, §11 (a Credence<E> is consumed only by a gate/combinator; an un-gated case is a TypeError — gate it first)"
-
-[[test]]
 id = "ctrl_credence_in_if_reject"
 section = "11_control"
 path = "tests/11_control/ctrl_credence_in_if_reject.ag"
 expect = "reject"
 error = "TypeError"
 spec = "§3, §11 (a Credence<bool> is not a bool; a bare Credence in an if is a TypeError — gate it first)"
+
+[[test]]
+id = "ctrl_gate_abstain_ok"
+section = "11_control"
+path = "tests/11_control/ctrl_gate_abstain_ok.ag"
+expect = "accept"
+spec = "§11, §13 (an abstain block makes a partial gate arm block exhaustive)"
+
+[[test]]
+id = "ctrl_gate_all_variants_ok"
+section = "11_control"
+path = "tests/11_control/ctrl_gate_all_variants_ok.ag"
+expect = "accept"
+spec = "§11, §13 (a gate arm block covering every enum variant is exhaustive)"
+
+[[test]]
+id = "ctrl_gate_nonexhaustive_reject"
+section = "11_control"
+path = "tests/11_control/ctrl_gate_nonexhaustive_reject.ag"
+expect = "reject"
+error = "ExhaustivenessError"
+spec = "§11, §13 (a gate arm block with no abstain must cover all variants)"
 
 [[test]]
 id = "ctrl_if_else"
@@ -806,6 +893,14 @@ expect = "reject"
 error = "ParseError"
 spec = "§11, §15.2 (retry's bound is mandatory — `retry ::= block \"retry\" \"(\" Int \")\"`; an unbounded `retry` with no `(N)` is a ParseError, so every reaction terminates)"
 note = "the only loop in the language is the bounded retry; there is no unbounded form"
+
+[[test]]
+id = "ctrl_ungated_credence_committed_reject"
+section = "11_control"
+path = "tests/11_control/ctrl_ungated_credence_committed_reject.ag"
+expect = "reject"
+error = "TypeError"
+spec = "§3, §11 (a Credence<E> is consumed only by a gate/combinator; testing `.committed` before a gate is a TypeError)"
 
 [[test]]
 id = "agg_all_bool_conjunction"
@@ -921,6 +1016,14 @@ expect = "accept"
 spec = "§13 (the optional abstain clause runs when the gate cannot commit a singleton prediction set)"
 
 [[test]]
+id = "gov_endorse_abstain_sink_reject"
+section = "13_governance"
+path = "tests/13_governance/gov_endorse_abstain_sink_reject.ag"
+expect = "reject"
+error = "TaintViolation"
+spec = "§13, §15.3.3 (an Endorsement is sink-admissible only in a committed-variant branch, not in abstain)"
+
+[[test]]
 id = "gov_endorse_artifact_allows_perform"
 section = "13_governance"
 path = "tests/13_governance/gov_endorse_artifact_allows_perform.ag"
@@ -935,6 +1038,14 @@ path = "tests/13_governance/gov_endorse_records_endorsed_ok.ag"
 expect = "accept"
 contains = ["Endorsed"]
 spec = "§9, §13 (endorse records an Endorsed event on the ledger for the exact subject)"
+
+[[test]]
+id = "gov_endorse_subject_scope_reject"
+section = "13_governance"
+path = "tests/13_governance/gov_endorse_subject_scope_reject.ag"
+expect = "reject"
+error = "GateError"
+spec = "§13, §20.3 (an endorsed subject must be in the decision's dependency scope; a decision about one subject cannot endorse another)"
 
 [[test]]
 id = "gov_endorsed_perform_ok"
@@ -953,12 +1064,27 @@ contains = ["Endorsed"]
 spec = "§13 (endorsing the exact subject by a sealed Decision settles it inside the matching commit arm, licensing a perform)"
 
 [[test]]
+id = "gov_endorsement_subject_collision_accept"
+section = "13_governance"
+path = "tests/13_governance/gov_endorsement_subject_collision_accept.ag"
+expect = "accept"
+spec = "§20.4 (Endorsement metadata accessors win name collisions; the subject field remains reachable through `.subject`)"
+
+[[test]]
 id = "gov_extend_use_subtractive_reject"
 section = "13_governance"
 path = "tests/13_governance/gov_extend_use_subtractive_reject.ag"
 expect = "reject"
 error = "AuthorityViolation"
 spec = "§5, §13 (capabilities, incl. `use`, are subtractive under extend)"
+
+[[test]]
+id = "gov_gate_unknown_arm_reject"
+section = "13_governance"
+path = "tests/13_governance/gov_gate_unknown_arm_reject.ag"
+expect = "reject"
+error = "TypeError"
+spec = "§13, §15.3.3 (gate arm heads must be variants of the gate enum, or true/false for bool)"
 
 [[test]]
 id = "gov_grants_star_ok"
@@ -1115,7 +1241,7 @@ id = "repro_collapse_off_ledger"
 section = "15_reproducibility"
 path = "tests/15_reproducibility/repro_collapse_off_ledger.ag"
 expect = "accept"
-spec = "§15 (`c by R` is a pure projection of a Credence; off-ledger and synchronous)"
+spec = "§13, §15 (`decide c by R` is a pure projection of a Credence; off-ledger and synchronous)"
 
 [[test]]
 id = "cfg_internalize_is_mandatory"
@@ -1125,6 +1251,15 @@ expect = "accept"
 contains = ["Internalized"]
 spec = "§16.7 (the mandatory memory envelope internalizes every reaction's experience; consult+internalize is unconditional — there is no opt-in/opt-out config knob, and configuration tunes budget/fidelity, not whether memory is part of the turn)"
 note = "a received reply is internalized into private memory with no config flag; the former `internalize_on_receive` opt-in was removed when the envelope became mandatory"
+
+[[test]]
+id = "cfg_manifest_decision_policy_reject"
+section = "16_config"
+path = "tests/16_config/cfg_manifest_decision_policy_reject.ag"
+expect = "reject"
+error = "ConfigError"
+manifest = ["policy.threshold=0.5"]
+spec = "§17.1, §17.2 (decision policy lives in source, not the manifest; config cannot set gate thresholds)"
 
 [[test]]
 id = "cfg_missing_principal_binding_reject"
@@ -1164,7 +1299,7 @@ id = "cfg_sampling_fallback"
 section = "16_config"
 path = "tests/16_config/cfg_sampling_fallback.ag"
 expect = "accept"
-contains = ["Decided(c)"]
+contains = ["Endorsed(ready)"]
 manifest = ["provider.exposes_logprobs=false", "provider.fallback_samples=10", "provider.fallback_temperature=0.7"]
 provider = "credence(true=0.9, false=0.1)"
 spec = "§16.8, §17 (a text-only provider — no logprobs — is served by the sampling fallback: the credence is the empirical frequency of N forced draws; a confident judgment still commits)"
@@ -1176,7 +1311,7 @@ section = "16_config"
 path = "tests/16_config/cfg_sampling_fallback_disabled_defers.ag"
 expect = "accept"
 contains = ["Abstained(c)"]
-absent = ["Decided(c)"]
+absent = ["Endorsed(c)"]
 manifest = ["provider.exposes_logprobs=false", "provider.sampling_fallback=false"]
 spec = "§20.3, §17 (without logprobs or sampling fallback, conformal degrades to deferral/abstain)"
 
@@ -1205,6 +1340,13 @@ expect = "accept"
 modules = ["a.ag", "b.ag"]
 spec = "§19.2 (same event name in two modules are DISTINCT qualified etypes)"
 note = "a.Tick and b.Tick coexist; when(a.Tick) binds the qualified type, no collision"
+
+[[test]]
+id = "mod_explicit_header_accept"
+section = "18_modules"
+path = "tests/18_modules/mod_explicit_header_accept.ag"
+expect = "accept"
+spec = "§15.2, §19.2 (an explicit module header overrides path-derived module naming)"
 
 [[test]]
 id = "mod_import_alias"
@@ -1272,6 +1414,14 @@ path = "tests/18_modules/mod_pub_import_reexport.ag"
 expect = "accept"
 modules = ["facade.ag", "internal.ag"]
 spec = "§19.2a (pub import re-exports a name through the importing module's public surface)"
+
+[[test]]
+id = "mod_pub_import_whole_prefix"
+section = "18_modules"
+path = "tests/18_modules/mod_pub_import_whole_prefix.ag"
+expect = "accept"
+modules = ["facade.ag", "internal.ag"]
+spec = "§19.2a (`pub import m;` re-exports the whole imported prefix)"
 
 [[test]]
 id = "mod_selective_import_unknown_reject"
@@ -1502,6 +1652,22 @@ path = "tests/21_interfaces/iface_outcome_mismatch_reject.ag"
 expect = "reject"
 error = "InterfaceError"
 spec = "§19.5 (interface conformance checks the declared handled event and decided outcome)"
+
+[[test]]
+id = "iface_private_required_cap_reject"
+section = "21_interfaces"
+path = "tests/21_interfaces/iface_private_required_cap_reject.ag"
+expect = "reject"
+error = "VisibilityError"
+spec = "§19.4, §19.5 (a public interface surface may not expose a private capability target)"
+
+[[test]]
+id = "iface_public_exposes_private_event_reject"
+section = "21_interfaces"
+path = "tests/21_interfaces/iface_public_exposes_private_event_reject.ag"
+expect = "reject"
+error = "VisibilityError"
+spec = "§19.4, §19.5 (a public interface surface may not expose a private event type)"
 
 [[test]]
 id = "iface_subtype_binding"

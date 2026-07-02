@@ -1,0 +1,15 @@
+//! id:        agent_instruction_extend_append_accept
+//! section:   05_agents
+//! expect:    accept
+//! spec:      §5 (global, parent, and child instructions compose in order; extend appends behavior instead of weakening the parent)
+//! ---
+instruction "global behavior";
+agent Base {
+  instruction "base behavior";
+  on awake { say("base"); }
+}
+agent Child {
+  extend Base();
+  instruction "child behavior";
+}
+spawn Child c; awake c;

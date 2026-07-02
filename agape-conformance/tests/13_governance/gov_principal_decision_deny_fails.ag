@@ -11,7 +11,7 @@ principal alice;
 agent Clerk grants { perform ReleaseFunds } {
   on awake {
     Credence<Approval> c = self <- "assess this refund request";
-    Decision<Approval> d = decide c by alice;
+    Decision<Approval> d = alice decide c by conformal 0.05;
     endorse c by d {
       Approve as e { perform ReleaseFunds(10000); }
       Decline as e { say("declined"); }

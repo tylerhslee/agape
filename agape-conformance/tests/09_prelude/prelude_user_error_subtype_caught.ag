@@ -4,7 +4,7 @@
 //! contains:  Error
 //! spec:      §19.5 (event Foo : Error extends the built-in Error root; when(Error e) catches it)
 //! ---
-event Glitch(reason: text) : Error;
+event Glitch(text reason) : Error;
 agent Watcher { when (Error e) { say("caught"); } }
 agent Emitter { on awake { emit Glitch("bad"); } }
 spawn Watcher w; awake w;

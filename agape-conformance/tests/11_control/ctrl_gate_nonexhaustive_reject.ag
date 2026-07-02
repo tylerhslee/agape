@@ -1,16 +1,16 @@
-//! id:        ctrl_case_nonexhaustive_reject
+//! id:        ctrl_gate_nonexhaustive_reject
 //! section:   11_control
 //! expect:    reject
 //! error:     ExhaustivenessError
-//! spec:      §11 (a case with no default must cover all variants)
+//! spec:      §11, §13 (a gate arm block with no abstain must cover all variants)
 //! ---
 enum Color { Red, Green, Blue }
 agent A {
   on awake {
     Credence<Color> c = self <- "what color is grass?";
-    case (c by confidence 0.8) as v {
-      Red: { say("r"); }
-      Green: { say("g"); }
+    decide c by confidence 0.8 {
+      Red { say("r"); }
+      Green { say("g"); }
     }
   }
 }
