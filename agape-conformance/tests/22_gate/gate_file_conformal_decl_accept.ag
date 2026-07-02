@@ -15,9 +15,8 @@ agent Desk grants { perform Act } {
     text body = q.body;
     Credence<R> c = self <- f"act: {body}";
     Decision<R> d = boss decide c by conformal 0.02;
-    Endorsement<text> e = endorse body by d;
-    if (e.committed == Yes) { perform Act(e); }
-    else if (e.committed == No) { say("no"); }
+    if (d.committed == Yes) { Endorsement<text> e = endorse body by d; perform Act(e); }
+    else if (d.committed == No) { Endorsement<text> e = endorse body by d; say("no"); }
   }
   on awake { emit Ask("go"); }
 }

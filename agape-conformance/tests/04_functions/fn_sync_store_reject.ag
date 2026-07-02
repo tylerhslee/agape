@@ -2,9 +2,9 @@
 //! section:   04_functions
 //! expect:    reject
 //! error:     ColorViolation
-//! spec:      §9, §10 (store reaches the provider-backed memory substrate, so a sync function may not call it)
+//! spec:      §9, §10 (a mem write reaches the provider-backed memory substrate to internalize, so a sync function may not store)
 //! ---
 sync null cache() {
-  store("fact note");
+  mem notes <- "fact note";
   return null;
 }

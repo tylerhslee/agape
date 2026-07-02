@@ -9,7 +9,7 @@ agent Worker {}
 agent Sender grants { reach Worker } {
   on awake {
     spawn Worker w;
-    event<null> s = w <- "late" expires 1;
+    null s = w <- "late" expires 1;
     awake w;
   }
 }

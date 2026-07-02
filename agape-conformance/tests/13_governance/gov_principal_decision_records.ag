@@ -2,8 +2,8 @@
 //! section:   13_governance
 //! expect:    accept
 //! principal: grant
-//! contains:  PrincipalDecision; Endorsed
-//! spec:      §13, §16.4 (a granted `p decide c by r` records a PrincipalDecision event for the gated credence)
+//! contains:  PrincipalDecision; Decided; Endorsed
+//! spec:      §13, §16.4 (a granted `p decide c by r` records PrincipalDecision, then the canonical Decided outcome)
 //! ---
 enum Approval { Approve, Decline }
 action ReleaseFunds(int cents);
@@ -13,9 +13,8 @@ agent Drafter grants { perform ReleaseFunds } {
     text memo = self <- "draft the refund memo";
     Credence<Approval> c = self <- f"approve: {memo}";
     Decision<Approval> d = alice decide c by conformal 0.05;
-    Endorsement<text> e = endorse memo by d;
-    if (e.committed == Approve) { perform ReleaseFunds(5000); }
-    else if (e.committed == Decline) { say("declined"); }
+    if (d.committed == Approve) { Endorsement<text> e = endorse memo by d; perform ReleaseFunds(5000); }
+    else if (d.committed == Decline) { Endorsement<text> e = endorse memo by d; say("declined"); }
   }
 }
 spawn Drafter d; awake d;

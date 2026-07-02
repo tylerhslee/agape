@@ -11,12 +11,12 @@ agent A grants { perform PublishMemo } {
     Memo memo = Memo { committed: "field", body: "draft" };
     Credence<Verdict> c = self <- f"is ready: {memo.body}";
     Decision<Verdict> d = decide c by confidence 0.9;
-    Endorsement<Memo> e = endorse memo by d;
-    if (e.committed == Publish) {
+    if (d.committed == Publish) {
+      Endorsement<Memo> e = endorse memo by d;
       say(f"{e.committed}");
       say(e.subject.committed);
       perform PublishMemo(e.body);
-    } else if (e.committed == Revise) { }
+    } else if (d.committed == Revise) { Endorsement<Memo> e = endorse memo by d; }
   }
 }
 spawn A a; awake a;

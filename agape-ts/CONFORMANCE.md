@@ -1,6 +1,6 @@
 # agape-ts — conformance status vs the black-box suite
 
-This implementation is run against `../agape-conformance` (Agape **v1.0.0-alpha.2026.7.1.0**, the
+This implementation is run against `../agape-conformance` (Agape **v1.0.0-alpha.2026.7.2.0**, the
 **core kernel** — 164 tests) by `conformance/run.mts`, which feeds each test's program through this
 front end (lex → parse → **check**) + runtime (**run**) and matches the `//!`-header expectation
 (`accept`/`reject` + error class + ledger matchers + §17.5 directives).
@@ -16,7 +16,7 @@ Measured against the canonical suite (the conformance tests and `SPEC.md` are th
 changed only with spec-grounded evidence that the test itself is wrong).
 
 ```
-TOTAL  164 / 164  (100%)        kernel vitest suite: 26 / 26        tsc --noEmit: clean
+TOTAL  164 / 164  (100%)        kernel vitest suite: 33 / 33        tsc --noEmit: clean
 
 00_lexical         11 / 11  ✓   10_memory          11 / 11  ✓
 01_axes             4 / 4   ✓   11_control          5 / 5   ✓
@@ -41,12 +41,13 @@ layer (`module`/`import`, `pub`, generics, interfaces).
 
 ## The gate (§13/§15.3.3)
 
-`decide` and `endorse` are plain value-producing expressions. An endorsement binds **settled but
-non-committed**; an `if (e.committed == V)` for a real variant flow-narrows it to sink-admissible in
-that branch (W-Endorse) — enforced in both the static checker and the runtime sink check. The raw
-subject stays tainted (performing it directly is a `TaintViolation`); the abstained `else` branch is
-not sink-admissible. Deference is per handler body: a cold conformal, non-principal endorsement
-reaching a non-reversible sink with no reachable principal escalation is a `GateError`.
+`decide` and `endorse` are plain value-producing expressions. Every `decide` appends `Decided` and
+returns a `Decision` with `.decision_id`; `endorse subject by d` is legal only after
+`if (d.committed == V)` flow-narrows `d` to a real committed variant, then appends `Endorsed` tied to
+that `decision_id`. The raw subject stays tainted (performing it directly is a `TaintViolation`);
+the abstained `else` branch has no endorsement to give. Deference is per handler body: a cold
+conformal, non-principal endorsement reaching a non-reversible sink with no reachable principal
+escalation is a `GateError`.
 
 ## Open items
 

@@ -7,7 +7,7 @@
 write tool bool transfer(int amount, text to);
 agent Bank grants { use transfer } {
   on awake {
-    event<text> who = self <- "who should we pay?";
+    text who = self <- "who should we pay?";
     bool ok = transfer(100, f"{who}");
   }
 }

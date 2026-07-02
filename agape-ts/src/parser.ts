@@ -26,8 +26,11 @@ function assertCore(p: A.Program): void {
   const bad = (msg: string): never => { throw new ParseError(`${msg} is not part of the core kernel`); };
 
   const walkType = (t: A.TypeRef): void => {
-    if (t.kind === "named" && t.typeArgs && t.typeArgs.length) bad("a generic type instantiation");
+    if (t.kind === "named" && t.typeArgs && t.typeArgs.length && t.name !== "LedgerEntry") {
+      bad("a generic type instantiation");
+    }
     if (t.kind === "event" || t.kind === "array") walkType(t.inner);
+    if (t.kind === "named" && t.typeArgs) t.typeArgs.forEach(walkType);
   };
   const walkExpr = (e: A.Expr): void => {
     switch (e.kind) {
@@ -300,6 +303,7 @@ class Parser {
     if (this.at("sync") || this.looksLikeFnDecl()) return this.withPub(this.parseFn(), pub);
     if (this.at("event")) {
       this.next();
+      if (this.at("<")) this.err("`event<T>` is no longer a reply type; declare a named `event Foo(...)` or use a bare reply type `T`");
       const name = this.eat("ident").value;
       const fields = this.parseFieldList();
       let errorSuper = false;
@@ -629,6 +633,16 @@ class Parser {
 
   // ---- types ----
   private parseType(): A.TypeRef {
+    let t = this.parseTypePrimary();
+    while (this.at("[")) {
+      this.next();
+      this.eat("]");
+      t = { kind: "array", inner: t };
+    }
+    return t;
+  }
+
+  private parseTypePrimary(): A.TypeRef {
     const t = this.peek();
     if (t.type === "int" || t.type === "float" || t.type === "bool" || t.type === "text" || t.type === "null") {
       this.next();
@@ -639,11 +653,7 @@ class Parser {
       return { kind: "mem" };
     }
     if (t.type === "event") {
-      this.next();
-      this.eat("<");
-      const inner = this.parseType();
-      this.eat(">");
-      return { kind: "event", inner };
+      this.err("`event<T>` is no longer a reply type; use a bare `T` for provider replies, or declare a named `event Foo(...)` for ledger records");
     }
     if (t.type === "array") {
       this.next();
@@ -785,6 +795,7 @@ class Parser {
     const save = this.i;
     try {
       const t = this.peek();
+      if (t.type === "event") return true;
       const typeStart = t.type === "int" || t.type === "float" || t.type === "bool" || t.type === "text" ||
         t.type === "null" || t.type === "event" || t.type === "array" ||
         // a type name is conventionally capitalized; a QUALIFIED type head may be a lowercase MODULE
@@ -899,7 +910,7 @@ class Parser {
   private startsFind(): boolean {
     return this.peek(1).type === "ident";
   }
-  // `select` opens a query when followed by `*` or an Ident-list (a projection), then `from`.
+  // `select` opens a query when followed by `*`, an Ident-list projection, or `Event as e`.
   private startsSelect(): boolean {
     return this.peek(1).type === "*" || this.peek(1).type === "ident";
   }
@@ -970,8 +981,29 @@ class Parser {
   }
 
   // select ::= "select" (Ident ("," Ident)* | "*") "from" Ident "where" "{" cond "}"  (§10)
+  //         | "select" Ident "as" Ident "from" "ledger" "where" "{" cond "}"
   private parseSelect(): A.SelectExpr {
     const pos = this.eat("select").pos;
+    const save = this.i;
+    if (this.at("ident")) {
+      try {
+        const eventType = this.qname();
+        if (this.atIdent("as")) {
+          this.next();
+          const alias = this.eat("ident").value;
+          this.eat("from");
+          let target: string;
+          if (this.at("self")) { this.next(); target = "self"; }
+          else target = this.colName();
+          this.eat("where");
+          const cond = this.parseQueryCond();
+          return { kind: "select", cols: "*", target, eventType, alias, cond, pos };
+        }
+      } catch {
+        // Restore and let the projection form produce the user's syntax error.
+      }
+      this.i = save;
+    }
     let cols: string[] | "*";
     if (this.at("*")) { this.next(); cols = "*"; }
     else {
@@ -1005,7 +1037,7 @@ class Parser {
     const conds: A.QueryCond[] = [];
     let connective: "&&" | "||" | undefined;
     while (!this.at("}") && !this.at("eof")) {
-      const field = this.colName();
+      const field = this.queryFieldName();
       let op: string;
       if (this.at(":")) { this.next(); op = "=="; }
       else {
@@ -1036,6 +1068,14 @@ class Parser {
     const t = this.peek();
     if (t.type === "ident" || CONTEXTUAL.has(t.type)) { this.next(); return t.value; }
     this.err("expected a name");
+  }
+  private queryFieldName(): string {
+    let name = this.colName();
+    while (this.at(".")) {
+      this.next();
+      name += "." + this.colName();
+    }
+    return name;
   }
   // a member/accessor field name: an ident, or a keyword token used positionally as a name (§2: keywords are
   // matched positionally), so `.text`, `.body`, `.committed`, etc. are valid field accessors.

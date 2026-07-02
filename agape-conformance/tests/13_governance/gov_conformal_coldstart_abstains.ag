@@ -1,17 +1,17 @@
 //! id:        gov_conformal_coldstart_abstains
 //! section:   13_governance
 //! expect:    accept
-//! contains:  Abstained
-//! spec:      §13 (a conformal gate with no recorded decisions is below its labelled-case readiness floor and abstains — the supervised cold start; autonomy is earned as grounded labels accrue)
+//! contains:  Decided
+//! absent:    Endorsed
+//! spec:      §13 (a conformal gate with no recorded decisions is below its labelled-case readiness floor and records a Decided abstention — the supervised cold start)
 //! ---
 agent A {
   on awake {
     text req = self <- "state the request";
     Credence<bool> c = self <- f"approve: {req}";
     Decision<bool> d = decide c by conformal 0.1;
-    Endorsement<text> e = endorse req by d;
-    if (e.committed == true) { }
-    else if (e.committed == false) { }
+    if (d.committed == true) { Endorsement<text> e = endorse req by d; }
+    else if (d.committed == false) { Endorsement<text> e = endorse req by d; }
     else { emit Event("escalate"); }
   }
 }

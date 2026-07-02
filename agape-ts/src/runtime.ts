@@ -30,6 +30,10 @@ export type Value =
       basis: string;
       margin: number;
       trust: "settled";
+      decisionId: number;
+      rule?: Record<string, unknown>;
+      binding?: string;
+      principalEvent?: number;
       // the exact Credence<E> this decision was collapsed from (§13). The endorse runtime backstop uses
       // it to confirm a raw/graded subject is the very judgment the decision settled — "a decision about
       // other_response cannot endorse response" — and to fail closed otherwise (§14).
@@ -44,11 +48,23 @@ export type Value =
       margin: number;
       committedNarrowed: boolean;
       trust: "settled";
+      binding?: string;
+      decisionId: number;
     }
   | { kind: "agentref"; name: string; agentType: string; trust: "settled" }
   | { kind: "memref"; name: string; trust: "settled" } // a handle into private memory (§10)
   | { kind: "struct"; typeName?: string; fields: Map<string, Value>; trust: Trust } // a record value (§3)
   | { kind: "array"; items: Value[]; trust: Trust }; // a query result set (§10/§12)
+
+export type StructuredSchema =
+  | { type: "string" }
+  | { type: "integer" }
+  | { type: "number" }
+  | { type: "boolean" }
+  | { type: "null" }
+  | { type: "string"; enum: string[] }
+  | { type: "array"; items: StructuredSchema }
+  | { type: "object"; properties: Record<string, StructuredSchema>; required: string[]; additionalProperties: false };
 
 export const settledText = (v: string): Value => ({ kind: "text", v, trust: "settled" });
 
@@ -60,7 +76,7 @@ export function show(v: Value): string {
     case "null": return "null";
     case "enumval": return `${v.enumName}.${v.variant}`;
     case "credence": return `Credence<${v.enumName}>{${Object.entries(v.scores).map(([k, s]) => `${k}:${s.toFixed(2)}`).join(", ")}}`;
-    case "decision": return `Decision<${v.enumName}>{committed:${v.committed}, basis:${v.basis}, margin:${v.margin.toFixed(2)}}`;
+    case "decision": return `Decision<${v.enumName}>#${v.decisionId}{committed:${v.committed}, basis:${v.basis}, margin:${v.margin.toFixed(2)}}`;
     case "endorsement": return `Endorsement{subject:${show(v.subject)}, committed:${v.committed}, margin:${v.margin.toFixed(2)}}`;
     case "agentref": return `&${v.name}:${v.agentType}`;
     case "memref": return `mem ${v.name}`;
@@ -87,6 +103,8 @@ export function render(v: Value): string {
 export interface Provider {
   // a typed judgment: forced categorical choice over the enum's variants -> a scored distribution.
   judge(prompt: string, enumName: string, variants: Variant[]): Promise<{ scores: Record<Variant, number> }>;
+  // a typed reply: constrained structured output for a declared scalar/array/struct schema.
+  structured?(prompt: string, schema: StructuredSchema, name?: string): Promise<unknown>;
   // a bare reply (raw text).
   reply(prompt: string): Promise<string>;
 }
@@ -110,6 +128,11 @@ export class MockProvider implements Provider {
     await tick();
     return `(reply to: ${prompt})`;
   }
+
+  async structured(_prompt: string, schema: StructuredSchema): Promise<unknown> {
+    await tick();
+    return mockStructured(schema);
+  }
 }
 
 // simulate an async boundary (a microtask) so even the mock path is genuinely asynchronous.
@@ -128,6 +151,22 @@ function normalize(scores: Record<Variant, number>, variants: Variant[]): Record
     for (const v of variants) out[v]! /= sum;
   }
   return out;
+}
+
+function mockStructured(schema: StructuredSchema): unknown {
+  switch (schema.type) {
+    case "string": return "enum" in schema ? schema.enum[0] ?? "" : "ok";
+    case "integer": return 0;
+    case "number": return 0;
+    case "boolean": return true;
+    case "null": return null;
+    case "array": return [mockStructured(schema.items)];
+    case "object": {
+      const out: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(schema.properties)) out[k] = mockStructured(v);
+      return out;
+    }
+  }
 }
 
 // ---- The ledger (append-only, totally ordered within the runtime) ----

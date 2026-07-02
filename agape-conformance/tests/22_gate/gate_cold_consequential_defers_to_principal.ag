@@ -14,9 +14,8 @@ agent Desk grants { perform Commit } {
     text body = self <- "state the request";
     Credence<R> c = self <- f"approve: {body}";
     Decision<R> d = boss decide c by conformal 0.05;
-    Endorsement<text> e = endorse body by d;
-    if (e.committed == Approve) { perform Commit(e); }
-    else if (e.committed == Reject) { say("rejected"); }
+    if (d.committed == Approve) { Endorsement<text> e = endorse body by d; perform Commit(e); }
+    else if (d.committed == Reject) { Endorsement<text> e = endorse body by d; say("rejected"); }
   }
 }
 spawn Desk d; awake d;

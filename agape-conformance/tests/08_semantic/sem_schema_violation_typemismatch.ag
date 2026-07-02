@@ -7,6 +7,6 @@
 //! ---
 struct Memo { amount: int, to: text }
 agent A {
-  on awake { event<Memo> m = self <- "extract the memo"; }
+  on awake { Memo m = self <- "extract the memo"; }
 }
 spawn A a; awake a;

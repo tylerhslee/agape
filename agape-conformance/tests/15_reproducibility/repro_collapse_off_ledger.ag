@@ -1,6 +1,0 @@
-//! id:        repro_collapse_off_ledger
-//! section:   15_reproducibility
-//! expect:    accept
-//! spec:      §13, §15 (`decide c by R` is a pure projection of a Credence; off-ledger and synchronous)
-//! ---
-sync Decision<bool> gate(Credence<bool> c) { return decide c by confidence 0.8; }

@@ -5,7 +5,7 @@
 //! ---
 agent A {
   on awake {
-    event<text> r = self <- "summarize: agape is event-driven";
+    text r = self <- "summarize: agape is event-driven";
     say(r);
   }
 }

@@ -11,7 +11,7 @@ agent Boss grants { reach Worker } {
   when (Error e) { emit Caught("err"); }
   on awake {
     spawn Worker w;
-    event<text> s = w <- "status?" expires 1;
+    text s = w <- "status?" expires 1;
   }
 }
 spawn Boss b; awake b;

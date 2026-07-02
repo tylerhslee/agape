@@ -1,0 +1,18 @@
+//! id:        repro_decision_records_decided
+//! section:   15_reproducibility
+//! expect:    accept
+//! contains:  Decided
+//! spec:      §13, §15 (`decide c by R` records a Decided ledger event while remaining sync/no dependency reach)
+//! ---
+sync Decision<bool> gate(Credence<bool> c) { return decide c by confidence 0.8; }
+
+agent A {
+  on awake {
+    Credence<bool> c = self <- "is this ready?";
+    Decision<bool> d = gate(c);
+    if (d.committed == true) { say("yes"); }
+    else if (d.committed == false) { say("no"); }
+    else { say("abstained"); }
+  }
+}
+spawn A a; awake a;

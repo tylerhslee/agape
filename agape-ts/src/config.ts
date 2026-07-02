@@ -6,7 +6,7 @@
 // the sampling fallback (§16.8). Secrets come from the environment, never the manifest.
 
 import { existsSync, readFileSync } from "node:fs";
-import { MockProvider, type Provider, type Variant } from "./runtime.js";
+import { MockProvider, type Provider, type StructuredSchema, type Variant } from "./runtime.js";
 
 export interface ProviderConfig {
   backend: "mock" | "anthropic" | "openai" | "gemini" | string;
@@ -137,6 +137,25 @@ function freqOf(choices: Variant[], variants: Variant[]): Record<Variant, number
   return scores;
 }
 
+function parseJsonPayload(raw: string): unknown {
+  let body = raw.trim();
+  const fence = body.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fence) body = fence[1]!.trim();
+  const firstObj = body.indexOf("{");
+  const firstArr = body.indexOf("[");
+  const starts = [firstObj, firstArr].filter((n) => n >= 0);
+  if (starts.length) {
+    const start = Math.min(...starts);
+    const close = body[start] === "{" ? body.lastIndexOf("}") : body.lastIndexOf("]");
+    if (close > start) body = body.slice(start, close + 1);
+  }
+  return JSON.parse(body);
+}
+
+function safeSchemaName(name = "Reply"): string {
+  return (name.replace(/[^A-Za-z0-9_]+/g, "_").replace(/^_+|_+$/g, "") || "Reply").slice(0, 64);
+}
+
 // ---- remote providers (real backends behind the same seam) ----
 // `judge` implements the §16.8 split: read per-variant logprobs when the backend exposes them,
 // else draw the forced choice `fallback_samples` times and use the empirical frequency.
@@ -175,6 +194,12 @@ abstract class RemoteProvider implements Provider {
   protected async scoreLogprobs(_p: string, _e: string, _v: Variant[]): Promise<Record<Variant, number> | undefined> {
     return undefined;
   }
+  async structured(prompt: string, schema: StructuredSchema, name?: string): Promise<unknown> {
+    const raw = await this.reply(
+      `${prompt}\n\nReturn only JSON conforming to this schema for ${safeSchemaName(name)}:\n${JSON.stringify(schema)}`,
+    );
+    return parseJsonPayload(raw);
+  }
   abstract reply(prompt: string): Promise<string>;
 }
 
@@ -200,6 +225,28 @@ class AnthropicProvider extends RemoteProvider {
       messages: [{ role: "user", content: prompt }],
     });
     return matchVariant(textOf(resp.content), variants);
+  }
+
+  override async structured(prompt: string, schema: StructuredSchema, name?: string): Promise<unknown> {
+    const client = await this.client();
+    const toolName = "return_structured_reply";
+    const inputSchema: StructuredSchema = schema.type === "object"
+      ? schema
+      : { type: "object", properties: { value: schema }, required: ["value"], additionalProperties: false };
+    const resp = await client.messages.create({
+      model: this.model,
+      max_tokens: 1024,
+      tools: [{
+        name: toolName,
+        description: `Return the schema-conforming ${safeSchemaName(name)} object.`,
+        input_schema: inputSchema,
+      }],
+      tool_choice: { type: "tool", name: toolName },
+      messages: [{ role: "user", content: prompt }],
+    });
+    const tool = (resp.content as any[]).find((b) => b.type === "tool_use" && b.name === toolName);
+    const input = tool?.input ?? parseJsonPayload(textOf(resp.content));
+    return schema.type === "object" ? input : (input as { value?: unknown }).value;
   }
 
   async reply(prompt: string): Promise<string> {
@@ -269,6 +316,37 @@ class OpenAIProvider extends RemoteProvider {
     return matchVariant(resp.choices?.[0]?.message?.content ?? "", variants);
   }
 
+  override async structured(prompt: string, schema: StructuredSchema, name?: string): Promise<unknown> {
+    const client = await this.client();
+    const wrapped = schema.type === "object"
+      ? { schema, unwrap: (value: unknown) => value }
+      : {
+          schema: {
+            type: "object" as const,
+            properties: { value: schema },
+            required: ["value"],
+            additionalProperties: false as const,
+          },
+          unwrap: (value: unknown) => (value as { value?: unknown }).value,
+        };
+    const resp = await client.chat.completions.create({
+      model: this.model,
+      messages: [
+        { role: "system", content: "Return only the requested structured output." },
+        { role: "user", content: prompt },
+      ],
+      response_format: {
+        type: "json_schema",
+        json_schema: {
+          name: safeSchemaName(name),
+          strict: true,
+          schema: wrapped.schema,
+        },
+      },
+    } as any);
+    return wrapped.unwrap(parseJsonPayload(resp.choices?.[0]?.message?.content ?? ""));
+  }
+
   async reply(prompt: string): Promise<string> {
     const client = await this.client();
     const resp = await client.chat.completions.create({
@@ -306,6 +384,19 @@ class GeminiProvider extends RemoteProvider {
       config: { temperature, maxOutputTokens: 8 },
     });
     return matchVariant(resp.text ?? "", variants);
+  }
+
+  override async structured(prompt: string, schema: StructuredSchema): Promise<unknown> {
+    const client = await this.client();
+    const resp = await client.models.generateContent({
+      model: this.model,
+      contents: prompt,
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: schema,
+      },
+    } as any);
+    return parseJsonPayload(resp.text ?? "");
   }
 
   async reply(prompt: string): Promise<string> {

@@ -12,9 +12,8 @@ agent Reviewer grants { perform Publish } {
     text second = self <- "draft the second memo";
     Credence<Verdict> c = self <- f"is this memo approved: {first}";
     Decision<Verdict> d = decide c by confidence 0.9;
-    Endorsement<text> e = endorse second by d;
-    if (e.committed == Approved) { perform Publish(e); }
-    else if (e.committed == Rejected) { }
+    if (d.committed == Approved) { Endorsement<text> e = endorse second by d; perform Publish(e); }
+    else if (d.committed == Rejected) { Endorsement<text> e = endorse second by d; }
   }
 }
 spawn Reviewer r; awake r;

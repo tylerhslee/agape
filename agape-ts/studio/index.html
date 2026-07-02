@@ -34,16 +34,27 @@
   }
   .dir { font: 12px var(--mono); color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
   header select, header button { flex-shrink: 0; }
+  .providerBox { display: flex; flex-direction: column; gap: 3px; min-width: 230px; max-width: 320px; flex-shrink: 0; }
+  .providerBox select { width: 100%; }
+  .providerNote { font: 10.5px/1.25 var(--mono); color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .providerNote.ready { color: var(--teal); }
+  .providerNote.warn { color: var(--amber); }
   select, button {
     background: var(--panel2); color: var(--text); border: 1px solid var(--line);
     border-radius: 8px; padding: 7px 12px; font: inherit; cursor: pointer;
   }
+  select option:disabled { color: var(--faint); }
   button.run {
     background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600;
     padding: 7px 20px; transition: filter .15s;
   }
   button.run:hover { filter: brightness(1.12); }
   button.run:disabled { opacity: .5; cursor: default; }
+  button.stop {
+    background: #2a1418; border-color: #7f1d1d; color: var(--red); font-weight: 600;
+    padding: 7px 14px;
+  }
+  button.stop[hidden] { display: none; }
 
   /* ---- layout ---- */
   .body { display: flex; flex: 1; min-height: 0; }
@@ -58,6 +69,7 @@
   }
   .prog:hover { background: var(--panel2); color: var(--text); }
   .prog.active { background: var(--panel2); border-color: var(--line); color: var(--text); }
+  .prog.example { border-color: rgba(94, 234, 212, .25); }
   .prog small { display: block; color: var(--faint); font-size: 10px; margin-top: 2px; }
 
   main { flex: 1; display: flex; min-width: 0; }
@@ -68,11 +80,63 @@
     padding: 14px 16px; margin-bottom: 14px;
   }
   .card h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .12em; color: var(--faint); margin-bottom: 10px; }
+  .sourceHead { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+  .sourceHead h2 { margin-bottom: 0; min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sourceTools { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+  button.mini { padding: 4px 8px; border-radius: 6px; font-size: 12px; }
+  button.mini.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.mini:disabled { opacity: .45; cursor: default; }
 
   /* ---- source ---- */
   pre.code {
-    font: 12.5px/1.65 var(--mono); white-space: pre-wrap; word-break: break-word; color: #c3ccdf;
+    font: 12.5px/1.65 var(--mono); color: #c3ccdf; white-space: normal;
   }
+  .codeLine {
+    display: grid; grid-template-columns: 4ch minmax(0, 1fr); gap: 12px;
+    align-items: start; min-height: 1.65em;
+  }
+  .ln {
+    color: var(--faint); text-align: right; user-select: none; padding-right: 8px;
+    border-right: 1px solid var(--line);
+  }
+  .codeText {
+    min-width: 0; white-space: pre-wrap; word-break: break-word;
+  }
+  .editorWrap {
+    display: none; grid-template-columns: 4ch minmax(0, 1fr); gap: 12px;
+    font: 12.5px/1.65 var(--mono);
+  }
+  .editLines {
+    color: var(--faint); text-align: right; user-select: none; padding-right: 8px;
+    border-right: 1px solid var(--line); white-space: pre; overflow: hidden;
+  }
+  textarea.editor {
+    width: 100%; min-height: 62vh; resize: vertical; border: 1px solid var(--line); border-radius: 8px;
+    background: #0d111a; color: var(--text); padding: 0 10px; font: inherit; line-height: inherit;
+    outline: none; tab-size: 2; white-space: pre; overflow: auto;
+  }
+  textarea.editor:focus { border-color: var(--accent); }
+  .editing pre.code { display: none; }
+  .editing .editorWrap { display: grid; }
+  .inputCard[hidden] { display: none; }
+  .inputList { display: grid; gap: 10px; }
+  .inputRow {
+    display: grid; gap: 6px; padding: 10px; border: 1px solid var(--line);
+    border-radius: 8px; background: rgba(255,255,255,.018);
+  }
+  .inputRow label {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    color: var(--dim); font: 11px var(--mono);
+  }
+  .inputRow label span { color: var(--faint); }
+  .inputRow textarea, .inputRow input[type="text"] {
+    width: 100%; border: 1px solid var(--line); border-radius: 8px; background: #0d111a;
+    color: var(--text); padding: 8px 10px; font: 12px/1.45 var(--mono); outline: none;
+  }
+  .inputRow textarea { min-height: 76px; resize: vertical; }
+  .inputRow textarea:focus, .inputRow input[type="text"]:focus { border-color: var(--accent); }
+  .checkLine { display: flex; align-items: center; gap: 8px; color: var(--text); font: 12px var(--mono); }
+  .checkLine input { accent-color: var(--accent); }
   .k  { color: #c792ea; }              /* keywords */
   .t  { color: #82aaff; }              /* types */
   .s  { color: #c3e88d; }              /* strings */
@@ -124,17 +188,69 @@
   /* ---- console ---- */
   .console { font: 12.5px var(--mono); color: var(--teal); white-space: pre-wrap; }
   .console:empty::after { content: "(no say output)"; color: var(--faint); }
+  .details { display: grid; gap: 10px; }
+  .detail {
+    border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px;
+    background: rgba(255,255,255,.018);
+  }
+  .detail h3 { font-size: 12px; margin-bottom: 6px; color: var(--text); }
+  .kv { display: grid; grid-template-columns: 104px minmax(0,1fr); gap: 5px 10px; font: 11.5px/1.45 var(--mono); }
+  .kv b { color: var(--faint); font-weight: 500; }
+  .kv span { min-width: 0; overflow-wrap: anywhere; color: #c3ccdf; }
+  .scorebar { display: grid; grid-template-columns: 88px minmax(0,1fr) 46px; align-items: center; gap: 8px; margin: 4px 0; font: 11px var(--mono); }
+  .scorebar .bar { height: 7px; border-radius: 999px; background: var(--line); overflow: hidden; }
+  .scorebar .fill { height: 100%; background: var(--accent2); }
 
   .empty { color: var(--faint); text-align: center; padding: 60px 20px; font-size: 13px; }
   .meta { font: 11px var(--mono); color: var(--faint); margin-top: 6px; }
+
+  /* ---- mobile ---- */
+  @media (max-width: 900px) {
+    html, body { height: auto; min-height: 100%; }
+    header { position: sticky; top: 0; z-index: 10; flex-wrap: wrap; gap: 8px 10px; padding: 10px 12px; }
+    .dir { flex-basis: 100%; order: 3; font-size: 11px; }
+    .providerBox { min-width: 0; flex: 1 1 170px; }
+    .providerNote { display: none; }
+    .body { flex-direction: column; }
+    nav {
+      width: auto; border-right: none; border-bottom: 1px solid var(--line);
+      padding: 8px 12px; overflow-x: auto; overflow-y: hidden; -webkit-overflow-scrolling: touch;
+    }
+    nav h3 { display: none; }
+    #programs { display: flex; gap: 8px; }
+    .prog { width: auto; white-space: nowrap; margin-bottom: 0; flex-shrink: 0; padding: 7px 12px; }
+    .prog small { display: none; }
+    main { flex-direction: column; }
+    .col { overflow: visible; padding: 12px; }
+    .col.source { max-width: none; border-right: none; order: 2; }
+    .col:not(.source) { order: 1; }
+    .verdict { flex-wrap: wrap; padding: 12px; }
+    .verdict .head { margin-left: 0; flex-basis: 100%; }
+    .verdict .msg { flex-basis: 100%; }
+    .ev { flex-wrap: wrap; row-gap: 2px; }
+    .ev .pay { flex-basis: 100%; padding-left: 40px; }
+    .stage { min-width: 84px; padding: 6px 6px; }
+    pre.code { font-size: 11.5px; }
+    .codeLine { grid-template-columns: 3.5ch minmax(0, 1fr); gap: 8px; }
+    .ln { padding-right: 6px; }
+    .sourceHead { flex-wrap: wrap; }
+    .sourceTools { width: 100%; }
+    .editorWrap { grid-template-columns: 3.5ch minmax(0, 1fr); gap: 8px; font-size: 11.5px; }
+    textarea.editor { min-height: 52vh; }
+    .kv { grid-template-columns: 1fr; }
+  }
 </style>
 </head>
 <body>
 <header>
   <div class="brand"><b>Agape Studio</b><span class="chip">execution inspector</span></div>
   <div class="dir" id="dir"></div>
-  <select id="provider"></select>
+  <div class="providerBox">
+    <select id="provider"></select>
+    <div class="providerNote" id="providerNote"></div>
+  </div>
   <button class="run" id="run" disabled>Run ▸</button>
+  <button class="stop" id="stop" hidden>Stop</button>
 </header>
 
 <div class="body">
@@ -144,7 +260,25 @@
   </nav>
   <main>
     <div class="col source">
-      <div class="card"><h2 id="srcTitle">Source</h2><pre class="code" id="source">Select a program.</pre></div>
+      <div class="card inputCard" id="inputsCard" hidden>
+        <h2>Inputs</h2>
+        <div class="inputList" id="inputControls"></div>
+      </div>
+      <div class="card" id="sourceCard">
+        <div class="sourceHead">
+          <h2 id="srcTitle">Source</h2>
+          <div class="sourceTools">
+            <button class="mini" id="editSource" disabled>Edit</button>
+            <button class="mini primary" id="saveSource" hidden>Save</button>
+            <button class="mini" id="cancelEdit" hidden>Cancel</button>
+          </div>
+        </div>
+        <pre class="code" id="source">Select a program.</pre>
+        <div class="editorWrap">
+          <div class="editLines" id="editLines"></div>
+          <textarea class="editor" id="editor" spellcheck="false"></textarea>
+        </div>
+      </div>
     </div>
     <div class="col">
       <div id="results"><div class="empty">Run a program to inspect its execution.<br><br>
@@ -158,15 +292,15 @@
 const CATS = {
   lifecycle: { color: "var(--cyan)",   types: ["Spawned","AgentAwake","AgentAsleep","AgentCrashed"] },
   message:   { color: "#7dd3fc",       types: ["Sent","Delivered","Resolved","Expired","DeliveryRefused"] },
-  gate:      { color: "var(--violet)", types: ["Endorsed","PrincipalDecision"] },
-  abstain:   { color: "var(--amber)",  types: ["Abstained","FailedPrincipalDecision"] },
+  gate:      { color: "var(--violet)", types: ["Decided","Endorsed","PrincipalDecision"] },
+  abstain:   { color: "var(--amber)",  types: ["FailedPrincipalDecision"] },
   memory:    { color: "var(--teal)",   types: ["MemoryConsulted","Internalized","Forgotten","ArtifactObserved","QueryResult","DependenceAsserted"] },
   tool:      { color: "var(--orange)", types: ["ToolStarted","ToolResolved"] },
   sensor:    { color: "var(--green)",  types: ["PromptOpened","Prompt"] },
   error:     { color: "var(--red)",    types: ["Error","TypeMismatch","MarginFloorViolation","Contradiction"] },
 };
 
-let state = { programs: [], selected: null, meta: {} };
+let state = { programs: [], selected: null, meta: {}, source: "", sourceOrigin: null, map: null, editing: false, dirty: false, sessionId: null, listening: false };
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c]));
@@ -178,19 +312,167 @@ function catOf(etype, map) {
   return { name: "event", color: "var(--dim)" };
 }
 
+const KW = new Set("agent enum struct action event tool read write grants perform reach use spawn awake sleep crash on when if else return decide endorse by confidence margin floor conformal readiness emit say mem forget quorum independent dependent principal prompt instruction sync extend self true false null abstained about as select from where expires".split(" "));
+const TYPES = new Set("Credence Decision Endorsement LedgerEntry Principal Entailment Basis int float bool text array".split(" "));
+
+function highlightCodePart(src) {
+  return esc(src).replace(/\b([A-Za-z_][\w]*|\d+(?:\.\d+)?)\b/g, (m) => {
+    if (/^\d/.test(m)) return `<span class="n">${m}</span>`;
+    if (KW.has(m)) return `<span class="k">${m}</span>`;
+    if (TYPES.has(m)) return `<span class="t">${m}</span>`;
+    return m;
+  });
+}
+
+function highlightLine(line) {
+  let out = "";
+  for (let i = 0; i < line.length;) {
+    if (line.startsWith("//", i)) {
+      out += `<span class="c">${esc(line.slice(i))}</span>`;
+      break;
+    }
+    const fString = line[i] === "f" && line[i + 1] === '"';
+    if (line[i] === '"' || fString) {
+      const start = i;
+      i += fString ? 2 : 1;
+      while (i < line.length) {
+        if (line[i] === "\\" && i + 1 < line.length) { i += 2; continue; }
+        if (line[i] === '"') { i++; break; }
+        i++;
+      }
+      out += `<span class="s">${esc(line.slice(start, i))}</span>`;
+      continue;
+    }
+    const nextComment = line.indexOf("//", i);
+    const nextQuote = line.indexOf('"', i);
+    const nextFQuote = line.indexOf('f"', i);
+    const stops = [nextComment, nextQuote, nextFQuote].filter((n) => n >= 0);
+    const next = stops.length ? Math.min(...stops) : line.length;
+    out += highlightCodePart(line.slice(i, next));
+    i = next;
+  }
+  return out;
+}
+
 function highlight(src) {
-  let h = esc(src);
-  h = h.replace(/(\/\/[^\n]*)/g, '<span class="c">$1</span>');
-  h = h.replace(/(f?&quot;(?:[^&]|&(?!quot;))*?&quot;)/g, '<span class="s">$1</span>');
-  h = h.replace(/\b(\d+(?:\.\d+)?)\b/g, '<span class="n">$1</span>');
-  h = h.replace(/\b(agent|enum|struct|action|event|tool|read|write|grants|perform|reach|use|spawn|awake|sleep|crash|on|when|if|else|return|decide|endorse|by|confidence|margin|floor|conformal|readiness|emit|say|mem|forget|quorum|independent|dependent|principal|prompt|instruction|sync|extend|self|true|false|null|abstained|about|as|select|from|where|expires|store)\b/g, '<span class="k">$1</span>');
-  h = h.replace(/\b(Credence|Decision|Endorsement|Principal|Entailment|Basis|int|float|bool|text|array)\b/g, '<span class="t">$1</span>');
-  return h;
+  return src.split("\n").map(highlightLine).join("\n");
+}
+
+function renderCode(src) {
+  return highlight(src).split("\n").map((line, i) =>
+    `<span class="codeLine"><span class="ln">${i + 1}</span><span class="codeText">${line || " "}</span></span>`
+  ).join("");
+}
+
+function updateEditLines() {
+  const count = Math.max(1, $("editor").value.split("\n").length);
+  $("editLines").textContent = Array.from({ length: count }, (_, i) => i + 1).join("\n");
+}
+
+function setEditing(on) {
+  state.editing = on;
+  state.dirty = false;
+  $("sourceCard").classList.toggle("editing", on);
+  $("editSource").hidden = on;
+  $("saveSource").hidden = !on;
+  $("cancelEdit").hidden = !on;
+  updateRunControls();
+  if (on) {
+    $("editor").value = state.source;
+    updateEditLines();
+    $("editor").focus();
+  }
+  updateSourceButtons();
+}
+
+function updateSourceButtons() {
+  const hasSource = Boolean(state.selected);
+  $("editSource").disabled = !hasSource || state.listening;
+  $("saveSource").disabled = !state.editing;
+  $("saveSource").textContent = state.sourceOrigin === "example" ? "Save copy" : "Save";
+}
+
+function hasPromptInputs() {
+  return (state.map?.prompts || []).length > 0;
+}
+
+function updateRunControls() {
+  const canRun = Boolean(state.selected) && !state.editing;
+  $("run").disabled = !canRun;
+  $("stop").hidden = !state.listening;
+  $("run").textContent = state.listening ? "Send prompt" : hasPromptInputs() ? "Listen ▸" : "Run ▸";
+  updateSourceButtons();
+}
+
+function inputId(prefix, name) {
+  return `${prefix}_${name.replace(/[^\w.-]/g, "_")}`;
+}
+
+function defaultPromptValue(prompt) {
+  return "";
+}
+
+function promptPlaceholder(prompt) {
+  if (prompt.type === "text") return `Type the user prompt for ${prompt.name}...`;
+  if (prompt.type === "int") return "Enter an integer, e.g. 42";
+  if (prompt.type === "float") return "Enter a number, e.g. 0.75";
+  if (prompt.type === "bool") return "Enter true or false";
+  return "Enter JSON matching this prompt type";
+}
+
+function renderInputControls(map) {
+  const prompts = map?.prompts || [];
+  const principals = map?.principals || [];
+  $("inputsCard").hidden = prompts.length === 0 && principals.length === 0;
+  $("inputControls").innerHTML = [
+    ...prompts.map((p) => `<div class="inputRow">
+      <label>${esc(p.name)}<span>${esc(p.type)}</span></label>
+      <textarea id="${esc(inputId("prompt", p.name))}" data-prompt="${esc(p.name)}" data-type="${esc(p.type)}" placeholder="${esc(promptPlaceholder(p))}">${esc(defaultPromptValue(p))}</textarea>
+      <div class="checkLine"><input id="${esc(inputId("prompt_attest", p.name))}" type="checkbox" checked><label for="${esc(inputId("prompt_attest", p.name))}">attest as local user</label></div>
+    </div>`),
+    ...principals.map((name) => `<div class="inputRow">
+      <label>${esc(name)}<span>principal</span></label>
+      <div class="checkLine"><input id="${esc(inputId("principal", name))}" data-principal="${esc(name)}" type="checkbox" checked><label for="${esc(inputId("principal", name))}">approve top variant</label></div>
+    </div>`),
+  ].join("");
+}
+
+function collectInputs() {
+  const promptInputs = (state.map?.prompts || []).map((p) => {
+    const el = $(inputId("prompt", p.name));
+    const attest = $(inputId("prompt_attest", p.name));
+    return {
+      name: p.name,
+      value: el?.value ?? "",
+      attestation: attest?.checked ? { attester: "studio-user" } : { attester: "unattested" },
+    };
+  }).filter((p) => String(p.value).trim() !== "");
+  const principalAttestations = (state.map?.principals || []).map((principal) => {
+    const el = $(inputId("principal", principal));
+    return { principal, approved: Boolean(el?.checked), attester: "studio-user" };
+  });
+  return { promptInputs, principalAttestations };
+}
+
+function validateInputs() {
+  const missing = (state.map?.prompts || []).find((p) => {
+    const el = $(inputId("prompt", p.name));
+    return !String(el?.value ?? "").trim();
+  });
+  if (!missing) return true;
+  const id = inputId("prompt", missing.name);
+  const el = $(id);
+  $("results").innerHTML = `<div class="verdict bad"><div class="light"></div><b>Input needed</b>
+    <span class="msg">Enter a value for prompt ${esc(missing.name)} before running.</span></div>`;
+  el?.focus();
+  return false;
 }
 
 // the access token (if this studio is token-gated) rides in from the page URL and onto every API call.
 const TOKEN = new URLSearchParams(location.search).get("token");
+const SERVED = location.protocol === "http:" || location.protocol === "https:";
 async function api(path, opts) {
+  if (!SERVED) throw new Error("this page must be opened through the studio server — http://localhost:4317 (or your tunnel URL), not as a file/preview");
   const sep = path.includes("?") ? "&" : "?";
   const r = await fetch(TOKEN ? `${path}${sep}token=${encodeURIComponent(TOKEN)}` : path, opts);
   if (!r.ok && r.headers.get("content-type")?.includes("json")) {
@@ -201,20 +483,69 @@ async function api(path, opts) {
   return r.json();
 }
 
+function providers() {
+  return (state.meta.providers || []).map((p) => {
+    if (typeof p === "string") return { name: p, label: p, enabled: true, live: p !== "mock", detail: p };
+    return p;
+  });
+}
+
+function renderProviders() {
+  const ps = providers();
+  $("provider").innerHTML = ps.map((p) => {
+    const label = `${p.label || p.name}${p.enabled ? "" : " (locked)"}`;
+    return `<option value="${esc(p.name)}" ${p.enabled ? "" : "disabled"}>${esc(label)}</option>`;
+  }).join("");
+  const first = ps.find((p) => p.enabled);
+  if (first) $("provider").value = first.name;
+  updateProviderNote();
+}
+
+function updateProviderNote() {
+  const ps = providers();
+  const selected = ps.find((p) => p.name === $("provider").value) || ps.find((p) => p.enabled);
+  const liveLocked = ps.some((p) => p.live && !p.enabled && state.meta.access && !state.meta.access.liveEnabled);
+  const noLiveKeys = state.meta.access?.liveEnabled && !ps.some((p) => p.live && p.enabled);
+  let text = selected?.detail || "";
+  let cls = "providerNote";
+  if (selected?.live && selected.enabled) cls += " ready";
+  if (liveLocked && selected?.name === "mock") {
+    text = "Live providers: restart with --share; token gate is automatic.";
+    cls += " warn";
+  } else if (noLiveKeys && selected?.name === "mock") {
+    text = "Live mode is on; add provider API keys to .env.";
+    cls += " warn";
+  }
+  $("providerNote").className = cls;
+  $("providerNote").textContent = text;
+}
+
+function renderProgramList(programs) {
+  $("programs").innerHTML = programs.length
+    ? programs.map((p) => {
+        const meta = p.origin === "example" ? "bundled example" : `${p.bytes} bytes`;
+        const cls = p.origin === "example" ? "prog example" : "prog";
+        return `<button class="${cls}" data-name="${esc(p.name)}">${esc(p.name)}<small>${esc(meta)}</small></button>`;
+      }).join("")
+    : `<div class="empty">no .ag programs here</div>`;
+  for (const b of document.querySelectorAll(".prog")) b.onclick = () => select(b.dataset.name);
+}
+
+async function loadPrograms(selectName) {
+  const { programs } = await api("/api/programs");
+  state.programs = programs;
+  renderProgramList(programs);
+  if (programs.length) await select(selectName && programs.some((p) => p.name === selectName) ? selectName : programs[0].name);
+}
+
 async function init() {
   // a cold tunnel edge can drop the first request — surface failures and retry instead of dying silent.
   $("programs").innerHTML = `<div class="empty">loading…</div>`;
   try {
     state.meta = await api("/api/meta");
     $("dir").textContent = state.meta.dir;
-    $("provider").innerHTML = state.meta.providers.map((p) => `<option>${p}</option>`).join("");
-    const { programs } = await api("/api/programs");
-    state.programs = programs;
-    $("programs").innerHTML = programs.length
-      ? programs.map((p) => `<button class="prog" data-name="${esc(p.name)}">${esc(p.name)}<small>${p.bytes} bytes</small></button>`).join("")
-      : `<div class="empty">no .ag programs here</div>`;
-    for (const b of document.querySelectorAll(".prog")) b.onclick = () => select(b.dataset.name);
-    if (programs.length) select(programs[0].name);
+    renderProviders();
+    await loadPrograms();
   } catch (e) {
     $("programs").innerHTML = `<div class="empty" style="color:var(--red)">couldn't reach the studio server<br>
       <span style="font:11px var(--mono)">${esc(e.message)}</span><br><br>
@@ -223,29 +554,387 @@ async function init() {
 }
 
 async function select(name) {
+  if (state.listening) {
+    if (!confirm("Stop the current listening session and switch programs?")) return;
+    await stopSession(true);
+  }
+  if (state.editing && state.dirty && !confirm("Discard unsaved edits?")) return;
+  setEditing(false);
   state.selected = name;
   for (const b of document.querySelectorAll(".prog")) b.classList.toggle("active", b.dataset.name === name);
-  $("srcTitle").textContent = name;
-  const { source } = await api(`/api/source?name=${encodeURIComponent(name)}`);
-  $("source").innerHTML = highlight(source);
-  $("run").disabled = false;
-  $("results").innerHTML = `<div class="empty">Press Run to execute <b>${esc(name)}</b> and inspect the ledger.</div>`;
+  const info = state.programs.find((p) => p.name === name);
+  $("srcTitle").textContent = info?.origin === "example" ? `${name} · bundled example` : name;
+  const { source, origin, map } = await api(`/api/source?name=${encodeURIComponent(name)}`);
+  state.source = source;
+  state.sourceOrigin = origin;
+  state.map = map || null;
+  $("source").innerHTML = renderCode(state.source);
+  renderInputControls(state.map);
+  state.sessionId = null;
+  state.listening = false;
+  updateRunControls();
+  updateSourceButtons();
+  const note = origin === "example" ? "This bundled example is not written into the project directory." : "Press Run to inspect the ledger.";
+  $("results").innerHTML = `<div class="empty"><b>${esc(name)}</b><br><br>${esc(note)}</div>`;
 }
+
+$("provider").onchange = updateProviderNote;
+$("editSource").onclick = () => setEditing(true);
+$("cancelEdit").onclick = () => {
+  setEditing(false);
+  $("source").innerHTML = renderCode(state.source);
+};
+$("saveSource").onclick = async () => {
+  if (!state.selected) return;
+  $("saveSource").disabled = true;
+  $("saveSource").textContent = "Saving...";
+  try {
+    const source = $("editor").value;
+    const saved = await api("/api/source", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: state.selected, source }),
+    });
+    state.source = source;
+    state.sourceOrigin = "project";
+    $("source").innerHTML = renderCode(state.source);
+    setEditing(false);
+    await loadPrograms(saved.program?.name || state.selected);
+    $("results").innerHTML = `<div class="verdict ok"><div class="light"></div><b>Saved</b><span class="msg">${esc(state.selected)} is now a project program.</span></div>`;
+  } catch (e) {
+    $("results").innerHTML = `<div class="verdict bad"><div class="light"></div><b>Save failed</b><span class="msg">${esc(e.message)}</span></div>`;
+  } finally {
+    updateSourceButtons();
+  }
+};
+$("editor").oninput = () => { state.dirty = true; updateEditLines(); };
+$("editor").onscroll = () => { $("editLines").scrollTop = $("editor").scrollTop; };
+$("editor").onkeydown = (e) => {
+  if (e.key === "Tab") {
+    e.preventDefault();
+    const el = $("editor");
+    const start = el.selectionStart, end = el.selectionEnd;
+    el.value = el.value.slice(0, start) + "  " + el.value.slice(end);
+    el.selectionStart = el.selectionEnd = start + 2;
+    state.dirty = true;
+    updateEditLines();
+  }
+};
+
+async function stopSession(silent = false) {
+  if (!state.sessionId) {
+    state.listening = false;
+    updateRunControls();
+    return;
+  }
+  const id = state.sessionId;
+  state.sessionId = null;
+  state.listening = false;
+  updateRunControls();
+  try {
+    await api("/api/stop", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sessionId: id }),
+    });
+    if (!silent) {
+      $("results").innerHTML = `<div class="verdict ok"><div class="light"></div><b>Stopped</b>
+        <span class="msg">The listening session has ended.</span></div>`;
+    }
+  } catch (e) {
+    if (!silent) {
+      $("results").innerHTML = `<div class="verdict bad"><div class="light"></div><b>Stop failed</b>
+        <span class="msg">${esc(e.message)}</span></div>`;
+    }
+  }
+}
+
+$("stop").onclick = () => stopSession(false);
 
 $("run").onclick = async () => {
   if (!state.selected) return;
-  $("run").disabled = true; $("run").textContent = "Running…";
+  const promptMode = hasPromptInputs();
+  if (promptMode && state.listening && !validateInputs()) return;
+  $("run").disabled = true;
+  $("run").textContent = promptMode ? (state.listening ? "Sending…" : "Listening…") : "Running…";
   try {
-    const r = await api("/api/run", {
-      method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ program: state.selected, provider: $("provider").value }),
-    });
+    let r;
+    if (promptMode && !state.listening) {
+      r = await api("/api/listen", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          program: state.selected,
+          provider: $("provider").value,
+          principalAttestations: collectInputs().principalAttestations,
+        }),
+      });
+      if (r.ok && r.sessionId) {
+        state.sessionId = r.sessionId;
+        state.listening = true;
+      }
+    } else if (promptMode && state.listening) {
+      r = await api("/api/prompt", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sessionId: state.sessionId, promptInputs: collectInputs().promptInputs }),
+      });
+    } else {
+      r = await api("/api/run", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ program: state.selected, provider: $("provider").value, ...collectInputs() }),
+      });
+    }
     render(r);
   } catch (e) {
     $("results").innerHTML = `<div class="verdict bad"><div class="light"></div><b>Request failed</b>
       <span class="msg">${esc(e.message)} — a live-provider run can take a while; retry if the tunnel timed out.</span></div>`;
-  } finally { $("run").disabled = false; $("run").textContent = "Run ▸"; }
+  } finally {
+    $("run").disabled = false;
+    updateRunControls();
+  }
 };
+
+function fmt(v) {
+  if (v === undefined || v === null) return "";
+  if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") return String(v);
+  return JSON.stringify(v, null, 2);
+}
+
+function kvRows(rows) {
+  return `<div class="kv">${rows.filter(([, v]) => v !== undefined && v !== null && v !== "").map(([k, v]) =>
+    `<b>${esc(k)}</b><span>${esc(fmt(v))}</span>`
+  ).join("")}</div>`;
+}
+
+function scoreBars(summary) {
+  const scores = summary?.scores || {};
+  return Object.entries(scores).map(([variant, score]) => {
+    const pct = Math.max(0, Math.min(100, Number(score) * 100));
+    return `<div class="scorebar"><span>${esc(variant)}</span><span class="bar"><span class="fill" style="width:${pct}%"></span></span><span>${pct.toFixed(1)}%</span></div>`;
+  }).join("");
+}
+
+function scoreText(scores) {
+  return Object.entries(scores || {}).map(([variant, score]) =>
+    `${variant}:${Number(score).toFixed(2)}`
+  ).join(", ");
+}
+
+function renderedValue(v) {
+  if (!v) return "";
+  if (v.kind === "text") return JSON.stringify(v.value ?? v.rendered ?? "");
+  if (v.kind === "int" || v.kind === "float" || v.kind === "bool") return String(v.value);
+  if (v.kind === "null") return "null";
+  if (v.kind === "enumval") return v.enum ? `${v.enum}.${v.variant}` : String(v.variant);
+  if (v.kind === "struct") return structValue(v);
+  if (v.kind === "array") return `[${(v.items || []).map(renderedValue).join(", ")}]`;
+  if (v.kind === "agentref") return v.rendered || `&${v.name}:${v.agentType}`;
+  if (v.kind === "credence") return `Credence<${v.enum}>{${scoreText(v.scores)}}`;
+  if (v.kind === "decision") return decisionValue(v);
+  if (v.kind === "endorsement") return endorsementValue(v);
+  return v.rendered ?? fmt(v);
+}
+
+function structValue(v) {
+  const fields = Object.entries(v.fields || {}).map(([name, value]) => `${name}: ${renderedValue(value)}`).join(", ");
+  return `${v.type || ""}{${fields}}`;
+}
+
+function valueFieldRows(v) {
+  if (v?.kind !== "struct") return [];
+  return Object.entries(v.fields || {}).map(([name, value]) => [`.${name}`, renderedValue(value)]);
+}
+
+function resolvedReply(p) {
+  if (p?.reply && typeof p.reply === "object") return p.reply;
+  if (p?.reply !== undefined) return { kind: "text", value: p.reply, rendered: p.reply, trust: "raw" };
+  return p?.value;
+}
+
+function credenceValue(name, p) {
+  const reply = resolvedReply(p) || p;
+  return `${name} = Credence<${reply.enum || p.enum}>{${scoreText(reply.scores || p.scores)}}`;
+}
+
+function decisionValue(d) {
+  if (typeof d === "string") return `Decision{committed:${d}}`;
+  const name = d.binding || "decision";
+  const enumName = d.enum || d.credence || "?";
+  const committed = d.effectiveCommitted || d.committed || d.decision || "abstained";
+  const basis = d.basis || (d.legacy ? "not recorded" : "?");
+  const margin = d.margin === undefined ? "not recorded" : Number(d.margin).toFixed(2);
+  const id = d.decision_id ?? d.decisionId;
+  return `${name} = Decision<${enumName}>#${id ?? "?"}{committed:${committed}, basis:${basis}, margin:${margin}}`;
+}
+
+function endorsementValue(e) {
+  const name = e.binding || "endorsement";
+  const subject = renderedValue(e.subject);
+  const id = e.decision_id ?? e.decisionId;
+  return `${name} = Endorsement#${id ?? "?"}{subject:${subject}, committed:${e.committed || e.branch || "?"}}`;
+}
+
+function singleEnumName(map) {
+  const names = Object.keys(map?.enums || {});
+  return names.length === 1 ? names[0] : "?";
+}
+
+function hydrateDecisionPayload(e, map) {
+  const p = e.payload || {};
+  if (p.decision && typeof p.decision === "object") return p.decision;
+  if (typeof p.decision === "string") {
+    return { enum: singleEnumName(map), committed: p.decision, effectiveCommitted: p.decision, legacy: true };
+  }
+  return p;
+}
+
+function eventValue(e, map) {
+  const p = e.payload || {};
+  if (e.etype === "Sent" && p.prompt) return `${e.subject} ⇐ ${JSON.stringify(p.prompt)}`;
+  if (e.etype === "Resolved") {
+    const reply = resolvedReply(p);
+    if (p.kind === "credence") return credenceValue(e.subject, p);
+    if (reply) return `${e.subject} = ${renderedValue(reply)}`;
+    return `${e.subject} = (resolved; reply not recorded by this Studio server)`;
+  }
+  if (e.etype === "Prompt") return `${e.subject} = ${renderedValue(p.input)}`;
+  if (e.etype === "PromptOpened") return `${e.subject} opened`;
+  if (e.etype === "Internalized" && p.reply) return `${e.subject} ⇐ ${renderedValue(p.reply)}`;
+  if (p.value) return `${e.subject} = ${renderedValue(p.value)}`;
+  if (e.etype === "Forgotten") return `${e.subject} forgotten (${p.mode || "recorded"})`;
+  if (e.etype === "MemoryConsulted") return `${e.subject} recalled ${JSON.stringify(p.recalled || "")}`;
+  if (e.etype === "Decided" || e.etype === "Endorsed") {
+    const bits = [];
+    if (e.etype === "Decided" || p.decision) bits.push(decisionValue(hydrateDecisionPayload(e, map)));
+    if (p.endorsement) bits.push(endorsementValue(p.endorsement));
+    return bits.join(" · ");
+  }
+  if (Array.isArray(p)) return `${e.subject} payload = ${fmt(p)}`;
+  return e.subject ?? "";
+}
+
+function detail(title, rows, body = "") {
+  return `<div class="detail"><h3>${esc(title)}</h3>${kvRows(rows)}${body}</div>`;
+}
+
+function renderRunDetails(r) {
+  const ev = r.events || [];
+  const parts = [];
+
+  for (const e of ev.filter((x) => ["Internalized", "MemoryConsulted", "Prompt", "PromptOpened"].includes(x.etype))) {
+    const p = e.payload || {};
+    if (e.etype === "Internalized") {
+      const v = p.reply || p.value;
+      parts.push(detail(`Memory write · ${eventValue(e, r.map)}`, [
+        ["binding", e.subject],
+        [p.reply ? "reply" : "value", renderedValue(v)],
+        ["source event", p.source_event],
+        ["effects", p.effects],
+        ["refs", p.refs],
+        ["policy", p.policy],
+        ["trust", v?.trust],
+        ["kind", v?.kind],
+      ]));
+    } else if (e.etype === "Prompt") {
+      parts.push(detail(`Prompt · ${eventValue(e, r.map)}`, [
+        ["source", e.subject],
+        ["input", renderedValue(p.input)],
+        ["kind", p.input?.kind],
+        ["trust", p.input?.trust],
+        ["attester", p.attestation?.attester],
+        ["payload hash", p.attestation?.payload_hash],
+        ["signature", p.attestation?.signature],
+      ]));
+    } else if (e.etype === "PromptOpened") {
+      parts.push(detail(`Prompt opened · ${e.subject}`, [
+        ["source", e.subject],
+      ]));
+    } else {
+      const candidates = (p.candidates || []).map((c, i) => `${i + 1}. ${renderedValue(c)}`).join("\n");
+      parts.push(detail(`Retrieval · ${e.subject}`, [
+        ["query", p.query],
+        ["hits", p.hits],
+        ["recalled", p.recalled],
+        ["candidates", candidates],
+      ], scoreBars(p)));
+    }
+  }
+
+  for (const e of ev.filter((x) => x.etype === "Forgotten")) {
+    const p = e.payload || {};
+    parts.push(detail(`Memory forget · ${eventValue(e, r.map)}`, [
+      ["binding", e.subject],
+      ["mode", p.mode],
+      ["effects", p.effects],
+      ["refs", p.refs],
+      ["policy", p.policy],
+    ]));
+  }
+
+  for (const e of ev.filter((x) => x.etype === "Resolved")) {
+    const p = e.payload || {};
+    const reply = resolvedReply(p);
+    if (p.kind === "credence") {
+      parts.push(detail(credenceValue(e.subject, p), [
+        ["variable", e.subject],
+        ["reply", credenceValue(e.subject, p)],
+        ["prompt", p.prompt],
+        ["enum", p.enum],
+        ["top", p.top ? `${p.top.variant} (${(p.top.score * 100).toFixed(1)}%)` : ""],
+        ["runner-up", p.runnerUp ? `${p.runnerUp.variant} (${(p.runnerUp.score * 100).toFixed(1)}%)` : ""],
+        ["margin", p.margin],
+      ], scoreBars(p)));
+    } else if (p.kind === "structured") {
+      parts.push(detail(`${e.subject} = ${renderedValue(reply)}`, [
+        ["variable", e.subject],
+        ["reply", renderedValue(reply)],
+        ...valueFieldRows(reply),
+        ["prompt", p.prompt],
+        ["schema", p.schema],
+        ["trust", reply?.trust],
+        ["kind", reply?.kind],
+      ]));
+    } else {
+      parts.push(detail(`${e.subject} = ${renderedValue(reply)}`, [
+        ["variable", e.subject],
+        ["reply", renderedValue(reply)],
+        ["prompt", p.prompt],
+        ["kind", p.kind],
+      ]));
+    }
+  }
+
+  for (const e of ev.filter((x) => ["Decided","Endorsed","PrincipalDecision","FailedPrincipalDecision"].includes(x.etype))) {
+    const p = e.payload || {};
+    const d = p.decision ? hydrateDecisionPayload(e, r.map) : p;
+    const endorsement = p.endorsement || {};
+    parts.push(detail(`${e.etype} · ${eventValue(e, r.map)}`, [
+      ["decision value", p.decision ? decisionValue(d) : ""],
+      ["endorsement value", p.endorsement ? endorsementValue(p.endorsement) : ""],
+      ["decision id", d.decision_id ?? p.decision_id ?? ""],
+      ["credence", d.enum || p.credence],
+      ["rule", d.rule],
+      ["basis", d.basis],
+      ["committed", d.effectiveCommitted || d.committed || p.decision],
+      ["margin", d.margin],
+      ["branch", endorsement.branch],
+      ["subject", endorsement.subject?.rendered],
+      ["subject trust", endorsement.subject?.trust],
+      ["attester", p.attestation?.attester || d.attestation?.attester],
+      ["payload hash", p.attestation?.payload_hash || d.attestation?.payload_hash],
+      ["signature", p.attestation?.signature || d.attestation?.signature],
+      ["top", d.source?.top ? `${d.source.top.variant} (${(d.source.top.score * 100).toFixed(1)}%)` : p.top ? `${p.top.variant} (${(p.top.score * 100).toFixed(1)}%)` : ""],
+    ], scoreBars(d.source || p)));
+  }
+
+  if (r.map?.actions) {
+    for (const e of ev.filter((x) => r.map.actions.includes(x.etype))) {
+      parts.push(detail(`Sink · ${e.etype}`, [
+        ["agent", e.subject],
+        ["payload", e.payload],
+      ]));
+    }
+  }
+
+  return parts.join("");
+}
 
 function render(r) {
   const out = [];
@@ -269,14 +958,17 @@ function render(r) {
   const stages = [
     { lbl: "Testimony", cls: has("Resolved") ? "lit" : "", sub: `${count("Resolved")} resolved` },
     { lbl: "Credence", cls: has("Resolved") ? "lit" : "", sub: "graded (in-memory)" },
-    { lbl: "Decision", cls: (has("Endorsed") || has("Abstained") || has("PrincipalDecision")) ? "lit" : "", sub: "sealed (in-memory)" },
-    { lbl: "Endorsement", cls: has("Endorsed") ? "good" : has("Abstained") ? "warn" : "", sub: has("Endorsed") ? `${count("Endorsed")} endorsed` : has("Abstained") ? "abstained" : "—" },
+    { lbl: "Decision", cls: has("Decided") || has("PrincipalDecision") ? "lit" : "", sub: has("Decided") ? `${count("Decided")} decided` : "sealed" },
+    { lbl: "Endorsement", cls: has("Endorsed") ? "good" : "", sub: has("Endorsed") ? `${count("Endorsed")} endorsed` : "—" },
     { lbl: "Sink", cls: sinks.length ? "good" : "", sub: sinks.length ? sinks.map((s) => s.etype).join(", ") : "no consequential act" },
     { lbl: "Ledger", cls: r.ok ? "lit" : "", sub: r.ok ? esc(r.chainHead) : "—" },
   ];
   out.push(`<div class="card"><h2>Trusted-kernel chain</h2><div class="chain">${
     stages.map((s, i) => `${i ? '<div class="arrow">→</div>' : ""}<div class="stage ${s.cls}"><div class="dot"></div><div class="lbl">${s.lbl}</div><div class="sub">${s.sub}</div></div>`).join("")
   }</div></div>`);
+
+  const detailHtml = renderRunDetails(r);
+  if (detailHtml) out.push(`<div class="card"><h2>Run details</h2><div class="details">${detailHtml}</div></div>`);
 
   // timeline
   if (ev.length) {
@@ -285,7 +977,7 @@ function render(r) {
         const c = catOf(e.etype, r.map);
         const pay = e.payload === undefined || e.payload === null ? "" : esc(JSON.stringify(e.payload));
         return `<div class="ev" style="--cat:${c.color}"><span class="tick">${e.tick}</span>
-          <span class="etype">${esc(e.etype)}</span><span class="subj">${esc(e.subject ?? "")}</span>
+          <span class="etype">${esc(e.etype)}</span><span class="subj">${esc(eventValue(e, r.map))}</span>
           <span class="tag">${c.name}</span><span class="pay">${pay}</span></div>`;
       }).join("")
     }</div><div class="meta">every event is hash-chained; the chain-head is the proof of replay-equivalence (T4)</div></div>`);

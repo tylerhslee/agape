@@ -8,7 +8,7 @@ action Alarm(text msg);
 read tool text fetch(text url);
 agent Mon grants { use fetch, perform Alarm } {
   on awake {
-    event<text> ep = self <- "which endpoint is down?";
+    text ep = self <- "which endpoint is down?";
     text body = fetch(f"{ep}");
     perform Alarm(body);
   }

@@ -1,17 +1,16 @@
 //! id:        gov_endorse_records_endorsed_ok
 //! section:   13_governance
 //! expect:    accept
-//! contains:  Endorsed
-//! spec:      §9, §13 (endorse records an Endorsed event on the ledger for the exact subject)
+//! contains:  Decided; Endorsed
+//! spec:      §9, §13 (decide records Decided, and endorse records an Endorsed event tied to that decision_id)
 //! ---
 agent A {
   on awake {
     text item = self <- "state the request";
     Credence<bool> c = self <- f"is this an approval: {item}";
     Decision<bool> d = decide c by confidence 0.9;
-    Endorsement<text> e = endorse item by d;
-    if (e.committed == true) { }
-    else if (e.committed == false) { }
+    if (d.committed == true) { Endorsement<text> e = endorse item by d; }
+    else if (d.committed == false) { Endorsement<text> e = endorse item by d; }
   }
 }
 spawn A a; awake a;

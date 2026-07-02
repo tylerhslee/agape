@@ -11,9 +11,8 @@ agent A grants { * } {
     text req = self <- "state the payment request";
     Credence<R> c = self <- f"should we pay: {req}";
     Decision<R> d = decide c by confidence 0.9;
-    Endorsement<text> e = endorse req by d;
-    if (e.committed == Pay) { perform Disburse(100); }
-    else if (e.committed == Hold) { }
+    if (d.committed == Pay) { Endorsement<text> e = endorse req by d; perform Disburse(100); }
+    else if (d.committed == Hold) { Endorsement<text> e = endorse req by d; }
   }
 }
 spawn A a; awake a;

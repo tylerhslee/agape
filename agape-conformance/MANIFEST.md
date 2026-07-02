@@ -1,4 +1,4 @@
-# Agape v1.0.0-alpha.2026.7.1.0 — Conformance Test Index
+# Agape v1.0.0-alpha.2026.7.2.0 — Conformance Test Index
 
 **164 tests** — accept: 101, reject: 63
 
@@ -25,7 +25,7 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 
 | id | expect | error | spec |
 |---|---|---|---|
-| `axes_collapse_is_decision` | accept | — | §13, §15.2 (`decide c by R` collapses a Credence to a Decision — settled, off-ledger, in hand) |
+| `axes_collapse_is_decision` | accept | — | §13, §15.2 (`decide c by R` collapses a Credence to a settled, ledgered Decision) |
 | `axes_credence_is_graded_judgment` | accept | — | §1, §8 (a semantic judgment is a provider send bound to Credence<E> → graded) |
 | `axes_pure_call_sync_settled` | accept | — | §1 Axis A/B (a pure `sync` fn reaches no dependency and stays `settled`) |
 | `axes_send_reply_is_raw` | accept | — | §1 Axis B/C, §15.3.2 T-Send (`d <- p` is on the ledger; its reply is `raw`) |
@@ -46,7 +46,7 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 | `type_event_multifield_arity_reject` | reject | TypeError | §3 (emit arity must match the declared event signature) |
 | `type_event_multifield_payload_ok` | accept | — | §3 (event invocation uses positional fields in declaration order) |
 | `type_event_multifield_type_reject` | reject | TypeError | §3 (emit arguments are type-checked positionally) |
-| `type_event_null_no_reply` | accept | — | §3 (event<null> = sent, no typed reply bound) |
+| `type_event_null_no_reply` | accept | — | §3 (null = sent, no typed reply bound) |
 | `type_no_text_to_principal_reject` | reject | TypeError | §3, §13 (a principal basis must be a declared `principal`, not a string; `decide c by "alice"` has no text -> Principal coercion) |
 | `type_rule_not_first_class_reject` | reject | TypeError | §3 (Rule is the gate parameter, not a first-class user-declared storage type) |
 | `type_scalars` | accept | — | §3 (scalars int/float/bool/text/null) |
@@ -67,7 +67,7 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 | `fn_sync_inhand_decide_ok` | accept | — | §4, §13 (a rule-driven `decide` over an in-hand Credence is a pure collapse, no dependency reach → sync-permitted) |
 | `fn_sync_pure_ok` | accept | — | §4 (a sync fn that reaches no declared dependency is well-formed) |
 | `fn_sync_reaches_seam_reject` | reject | ColorViolation | §1 Axis A, §4 (a sync fn may not reach the provider via `<-`) |
-| `fn_sync_store_reject` | reject | ColorViolation | §9, §10 (store reaches the provider-backed memory substrate, so a sync function may not call it) |
+| `fn_sync_store_reject` | reject | ColorViolation | §9, §10 (a mem write reaches the provider-backed memory substrate to internalize, so a sync function may not store) |
 | `fn_sync_tool_call_reject` | reject | ColorViolation | §4, §6b (a tool call reaches the tool dependency → async) |
 | `fn_taint_flows_through_call_reject` | reject | TaintViolation | §15.3.3 (function calls are trust-transparent; taint flowing through a helper still cannot reach a consequential sink) |
 
@@ -98,7 +98,7 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 | `comm_self_send_thinks` | accept | — | §6 (sending to self is the agent's own cognition; needs no reach grant) |
 | `comm_send_expires_ok` | accept | — | §6 (a send may carry a lifetime: `dest <- msg expires N`; reach into Worker is granted) |
 | `comm_send_lost_no_delivery` | accept | — | §6 (a send to a non-awake agent is lost — the chain stalls at Sent, never Delivered; loss is the absence of Delivered, not an event) |
-| `comm_typed_reply` | accept | — | §6 (a typed reply binds the provider answer into event<T>) |
+| `comm_typed_reply` | accept | — | §6 (a typed reply binds the provider answer into a typed value; the send lifecycle is ledgered) |
 
 ## 07_ledger
 
@@ -120,11 +120,11 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 | `sem_credence_over_user_enum` | accept | — | §8 (a provider send bound to Credence<E> is a constrained classifier over E) |
 | `sem_entailment_three_valued` | accept | — | §8, §9 (Credence<Entailment> over {Entails, Contradicts, Neutral}) |
 | `sem_sample_unknown_reject` | reject | TypeError | §8 (there is no sampling combinator in the surface language; a use of `sample` is an unknown-identifier error) |
-| `sem_schema_array_nested_exact` | accept | — | §8 (event<array<T>> compiles to an array schema whose item schema is the exact schema for T) |
-| `sem_schema_enum_exact` | accept | — | §8 (event<Enum> compiles to a closed enum structured-output schema) |
-| `sem_schema_struct_exact` | accept | — | §8 (event<struct> compiles to an exact object schema with all fields required and no extra fields) |
-| `sem_schema_violation_array_typemismatch` | accept | — | §8 (event<array<T>> compiles to schema-constrained output; schema failure raises TypeMismatch) |
-| `sem_schema_violation_enum_typemismatch` | accept | — | §8 (event<Enum> compiles to a closed enum schema; schema failure raises TypeMismatch) |
+| `sem_schema_array_nested_exact` | accept | — | §8 (array<T> compiles to an array schema whose item schema is the exact schema for T) |
+| `sem_schema_enum_exact` | accept | — | §8 (Enum compiles to a closed enum structured-output schema) |
+| `sem_schema_struct_exact` | accept | — | §8 (struct compiles to an exact object schema with all fields required and no extra fields) |
+| `sem_schema_violation_array_typemismatch` | accept | — | §8 (array<T> compiles to schema-constrained output; schema failure raises TypeMismatch) |
+| `sem_schema_violation_enum_typemismatch` | accept | — | §8 (Enum compiles to a closed enum schema; schema failure raises TypeMismatch) |
 | `sem_schema_violation_typemismatch` | accept | — | §8 (structured output uses constrained decoding; on schema failure the runtime raises a clean TypeMismatch — catchable and retryable) |
 
 ## 09_prelude
@@ -150,8 +150,8 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 | `mem_recall_requires_mem_reject` | reject | TypeError | §10 (`->` recall requires a `mem` handle on the left; a non-`mem` LHS is a TypeError) |
 | `mem_recall_taint_perform_reject` | reject | TaintViolation | §10, §13, §16.7 (a value recalled from private memory is subjective/graded and cannot drive a consequential sink without a gate) |
 | `mem_select_boolean_ops_ok` | accept | — | §10 (select where conditions support comparison operators combined by boolean connectives) |
-| `mem_store_internalizes_ok` | accept | — | §9, §10 (store(x) is the explicit emphasis form of internalization, on top of the mandatory memory envelope that internalizes every reaction's experience anyway, §16.7) |
-| `mem_store_records_internalized` | accept | — | §9, §10 (store(x) explicitly internalizes a value and records Internalized) |
+| `mem_store_internalizes_ok` | accept | — | §10 (the memory write seam mem <- value is the explicit emphasis form of internalization, on top of the mandatory memory envelope that internalizes every reaction, §16.7) |
+| `mem_store_records_internalized` | accept | — | §10, §15.4.2 (a mem write internalizes the value across the region views and records Internalized) |
 | `mem_write_recall_accept` | accept | — | §10 (a `mem` handle into private memory: write with `<-`, recall with `->`) |
 
 ## 11_control
@@ -179,25 +179,25 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 | id | expect | error | spec |
 |---|---|---|---|
 | `gov_bare_decision_no_perform_reject` | reject | TaintViolation | §13 (a sealed Decision<E> alone does not settle a subject; performing the raw artifact without an `endorse` is a taint violation) |
-| `gov_conformal_coldstart_abstains` | accept | — | §13 (a conformal gate with no recorded decisions is below its labelled-case readiness floor and abstains — the supervised cold start; autonomy is earned as grounded labels accrue) |
+| `gov_conformal_coldstart_abstains` | accept | — | §13 (a conformal gate with no recorded decisions is below its labelled-case readiness floor and records a Decided abstention — the supervised cold start) |
 | `gov_conformal_gate_ok` | accept | — | §13 (the conformal basis `by conformal α` is a distribution-free finite-sample gate calibrated from the ledger) |
 | `gov_consequential_bare_collapse_reject` | reject | TaintViolation | §13 (a sealed Decision may guide control flow but is not a subject endorsement → it may not license a perform) |
-| `gov_endorse_abstain_ok` | accept | — | §13 (the else branch runs when the gate abstains; the endorsement is not committed-narrowed there) |
-| `gov_endorse_abstain_sink_reject` | reject | TaintViolation | §13, §15.3.3 (an Endorsement is sink-admissible only in a committed-variant branch, not in the abstained else branch) |
+| `gov_endorse_abstain_ok` | accept | — | §13 (the else branch runs when the gate abstains; no Endorsement is constructed for abstinence) |
+| `gov_endorse_abstain_sink_reject` | reject | TypeError | §13, §15.3.3 (abstinence is a Decision outcome, not an Endorsement; endorse requires a committed-narrowed Decision) |
 | `gov_endorse_artifact_allows_perform` | accept | — | §13 (a generated artifact is settled by endorsing it; the endorsement is sink-admissible only in a committed branch) |
-| `gov_endorse_records_endorsed_ok` | accept | — | §9, §13 (endorse records an Endorsed event on the ledger for the exact subject) |
+| `gov_endorse_records_endorsed_ok` | accept | — | §9, §13 (decide records Decided, and endorse records an Endorsed event tied to that decision_id) |
 | `gov_endorse_subject_scope_reject` | reject | GateError | §13 (an endorsed subject must be in the decision's dependency scope; a decision about one subject cannot endorse another) |
 | `gov_endorsed_perform_ok` | accept | — | §13 (a recorded subject endorsement licenses a consequential perform in its committed branch) |
 | `gov_endorsed_subject_allows_perform` | accept | — | §13 (endorsing the exact subject settles it; the endorsement is sink-admissible inside a committed branch, licensing a perform) |
 | `gov_endorsement_subject_collision_accept` | accept | — | §13 (Endorsement metadata accessors win name collisions; the subject field remains reachable through `.subject`) |
 | `gov_extend_use_subtractive_reject` | reject | AuthorityViolation | §5, §13 (capabilities, incl. `use`, are subtractive under extend) |
 | `gov_grants_star_ok` | accept | — | §13 (grants { * } is the explicit unconstrained opt-out — lattice top) |
-| `gov_margin_floor_abstains` | accept | — | §13 (a rule's `margin δ` requires the top-vs-runner-up lead ≥ δ at decision time; a 0.10 lead below the 0.20 margin abstains, so no Endorsed is recorded; the rule is inline, not a manifest knob) |
+| `gov_margin_floor_abstains` | accept | — | §13 (a rule's `margin δ` requires the top-vs-runner-up lead ≥ δ at decision time; a 0.10 lead below the 0.20 margin records a Decided abstention, so no Endorsed is recorded) |
 | `gov_perform_reach_subtractive_reject` | reject | AuthorityViolation | §5, §13 (grants are subtractive under extend for `perform`/`reach` too — a child may not exceed its parent's authority) |
 | `gov_perform_ungranted_reject` | reject | AuthorityViolation | §13 (default-deny: an agent may only perform actions in its grants) |
-| `gov_principal_decision_deny_fails` | accept | — | §13 (when the principal declines, `p decide c by r` records a FailedPrincipalDecision and the decision stays abstained) |
-| `gov_principal_decision_ok` | accept | — | §13 (`p decide c by r` reaches the identity dependency and records a PrincipalDecision when the rule cannot commit, then endorses the subject) |
-| `gov_principal_decision_records` | accept | — | §13, §16.4 (a granted `p decide c by r` records a PrincipalDecision event for the gated credence) |
+| `gov_principal_decision_deny_fails` | accept | — | §13 (when the principal declines, `p decide c by r` records FailedPrincipalDecision and a Decided abstention) |
+| `gov_principal_decision_ok` | accept | — | §13 (`p decide c by r` reaches identity when the rule cannot commit, records PrincipalDecision, records Decided, then may endorse the subject) |
+| `gov_principal_decision_records` | accept | — | §13, §16.4 (a granted `p decide c by r` records PrincipalDecision, then the canonical Decided outcome) |
 | `gov_raw_subject_to_sink_reject` | reject | TaintViolation | §13 (endorse never settles the raw subject variable; only the endorsement binder reaches a sink — performing the raw subject is rejected, in any branch) |
 | `gov_reach_ungranted_reject` | reject | AuthorityViolation | §13 (sending into another agent requires a `reach` grant) |
 | `gov_read_tool_settled_perform_ok` | accept | — | §6b, §13 (a read tool over settled inputs yields a settled result — external data settled by origin — that may drive a perform) |
@@ -214,7 +214,7 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 | id | expect | error | spec |
 |---|---|---|---|
 | `repro_chain_head_equal` | accept | — | §15.4.2, §15.5 / T4 (a recorded run replays to an identical chain-head: every oracle result is re-served from the journal in order and nothing is re-invoked) |
-| `repro_collapse_off_ledger` | accept | — | §13, §15 (`decide c by R` is a pure projection of a Credence; off-ledger and synchronous) |
+| `repro_decision_records_decided` | accept | — | §13, §15 (`decide c by R` records a Decided ledger event while remaining sync/no dependency reach) |
 
 ## 16_config
 

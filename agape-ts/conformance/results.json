@@ -1265,8 +1265,8 @@
       "section": "13_governance",
       "expect": "reject",
       "pass": true,
-      "reason": "rejected with TaintViolation",
-      "errorClass": "TaintViolation",
+      "reason": "rejected with TypeError",
+      "errorClass": "TypeError",
       "phase": "run",
       "hadMatchers": false,
       "directives": []
@@ -1544,13 +1544,13 @@
       ]
     },
     {
-      "id": "repro_collapse_off_ledger",
+      "id": "repro_decision_records_decided",
       "section": "15_reproducibility",
       "expect": "accept",
       "pass": true,
-      "reason": "accepted",
+      "reason": "accepted + ledger ok",
       "phase": "run",
-      "hadMatchers": false,
+      "hadMatchers": true,
       "directives": []
     },
     {

@@ -10,9 +10,11 @@ agent Desk {
     text item = self <- "describe";
     Credence<R> c = self <- f"yes: {item}";
     Decision<R> d = decide c by confidence 0.8;
-    Endorsement<text> e = endorse item by d;
-    Decision<R> bad = e;
-    say(f"{bad}");
+    if (d.committed == Yes) {
+      Endorsement<text> e = endorse item by d;
+      Decision<R> bad = e;
+      say(f"{bad}");
+    }
   }
 }
 spawn Desk d; awake d;

@@ -6,6 +6,6 @@
 //! note:      a received reply is internalized into private memory with no config flag; the former `internalize_on_receive` opt-in was removed when the envelope became mandatory
 //! ---
 agent A {
-  on awake { event<text> r = self <- "what happened today?"; }
+  on awake { text r = self <- "what happened today?"; }
 }
 spawn A a; awake a;

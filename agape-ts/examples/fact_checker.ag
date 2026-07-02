@@ -1,0 +1,114 @@
+// fact_checker.ag - prompt -> structured claims -> per-claim verification -> endorsed answer.
+//
+// The first provider call returns a structured array of atomic claims. Each claim is
+// sent back through the same agent as a CheckClaim event, where a dummy search-backed
+// verification path tags the claim with a Verification object.
+
+prompt text question;
+
+read tool text search(text q);
+
+enum ClaimKind { Factual, Opinionated }
+enum Grounding { Grounded, Weak, Unsupported }
+enum AnswerVerdict { Publish, Revise }
+
+struct AtomicClaim {
+  statement: text,
+  kind: ClaimKind,
+  rationale: text
+}
+
+struct Verification {
+  claim: text,
+  claim_kind: ClaimKind,
+  verdict: text,
+  evidence: text
+}
+
+event CheckClaim(AtomicClaim claim);
+event ClaimVerified(Verification result);
+event FinalAnswer(text status);
+
+agent FactChecker grants { use search } {
+  when (Prompt p about question) {
+    text user_prompt = p.text;
+
+    AtomicClaim[] claims =
+      self <- f"Answer this user request as an array of atomic claims. Include factual claims and opinionated claims that should still be grounded. User request: {user_prompt}";
+
+    // The current core has no for-each surface. The verification path is event-based,
+    // so additional fixed claim slots can be emitted the same way when the provider
+    // contract asks for a fixed-size array.
+    emit CheckClaim(claims[0]);
+
+    text draft =
+      self <- f"Write the user-facing answer in natural language using this atomic claim plan: {claims[0].statement}";
+
+    Credence<AnswerVerdict> quality =
+      self <- f"Does this answer faithfully synthesize the atomic claim plan and avoid unsupported certainty: {draft}";
+    Decision<AnswerVerdict> d = decide quality by confidence 0.8;
+
+    if (d.committed == Publish) {
+      Endorsement<text> answer = endorse draft by d;
+      emit FinalAnswer("endorsed");
+      say(answer);
+    } else if (d.committed == Revise) {
+      Endorsement<text> answer = endorse draft by d;
+      emit FinalAnswer("needs revision");
+      say("draft held for revision");
+    } else {
+      emit FinalAnswer("abstained");
+      say("answer held for review");
+    }
+  }
+
+  when (CheckClaim q about self) {
+    AtomicClaim claim = q.claim;
+    text evidence = search(f"fact check this claim: {claim.statement}");
+
+    Credence<Grounding> grounded =
+      self <- f"Dummy fact-check criteria: mark Grounded if the search evidence supports the claim, Weak if it is opinionated but plausibly grounded, Unsupported otherwise. Claim kind: {claim.kind}. Claim: {claim.statement}. Search evidence: {evidence}";
+    Decision<Grounding> d = decide grounded by confidence 0.75;
+
+    if (d.committed == Grounded) {
+      Verification result = Verification {
+        claim: claim.statement,
+        claim_kind: claim.kind,
+        verdict: "grounded",
+        evidence: evidence
+      };
+      emit ClaimVerified(result);
+      say(f"verification: {result.claim} -> {result.verdict}");
+    } else if (d.committed == Weak) {
+      Verification result = Verification {
+        claim: claim.statement,
+        claim_kind: claim.kind,
+        verdict: "weakly grounded",
+        evidence: evidence
+      };
+      emit ClaimVerified(result);
+      say(f"verification: {result.claim} -> {result.verdict}");
+    } else if (d.committed == Unsupported) {
+      Verification result = Verification {
+        claim: claim.statement,
+        claim_kind: claim.kind,
+        verdict: "unsupported",
+        evidence: evidence
+      };
+      emit ClaimVerified(result);
+      say(f"verification: {result.claim} -> {result.verdict}");
+    } else {
+      Verification result = Verification {
+        claim: claim.statement,
+        claim_kind: claim.kind,
+        verdict: "unresolved",
+        evidence: evidence
+      };
+      emit ClaimVerified(result);
+      say(f"verification: {result.claim} -> unresolved");
+    }
+  }
+}
+
+spawn FactChecker checker;
+awake checker;

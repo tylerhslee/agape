@@ -1,7 +1,7 @@
-# Agape — Black-Box Conformance Suite (v1.0.0-alpha.2026.7.1.0)
+# Agape — Black-Box Conformance Suite (v1.0.0-alpha.2026.7.2.0)
 
 A set of `.ag` programs, each tagged with an expected outcome, that together
-define when an implementation of **Agape v1.0.0-alpha.2026.7.1.0** is *valid* (every
+define when an implementation of **Agape v1.0.0-alpha.2026.7.2.0** is *valid* (every
 behavior matches the spec) and *complete* (every required behavior is exercised). Tests
 are derived **only** from `../SPEC.md` — never from any implementation. An
 implementation passes by feeding each test through its own front end + runtime
@@ -11,7 +11,7 @@ The suite is kernel-first. The most important tests are the ones that prove no
 surface feature can bypass the trusted path:
 
 ```
-testimony -> Credence<E> -> Decision<E> -> recorded endorsement -> granted sink -> ledger
+testimony -> Credence<E> -> Decided Decision<E> -> committed Endorsement<T> -> granted sink -> ledger
 ```
 
 This is the **core kernel** suite — the complete language with no syntactic sugar.
@@ -106,7 +106,7 @@ categories; the suite asserts the category, not the message text.
 
 ```
 Spawned(x) AgentAwake(x) SleepEvent(x) PromptOpened(x) Prompt(x)
-Event Error  Endorsed(x) Abstained(x) PrincipalDecision(x)
+Event Error  Decided(x) Endorsed(x) PrincipalDecision(x)
 Contradiction(x) QueryResult(x)  MemoryConsulted(x) ArtifactObserved(x) Internalized(x) Forgotten(x)
 TypeMismatch MarginFloorViolation(x)
 pair(op@subj)   ← a Started/Resolved pair for async op `op` on subject `subj`
@@ -115,9 +115,11 @@ single(op@subj) ← a single (synchronous) event
 
 `ledger:` is an exact ordered match. `contains:`/`absent:` are order-free. `order:` is an
 **ordered subsequence** — every listed event must appear, in the given relative order, with
-anything allowed in between. Subtype matching follows §9: an `endorse` records `Endorsed(x)` (a
-singleton commit applied to a subject) or `Abstained(x)`; a `decide c by p` records
-`PrincipalDecision(x)`; `Error` matches any `Error` subtype (e.g. `Contradiction`).
+anything allowed in between. Subtype matching follows §9: every `decide` records `Decided(x)`
+(committed or abstained); an `endorse` records `Endorsed(x)` only after a committed Decision has
+been flow-narrowed; a principal-prefixed `decide` may also record `PrincipalDecision(x)` or
+`FailedPrincipalDecision(x)` before `Decided(x)`; `Error` matches any `Error` subtype (e.g.
+`Contradiction`).
 
 The message lifecycle and async pairs use ordinary event tokens: `Sent(x)` `Delivered(x)`
 `Resolved(x)` `Expired(x)` `DeliveryRefused(x)`, plus `AgentCrashed(x)` `FailedPrincipalDecision(x)`.

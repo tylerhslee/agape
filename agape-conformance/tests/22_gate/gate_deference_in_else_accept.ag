@@ -2,7 +2,7 @@
 //! section:   22_gate
 //! expect:    accept
 //! principal: grant
-//! contains:  PrincipalDecision; Endorsed
+//! contains:  PrincipalDecision; Decided; Endorsed
 //! spec:      §13 (deference is an ordinary principal-prefixed `decide` in the else branch when the autonomous gate abstains)
 //! ---
 conformal 0.05;
@@ -15,14 +15,12 @@ agent Desk grants { perform Commit } {
     text body = q.body;
     Credence<R> c = self <- f"commit: {body}";
     Decision<R> d = decide c by conformal 0.05;
-    Endorsement<text> e = endorse body by d;
-    if (e.committed == Approve) { perform Commit(e); }
-    else if (e.committed == Reject) { say("rejected"); }
+    if (d.committed == Approve) { Endorsement<text> e = endorse body by d; perform Commit(e); }
+    else if (d.committed == Reject) { Endorsement<text> e = endorse body by d; say("rejected"); }
     else {
       Decision<R> h = boss decide c by conformal 0.05;
-      Endorsement<text> eh = endorse body by h;
-      if (eh.committed == Approve) { perform Commit(eh); }
-      else if (eh.committed == Reject) { say("rejected"); }
+      if (h.committed == Approve) { Endorsement<text> eh = endorse body by h; perform Commit(eh); }
+      else if (h.committed == Reject) { Endorsement<text> eh = endorse body by h; say("rejected"); }
     }
   }
   on awake { emit Ask("go"); }

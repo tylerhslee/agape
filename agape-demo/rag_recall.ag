@@ -17,22 +17,21 @@ action Publish(text body);        // the consequential sink
 
 agent Librarian grants { perform Publish } {
   on awake {
-    // INGEST — three private marker writes. These are deliberately arbitrary demo facts,
-    // not facts about Agape, so a live provider has to rely on the recalled context.
-    // Watch the Internalized events on the ledger.
-    mem notes <- "Private marker: Project Violet's launch code is SABLE-47.";
-    notes <- "Private marker: the companion phrase for SABLE-47 is north-window.";
-    notes <- "Private marker: the verified answer should pair SABLE-47 with north-window.";
+    // INGEST — three knowledge writes; each is decomposed across facts/graph/vectors
+    // (watch the Internalized events on the ledger).
+    mem notes <- "Agape's ledger is append-only and hash-chained; the chain-head proves replay.";
+    notes <- "The gate has two operations: decide collapses a Credence, endorse settles a subject.";
+    notes <- "A recall from private memory is always tainted and must be re-gated before a sink.";
 
     // RETRIEVE — the RAG query; fused across the three views, and TAINTED by design
     // (the MemoryConsulted event is the retrieval trace).
-    text context = notes -> "which launch code and phrase belong together?";
+    text context = notes -> "what makes an Agape run trustworthy?";
 
     // AUGMENTED GENERATION — draft an answer grounded in the retrieved context (still tainted).
     text answer = self <- f"answer in one sentence using this context: {context}";
 
     // JUDGE + GATE — is the generated answer grounded? Collapse, endorse the exact answer.
-    Credence<Verdict> c = self <- f"is this answer grounded in the retrieved context and does it pair SABLE-47 with north-window: {answer}";
+    Credence<Verdict> c = self <- f"is this answer grounded in the retrieved context: {answer}";
     Decision<Verdict>  d = decide c by confidence 0.8;
 
     if (d.committed == Grounded) {

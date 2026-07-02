@@ -6,7 +6,7 @@
 //! ---
 agent Worker {}
 agent Boss(Worker hand) {
-  on awake { event<text> s = hand <- "status?"; }
+  on awake { text s = hand <- "status?"; }
 }
 spawn Worker w;
 spawn Boss b(w); awake b;

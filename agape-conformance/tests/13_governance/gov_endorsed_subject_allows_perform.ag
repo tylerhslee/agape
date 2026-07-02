@@ -11,9 +11,8 @@ agent A grants { perform Reply } {
     text draft = self <- "write the answer";
     Credence<Verdict> c = self <- f"is this faithful: {draft}";
     Decision<Verdict> d = decide c by confidence 0.9;
-    Endorsement<text> e = endorse draft by d;
-    if (e.committed == Faithful) { perform Reply(e); }
-    else if (e.committed == Unsupported) { emit Event("revise"); }
+    if (d.committed == Faithful) { Endorsement<text> e = endorse draft by d; perform Reply(e); }
+    else if (d.committed == Unsupported) { Endorsement<text> e = endorse draft by d; emit Event("revise"); }
   }
 }
 spawn A a; awake a;

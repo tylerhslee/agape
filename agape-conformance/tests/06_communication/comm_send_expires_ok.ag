@@ -5,7 +5,7 @@
 //! ---
 agent Worker {}
 agent Boss(Worker hand) grants { reach Worker } {
-  on awake { event<text> s = hand <- "status?" expires 5; }
+  on awake { text s = hand <- "status?" expires 5; }
 }
 spawn Worker w;
 spawn Boss b(w); awake b;

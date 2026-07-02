@@ -1,7 +1,7 @@
 //! id:        gov_endorse_abstain_ok
 //! section:   13_governance
 //! expect:    accept
-//! spec:      §13 (the else branch runs when the gate abstains; the endorsement is not committed-narrowed there)
+//! spec:      §13 (the else branch runs when the gate abstains; no Endorsement is constructed for abstinence)
 //! ---
 enum R { Fraud, Clean }
 action Flag(text note);
@@ -10,9 +10,8 @@ agent C grants { perform Flag } {
     text report = self <- "describe the transaction";
     Credence<R> c = self <- f"is this fraud: {report}";
     Decision<R> d = decide c by confidence 0.95 margin 0.2;
-    Endorsement<text> e = endorse report by d;
-    if (e.committed == Fraud) { perform Flag(e); }
-    else if (e.committed == Clean) { say("clean"); }
+    if (d.committed == Fraud) { Endorsement<text> e = endorse report by d; perform Flag(e); }
+    else if (d.committed == Clean) { Endorsement<text> e = endorse report by d; say("clean"); }
     else { emit Event("escalate"); }
   }
 }

@@ -1,0 +1,35 @@
+// prompt_notify.ag — user input -> conformal gate -> local attestation -> notification.
+
+prompt text request;
+principal reviewer;
+
+enum Notice { Notify, Ignore }
+
+action NotifyUser(text body);
+event Held(text reason);
+
+agent Notifier grants { perform NotifyUser } {
+  when (Prompt p about request) {
+    text body = p.text;
+
+    Credence<Notice> c = self <- f"should this request notify the user: {body}";
+
+    // Conformal is cold in this demo runtime, so it abstains locally and reaches the
+    // declared principal. Studio supplies a local user attestation for that principal.
+    Decision<Notice> d = reviewer decide c by conformal 0.1;
+
+    if (d.committed == Notify) {
+      Endorsement<text> e = endorse body by d;
+      perform NotifyUser(e);
+      say(f"notified: {body}");
+    } else if (d.committed == Ignore) {
+      Endorsement<text> e = endorse body by d;
+      emit Held("ignored by attestation");
+    } else {
+      emit Held("awaiting user attestation");
+    }
+  }
+}
+
+spawn Notifier n;
+awake n;

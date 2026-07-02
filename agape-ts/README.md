@@ -1,9 +1,9 @@
 # agape-ts — a TypeScript compiler + runtime for Agape
 
 A from-scratch implementation of the Agape **core kernel** (per `../SPEC.md`,
-v1.0.0-alpha.2026.7.1.0), written in TypeScript so it can live inside Agape Studio. It lexes,
+v1.0.0-alpha.2026.7.2.0), written in TypeScript so it can live inside Agape Studio. It lexes,
 parses, statically checks, and runs the complete core language, with the trusted kernel
-(`decide` → `endorse` → granted sink → ledger) enforced both statically and at runtime.
+(`decide` → `Decided` → committed `endorse` → granted sink → ledger) enforced both statically and at runtime.
 
 **Conformance: 164/164 (100%)** against `../agape-conformance` — see [CONFORMANCE.md](CONFORMANCE.md).
 
@@ -14,6 +14,7 @@ npm install
 npm run hello                     # runs examples/hello.ag on the mock provider
 npx tsx src/cli.ts run examples/hello.ag --manifest agape.toml
 npx tsx src/cli.ts studio         # the execution-inspection UI (serves .ag files in the cwd)
+npx tsx src/cli.ts studio --share # live providers + an ephemeral token for a short tunnel demo
 npm test                          # the kernel safety test suite
 
 # live providers — secrets come from the environment / a .env (never the manifest):
@@ -28,10 +29,10 @@ times and uses the empirical frequency; Gemini is wired the same way.
 
 `examples/hello.ag` is the whole trusted kernel on one screen — a Greeter that judges a draft,
 collapses the judgment with `decide`, endorses the exact draft, and reaches the `Announce` sink only
-inside the committed `Publish` branch (`if (e.committed == Publish)`):
+inside the committed `Publish` branch (`if (d.committed == Publish)`):
 
 ```
-testimony  ->  Credence<Verdict>  ->  Decision<Verdict>  ->  Endorsement<text>  ->  granted sink  ->  ledger
+testimony  ->  Credence<Verdict>  ->  Decided Decision<Verdict>  ->  Endorsement<text>  ->  granted sink  ->  ledger
 ```
 
 ## Pipeline
@@ -86,7 +87,7 @@ The complete core kernel: agents + lifecycle (`spawn`/`awake`/`sleep`/crash + `o
 `extend` + `instruction`), the send `<-` with the three-phase lifecycle (+ `expires`/refusal),
 `Credence<E>` slots, `decide c by confidence θ [margin δ] [floor m]` / `conformal α [readiness N]
 [floor m]`, the principal escalation prefix (`p decide c by r`) with `PrincipalDecision`/
-`FailedPrincipalDecision`, `endorse` with Model-A `if (e.committed == V)` flow narrowing, the
+`FailedPrincipalDecision`, `Decided` ledger records, `endorse` with `if (d.committed == V)` flow narrowing, the
 consequential-action rule (static admission + the runtime margin floor), default-deny `grants` with
 subtractive `extend`, read/write tools over the tool seam, `when` subscriptions (subtype match,
 `about`, guards, registration order), private memory (`mem` store/recall/`forget`, always-tainted

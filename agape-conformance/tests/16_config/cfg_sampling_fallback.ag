@@ -12,9 +12,8 @@ agent A {
     text item = self <- "state readiness";
     Credence<bool> c = self <- f"ready: {item}";
     Decision<bool> d = decide c by confidence 0.8;
-    Endorsement<text> e = endorse item by d;
-    if (e.committed == true) { say("ready"); }
-    else if (e.committed == false) { say("not-ready"); }
+    if (d.committed == true) { Endorsement<text> e = endorse item by d; say("ready"); }
+    else if (d.committed == false) { Endorsement<text> e = endorse item by d; say("not-ready"); }
   }
 }
 spawn A a; awake a;

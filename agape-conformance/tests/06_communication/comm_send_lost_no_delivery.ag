@@ -10,7 +10,7 @@ agent Worker {}
 agent Boss grants { reach Worker } {
   on awake {
     spawn Worker w;
-    event<text> s = w <- "status?";
+    text s = w <- "status?";
   }
 }
 spawn Boss b; awake b;

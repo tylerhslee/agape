@@ -2,9 +2,9 @@
 //! section:   13_governance
 //! expect:    accept
 //! provider:  credence(true=0.55, false=0.45)
-//! contains:  Abstained
+//! contains:  Decided
 //! absent:    Endorsed
-//! spec:      §13 (a rule's `margin δ` requires the top-vs-runner-up lead ≥ δ at decision time; a 0.10 lead below the 0.20 margin abstains, so no Endorsed is recorded; the rule is inline, not a manifest knob)
+//! spec:      §13 (a rule's `margin δ` requires the top-vs-runner-up lead ≥ δ at decision time; a 0.10 lead below the 0.20 margin records a Decided abstention, so no Endorsed is recorded)
 //! ---
 action Flag(bool b);
 agent A grants { perform Flag } {
@@ -12,9 +12,8 @@ agent A grants { perform Flag } {
     text subj = self <- "state the case";
     Credence<bool> c = self <- f"should we flag: {subj}";
     Decision<bool> d = decide c by confidence 0.5 margin 0.2 floor 0.2;
-    Endorsement<text> e = endorse subj by d;
-    if (e.committed == true) { perform Flag(true); }
-    else if (e.committed == false) { }
+    if (d.committed == true) { Endorsement<text> e = endorse subj by d; perform Flag(true); }
+    else if (d.committed == false) { Endorsement<text> e = endorse subj by d; }
     else { emit Event("escalate"); }
   }
 }

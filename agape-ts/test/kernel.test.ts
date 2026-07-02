@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { parse } from "../src/parser.js";
 import { run } from "../src/interp.js";
-import { MockProvider } from "../src/runtime.js";
+import { MockProvider, type StructuredSchema } from "../src/runtime.js";
 
 const HELLO = `
 enum Verdict { Publish, Revise }
@@ -13,9 +13,11 @@ agent Greeter grants { perform Announce } {
     text draft = "hello, world";
     Credence<Verdict> v = self <- f"is this safe to publish: {draft}";
     Decision<Verdict> d = decide v by confidence 0.8;
-    Endorsement<text> e = endorse draft by d;
-    if (e.committed == Publish) { perform Announce(e); }
-    else if (e.committed == Revise) { emit Revised("held"); }
+    if (d.committed == Publish) {
+      Endorsement<text> e = endorse draft by d;
+      perform Announce(e);
+    }
+    else if (d.committed == Revise) { emit Revised("held"); }
     else { emit Revised("uncertain"); }
   }
 }
@@ -31,6 +33,15 @@ function runWith(scores: Record<string, number>) {
 }
 type Result = Awaited<ReturnType<typeof runWith>>;
 const etypes = (r: Result) => r.ledger.events.map((e) => e.etype);
+
+class RecordingStructuredProvider extends MockProvider {
+  readonly calls: { prompt: string; schema: StructuredSchema; name?: string }[] = [];
+  constructor(private readonly answer: unknown) { super(); }
+  override async structured(prompt: string, schema: StructuredSchema, name?: string): Promise<unknown> {
+    this.calls.push({ prompt, schema, name });
+    return this.answer;
+  }
+}
 
 describe("the trusted kernel — gate chain", () => {
   it("commits to Publish and reaches the Announce sink with the endorsed subject", async () => {
@@ -51,10 +62,125 @@ describe("the trusted kernel — gate chain", () => {
 
   it("abstains below threshold → no commit, no sink, else branch runs", async () => {
     const r = await runWith({ Publish: 0.5, Revise: 0.5 }); // top 0.5 < 0.8 → abstained
-    expect(etypes(r)).toContain("Abstained");
+    expect(etypes(r)).toContain("Decided");
+    expect(etypes(r)).not.toContain("Endorsed");
     expect(etypes(r)).not.toContain("Announce");
     const rev = r.ledger.events.find((e) => e.etype === "Revised");
     expect(rev!.payload).toEqual(["uncertain"]);
+  });
+});
+
+describe("structured provider replies", () => {
+  const TEXT_REPLY = `
+    agent A {
+      on awake {
+        text claim = self <- "summarize the incoming claim";
+        say(claim);
+      }
+    }
+    spawn A a; awake a;
+  `;
+
+  it("accepts a scalar text structured reply instead of substituting null", async () => {
+    const provider = new RecordingStructuredProvider("claim summary");
+    const r = await run(parse(TEXT_REPLY), { provider });
+    expect(provider.calls[0]?.schema).toEqual({ type: "string" });
+    expect(r.stdout).toEqual(["claim summary"]);
+    expect(r.ledger.events.find((e) => e.etype === "TypeMismatch")).toBeUndefined();
+    const resolved = r.ledger.events.find((e) => e.etype === "Resolved" && e.subject === "claim");
+    expect((resolved?.payload as any)?.value).toBeUndefined();
+    expect((resolved?.payload as any)?.reply?.kind).toBe("text");
+    expect((resolved?.payload as any)?.reply?.value).toBe("claim summary");
+    expect((resolved?.payload as any)?.reply?.rendered).toBe("claim summary");
+  });
+
+  it("records the raw bad value when a structured reply fails its schema", async () => {
+    const r = await run(parse(TEXT_REPLY), { provider: new RecordingStructuredProvider({ value: "wrapped" }) });
+    expect(r.stdout).toEqual(["null"]);
+    const mismatch = r.ledger.events.find((e) => e.etype === "TypeMismatch" && e.subject === "claim");
+    expect(mismatch?.payload).toMatchObject({
+      schema: { type: "string" },
+      raw: { value: "wrapped" },
+      error: "structured reply field is not text",
+    });
+  });
+
+  it("uses the struct itself as the schema for typed struct replies", async () => {
+    const prog = `
+      struct Receipt {
+        vendor: text,
+        total_cents: int,
+        needs_review: bool
+      }
+      agent A {
+        on awake {
+          Receipt receipt = self <- "extract receipt";
+          say(receipt.vendor);
+          say(f"total: {receipt.total_cents}");
+          say(f"review: {receipt.needs_review}");
+        }
+      }
+      spawn A a; awake a;
+    `;
+    const provider = new RecordingStructuredProvider({
+      vendor: "Northwind",
+      total_cents: 4125,
+      needs_review: false,
+    });
+    const r = await run(parse(prog), { provider });
+    expect(provider.calls[0]?.schema).toEqual({
+      type: "object",
+      properties: {
+        vendor: { type: "string" },
+        total_cents: { type: "integer" },
+        needs_review: { type: "boolean" },
+      },
+      required: ["vendor", "total_cents", "needs_review"],
+      additionalProperties: false,
+    });
+    expect(r.stdout).toEqual(["Northwind", "total: 4125", "review: false"]);
+    const resolved = r.ledger.events.find((e) => e.etype === "Resolved" && e.subject === "receipt");
+    expect((resolved?.payload as any)?.schema?.properties?.vendor).toEqual({ type: "string" });
+    expect((resolved?.payload as any)?.value).toBeUndefined();
+    expect((resolved?.payload as any)?.reply?.kind).toBe("struct");
+    expect((resolved?.payload as any)?.reply?.fields?.vendor).toMatchObject({ kind: "text", value: "Northwind" });
+    expect((resolved?.payload as any)?.reply?.fields?.total_cents).toMatchObject({ kind: "int", value: 4125 });
+    // §16.7: the mandatory memory envelope internalizes every received typed reply — struct replies
+    // included (cfg_internalize_is_mandatory pins the same for bare text replies).
+    const internalized = r.ledger.events.find((e) => e.etype === "Internalized" && e.subject === "receipt");
+    expect(internalized).toBeDefined();
+  });
+
+  it("rejects legacy event<T> reply syntax", () => {
+    const prog = `
+      agent A {
+        on awake {
+          event<text> reply = self <- "hello";
+        }
+      }
+      spawn A a; awake a;
+    `;
+    expect(() => parse(prog)).toThrow(/event<T>` is no longer a reply type/);
+  });
+
+  it("stores memory through <- and returns an Internalized ledger receipt", async () => {
+    const prog = `
+      agent A {
+        on awake {
+          mem notes;
+          LedgerEntry<Internalized> receipt = notes <- "durable note";
+          say(receipt._meta.etype);
+          say(receipt.refs.input);
+        }
+      }
+      spawn A a; awake a;
+    `;
+    const r = await run(parse(prog), {});
+    expect(r.stdout[0]).toBe("Internalized");
+    expect(r.stdout[1]).toMatch(/^blob:sha256:/);
+    const internalized = r.ledger.events.find((e) => e.etype === "Internalized" && e.subject === "notes");
+    expect((internalized?.payload as any)?.effects?.facts?.upserted).toBe(1);
+    expect((internalized?.payload as any)?.policy?.background_reindex).toBe("runtime-managed");
   });
 });
 
@@ -99,9 +225,11 @@ describe("the identity dependency fails closed (§13)", () => {
       on awake {
         Credence<Approval> c = self <- "assess this refund request";
         Decision<Approval> d = alice decide c by conformal 0.05;
-        Endorsement<Credence<Approval>> e = endorse c by d;
-        if (e.committed == Approve) { perform ReleaseFunds(10000); }
-        else if (e.committed == Decline) { emit Event("declined"); }
+        if (d.committed == Approve) {
+          Endorsement<Credence<Approval>> e = endorse c by d;
+          perform ReleaseFunds(10000);
+        }
+        else if (d.committed == Decline) { emit Event("declined"); }
         else { emit Event("withheld"); }
       }
     }
@@ -113,7 +241,8 @@ describe("the identity dependency fails closed (§13)", () => {
   it("fails closed (abstain) when no principal directive is configured — no fabricated approval", async () => {
     const r = await run(parse(RELEASE), { provider: new MockProvider(scores) });
     expect(ledger(r)).toContain("FailedPrincipalDecision");
-    expect(ledger(r)).toContain("Abstained");
+    expect(ledger(r)).toContain("Decided");
+    expect(ledger(r)).not.toContain("Endorsed");
     expect(ledger(r)).not.toContain("PrincipalDecision");
     expect(ledger(r)).not.toContain("ReleaseFunds"); // the sink must NOT fire
   });
@@ -155,6 +284,64 @@ describe("the prompt sensor opens from its declaration (§5b)", () => {
     const r = await run(parse(prog), { provider: new MockProvider(() => ({})) });
     expect(r.ledger.events.filter((e) => e.etype === "PromptOpened").length).toBe(1);
   });
+
+  it("dispatches an attested prompt arrival to armed subscribers", async () => {
+    const prog = `
+      prompt text question;
+      agent A {
+        when (Prompt p about question) {
+          say(p.text);
+          say(p.attester);
+        }
+      }
+      spawn A a; awake a;
+    `;
+    const r = await run(parse(prog), {
+      provider: new MockProvider(() => ({})),
+      promptInputs: [{ name: "question", value: "hello from the user", attestation: { attester: "local-user" } }],
+    });
+    expect(r.stdout).toEqual(["hello from the user", "local-user"]);
+    const prompt = r.ledger.events.find((e) => e.etype === "Prompt");
+    expect(prompt?.subject).toBe("question");
+    expect((prompt?.payload as any)?.input).toMatchObject({ kind: "text", value: "hello from the user", trust: "settled" });
+    expect((prompt?.payload as any)?.attestation?.attester).toBe("local-user");
+    expect((prompt?.payload as any)?.attestation?.payload_hash).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it("can route a cold conformal decision through local user attestation to a notification sink", async () => {
+    const prog = `
+      prompt text request;
+      principal reviewer;
+      enum Notice { Notify, Ignore }
+      action NotifyUser(text body);
+      event Held(text reason);
+      agent Notifier grants { perform NotifyUser } {
+        when (Prompt p about request) {
+          text body = p.text;
+          Credence<Notice> c = self <- f"should this request notify the user: {body}";
+          Decision<Notice> d = reviewer decide c by conformal 0.1;
+          if (d.committed == Notify) {
+            Endorsement<text> e = endorse body by d;
+            perform NotifyUser(e);
+          } else {
+            emit Held("held");
+          }
+        }
+      }
+      spawn Notifier n; awake n;
+    `;
+    const r = await run(parse(prog), {
+      provider: new MockProvider(() => ({ Notify: 0.91, Ignore: 0.09 })),
+      promptInputs: [{ name: "request", value: "send a notification", attestation: { attester: "local-user" } }],
+      principalAttestations: [{ principal: "reviewer", approved: true, attester: "local-user" }],
+    });
+    expect(r.ledger.events.map((e) => e.etype)).toContain("PrincipalDecision");
+    const principal = r.ledger.events.find((e) => e.etype === "PrincipalDecision");
+    expect((principal?.payload as any)?.decision).toBe("Notify");
+    expect((principal?.payload as any)?.attestation?.attester).toBe("local-user");
+    const notify = r.ledger.events.find((e) => e.etype === "NotifyUser");
+    expect(notify?.payload).toEqual(["send a notification"]);
+  });
 });
 
 describe("the memory surface cannot launder trust (§10, §13, §16.7)", () => {
@@ -187,9 +374,14 @@ describe("the memory surface cannot launder trust (§10, §13, §16.7)", () => {
           text r = notes -> "q";
           Credence<R> c = self <- "approve?";
           Decision<R> d = decide c by confidence 0.8;
-          Endorsement<text> e = endorse r by d;
-          if (e.committed == Yes) { perform Transfer(e); }
-          else if (e.committed == No) { perform Transfer(e); }
+          if (d.committed == Yes) {
+            Endorsement<text> e = endorse r by d;
+            perform Transfer(e);
+          }
+          else if (d.committed == No) {
+            Endorsement<text> e = endorse r by d;
+            perform Transfer(e);
+          }
         }
       }
       spawn Bank b; awake b;
@@ -209,9 +401,11 @@ describe("the memory surface cannot launder trust (§10, §13, §16.7)", () => {
           text fact = notes -> "the pending transfer";
           Credence<R> c = self <- f"approve {fact}?";
           Decision<R> d = decide c by confidence 0.8;
-          Endorsement<text> e = endorse fact by d;
-          if (e.committed == Yes) { say("ok"); }
-          else if (e.committed == No) { say("no"); }
+          if (d.committed == Yes) {
+            Endorsement<text> e = endorse fact by d;
+            say("ok");
+          }
+          else if (d.committed == No) { say("no"); }
         }
       }
       spawn Bank b; awake b;
@@ -235,9 +429,11 @@ describe("the memory surface cannot launder trust (§10, §13, §16.7)", () => {
           text safe = "ok";
           Credence<R> c = self <- f"ok? {safe}";
           Decision<R> d = decide c by confidence 0.5;
-          Endorsement<text> e = endorse u by d;
-          if (e.committed == Yes) { perform Pay(e); }
-          else if (e.committed == No) { say("n"); }
+          if (d.committed == Yes) {
+            Endorsement<text> e = endorse u by d;
+            perform Pay(e);
+          }
+          else if (d.committed == No) { say("n"); }
         }
       }
       spawn Bank b; awake b;
@@ -257,9 +453,14 @@ describe("the memory surface cannot launder trust (§10, §13, §16.7)", () => {
           text safe = "ok";
           Credence<R> c = self <- f"ok? {safe}";
           Decision<R> d = decide c by confidence 0.1;
-          Endorsement<text> e = endorse reply by d;
-          if (e.committed == Yes) { perform Do(e); }
-          else if (e.committed == No) { perform Do(e); }
+          if (d.committed == Yes) {
+            Endorsement<text> e = endorse reply by d;
+            perform Do(e);
+          }
+          else if (d.committed == No) {
+            Endorsement<text> e = endorse reply by d;
+            perform Do(e);
+          }
         }
       }
       spawn A a; awake a;
@@ -291,7 +492,7 @@ describe("sync color reaches the async memory substrate (§9, §10)", () => {
   const rejects = (body: string) =>
     expect(run(parse(`sync null f() { ${body} return null; }`), {})).rejects.toMatchObject({ cls: "ColorViolation" });
   it("rejects a recall in a sync body", async () => { await rejects(`mem n <- "x"; text t = n -> "q";`); });
-  it("rejects store() in a sync body", async () => { await rejects(`store("fact");`); });
+  it("rejects a memory write in a sync body", async () => { await rejects(`mem n; n <- "fact";`); });
 });
 
 describe("ledger reads carry recorded trust (§10) — Endorsed reads back settled", () => {
@@ -306,9 +507,11 @@ describe("ledger reads carry recorded trust (§10) — Endorsed reads back settl
           text subj = self <- "describe";
           Credence<R> c = self <- f"ok: {subj}";
           Decision<R> d = decide c by confidence 0.1;
-          Endorsement<text> e = endorse subj by d;
-          if (e.committed == Yes) { say("y"); }
-          else if (e.committed == No) { say("n"); }
+          if (d.committed == Yes) {
+            Endorsement<text> e = endorse subj by d;
+            say("y");
+          }
+          else if (d.committed == No) { say("n"); }
           text row = select subject from ledger where { etype == "Endorsed" };
           perform Do(row);
         }
@@ -361,6 +564,53 @@ describe("structs (§3) — a record value with field access", () => {
       Memo m = Memo { amount: 25, to: "alice" };
     `;
     await expect(run(parse(prog), {})).rejects.toMatchObject({ cls: "TypeError" });
+  });
+
+  it("binds a struct-typed send through a structured provider schema", async () => {
+    const prog = `
+      struct Memo { amount: int, to: text }
+      agent A {
+        on awake {
+          Memo m = self <- "extract the memo";
+          say(m.to);
+          say(f"{m.amount}");
+        }
+      }
+      spawn A a; awake a;
+    `;
+    const provider = new RecordingStructuredProvider({ amount: 125, to: "bob" });
+    const r = await run(parse(prog), { provider });
+    expect(r.stdout).toEqual(["bob", "125"]);
+    expect(provider.calls[0]!.schema).toEqual({
+      type: "object",
+      properties: { amount: { type: "integer" }, to: { type: "string" } },
+      required: ["amount", "to"],
+      additionalProperties: false,
+    });
+    const resolved = r.ledger.events.find((e) => e.etype === "Resolved" && e.subject === "m");
+    expect((resolved!.payload as any).kind).toBe("structured");
+    expect((resolved!.payload as any).value).toBeUndefined();
+    expect((resolved!.payload as any).reply).toMatchObject({
+      kind: "struct",
+      fields: {
+        amount: { kind: "int", value: 125 },
+        to: { kind: "text", value: "bob" },
+      },
+    });
+  });
+
+  it("records TypeMismatch when a structured provider reply violates the struct schema", async () => {
+    const prog = `
+      struct Memo { amount: int, to: text }
+      agent A {
+        on awake {
+          Memo m = self <- "extract the memo";
+        }
+      }
+      spawn A a; awake a;
+    `;
+    const r = await run(parse(prog), { provider: new RecordingStructuredProvider({ amount: "oops", to: "bob" }) });
+    expect(r.ledger.events.map((e) => e.etype)).toContain("TypeMismatch");
   });
 });
 

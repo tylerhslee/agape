@@ -1,6 +1,6 @@
 //! id:        axes_collapse_is_decision
 //! section:   01_axes
 //! expect:    accept
-//! spec:      §13, §15.2 (`decide c by R` collapses a Credence to a Decision — settled, off-ledger, in hand)
+//! spec:      §13, §15.2 (`decide c by R` collapses a Credence to a settled, ledgered Decision)
 //! ---
 sync Decision<bool> over(Credence<bool> c) { return decide c by confidence 0.9; }

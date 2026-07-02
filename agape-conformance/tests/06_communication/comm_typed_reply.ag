@@ -1,11 +1,11 @@
 //! id:        comm_typed_reply
 //! section:   06_communication
 //! expect:    accept
-//! spec:      §6 (a typed reply binds the provider answer into event<T>)
+//! spec:      §6 (a typed reply binds the provider answer into a typed value; the send lifecycle is ledgered)
 //! ---
 agent A {
   on awake {
-    event<bool> yes = self <- "is the sky blue?";
+    bool yes = self <- "is the sky blue?";
     say(f"{yes}");
   }
 }

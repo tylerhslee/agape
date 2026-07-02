@@ -10,12 +10,12 @@ export interface Node {
 export type TypeRef =
   | { kind: "scalar"; name: "int" | "float" | "bool" | "text" | "null" }
   | { kind: "mem" } // a private-memory handle (§10)
-  | { kind: "event"; inner: TypeRef }
+  | { kind: "event"; inner: TypeRef } // legacy/deprecated: surface `event<T>` is rejected by the parser
   | { kind: "array"; inner: TypeRef }
   | { kind: "credence"; enumName: string }
   | { kind: "decision"; enumName: string }
   | { kind: "endorsement"; inner: TypeRef }
-  | { kind: "named"; name: string; typeArgs?: TypeRef[] }; // enum/struct/agent/action/Principal; typeArgs at a generic-instantiation site (§19.5)
+  | { kind: "named"; name: string; typeArgs?: TypeRef[] }; // enum/struct/agent/action/Principal/LedgerEntry; typeArgs at a generic-instantiation site (§19.5)
 
 // ---- Program & declarations ----
 export interface Program extends Node {
@@ -354,11 +354,14 @@ export interface RecallExpr extends Node {
   mem: Expr;
   query: Expr;
 }
-// `select COLS from TARGET where { COND }` — a facts/ledger query (§10).
+// `select COLS from TARGET where { COND }`, or `select Event as e from ledger where { e.field ... }`
+// — a facts/ledger query (§10).
 export interface SelectExpr extends Node {
   kind: "select";
   cols: string[] | "*";
   target: string; // an agent instance name, or `ledger`/`self`
+  eventType?: string; // new ledger-row form: `select Held as h from ledger ...`
+  alias?: string;
   cond: QueryCond[];
 }
 // `find x [, origin(x)] where { TRIPLE+ }` — a relationship-graph query (§10).

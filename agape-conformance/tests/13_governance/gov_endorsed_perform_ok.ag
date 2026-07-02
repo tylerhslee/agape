@@ -11,9 +11,8 @@ agent C grants { perform Flag } {
     text report = self <- "describe the transaction";
     Credence<R> c = self <- f"is this fraud: {report}";
     Decision<R> d = decide c by confidence 0.9 margin 0.2;
-    Endorsement<text> e = endorse report by d;
-    if (e.committed == Fraud) { perform Flag(true); }
-    else if (e.committed == Clean) { }
+    if (d.committed == Fraud) { Endorsement<text> e = endorse report by d; perform Flag(true); }
+    else if (d.committed == Clean) { Endorsement<text> e = endorse report by d; }
   }
 }
 spawn C c; awake c;

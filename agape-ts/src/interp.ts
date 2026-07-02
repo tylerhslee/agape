@@ -2,10 +2,11 @@
 // Cognition is async (a model call through the provider seam), so evaluation is async throughout —
 // the mock provider resolves on a microtask, so the same async path is exercised in tests and live.
 
+import { createHash } from "node:crypto";
 import type * as A from "./ast.js";
 import {
   Ledger, MockProvider, render, settledText,
-  type Provider, type Value, type Committed, type Variant, type Trust,
+  type Provider, type StructuredSchema, type Value, type Committed, type Variant, type Trust,
 } from "./runtime.js";
 import { check, linkModules, type ModuleInput, type Resolution } from "./check.js";
 import type { Manifest } from "./config.js";
@@ -63,22 +64,157 @@ class Scope {
   }
 }
 
+function scoreSummary(scores: Record<Variant, number>) {
+  const top = topVariant(scores);
+  const sorted = Object.entries(scores).sort((a, b) => b[1] - a[1]);
+  const runnerUp = sorted[1] ? { variant: sorted[1][0], score: sorted[1][1] } : undefined;
+  return { scores, top, runnerUp, margin: top.score - (runnerUp?.score ?? 0) };
+}
+
+function valueSummary(v: Value): Record<string, unknown> {
+  const base: Record<string, unknown> = { kind: v.kind, trust: v.trust, rendered: render(v) };
+  if (v.kind === "text") return { ...base, value: v.v };
+  if (v.kind === "int" || v.kind === "float" || v.kind === "bool") return { ...base, value: v.v };
+  if (v.kind === "null") return { ...base, value: null };
+  if (v.kind === "enumval") return { ...base, enum: v.enumName, variant: v.variant, value: v.variant };
+  if (v.kind === "credence") return { ...base, enum: v.enumName, ...scoreSummary(v.scores) };
+  if (v.kind === "decision") return {
+    ...base,
+    binding: v.binding,
+    enum: v.enumName,
+    committed: v.committed,
+    basis: v.basis,
+    margin: v.margin,
+    decision_id: v.decisionId,
+    principal_event: v.principalEvent,
+    rule: v.rule,
+  };
+  if (v.kind === "endorsement") {
+    return {
+      ...base,
+      binding: v.binding,
+      enum: v.enumName,
+      committed: v.committed,
+      basis: v.basis,
+      margin: v.margin,
+      decision_id: v.decisionId,
+      subject: valueSummary(v.subject),
+      committedNarrowed: v.committedNarrowed,
+    };
+  }
+  if (v.kind === "agentref") return { ...base, name: v.name, agentType: v.agentType };
+  if (v.kind === "memref") return { ...base, name: v.name };
+  if (v.kind === "struct") {
+    return {
+      ...base,
+      type: v.typeName,
+      fields: Object.fromEntries([...v.fields].map(([name, value]) => [name, valueSummary(value)])),
+    };
+  }
+  if (v.kind === "array") return { ...base, items: v.items.map(valueSummary) };
+  return base;
+}
+
+function ruleSummary(rule: A.Rule): Record<string, unknown> {
+  switch (rule.kind) {
+    case "confidence": return { kind: "confidence", threshold: rule.theta, margin: rule.margin, floor: rule.floor };
+    case "conformal": return { kind: "conformal", alpha: rule.alpha, readiness: rule.readiness, floor: rule.floor };
+    case "policy": return { kind: "policy", name: rule.name };
+    case "expr": return { kind: "expr" };
+  }
+}
+
+function stableJson(v: unknown): string {
+  if (v === null || typeof v !== "object") return JSON.stringify(v);
+  if (Array.isArray(v)) return `[${v.map(stableJson).join(",")}]`;
+  return `{${Object.entries(v as Record<string, unknown>)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([k, val]) => `${JSON.stringify(k)}:${stableJson(val)}`)
+    .join(",")}}`;
+}
+
+function sha256(v: unknown): string {
+  return createHash("sha256").update(stableJson(v)).digest("hex");
+}
+
+function localAttestation(kind: string, payload: Record<string, unknown>, supplied?: { attester?: string; signature?: string; [key: string]: unknown }) {
+  const payloadHash = sha256(payload);
+  const attester = supplied?.attester || "studio-user";
+  const signature = supplied?.signature || `local:${sha256({ kind, attester, payload_hash: payloadHash })}`;
+  return {
+    kind,
+    attester,
+    payload_hash: payloadHash,
+    signature,
+    ...Object.fromEntries(Object.entries(supplied ?? {}).filter(([k]) => k !== "attester" && k !== "signature")),
+  };
+}
+
 export interface RunResult {
   ledger: Ledger;
   stdout: string[];
 }
 
+export interface PromptInput {
+  name: string;
+  value: unknown;
+  attestation?: {
+    attester?: string;
+    signature?: string;
+    [key: string]: unknown;
+  };
+}
+
+export interface PrincipalAttestation {
+  principal: string;
+  approved?: boolean;
+  decision?: string;
+  attester?: string;
+  signature?: string;
+  [key: string]: unknown;
+}
+
+export interface RuntimeSession {
+  start(): Promise<RunResult>;
+  sendPrompt(input: PromptInput): Promise<RunResult>;
+  snapshot(): RunResult;
+}
+
+type RunOptions = {
+  provider?: Provider;
+  modules?: ModuleInput[];
+  manifest?: Manifest;
+  principal?: string;
+  promptInputs?: PromptInput[];
+  principalAttestations?: PrincipalAttestation[];
+  strictConfig?: boolean;
+};
+
 export async function run(
   program: A.Program,
-  opts: { provider?: Provider; modules?: ModuleInput[]; manifest?: Manifest; principal?: string; strictConfig?: boolean } = {},
+  opts: RunOptions = {},
 ): Promise<RunResult> {
+  const session = createSession(program, opts);
+  await session.start();
+  for (const input of opts.promptInputs ?? []) await session.sendPrompt(input);
+  return session.snapshot();
+}
+
+export function createSession(program: A.Program, opts: RunOptions = {}): RuntimeSession {
   check(program, opts.modules, opts.manifest, opts.strictConfig); // static pass first (TypeError/ModuleError/ConfigError/…)
-  return new Interpreter(program, opts.provider ?? new MockProvider(), opts.modules ?? [], opts.principal).run();
+  return new Interpreter(
+    program,
+    opts.provider ?? new MockProvider(),
+    opts.modules ?? [],
+    opts.principal,
+    opts.principalAttestations ?? [],
+  );
 }
 
 class Interpreter {
   private ledger = new Ledger();
   private stdout: string[] = [];
+  private started = false;
   private enums = new Map<string, string[]>();
   private structs = new Map<string, A.Field[]>();
   private actions = new Map<string, A.ActionDecl>();
@@ -98,6 +234,7 @@ class Interpreter {
   private principals = new Set<string>();
   // §13: declared `policy NAME { … }` rule bundles, applied when a `decide c by NAME` names one.
   private policies = new Map<string, A.PolicyDecl>();
+  private prompts = new Map<string, A.PromptDecl>();
   // §6: sends that EXPIRED before their destination was awake — refused (DeliveryRefused) if it later awakes.
   private pendingExpired: { dest: string; subj: string }[] = [];
   // §19.2 module resolution (erased from the linker): a bound bare name (selective import) → its
@@ -113,7 +250,13 @@ class Interpreter {
   // `principal:` directive (e.g. "grant" / "deny"). Undefined = no principal decision configured. The
   // principal-decide implementation consumes this to commit (grant → PrincipalDecision) or decline
   // (deny → FailedPrincipalDecision).
-  constructor(private program: A.Program, private provider: Provider, modules: ModuleInput[], private principalOutcome?: string) {
+  constructor(
+    private program: A.Program,
+    private provider: Provider,
+    modules: ModuleInput[],
+    private principalOutcome?: string,
+    private principalAttestations: PrincipalAttestation[] = [],
+  ) {
     // §3: register the declared principal names so a `decide c by p` (the parser's {policy} rule form)
     // can be reinterpreted as a principal escalation by evalGate.
     for (const d of program.decls) if (d.kind === "principal") this.principals.add(d.name);
@@ -166,7 +309,9 @@ class Interpreter {
     }
   }
 
-  async run(): Promise<RunResult> {
+  async start(): Promise<RunResult> {
+    if (this.started) return this.snapshot();
+    this.started = true;
     for (const d of this.program.decls) {
       switch (d.kind) {
         case "enum": this.enums.set(d.name, d.variants); break;
@@ -182,7 +327,7 @@ class Interpreter {
         // `principal` is consumed at a `decide c by p` site (evalGate), `prompt` opens its sensor at awake
         // (execAwake), and `conformal α;` is a parse-only default (§20) — none run here.
         case "principal": break;
-        case "prompt": break;
+        case "prompt": this.prompts.set(d.name, d); break;
         case "conformal": break;
         case "policydecl": this.policies.set(d.name, d); break;
       }
@@ -211,6 +356,16 @@ class Interpreter {
     // by any later statement (an agent's emit included). Prospective only: nothing before this fires it.
     for (const s of this.program.stmts) if (s.kind === "when") this.subscriptions.push({ when: s });
     for (const s of this.program.stmts) await this.execStmt(s, top);
+    return this.snapshot();
+  }
+
+  async sendPrompt(input: PromptInput): Promise<RunResult> {
+    await this.start();
+    await this.deliverPrompt(input);
+    return this.snapshot();
+  }
+
+  snapshot(): RunResult {
     return { ledger: this.ledger, stdout: this.stdout };
   }
 
@@ -308,9 +463,9 @@ class Interpreter {
         const taken = c.v;
         const branch = taken ? s.then : s.else ?? [];
         const inner = new Scope(scope);
-        // Model-A flow narrowing (§13/§15.3.3, W-Endorse): inside the TRUE branch of
-        // `if (e.committed == V)` for a real variant V, the endorsement `e` is committed-narrowed and
-        // becomes sink-admissible. The else branch leaves it un-narrowed (the abstained / other-variant case).
+        // Flow narrowing (§13/§15.3.3, W-Decision): inside the TRUE branch of
+        // `if (d.committed == V)` for a real variant V, the Decision `d` may be endorsed.
+        // Legacy Endorsement values still become sink-admissible when narrowed.
         if (taken) {
           const n = this.committedNarrowingOf(s.cond, scope);
           if (n) inner.set(n.name, this.narrow(n.value, true));
@@ -356,9 +511,10 @@ class Interpreter {
     if (!agent) throw new RuntimeError("`mem` declared outside an agent");
     const region: MemRegion = { writes: [], forgotten: false };
     if (s.init) {
-      region.writes.push(await this.evalExpr(s.init, scope));
+      const v = await this.evalExpr(s.init, scope);
+      region.writes.push(v);
       // E-Store (§15.4.2): the declare-with-init form is a store too — it internalizes and traces.
-      this.ledger.append("Internalized", s.name, undefined, agent.name);
+      this.ledger.append("Internalized", s.name, this.memoryInternalizedPayload(s.name, v), agent.name);
     }
     agent.mems.set(s.name, region);
     scope.set(s.name, { kind: "memref", name: s.name, trust: "settled" });
@@ -368,8 +524,11 @@ class Interpreter {
   private execForget(s: A.ForgetStmt, scope: Scope): void {
     const agent = scope.currentAgent();
     const region = agent?.mems.get(s.name);
-    if (region) region.forgotten = true;
-    this.ledger.append("Forgotten", s.name, undefined, agent?.name);
+    if (!region) throw typeError(`'forget ${s.name}': not a mem handle`);
+    const payload = this.memoryForgottenPayload(s.name, region);
+    region.writes = [];
+    region.forgotten = true;
+    this.ledger.append("Forgotten", s.name, payload, agent?.name);
   }
 
   private async execSpawn(s: A.SpawnStmt, scope: Scope): Promise<void> {
@@ -393,7 +552,7 @@ class Interpreter {
     // the constructor body runs FIRST, then the Spawned event is appended.
     const ctorScope = new Scope(undefined, inst);
     for (const st of this.ctorOf(inst)) await this.execStmt(st, ctorScope);
-    this.ledger.append("Spawned", s.name, undefined, s.name);
+    this.ledger.append("Spawned", s.name, { value: valueSummary({ kind: "agentref", name: s.name, agentType, trust: "settled" }) }, s.name);
   }
 
   // the constructor statements of an instance, with an `extend`ed parent's ctor running first (§5).
@@ -407,7 +566,7 @@ class Interpreter {
   private async execAwake(name: string): Promise<void> {
     const inst = this.requireInstance(name);
     inst.awake = true;
-    this.ledger.append("AgentAwake", name, undefined, name);
+    this.ledger.append("AgentAwake", name, { value: valueSummary({ kind: "agentref", name, agentType: inst.agentType, trust: "settled" }) }, name);
     // §7: awakening ARMS this agent's `when` handlers as subscriptions (lexical order), so a subsequent
     // matching event append fires them. Guard against re-arming on a re-awake.
     if (!this.subscriptions.some((s) => s.inst === inst)) {
@@ -437,6 +596,23 @@ class Interpreter {
     for (const st of hook.body) await this.execStmt(st, scope);
   }
 
+  private async deliverPrompt(input: PromptInput): Promise<void> {
+    const decl = this.prompts.get(input.name);
+    if (!decl) throw typeError(`prompt input for undeclared prompt '${input.name}'`);
+    const value = this.valueFromPromptInput(input.value, decl.type, new Scope());
+    const summary = valueSummary(value);
+    const attestation = localAttestation("prompt", { prompt: input.name, input: summary }, input.attestation);
+    const fields = new Map<string, Value>([
+      ["value", value],
+      ["text", { kind: "text", v: render(value), trust: "settled" }],
+      ["attester", settledText(String(attestation.attester))],
+      ["payload_hash", settledText(String(attestation.payload_hash))],
+      ["signature", settledText(String(attestation.signature))],
+    ]);
+    this.ledger.append("Prompt", input.name, { input: summary, attestation }, undefined);
+    await this.fireSubscriptions("Prompt", input.name, fields);
+  }
+
   // §7/§16.3: fire every armed subscription that MATCHES an appended event, in registration order. Matching is
   // by subtype (a `when (Error e)` catches any Error leaf, §9), the `about <subj>` filter (the event must be
   // about the held subject), and the `if (guard)` predicate. The bound event evaluates to a struct exposing its
@@ -451,8 +627,7 @@ class Interpreter {
         if (!this.eventMatches(evEtype, this.qualifyWhenEtype(sub.when.etype, sub.inst))) continue;
         const hscope = new Scope(undefined, sub.inst);
         if (sub.when.about) {
-          const av = await this.evalExpr(sub.when.about, hscope);
-          const aboutName = av.kind === "agentref" ? av.name : render(av);
+          const aboutName = await this.eventAboutName(sub.when.about, hscope);
           if (aboutName !== evSubject) continue;
         }
         if (sub.when.binder) hscope.set(sub.when.binder, { kind: "struct", typeName: evEtype, fields, trust: "graded" });
@@ -465,6 +640,12 @@ class Interpreter {
     } finally {
       this.dispatchDepth--;
     }
+  }
+
+  private async eventAboutName(e: A.Expr, scope: Scope): Promise<string> {
+    if (e.kind === "ident" && this.prompts.has(e.name)) return e.name;
+    const av = await this.evalExpr(e, scope);
+    return av.kind === "agentref" ? av.name : render(av);
   }
 
   // §9 subtype matching: a subscription's declared event type against an appended event's type.
@@ -583,9 +764,9 @@ class Interpreter {
     return value;
   }
 
-  // Model-A narrowing target: if `cond` is `IDENT.committed == VARIANT` with VARIANT a real (non-`abstained`)
-  // enum variant or bool literal, and IDENT bound to an Endorsement, return that binding so the TRUE branch
-  // can re-bind it committed-narrowed (§13/§15.3.3, W-Endorse). Any other condition narrows nothing.
+  // Narrowing target: if `cond` is `IDENT.committed == VARIANT` with VARIANT a real (non-`abstained`)
+  // enum variant or bool literal, return that binding so the TRUE branch can re-bind it narrowed.
+  // Decisions become endorsement-admissible; legacy Endorsement bindings remain sink-admissible.
   private committedNarrowingOf(cond: A.Expr, scope: Scope): { name: string; value: Value } | undefined {
     if (cond.kind !== "binary" || cond.op !== "==") return undefined;
     const committedIdent = (e: A.Expr): string | undefined =>
@@ -597,12 +778,12 @@ class Interpreter {
     const variant = other.kind === "ident" ? other.name : other.kind === "bool" ? String(other.value) : undefined;
     if (!variant || variant === "abstained") return undefined;
     const v = scope.get(name);
-    if (!v || v.kind !== "endorsement") return undefined;
+    if (!v || (v.kind !== "endorsement" && v.kind !== "decision")) return undefined;
     return { name, value: v };
   }
 
   // ---- the gate ----
-  private async evalGate(gate: A.GateExpr, scope: Scope, dispatchArms?: A.DispatchStmt["arms"]): Promise<{ value: Value; committed: Committed }> {
+  private async evalGate(gate: A.GateExpr, scope: Scope, dispatchArms?: A.DispatchStmt["arms"], bindName?: string): Promise<{ value: Value; committed: Committed }> {
     if (gate.kind === "decide") {
       const cred = await this.evalExpr(gate.credence, scope);
       if (cred.kind !== "credence") throw new RuntimeError("`decide` requires a Credence");
@@ -617,16 +798,31 @@ class Interpreter {
       let committed: Committed;
       let margin: number;
       let basis: string;
+      let principalEvent: number | undefined;
       if (pureByForm) {
         // route directly to the principal; no rule collapse (the "rule" IS the principal name).
-        ({ committed, margin, basis } = this.principalRule(cred, scope, principalName!));
+        ({ committed, margin, basis, principalEvent } = this.principalRule(cred, scope, principalName!));
       } else {
         ({ committed, margin, basis } = this.collapse(cred, gate.rule));
         // prefix form: escalate to the principal ONLY when the rule could not commit (§13).
         if (committed === "abstained" && principalName) {
-          ({ committed, margin, basis } = this.principalRule(cred, scope, principalName));
+          ({ committed, margin, basis, principalEvent } = this.principalRule(cred, scope, principalName));
         }
       }
+      const decisionSubject = bindName ?? (gate.credence.kind === "ident" ? gate.credence.name : this.agentSubject(scope));
+      const decisionId = this.ledger.events.length;
+      this.ledger.append("Decided", decisionSubject, {
+        decision_id: decisionId,
+        credence: cred.enumName,
+        enum: cred.enumName,
+        binding: bindName,
+        committed,
+        basis,
+        margin,
+        rule: ruleSummary(gate.rule),
+        source: scoreSummary(cred.scores),
+        principal_event: principalEvent,
+      }, scope.currentAgent()?.name);
       // §8/§11: committing a Credence<Entailment> to Contradicts also appends a first-class Contradiction,
       // subjected at the judged credence, so a downstream `when (Contradiction c)` / `when (Error e)` reacts
       // to the conflict (Contradiction extends Error, §9).
@@ -635,7 +831,19 @@ class Interpreter {
         this.ledger.append("Contradiction", subj, undefined, scope.currentAgent()?.name);
         await this.fireSubscriptions("Contradiction", subj, new Map()); // §7: `when (Error e)` catches it (§9)
       }
-      const value: Value = { kind: "decision", enumName: cred.enumName, committed, basis, margin, trust: "settled", source: cred };
+      const value: Value = {
+        kind: "decision",
+        enumName: cred.enumName,
+        committed,
+        basis,
+        margin,
+        decisionId,
+        principalEvent,
+        rule: ruleSummary(gate.rule),
+        trust: "settled",
+        binding: bindName,
+        source: cred,
+      };
       return { value, committed };
     }
     const subject = await this.evalExpr(gate.subject, scope);
@@ -655,25 +863,35 @@ class Interpreter {
         `decision settled — a decision about something else cannot settle it for a sink (§13/§14); re-decide it on its own credence`,
       );
     }
-    let committed = dec.committed;
-    // §20.1 reversible cold-start allowance: a CONFORMAL decide that abstained without a principal escalation
-    // may still commit an obvious cold winner WHEN the winning arm reaches a REVERSIBLE consequential sink —
-    // the low-stakes case earns autonomy. A tie (no clear winner), an arm with NO sink (nothing to commit to,
-    // e.g. the supervised cold start, §13), or a NON-reversible arm (which must defer, §20.3) stays abstained.
-    if (committed === "abstained" && dec.basis === "Conformal" && dec.source?.kind === "credence" && dispatchArms) {
-      const top = topVariant(dec.source.scores);
-      const margin = top.score - secondScore(dec.source.scores);
-      const arm = dispatchArms.find((a) => a.head === top.variant);
-      if (margin > 0 && arm && this.armReachesReversibleSink(arm.body)) committed = top.variant;
+    const committed = dec.committed;
+    if (committed === "abstained") {
+      throw taintViolation("endorse requires a committed Decision; an abstained Decision has no endorsement to give (§13)");
     }
     const subjId = gate.subject.kind === "ident" ? gate.subject.name
       : gate.subject.kind === "string" ? gate.subject.value // a string-literal subject IS its own identifier
       : `#${render(subject).slice(0, 12)}`;
-    if (committed === "abstained") this.ledger.append("Abstained", subjId, undefined, scope.currentAgent()?.name);
-    else this.ledger.append("Endorsed", subjId, { decision: committed }, scope.currentAgent()?.name);
+    const endorsementPayload = {
+      decision: {
+        decision_id: dec.decisionId,
+        enum: dec.enumName,
+        binding: dec.binding,
+        committed: dec.committed,
+        basis: dec.basis,
+        margin: dec.margin,
+        rule: dec.rule,
+        source: dec.source?.kind === "credence" ? scoreSummary(dec.source.scores) : undefined,
+      },
+      endorsement: {
+        subject: valueSummary(subject),
+        binding: bindName,
+        committed,
+        branch: `${committed}`,
+      },
+    };
+    this.ledger.append("Endorsed", subjId, endorsementPayload, scope.currentAgent()?.name);
     const value: Value = {
       kind: "endorsement", subject, enumName: dec.enumName, committed,
-      basis: dec.basis, margin: dec.margin, committedNarrowed: false, trust: "settled",
+      basis: dec.basis, margin: dec.margin, committedNarrowed: true, trust: "settled", binding: bindName, decisionId: dec.decisionId,
     };
     return { value, committed };
   }
@@ -732,16 +950,33 @@ class Interpreter {
     cred: Extract<Value, { kind: "credence" }>,
     scope: Scope,
     who: string,
-  ): { committed: Committed; margin: number; basis: string } {
+  ): { committed: Committed; margin: number; basis: string; principalEvent?: number } {
     const { variant, score } = topVariant(cred.scores);
     const margin = score - secondScore(cred.scores);
+    const attested = this.principalAttestations.find((a) => a.principal === who);
+    if (attested) {
+      if (attested.approved === false) {
+        const attestation = localAttestation("principal-decline", { principal: who, credence: cred.enumName, scores: cred.scores }, attested);
+        const ev = this.ledger.append("FailedPrincipalDecision", who, { credence: cred.enumName, ...scoreSummary(cred.scores), attestation }, scope.currentAgent()?.name);
+        return { committed: "abstained", margin, basis: "Principal", principalEvent: ev.tick };
+      }
+      const decision = attested.decision || variant;
+      if (!Object.prototype.hasOwnProperty.call(cred.scores, decision)) {
+        const attestation = localAttestation("principal-invalid", { principal: who, credence: cred.enumName, decision }, attested);
+        const ev = this.ledger.append("FailedPrincipalDecision", who, { credence: cred.enumName, decision, ...scoreSummary(cred.scores), attestation }, scope.currentAgent()?.name);
+        return { committed: "abstained", margin, basis: "Principal", principalEvent: ev.tick };
+      }
+      const attestation = localAttestation("principal-decision", { principal: who, credence: cred.enumName, decision, scores: cred.scores }, attested);
+      const ev = this.ledger.append("PrincipalDecision", who, { credence: cred.enumName, decision, ...scoreSummary(cred.scores), attestation }, scope.currentAgent()?.name);
+      return { committed: decision, margin, basis: "Principal", principalEvent: ev.tick };
+    }
     if (this.principalOutcome !== "grant") {
       // decline OR unavailable/unconfigured → fail closed (abstain), never a fabricated approval.
-      this.ledger.append("FailedPrincipalDecision", who, { credence: cred.enumName }, scope.currentAgent()?.name);
-      return { committed: "abstained", margin, basis: "Principal" };
+      const ev = this.ledger.append("FailedPrincipalDecision", who, { credence: cred.enumName, ...scoreSummary(cred.scores) }, scope.currentAgent()?.name);
+      return { committed: "abstained", margin, basis: "Principal", principalEvent: ev.tick };
     }
-    this.ledger.append("PrincipalDecision", who, { credence: cred.enumName, decision: variant }, scope.currentAgent()?.name);
-    return { committed: variant, margin, basis: "Principal" };
+    const ev = this.ledger.append("PrincipalDecision", who, { credence: cred.enumName, decision: variant, ...scoreSummary(cred.scores) }, scope.currentAgent()?.name);
+    return { committed: variant, margin, basis: "Principal", principalEvent: ev.tick };
   }
 
   // ---- expressions ----
@@ -797,7 +1032,7 @@ class Interpreter {
         }
         return { kind: "struct", typeName: e.typeName, fields, trust: trustJoin(parts) };
       }
-      case "decide": case "endorse": return (await this.evalGate(e, scope)).value;
+      case "decide": case "endorse": return (await this.evalGate(e, scope, undefined, bindName)).value;
       case "member": return this.evalMember(e, scope);
       case "index": {
         // `a[i]` element access (§10): the element inherits the array's trust (a match/query hit is graded).
@@ -820,11 +1055,6 @@ class Interpreter {
       case "call": {
         if (e.callee.kind === "ident" && this.tools.has(e.callee.name)) {
           return this.evalToolCall(e.callee.name, e.args, scope);
-        }
-        // store(x)/embed(x) (§9): the explicit emphasis forms of internalization — they write the value
-        // into the agent's private memory and record an `Internalized` trace (§10/§15.5.1).
-        if (e.callee.kind === "ident" && (e.callee.name === "store" || e.callee.name === "embed")) {
-          return this.evalInternalize(e.callee.name, e.args, scope);
         }
         // a call to a user-declared function `f(a, …)` (§15.2). Generic functions are monomorphized and
         // their type arguments erased before this point (§19.5), so the concrete argument values suffice.
@@ -1119,6 +1349,98 @@ class Interpreter {
     return out;
   }
 
+  private blobRef(parts: Record<string, unknown>): string {
+    return `blob:sha256:${sha256(parts)}`;
+  }
+
+  private memoryInternalizedPayload(mem: string, value: Value): Record<string, unknown> {
+    const summary = valueSummary(value);
+    return {
+      value: summary,
+      effects: {
+        facts: { upserted: 1, tombstoned: 0, deleted: 0 },
+        graph: {
+          nodes_upserted: 1,
+          edges_upserted: 0,
+          nodes_tombstoned: 0,
+          edges_tombstoned: 0,
+          nodes_deleted: 0,
+          edges_deleted: 0,
+        },
+        vectors: { chunks_upserted: 1, chunks_deleted: 0, embeddings_deleted: 0 },
+        blobs: { archived: 1, redacted: 0, deleted: 0 },
+      },
+      refs: {
+        input: this.blobRef({ mem, view: "input", value: summary }),
+        facts_delta: this.blobRef({ mem, view: "facts_delta", value: summary }),
+        graph_delta: this.blobRef({ mem, view: "graph_delta", value: summary }),
+        vector_delta: this.blobRef({ mem, view: "vector_delta", value: summary }),
+      },
+      policy: {
+        indexing: "incremental",
+        background_reindex: "runtime-managed",
+        graph_forget: "cascade",
+        archive: "runtime-configured",
+      },
+    };
+  }
+
+  private memoryForgottenPayload(mem: string, region: MemRegion): Record<string, unknown> {
+    const n = region.writes.length;
+    return {
+      mode: "cascade",
+      effects: {
+        facts: { upserted: 0, tombstoned: n, deleted: 0 },
+        graph: {
+          nodes_upserted: 0,
+          edges_upserted: 0,
+          nodes_tombstoned: n,
+          edges_tombstoned: 0,
+          nodes_deleted: 0,
+          edges_deleted: 0,
+        },
+        vectors: { chunks_upserted: 0, chunks_deleted: n, embeddings_deleted: n },
+        blobs: { archived: n, redacted: 0, deleted: 0 },
+      },
+      refs: {
+        forget_delta: this.blobRef({ mem, op: "forget", count: n }),
+      },
+      policy: {
+        graph_forget: "cascade",
+        redaction: "separate-operation",
+        archive: "runtime-configured",
+      },
+    };
+  }
+
+  private jsonValue(raw: unknown, typeName = "Json"): Value {
+    if (typeof raw === "string") return settledText(raw);
+    if (typeof raw === "boolean") return { kind: "bool", v: raw, trust: "settled" };
+    if (typeof raw === "number") {
+      return Number.isInteger(raw)
+        ? { kind: "int", v: raw, trust: "settled" }
+        : { kind: "float", v: raw, trust: "settled" };
+    }
+    if (raw === null || raw === undefined) return { kind: "null", trust: "settled" };
+    if (Array.isArray(raw)) return { kind: "array", items: raw.map((x) => this.jsonValue(x)), trust: "settled" };
+    const fields = new Map<string, Value>();
+    for (const [k, v] of Object.entries(raw as Record<string, unknown>)) fields.set(k, this.jsonValue(v));
+    return { kind: "struct", typeName, fields, trust: "settled" };
+  }
+
+  private ledgerEntryValue(ev: { tick: number; etype: string; subject: string; agent?: string }, eventType: string, fields: Record<string, Value>): Value {
+    const out = new Map<string, Value>();
+    out.set("_meta", this.jsonValue({
+      tick: ev.tick,
+      etype: ev.etype,
+      subject: ev.subject,
+      agent: ev.agent ?? "",
+      hash: this.ledger.head(),
+    }, "LedgerMeta"));
+    for (const [k, v] of Object.entries(fields)) out.set(k, v);
+    return { kind: "struct", typeName: `LedgerEntry<${eventType}>`, fields: out, trust: "settled" };
+  }
+
   private async evalSend(e: A.SendExpr, scope: Scope, expected?: A.TypeRef, bindName?: string): Promise<Value> {
     const dest = await this.evalExpr(e.dest, scope);
     // `<-` is LHS-type-directed (§10): an established `mem` on the left STORES into the region (no
@@ -1127,13 +1449,19 @@ class Interpreter {
       const agent = scope.currentAgent();
       const region = agent?.mems.get(dest.name);
       const v = await this.evalExpr(e.message, scope);
-      if (region && !region.forgotten) {
-        region.writes.push(v);
-        // E-Store (§15.4.2): a mem write internalizes across the region's views and appends
-        // Internalized(m) — the incidental memory-write trace (§15.5.1), replay-stable.
-        this.ledger.append("Internalized", dest.name, undefined, agent?.name);
-      }
-      return v;
+      if (!region) throw typeError(`'${dest.name} <-': not a mem handle`);
+      if (region.forgotten) throw typeError(`'${dest.name} <-': the handle was forgotten and is no longer writable`);
+      region.writes.push(v);
+      // E-Store (§15.4.2): a mem write mutates the live private-memory views and appends an audit receipt.
+      const payload = this.memoryInternalizedPayload(dest.name, v);
+      const ev = this.ledger.append("Internalized", dest.name, payload, agent?.name);
+      return this.ledgerEntryValue(ev, "Internalized", {
+        mem: settledText(dest.name),
+        input: v,
+        effects: this.jsonValue(payload.effects, "MemoryEffects"),
+        refs: this.jsonValue(payload.refs, "MemoryRefs"),
+        policy: this.jsonValue(payload.policy, "MemoryPolicy"),
+      });
     }
     // The DESTINATION MUST BE AN ADDRESS (§6: "A send `dest <- p` goes to the agent at `dest`" / "the
     // destination is only an address"). Only an agent (a send to cognition) or a `mem` handle (a write,
@@ -1151,10 +1479,10 @@ class Interpreter {
     this.assertReach(dest, scope);
     const destName = dest.name;
     const prompt = render(await this.evalExpr(e.message, scope));
-    // §6: a typed binding `event<T> s = d <- …` gives the produced send its subject `s`; an unbound send is
+    // §6: a typed binding `T s = d <- …` gives the produced send its subject `s`; an unbound send is
     // subjected at the destination.
     const subj = bindName ?? destName;
-    this.ledger.append("Sent", subj, undefined, scope.currentAgent()?.name);
+    this.ledger.append("Sent", subj, { to: destName, prompt }, scope.currentAgent()?.name);
     // §6: a send to a NON-awake agent has no mailbox — the chain stalls at `Sent` (never `Delivered`); loss is
     // the ABSENCE of Delivered, not an event. A send with an `expires N` lifetime that elapses undelivered
     // appends an `Expired` tombstone instead. A send to `self` (own cognition) always delivers.
@@ -1162,12 +1490,12 @@ class Interpreter {
     const toSelf = destName === scope.currentAgent()?.name;
     if (destInst && !destInst.awake && !toSelf) {
       if (e.expires !== undefined) {
-        this.ledger.append("Expired", subj, undefined, scope.currentAgent()?.name);
+        this.ledger.append("Expired", subj, { to: destName }, scope.currentAgent()?.name);
         this.pendingExpired.push({ dest: destName, subj }); // refused if the dest later awakes (§6)
       }
       return { kind: "text", v: "", trust: "raw" }; // an undelivered orphan reply
     }
-    this.ledger.append("Delivered", subj, undefined, scope.currentAgent()?.name);
+    this.ledger.append("Delivered", subj, { to: destName }, scope.currentAgent()?.name);
     // §5/§8 provider faults: `empty` = an unrecoverable seam failure → the agent crashes (contained); a
     // `schema_violation` = a structured typed reply that fails its schema → a clean, catchable TypeMismatch.
     const fault = (this.provider as { fault?: string }).fault;
@@ -1180,17 +1508,56 @@ class Interpreter {
       const variants = this.variantsOf(expected.enumName);
       if (!variants) throw new RuntimeError(`unknown enum '${expected.enumName}'`);
       const { scores } = await this.provider.judge(prompt, expected.enumName, variants);
-      this.ledger.append("Resolved", subj, undefined, scope.currentAgent()?.name);
+      const value: Value = { kind: "credence", enumName: expected.enumName, scores, trust: "graded", derivedFrom: this.promptSources(e.message, scope) };
+      this.ledger.append("Resolved", subj, {
+        kind: "credence",
+        prompt,
+        reply: valueSummary(value),
+        enum: expected.enumName,
+        rule: undefined,
+        ...scoreSummary(scores),
+      }, scope.currentAgent()?.name);
       // §13 dependency scope: record which in-scope values fed this credence's prompt, so a later
       // `endorse subject by (decide c)` can confirm the decision is ABOUT the subject (see evalGate).
-      return { kind: "credence", enumName: expected.enumName, scores, trust: "graded", derivedFrom: this.promptSources(e.message, scope) };
+      return value;
+    }
+    const structuredType = this.structuredType(expected, scope);
+    if (structuredType) {
+      const schema = this.schemaOf(structuredType, scope)!;
+      let raw: unknown;
+      try {
+        raw = this.provider.structured
+          ? await this.provider.structured(prompt, schema, bindName ?? "Reply")
+          : JSON.parse(await this.provider.reply(`${prompt}\n\nReturn only JSON matching this schema:\n${JSON.stringify(schema)}`));
+        const value = this.valueFromStructured(raw, structuredType, scope);
+        const resolved = this.ledger.append("Resolved", subj, {
+          kind: "structured",
+          prompt,
+          schema,
+          reply: valueSummary(value),
+        }, scope.currentAgent()?.name);
+        // §16.7: a received typed reply is internalized into the agent's private memory — the mandatory
+        // memory envelope (consult+internalize is unconditional; no opt-in/opt-out config knob).
+        this.ledger.append("Internalized", subj, { reply: valueSummary(value), source_event: resolved.tick }, scope.currentAgent()?.name);
+        return value;
+      } catch (e) {
+        this.ledger.append("TypeMismatch", subj, {
+          schema,
+          raw,
+          error: (e as Error).message,
+        }, scope.currentAgent()?.name);
+        return { kind: "null", trust: "raw" };
+      }
     }
     const reply = await this.provider.reply(prompt);
-    this.ledger.append("Resolved", subj, undefined, scope.currentAgent()?.name);
-    // §16.7: a received TYPED reply is internalized into the agent's private memory — the mandatory memory
-    // envelope (consult+internalize is unconditional; there is no opt-in/opt-out config knob).
-    if (expected?.kind === "event") this.ledger.append("Internalized", subj, undefined, scope.currentAgent()?.name);
-    return { kind: "text", v: reply, trust: "raw" };
+    const value: Value = { kind: "text", v: reply, trust: "raw" };
+    const resolved = this.ledger.append("Resolved", subj, { kind: "reply", prompt, reply: valueSummary(value) }, scope.currentAgent()?.name);
+    // §16.7: a received typed reply is internalized into the agent's private memory — the mandatory memory
+    // envelope (consult+internalize is unconditional; there is no opt-in/opt-out config knob). A typed
+    // binding slot (`text r = d <- …`) internalizes; a bare unbound send (`d <- …;`) records only its
+    // lifecycle. (Credence-slot judgments take the judge path above, not this reply path.)
+    if (expected !== undefined) this.ledger.append("Internalized", subj, { reply: valueSummary(value), source_event: resolved.tick }, scope.currentAgent()?.name);
+    return value;
   }
 
   // W-Auth reach (§13): the current agent must hold `reach` for the destination agent's concrete type or
@@ -1224,15 +1591,29 @@ class Interpreter {
     if (!region) throw typeError(`'${e.mem.name} ->': not a mem handle`);
     if (region.forgotten) throw typeError(`'${e.mem.name} ->': the handle was forgotten and is no longer recallable`);
     const query = render(await this.evalExpr(e.query, scope));
-    this.ledger.append("MemoryConsulted", agent?.name ?? "<top>", { query, hits: region.writes.length }, agent?.name);
+    const candidates = region.writes.map(valueSummary);
     if (expected?.kind === "credence") {
       const variants = this.variantsOf(expected.enumName);
       if (!variants) throw new RuntimeError(`unknown enum '${expected.enumName}'`);
       const { scores } = await this.provider.judge(query, expected.enumName, variants);
+      this.ledger.append("MemoryConsulted", agent?.name ?? "<top>", {
+        query,
+        hits: region.writes.length,
+        candidates,
+        kind: "credence",
+        enum: expected.enumName,
+        ...scoreSummary(scores),
+      }, agent?.name);
       return { kind: "credence", enumName: expected.enumName, scores, trust: "graded", derivedFrom: this.promptSources(e.query, scope) };
     }
     // raw recall text — never settled (a recalled value must be re-decided + endorsed before a sink).
     const recalled = region.writes.length ? render(region.writes[region.writes.length - 1]!) : "";
+    this.ledger.append("MemoryConsulted", agent?.name ?? "<top>", {
+      query,
+      hits: region.writes.length,
+      candidates,
+      recalled,
+    }, agent?.name);
     return { kind: "text", v: recalled, trust: "raw" };
   }
 
@@ -1269,9 +1650,10 @@ class Interpreter {
   // any un-interpreted condition is treated as matching every row, so the result can only be MORE tainted,
   // never less — the safe (non-laundering) direction. No rows match ⇒ `graded` (withhold by default).
   private ledgerReadTrust(e: A.SelectExpr): Trust {
-    const etypeEq = e.cond.find((c) => c.field === "etype" && c.op === "==" && c.value.kind === "string");
+    const etypeEq = e.cond.find((c) => (c.field === "etype" || c.field.endsWith(".etype")) && c.op === "==" && c.value.kind === "string");
     const wantEtype = etypeEq && etypeEq.value.kind === "string" ? etypeEq.value.value : undefined;
-    const rows = this.ledger.events.filter((ev) => (wantEtype === undefined ? true : ev.etype === wantEtype));
+    const wanted = e.eventType ?? wantEtype;
+    const rows = this.ledger.events.filter((ev) => (wanted === undefined ? true : ev.etype === wanted));
     if (rows.length === 0) return "graded";
     return rows.every((ev) => this.isEndorsedOrigin(ev.etype)) ? "settled" : "graded";
   }
@@ -1289,17 +1671,6 @@ class Interpreter {
     return { kind: "array", items: [], trust: "graded" };
   }
 
-  // store(x) / embed(x) (§9, §10): the explicit emphasis forms of internalization. `store` writes the
-  // value's facts/relationships; `embed` writes its embedding to the vector store. Either way the write
-  // is internalized into the current agent's private memory and records an `Internalized` trace (§15.5.1).
-  private async evalInternalize(which: "store" | "embed", argExprs: A.Expr[], scope: Scope): Promise<Value> {
-    const agent = scope.currentAgent();
-    const args: Value[] = [];
-    for (const a of argExprs) args.push(await this.evalExpr(a, scope));
-    this.ledger.append("Internalized", agent?.name ?? "<top>", { op: which, n: args.length }, agent?.name);
-    return { kind: "null", trust: "settled" };
-  }
-
   private async evalMember(e: A.MemberExpr, scope: Scope): Promise<Value> {
     const o = await this.evalExpr(e.obj, scope);
     if (o.kind === "struct") {
@@ -1315,6 +1686,7 @@ class Interpreter {
             : { kind: "enumval", enumName: o.enumName, variant: o.committed, trust: "settled" };
         case "basis": return { kind: "enumval", enumName: "Basis", variant: o.basis, trust: "settled" };
         case "margin": return { kind: "float", v: o.margin, trust: "settled" };
+        case "decision_id": return { kind: "int", v: o.decisionId, trust: "settled" };
         case "subject": if (o.kind === "endorsement") return o.subject; break;
       }
       // §20.4: the metadata accessors (committed/basis/margin/subject) WIN a name collision; any OTHER field
@@ -1357,7 +1729,10 @@ class Interpreter {
 
   private eq(l: Value, r: Value): boolean {
     if (l.kind === "enumval" && r.kind === "enumval") return l.variant === r.variant;
+    if (l.kind === "enumval" && r.kind === "bool") return l.variant === String(r.v);
+    if (l.kind === "bool" && r.kind === "enumval") return String(l.v) === r.variant;
     if (l.kind === "enumval") return false;
+    if (r.kind === "enumval") return false;
     if ("v" in l && "v" in r) return (l as any).v === (r as any).v;
     return false;
   }
@@ -1377,6 +1752,161 @@ class Interpreter {
   private variantsOf(enumName: string): string[] | undefined {
     return this.enums.get(enumName) ?? (enumName === "bool" ? ["true", "false"] : undefined);
   }
+
+  private structuredType(expected: A.TypeRef | undefined, scope: Scope): A.TypeRef | undefined {
+    if (!expected) return undefined;
+    const t = expected.kind === "event" ? expected.inner : expected;
+    return this.schemaOf(t, scope) ? t : undefined;
+  }
+
+  private schemaOf(t: A.TypeRef, scope: Scope): StructuredSchema | undefined {
+    switch (t.kind) {
+      case "scalar":
+        switch (t.name) {
+          case "text": return { type: "string" };
+          case "int": return { type: "integer" };
+          case "float": return { type: "number" };
+          case "bool": return { type: "boolean" };
+          case "null": return { type: "null" };
+        }
+        break;
+      case "array": {
+        const items = this.schemaOf(t.inner, scope);
+        return items ? { type: "array", items } : undefined;
+      }
+      case "named": {
+        const name = this.resolveTypeName(t.name, scope);
+        const variants = this.enums.get(name);
+        if (variants) return { type: "string", enum: variants };
+        const fields = this.structs.get(name);
+        if (!fields) return undefined;
+        const properties: Record<string, StructuredSchema> = {};
+        const required: string[] = [];
+        for (const f of fields) {
+          const schema = this.schemaOf(f.type, scope);
+          if (!schema) return undefined;
+          properties[f.name] = schema;
+          required.push(f.name);
+        }
+        return { type: "object", properties, required, additionalProperties: false };
+      }
+      default:
+        return undefined;
+    }
+  }
+
+  private resolveTypeName(name: string, scope: Scope): string {
+    if (name.includes(".")) return name;
+    const q = this.qualifyInModule(name, scope);
+    return this.structs.has(q) || this.enums.has(q) ? q : name;
+  }
+
+  private valueFromPromptInput(raw: unknown, t: A.TypeRef, scope: Scope): Value {
+    return this.withTrust(this.valueFromStructured(this.coercePromptInput(raw, t, scope), t, scope), "settled");
+  }
+
+  private coercePromptInput(raw: unknown, t: A.TypeRef, scope: Scope): unknown {
+    if (t.kind === "event") return this.coercePromptInput(raw, t.inner, scope);
+    if (t.kind === "scalar") {
+      if (t.name === "text") return String(raw ?? "");
+      if (t.name === "int") {
+        const n = typeof raw === "number" ? raw : Number.parseInt(String(raw ?? ""), 10);
+        if (!Number.isInteger(n)) throw typeError("prompt input is not an int");
+        return n;
+      }
+      if (t.name === "float") {
+        const n = typeof raw === "number" ? raw : Number.parseFloat(String(raw ?? ""));
+        if (!Number.isFinite(n)) throw typeError("prompt input is not a float");
+        return n;
+      }
+      if (t.name === "bool") {
+        if (typeof raw === "boolean") return raw;
+        const s = String(raw ?? "").trim().toLowerCase();
+        if (["true", "yes", "1", "on"].includes(s)) return true;
+        if (["false", "no", "0", "off"].includes(s)) return false;
+        throw typeError("prompt input is not a bool");
+      }
+      if (t.name === "null") return null;
+    }
+    if (t.kind === "array") {
+      const arr = typeof raw === "string" ? JSON.parse(raw) : raw;
+      if (!Array.isArray(arr)) throw typeError("prompt input is not an array");
+      return arr.map((x) => this.coercePromptInput(x, t.inner, scope));
+    }
+    if (t.kind === "named") {
+      const name = this.resolveTypeName(t.name, scope);
+      const variants = this.enums.get(name);
+      if (variants) return String(raw ?? "");
+      const fields = this.structs.get(name);
+      if (fields) {
+        const obj = typeof raw === "string" ? JSON.parse(raw) : raw;
+        if (obj === null || typeof obj !== "object" || Array.isArray(obj)) throw typeError(`prompt input is not a ${name} object`);
+        const src = obj as Record<string, unknown>;
+        return Object.fromEntries(fields.map((f) => [f.name, this.coercePromptInput(src[f.name], f.type, scope)]));
+      }
+    }
+    return raw;
+  }
+
+  private withTrust(v: Value, trust: Trust): Value {
+    if (v.kind === "struct") {
+      const fields = new Map([...v.fields].map(([k, val]) => [k, this.withTrust(val, trust)]));
+      return { ...v, fields, trust };
+    }
+    if (v.kind === "array") return { ...v, items: v.items.map((item) => this.withTrust(item, trust)), trust };
+    if (v.kind === "credence" || v.kind === "decision" || v.kind === "endorsement") return v;
+    return { ...v, trust } as Value;
+  }
+
+  private valueFromStructured(raw: unknown, t: A.TypeRef, scope: Scope): Value {
+    if (t.kind === "event") return this.valueFromStructured(raw, t.inner, scope);
+    if (t.kind === "scalar") {
+      switch (t.name) {
+        case "text":
+          if (typeof raw !== "string") throw new RuntimeError("structured reply field is not text");
+          return { kind: "text", v: raw, trust: "raw" };
+        case "int":
+          if (typeof raw !== "number" || !Number.isInteger(raw)) throw new RuntimeError("structured reply field is not int");
+          return { kind: "int", v: raw, trust: "raw" };
+        case "float":
+          if (typeof raw !== "number") throw new RuntimeError("structured reply field is not float");
+          return { kind: "float", v: raw, trust: "raw" };
+        case "bool":
+          if (typeof raw !== "boolean") throw new RuntimeError("structured reply field is not bool");
+          return { kind: "bool", v: raw, trust: "raw" };
+        case "null":
+          if (raw !== null) throw new RuntimeError("structured reply field is not null");
+          return { kind: "null", trust: "raw" };
+      }
+    }
+    if (t.kind === "array") {
+      if (!Array.isArray(raw)) throw new RuntimeError("structured reply is not an array");
+      const items = raw.map((x) => this.valueFromStructured(x, t.inner, scope));
+      return { kind: "array", items, trust: trustJoin(items) };
+    }
+    if (t.kind === "named") {
+      const name = this.resolveTypeName(t.name, scope);
+      const variants = this.enums.get(name);
+      if (variants) {
+        if (typeof raw !== "string" || !variants.includes(raw)) throw new RuntimeError(`structured reply is not a ${name} variant`);
+        return { kind: "enumval", enumName: name, variant: raw, trust: "raw" };
+      }
+      const fields = this.structs.get(name);
+      if (!fields) throw new RuntimeError(`unknown structured reply type '${name}'`);
+      if (raw === null || typeof raw !== "object" || Array.isArray(raw)) throw new RuntimeError(`structured reply is not a ${name} object`);
+      const obj = raw as Record<string, unknown>;
+      const allowed = new Set(fields.map((f) => f.name));
+      for (const key of Object.keys(obj)) if (!allowed.has(key)) throw new RuntimeError(`structured reply has extra field '${key}'`);
+      const out = new Map<string, Value>();
+      for (const f of fields) {
+        if (!Object.prototype.hasOwnProperty.call(obj, f.name)) throw new RuntimeError(`structured reply missing field '${f.name}'`);
+        out.set(f.name, this.valueFromStructured(obj[f.name], f.type, scope));
+      }
+      return { kind: "struct", typeName: name, fields: out, trust: trustJoin([...out.values()]) };
+    }
+    throw new RuntimeError("type does not have a structured reply schema");
+  }
+
   private requireInstance(name: string): AgentInstance {
     const inst = this.instances.get(name);
     if (!inst) throw new RuntimeError(`unknown agent instance '${name}'`);

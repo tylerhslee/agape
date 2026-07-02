@@ -39,6 +39,7 @@ async function main(argv: string[]): Promise<number> {
     let token: string | undefined;
     for (let i = 0; i < rest.length; i++) {
       if (rest[i] === "--port") port = Number(rest[++i]);
+      else if (rest[i] === "--share") allowLive = true;
       else if (rest[i] === "--live") allowLive = true;
       else if (rest[i] === "--token") token = rest[++i];
     }
@@ -49,7 +50,7 @@ async function main(argv: string[]): Promise<number> {
   }
   if (cmd !== "run" || rest.length === 0) {
     console.error("usage: agape-ts run <file.ag> [--manifest agape.toml] [--provider mock|anthropic|openai|gemini]");
-    console.error("       agape-ts studio [--port 4317] [--live]   # execution-inspection UI over the cwd");
+    console.error("       agape-ts studio [--port 4317] [--share|--live] [--token secret]   # execution-inspection UI over the cwd");
     return 2;
   }
   let file = "";

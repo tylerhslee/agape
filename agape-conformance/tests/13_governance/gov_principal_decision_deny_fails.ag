@@ -2,8 +2,9 @@
 //! section:   13_governance
 //! expect:    accept
 //! principal: deny
-//! contains:  FailedPrincipalDecision
-//! spec:      §13 (when the principal declines, `p decide c by r` records a FailedPrincipalDecision and the decision stays abstained)
+//! contains:  FailedPrincipalDecision; Decided
+//! absent:    Endorsed
+//! spec:      §13 (when the principal declines, `p decide c by r` records FailedPrincipalDecision and a Decided abstention)
 //! ---
 enum Approval { Approve, Decline }
 action ReleaseFunds(int cents);
@@ -13,9 +14,8 @@ agent Clerk grants { perform ReleaseFunds } {
     text req = self <- "state the refund request";
     Credence<Approval> c = self <- f"assess: {req}";
     Decision<Approval> d = alice decide c by conformal 0.05;
-    Endorsement<text> e = endorse req by d;
-    if (e.committed == Approve) { perform ReleaseFunds(10000); }
-    else if (e.committed == Decline) { say("declined"); }
+    if (d.committed == Approve) { Endorsement<text> e = endorse req by d; perform ReleaseFunds(10000); }
+    else if (d.committed == Decline) { Endorsement<text> e = endorse req by d; say("declined"); }
     else { say("principal declined to rule"); }
   }
 }

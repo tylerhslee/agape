@@ -6,7 +6,7 @@
 //! ---
 agent A {
   on awake {
-    event<text> r = self <- "what is your name?";
+    text r = self <- "what is your name?";
     say(r);
   }
 }

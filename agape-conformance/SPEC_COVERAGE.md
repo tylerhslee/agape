@@ -1,6 +1,6 @@
 # SPEC Coverage Matrix
 
-Target: `SPEC.md` `v1.0.0-alpha.2026.7.1.0` — the core kernel.
+Target: `SPEC.md` `v1.0.0-alpha.2026.7.2.0` — the core kernel.
 
 Scope of this matrix: compiler/language conformance only. Runtime-only obligations in sections 16/17/18 are marked `runtime-suite` because they cannot be proven by feeding `.ag` source to a compiler. They belong in the TypeScript runtime conformance suite and adapters.
 
@@ -30,7 +30,7 @@ Status meanings:
 | 13 Capabilities/governance | covered | Default-deny grants, subtractive extend, reach/use/perform authority, taint at sinks, subject endorsement, the endorsement binder as the settled subject, sink-admissibility only in a committed `if` branch, non-admissibility in the abstained else branch, raw-subject rejection, subject-scope rejection, the deference requirement, principal decisions, failed principal decisions, the inline margin `floor`, and Endorsed ledger records. Margin-floor runtime faults are `runtime-suite`. |
 | 14 Trusted kernel/invariants | covered | Bypass matrix is represented across gates, memory store/recall, the ledger query, tools, prompts, and config tests: no construct launders taint, invents authority, skips endorsement, or writes through an unsettled sink. |
 | 15 Formal semantics | covered | EBNF surfaces, selected T-rules, W-rules, error categories, replay directives, and conformance harness directives. Stochastic theorems are `runtime-suite`. |
-| 15.5 Reproducibility | covered | Compiler suite pins replay directives and pure off-ledger `decide`; runtime adapter tests cover replay, no oracle reinvocation, multi-run observational-equivalence/stability checks, and exactly-once idempotency. |
+| 15.5 Reproducibility | covered | Compiler suite pins replay directives and ledgered sync `decide`; runtime adapter tests cover replay, no oracle reinvocation, multi-run observational-equivalence/stability checks, and exactly-once idempotency. |
 | 15.5.6 Conformal | covered | File-level and per-gate conformal declarations, cold abstain/defer surfaces, and config-aware fallback tests. Statistical coverage is `runtime-suite`. |
 | 16 Runtime | runtime-suite | Covered by TypeScript runtime adapter tests for scheduler, ledger, seam protocol, replay, faults, memory, projections, calibration, and API surfaces. |
 | 16.7 Memory runtime | runtime-suite | Compiler tests cover memory surface and trust. Runtime adapter tests cover mandatory envelope, artifact ingestion, idempotency, provenance, learning loop, and no memory-to-action laundering. |

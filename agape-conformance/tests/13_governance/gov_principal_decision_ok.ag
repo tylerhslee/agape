@@ -2,8 +2,8 @@
 //! section:   13_governance
 //! expect:    accept
 //! principal: grant
-//! contains:  PrincipalDecision; Endorsed
-//! spec:      §13 (`p decide c by r` reaches the identity dependency and records a PrincipalDecision when the rule cannot commit, then endorses the subject)
+//! contains:  PrincipalDecision; Decided; Endorsed
+//! spec:      §13 (`p decide c by r` reaches identity when the rule cannot commit, records PrincipalDecision, records Decided, then may endorse the subject)
 //! ---
 enum Approval { Approve, Decline }
 action ReleaseFunds(int cents);
@@ -13,9 +13,8 @@ agent Clerk grants { perform ReleaseFunds } {
     text req = self <- "state the refund request";
     Credence<Approval> c = self <- f"assess: {req}";
     Decision<Approval> d = alice decide c by conformal 0.05;
-    Endorsement<text> e = endorse req by d;
-    if (e.committed == Approve) { perform ReleaseFunds(10000); }
-    else if (e.committed == Decline) { say("declined"); }
+    if (d.committed == Approve) { Endorsement<text> e = endorse req by d; perform ReleaseFunds(10000); }
+    else if (d.committed == Decline) { Endorsement<text> e = endorse req by d; say("declined"); }
   }
 }
 spawn Clerk a; awake a;

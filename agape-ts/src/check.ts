@@ -67,15 +67,13 @@ class Scope {
   // a `var m = n` / `assign m = n` copies n's type). Used for the §19.5 interface-typed-binding check:
   // binding a known non-implementor into an interface slot is an InterfaceError. Unknown ⇒ unchecked.
   agentTypeOf = new Map<string, string>();
-  // Endorsement binders bound in a NON-committed-narrowed branch (the `abstain`/`else` arm, §13/§15.3.3).
-  // An `Endorsement` is sink-admissible only inside a branch that has narrowed its `.committed` to a
-  // committed variant; in the abstain branch it is settled but not committed-narrowed, so the endorsed
-  // subject cannot itself reach a consequential sink. A `perform` of such a binder is a TaintViolation.
+  // Legacy dispatch bookkeeping for pre-core arm sugar. In the core, `endorse` can only be constructed
+  // from a committed-narrowed Decision, so an Endorsement binder is sink-admissible immediately.
   nonCommittedEndorsements = new Set<string>();
-  // Endorsement binders NARROWED committed in this (child) branch via `if (e.committed == V)` for a real
-  // variant V — sink-admissible here even though an ancestor marked them non-committed at binding
-  // (Model-A flow narrowing, §13/§15.3.3, W-Endorse).
+  // Bindings narrowed committed in this child branch via `if (x.committed == V)` for a real variant V.
+  // Decisions become endorsement-admissible; legacy Endorsements become sink-admissible.
   committedNarrowed = new Set<string>();
+  committedDecisions = new Set<string>();
   // The `decide` expression a `Decision<E>` binding was produced from, when statically known (a
   // `Decision<E> d = decide c by R`). Used by the §20.3 deference check to ask whether the decision
   // endorsing a consequential path is principal-driven (a prefix `p decide …` or a `by <principal>` rule).
@@ -87,6 +85,10 @@ class Scope {
   }
   markNonCommittedEndorsement(name: string) { this.nonCommittedEndorsements.add(name); }
   markCommittedNarrowed(name: string) { this.committedNarrowed.add(name); }
+  markCommittedDecision(name: string) { this.committedDecisions.add(name); }
+  isCommittedDecision(name: string): boolean {
+    return this.committedDecisions.has(name) || (this.parent?.isCommittedDecision(name) ?? false);
+  }
   isNonCommittedEndorsement(name: string): boolean {
     if (this.committedNarrowed.has(name)) return false; // narrowed committed in this branch → sink-admissible
     return this.nonCommittedEndorsements.has(name) || (this.parent?.isNonCommittedEndorsement(name) ?? false);
@@ -652,7 +654,7 @@ function declClass(t: A.TypeRef): Cls {
     case "endorsement": return "endorsement";
     case "named": return "enum"; // enum/struct/agent — treated leniently
     case "array": return t.inner.kind === "credence" ? "credarray" : "unknown"; // narrow: array<Credence<…>>
-    default: return "unknown"; // event<>
+    default: return "unknown"; // legacy event<>
   }
 }
 
@@ -780,7 +782,11 @@ class Checker {
       if (t.name === "Rule") throw typeError(`'Rule' is the gate parameter, not a first-class storage type — it cannot be stored in a binding (§3)`);
       if (t.typeArgs) {
         for (const a of t.typeArgs) this.checkTypeRef(a);
-        this.checkInstantiation(t.name);
+        if (t.name === "LedgerEntry") {
+          if (t.typeArgs.length !== 1) throw typeError("LedgerEntry takes exactly one event type argument");
+        } else {
+          this.checkInstantiation(t.name);
+        }
       }
       return;
     }
@@ -1085,6 +1091,10 @@ class Checker {
       case "emit": case "perform": for (const a of s.args) this.assertSyncExpr(a); return;
       case "if": this.assertSyncExpr(s.cond); this.assertSyncBody(s.then); if (s.else) this.assertSyncBody(s.else); return;
       case "dispatch": this.assertSyncGate(s.gate); for (const arm of s.arms) this.assertSyncBody(arm.body); if (s.abstain) this.assertSyncBody(s.abstain.body); return;
+      // §9/§10: a mem WRITE internalizes through the provider (decompose across the region's views) —
+      // a dependency reach, so a `sync` body may not store (the recall seam is likewise async, below).
+      case "memdecl":
+        throw colorViolation("a `sync` function may not declare/write a `mem` (a memory write internalizes through the provider → async)");
       default: return;
     }
   }
@@ -1123,11 +1133,6 @@ class Checker {
       case "call":
         if (e.callee.kind === "ident" && this.d.tools.has(e.callee.name)) {
           throw colorViolation(`a \`sync\` function may not call the tool '${e.callee.name}' (a tool call reaches the tool dependency → async)`);
-        }
-        // store(x)/embed(x) are memory-internalization calls (§9/§10): they write through the async
-        // memory substrate (the provider decomposes/embeds), so a `sync` body may not call them.
-        if (e.callee.kind === "ident" && (e.callee.name === "store" || e.callee.name === "embed")) {
-          throw colorViolation(`a \`sync\` function may not call '${e.callee.name}' (memory internalization reaches the async memory substrate → async)`);
         }
         // §4: a `sync` fn may only call other `sync` fns. Calling a KNOWN user function that is not marked
         // `sync` (its body may reach a declared dependency — a send, recall, tool call, or principal-decide)
@@ -1211,11 +1216,14 @@ class Checker {
           throw typeError(`an 'if' condition must be a bool, not ${cond} (gate a Credence first)`);
         }
         const thenScope = scope.child();
-        // Model-A flow narrowing (§13/§15.3.3, W-Endorse): inside the TRUE branch of `if (e.committed == V)`
-        // for a real variant V, the endorsement `e` is committed-narrowed and becomes sink-admissible. The
-        // else branch leaves it non-committed (the abstained / other-variant case).
+        // Model-A flow narrowing (§13/§15.3.3): inside the TRUE branch of `if (d.committed == V)`
+        // for a real variant V, the Decision `d` is committed-narrowed and may be endorsed. The else branch
+        // leaves it not committed-narrowed (the abstained / other-variant case).
         const narrowed = this.committedNarrowIdent(s.cond);
-        if (narrowed) thenScope.markCommittedNarrowed(narrowed);
+        if (narrowed) {
+          if (scope.get(narrowed) === "decision") thenScope.markCommittedDecision(narrowed);
+          else thenScope.markCommittedNarrowed(narrowed);
+        }
         this.checkBody(s.then, thenScope);
         if (s.else) this.checkBody(s.else, scope.child());
         return;
@@ -1315,7 +1323,7 @@ class Checker {
 
   private checkDispatch(s: A.DispatchStmt, scope: Scope): void {
     this.infer(s.gate, scope);
-    if (s.gate.kind === "endorse") { this.checkEndorseScope(s.gate, scope); this.checkDeference(s, scope); }
+    if (s.gate.kind === "endorse") { this.checkEndorseScope(s.gate, scope); this.checkEndorseCommitted(s.gate, scope); this.checkDeference(s, scope); }
     const boundCls: Cls = s.gate.kind === "endorse" ? "endorsement" : "decision";
     const enumName = this.gateEnum(s.gate, scope);
     if (enumName) {
@@ -1642,7 +1650,7 @@ class Checker {
         if (e.principalStr) throw typeError(`a principal basis must be a declared \`principal\`, not the string ${JSON.stringify(e.principal)} — there is no text→Principal coercion (§3/§13)`);
         this.infer(e.credence, scope);
         return "decision";
-      case "endorse": this.checkEndorseScope(e, scope); return "endorsement";
+      case "endorse": this.checkEndorseScope(e, scope); this.checkEndorseCommitted(e, scope); return "endorsement";
       case "index": this.infer(e.obj, scope); this.infer(e.index, scope); return "unknown"; // element class unknown
       case "member": {
         const obj = this.infer(e.obj, scope);
@@ -1655,6 +1663,7 @@ class Checker {
           if (e.field === "committed") return "enum";
           if (e.field === "basis") return "enum"; // a value of the built-in `Basis` enum (§20.4)
           if (e.field === "margin") return "float";
+          if (e.field === "decision_id") return "int";
           if (e.field === "subject") return "unknown";
         }
         return "unknown";
@@ -1678,11 +1687,11 @@ class Checker {
           const name = e.callee.name;
           const tool = this.d.tools.get(name);
           if (tool) return declClass(tool.ret);
-          // §6b/§8: a bare call to a name that is not a declared/imported tool or function, nor a built-in
-          // internalize (`store`/`embed`), is an unknown-identifier TypeError — tools and functions are
+          // §6b/§8: a bare call to a name that is not a declared/imported tool or function is an
+          // unknown-identifier TypeError — tools and functions are
           // declared dependencies, not self-declaring (e.g. an undeclared `search(…)` or a nonexistent
           // `sample(…)`). A qualified callee (`m.f(…)`) is a member, not an ident, so it is unaffected.
-          if (!this.d.fns.has(name) && name !== "store" && name !== "embed") {
+          if (!this.d.fns.has(name)) {
             throw typeError(`call to undeclared '${name}' — a tool or function is a declared dependency, not self-declaring (§6b/§8)`);
           }
         }
@@ -1824,12 +1833,10 @@ class Checker {
     const rawSendReply = init.kind === "send" && declared !== "credence";
     scope.setTaintedTo(name, this.isTaintedExpr(init, scope) || rawSendReply);
     if (init.kind === "endorse") {
-      // Model A (§13/§15.3.3, W-Endorse): an endorsement is the SETTLED form of its subject — bind it
-      // UN-tainted — but it is sink-admissible only when committed-narrowed, so mark it non-committed until an
-      // `if (e.committed == V)` narrows it (checkStmt `if`, below). The raw SUBJECT (e.g. `draft`) keeps its
-      // own taint, so performing the raw subject directly is still a TaintViolation.
+      // Model A (§13/§15.3.3): an endorsement is the SETTLED form of its subject. Construction already
+      // required a committed-narrowed Decision, so the binder is sink-admissible immediately. The raw SUBJECT
+      // (e.g. `draft`) keeps its own taint, so performing the raw subject directly is still a TaintViolation.
       scope.setTaintedTo(name, false);
-      scope.markNonCommittedEndorsement(name);
       scope.setScope(name, free);
     } else if (init.kind === "decide") {
       scope.setScope(name, this.scopeOfDecision(init, scope));
@@ -1892,6 +1899,13 @@ class Checker {
         );
       }
     }
+  }
+
+  // Abstinence is a decision outcome, not an endorsement. A subject can be endorsed only after the
+  // Decision has been flow-narrowed to a real committed variant (`if (d.committed == V) { endorse ... }`).
+  private checkEndorseCommitted(e: A.EndorseExpr, scope: Scope): void {
+    if (e.decision.kind === "ident" && scope.isCommittedDecision(e.decision.name)) return;
+    throw typeError("endorse requires a Decision narrowed to a committed variant; an abstained Decision has no endorsement to give (§13)");
   }
 
   // Whether an expression is a direct memory READ that yields a tainted, subjective fact (§10): a recall
