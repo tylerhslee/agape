@@ -1950,6 +1950,7 @@ function graphOverlay(g, events, map) {
     const d = p.decision && typeof p.decision === "object" ? p.decision : p; // flat or nested payload
     const v = typeof p.decision === "string" ? p.decision : (d.effectiveCommitted || d.committed);
     if (v && v !== "abstained") committed.add(v);
+    else committed.add("else"); // an abstained decision witnesses the residual arm
   }
   const variantOk = (e) => !e.variant || committed.has(e.variant);
   const litEdges = (pred) => { for (const e of g.edges) if (pred(e) && variantOk(e)) le.add(e.id); };
@@ -1959,7 +1960,12 @@ function graphOverlay(g, events, map) {
   for (const ev of events || []) {
     const t = ev.etype, p = ev.payload || {}, ag = ev.agent;
     if (map?.actions?.includes(t)) { litNode("sink:" + t); litEdges((e) => e.kind === "sink" && e.to === "sink:" + t); continue; }
-    if (map?.events?.includes(t)) { litNode("event:" + t); litEdges((e) => e.kind === "event" && e.label === t); continue; }
+    if (map?.events?.includes(t)) {
+      litNode("event:" + t);
+      // the event fired: light its edges AND the handlers that consumed it
+      for (const ed of g.edges) if (ed.kind === "event" && ed.label === t && variantOk(ed)) { le.add(ed.id); ln.add(ed.to); }
+      continue;
+    }
     switch (t) {
       case "Decided": case "Endorsed": {
         const en = (p.decision && typeof p.decision === "object" ? p.decision.enum : p.enum) || p.credence;
@@ -2020,7 +2026,7 @@ function drawGraph(events, map) {
   const pend = state.pendingAttestation;
 
   // ---- vertical layout: ranks are ROWS, the kernel chain reads top -> bottom ----
-  const UW = 250, PADX = 12, HEADH = 30, MGAP = 10, RGAP = 92, HGAP = 64, M = 18;
+  const UW = 250, PADX = 12, HEADH = 30, MGAP = 18, RGAP = 92, HGAP = 64, M = 18;
   const GREY = "#3d465e", GREYTEXT = "#828ca3";
   const rowH = (n) => (n.kind === "gate" ? 52 : n.kind === "ask" ? 34 : 36);
   const unitH = (u) => u.members.length ? HEADH + 8 + u.members.reduce((a, m) => a + rowH(m) + MGAP, 0) + 2 : 40;
@@ -2070,13 +2076,18 @@ function drawGraph(events, map) {
   }
   const svgH = y - RGAP + M;
 
-  // ---- edges: orthogonal (LucidChart-style) ----
-  // down edges leave a spread port on the source's bottom, run to a dedicated horizontal CHANNEL
-  // in the gap above the target row (one lane per edge — labels live there, never under a box),
-  // then drop into a spread port on the target's top. Up edges route around the right margin.
+  // ---- edges: orthogonal, box-avoiding ----
+  // Invariant: an edge never crosses a node box. A source with member rows BELOW it exits its
+  // cluster sideways; a target with member rows ABOVE it is entered sideways; an intra-cluster
+  // skip rides the frame's inner gutter. Gate out-edges carry BRANCH labels only (the variant,
+  // or `else` for the abstain arm) — the target node already names the event/action.
   const parentOf = new Map(g.nodes.map((n) => [n.id, n.parent || null]));
+  const nodeKind = new Map(g.nodes.map((n) => [n.id, n.kind]));
   const drawable = g.edges.filter((e) => pos.get(e.from) && pos.get(e.to));
   const rankOfNode = (id) => rank.get(unitOf.get(id));
+  const frameOf = (id) => unitRect.get(unitOf.get(id));
+  const rowsBelow = (id) => { const f = frameOf(id), p = pos.get(id); return parentOf.get(id) && f && p.y + p.h < f.y + f.h - 18; };
+  const rowsAbove = (id) => { const f = frameOf(id), p = pos.get(id); return parentOf.get(id) && f && p.y > f.y + HEADH + 12; };
   const kindOf = { intra: [], down: [], up: [], flat: [] };
   for (const e of drawable) {
     if (parentOf.get(e.from) && parentOf.get(e.from) === parentOf.get(e.to)) kindOf.intra.push(e);
@@ -2087,17 +2098,15 @@ function drawGraph(events, map) {
       else kindOf.flat.push(e);
     }
   }
+  for (const e of kindOf.down) { e._sideOut = rowsBelow(e.from); e._sideIn = rowsAbove(e.to); }
   const botPorts = new Map(), topPorts = new Map();
   for (const e of kindOf.down) {
-    if (!botPorts.has(e.from)) botPorts.set(e.from, []);
-    botPorts.get(e.from).push(e);
-    if (!topPorts.has(e.to)) topPorts.set(e.to, []);
-    topPorts.get(e.to).push(e);
+    if (!e._sideOut) { if (!botPorts.has(e.from)) botPorts.set(e.from, []); botPorts.get(e.from).push(e); }
+    if (!e._sideIn) { if (!topPorts.has(e.to)) topPorts.set(e.to, []); topPorts.get(e.to).push(e); }
   }
   for (const list of botPorts.values()) list.sort((a, b) => pos.get(a.to).x - pos.get(b.to).x || a.id.localeCompare(b.id));
   for (const list of topPorts.values()) list.sort((a, b) => pos.get(a.from).x - pos.get(b.from).x || a.id.localeCompare(b.id));
   const portX = (p, list, e) => p.x + p.w * ((list.indexOf(e) + 1) / (list.length + 1));
-  // one channel lane per edge entering a row, allocated across that row's gap
   const gapEdges = new Map();
   for (const e of kindOf.down) {
     const rb = rankOfNode(e.to);
@@ -2106,74 +2115,108 @@ function drawGraph(events, map) {
   }
   const chanY = new Map();
   for (const [rb, list] of gapEdges) {
-    list.sort((a, b) => portX(pos.get(a.to), topPorts.get(a.to), a) - portX(pos.get(b.to), topPorts.get(b.to), b));
+    list.sort((a, b) => pos.get(a.to).x - pos.get(b.to).x || a.id.localeCompare(b.id));
     const gapTop = rowTop.get(rb) - RGAP + 16, gapH = RGAP - 34;
     list.forEach((e, i) => chanY.set(e.id, gapTop + gapH * ((i + 1) / (list.length + 1))));
   }
-  const blockedDrop = (x, ra, rb) => { // does a straight drop at x cross a unit in rows between?
+  const blockedDrop = (x, ra, rb) => {
     for (const r of sortedRanks) {
       if (rankIndex.get(r) <= rankIndex.get(ra) || rankIndex.get(r) >= rankIndex.get(rb)) continue;
       for (const u of rows.get(r)) { const b = unitRect.get(u.id); if (x > b.x - 8 && x < b.x + b.w + 8) return true; }
     }
     return false;
   };
-  let sideLane = 0;
+  const laneCount = new Map(); // per (unit, side) allocation of side lanes
+  const lane = (f, side) => {
+    const k = laneCount.get(f.x + side) || 0;
+    laneCount.set(f.x + side, k + 1);
+    return side === "R" ? f.x + f.w + 9 + k * 11 : f.x - 9 - k * 11;
+  };
+  let farLane = 0;
   const epaths = [], elabels = [];
   const edgeVisual = (e) => {
     const lit = over.le.has(e.id);
     const pendEdge = pend && e.kind === "escalate" && e.to === "principal:" + pend.principal;
+    let label;
+    if (e.kind === "escalate") label = "escalate";
+    else if (nodeKind.get(e.from) === "gate") label = e.variant || ""; // branch label only
+    else if (e.kind === "prompt") label = ""; // the sensor node already says it
+    else label = e.label || "";
     return {
       lit, pendEdge,
       cls: `gedge${e.kind === "recall" || e.kind === "store" ? " dashed" : ""}${lit ? " lit" : ""}${pendEdge ? " pend" : ""}`,
       color: lit ? (EDGE_COLORS[e.kind] || "var(--green)") : GREY,
       marker: `marker-end="url(#ar-${lit ? (EDGE_COLORS[e.kind] ? e.kind : "lit") : pendEdge ? "pend" : "grey"})"`,
-      label: e.label ? (e.variant ? `${e.label} · ${e.variant}` : e.label) : (e.variant ? `· ${e.variant}` : ""),
+      label,
     };
   };
   const trim = (t) => (t.length > 30 ? t.slice(0, 29) + "…" : t);
   const putLabel = (v, anchor, x, y, text) => elabels.push({ cls: v.cls, color: v.lit ? v.color : GREYTEXT, anchor, x, y, text: trim(text) });
 
-  for (const e of kindOf.intra) { // vertical connector inside a cluster; label OUTSIDE the frame
-    const s = pos.get(e.from), t = pos.get(e.to), v = edgeVisual(e);
-    const down = t.y >= s.y;
-    const x1 = s.x + 24, x2 = t.x + 24;
-    const y1 = down ? s.y + s.h : s.y, y2 = down ? t.y - 3 : t.y + t.h + 3;
-    const midY = (y1 + y2) / 2;
-    const d = x1 === x2 ? `M ${x1} ${y1} L ${x2} ${y2}` : `M ${x1} ${y1} L ${x1} ${midY} L ${x2} ${midY} L ${x2} ${y2}`;
-    epaths.push(`<g class="${v.cls}"><path d="${d}" stroke="${v.color}" ${v.marker}></path></g>`);
-    if (v.label) {
-      const frame = unitRect.get(unitOf.get(e.from));
-      putLabel(v, "start", frame.x + frame.w + 10, midY + 4, v.label);
+  for (const e of kindOf.intra) {
+    const s = pos.get(e.from), t = pos.get(e.to), v = edgeVisual(e), f = frameOf(e.from);
+    const adjacent = t.y > s.y && t.y - (s.y + s.h) <= MGAP + 4;
+    let d, labelY;
+    if (adjacent) { // straight vertical between consecutive rows
+      const x = Math.max(s.x, t.x) + 22;
+      d = `M ${x} ${s.y + s.h} L ${x} ${t.y - 3}`;
+      labelY = (s.y + s.h + t.y) / 2 + 4;
+    } else { // a skip: ride the frame's inner-right gutter, enter the target's right side
+      const gx = f.x + f.w - 5;
+      const scy = s.y + s.h / 2, tcy = t.y + t.h / 2;
+      d = `M ${s.x + s.w} ${scy} L ${gx} ${scy} L ${gx} ${tcy} L ${t.x + t.w + 4} ${tcy}`;
+      labelY = (scy + tcy) / 2 + 4;
     }
+    epaths.push(`<g class="${v.cls}"><path d="${d}" stroke="${v.color}" ${v.marker}></path></g>`);
+    if (v.label) putLabel(v, "start", f.x + f.w + 12, labelY, v.label);
   }
   for (const e of kindOf.down) {
     const s = pos.get(e.from), t = pos.get(e.to), v = edgeVisual(e);
-    const sx = portX(s, botPorts.get(e.from), e), tx = portX(t, topPorts.get(e.to), e);
     const cy = chanY.get(e.id), ra = rankOfNode(e.from), rb = rankOfNode(e.to);
-    let d;
-    if (rankIndex.get(rb) - rankIndex.get(ra) > 1 && blockedDrop(sx, ra, rb)) {
-      const lane = M + maxRowW + 20 + (sideLane++ % 5) * 15; // detour via the right margin
-      const outY = rowBottom.get(ra) + 18;
-      d = `M ${sx} ${s.y + s.h} L ${sx} ${outY} L ${lane} ${outY} L ${lane} ${cy} L ${tx} ${cy} L ${tx} ${t.y - 3}`;
+    const scy = s.y + s.h / 2, tcy = t.y + t.h / 2;
+    let head, dropX;
+    if (e._sideOut) { // exit the cluster sideways: never drop through the rows below
+      const lx = lane(frameOf(e.from), "R");
+      head = `M ${s.x + s.w} ${scy} L ${lx} ${scy}`;
+      dropX = lx;
     } else {
-      d = `M ${sx} ${s.y + s.h} L ${sx} ${cy} L ${tx} ${cy} L ${tx} ${t.y - 3}`;
+      const sx = portX(s, botPorts.get(e.from), e);
+      head = `M ${sx} ${s.y + s.h}`;
+      dropX = sx;
     }
-    epaths.push(`<g class="${v.cls}"><path d="${d}" stroke="${v.color}" ${v.marker}></path></g>`);
-    if (v.label) {
-      // the label lives on the channel run — guaranteed box-free space
-      const lx = Math.abs(tx - sx) > 60 ? (sx + tx) / 2 : tx + 10;
-      putLabel(v, Math.abs(tx - sx) > 60 ? "middle" : "start", lx, cy - 5, v.label);
+    if (rankIndex.get(rb) - rankIndex.get(ra) > 1 && blockedDrop(dropX, ra, rb)) {
+      const far = M + maxRowW + 22 + (farLane++ % 5) * 13;
+      const outY = rowBottom.get(ra) + 16;
+      head += ` L ${dropX} ${outY} L ${far} ${outY} L ${far} ${cy}`;
+      dropX = far;
+    } else {
+      head += ` L ${dropX} ${cy}`;
+    }
+    let tail, endX;
+    if (e._sideIn) { // enter the cluster sideways: never drop through the rows above
+      const lx = lane(frameOf(e.to), "L");
+      tail = ` L ${lx} ${cy} L ${lx} ${tcy} L ${t.x - 4} ${tcy}`;
+      endX = lx;
+    } else {
+      const tx = portX(t, topPorts.get(e.to), e);
+      tail = ` L ${tx} ${cy} L ${tx} ${t.y - 3}`;
+      endX = tx;
+    }
+    epaths.push(`<g class="${v.cls}"><path d="${head}${tail}" stroke="${v.color}" ${v.marker}></path></g>`);
+    if (v.label) { // on the channel run — box-free by construction
+      const lx = Math.abs(endX - dropX) > 56 ? (dropX + endX) / 2 : endX + 10;
+      putLabel(v, Math.abs(endX - dropX) > 56 ? "middle" : "start", lx, cy - 5, v.label);
     }
   }
-  for (const e of kindOf.up) { // around the right margin, entering the target's right side
+  for (const e of kindOf.up) {
     const s = pos.get(e.from), t = pos.get(e.to), v = edgeVisual(e);
-    const lane = M + maxRowW + 24 + (sideLane++ % 5) * 15;
+    const far = M + maxRowW + 26 + (farLane++ % 5) * 13;
     const sy = s.y + s.h / 2, ty = t.y + t.h / 2;
-    const d = `M ${s.x + s.w} ${sy} L ${lane} ${sy} L ${lane} ${ty} L ${t.x + t.w + 4} ${ty}`;
+    const d = `M ${s.x + s.w} ${sy} L ${far} ${sy} L ${far} ${ty} L ${t.x + t.w + 4} ${ty}`;
     epaths.push(`<g class="${v.cls}"><path d="${d}" stroke="${v.color}" ${v.marker}></path></g>`);
-    if (v.label) putLabel(v, "end", lane - 8, (sy + ty) / 2, v.label);
+    if (v.label) putLabel(v, "end", far - 8, (sy + ty) / 2, v.label);
   }
-  for (const e of kindOf.flat) { // same row: side to side
+  for (const e of kindOf.flat) {
     const s = pos.get(e.from), t = pos.get(e.to), v = edgeVisual(e);
     const ltr = t.x > s.x;
     const x1 = ltr ? s.x + s.w : s.x, x2 = ltr ? t.x - 4 : t.x + t.w + 4;

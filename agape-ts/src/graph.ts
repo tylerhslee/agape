@@ -117,7 +117,9 @@ export function buildGraph(program: A.Program, programName = ""): ProgramGraph {
 
   // ---- contexts: agent clusters (hooks/handlers/ctors/mems) + the top level -------------------
   const ctxs: Ctx[] = [];
-  const topStmts = program.stmts.filter((s) => s.kind !== "when" && s.kind !== "spawn");
+  // spawn/awake/sleep are wiring boilerplate — a program whose top level is ONLY that gets no
+  // "program" node (the graph starts at the agents); anything more substantive keeps it.
+  const topStmts = program.stmts.filter((s) => !["when", "spawn", "awake", "sleep"].includes(s.kind));
   const topWhens = program.stmts.filter((s): s is A.WhenStmt => s.kind === "when");
   const needTop = topStmts.length > 0;
   if (needTop) addNode({ id: "top", kind: "top", label: "program", line: 1 });
@@ -412,7 +414,9 @@ export function buildGraph(program: A.Program, programName = ""): ProgramGraph {
             visitExpr(s.cond, at);
             if (n) {
               visitStmts(s.then, { nodeId: n.gate.nodeId, variant: n.variant });
-              if (s.else) visitStmts(s.else, { nodeId: n.gate.nodeId, variant: undefined });
+              // the else of a narrowing chain is the residual arm; a nested `else if` narrowing
+              // overrides this with its own variant, so only the FINAL else keeps "else" (abstain).
+              if (s.else) visitStmts(s.else, { nodeId: n.gate.nodeId, variant: "else" });
             } else {
               visitStmts(s.then, at);
               if (s.else) visitStmts(s.else, at);

@@ -91,11 +91,13 @@ describe("graph: the gated-sink chain", () => {
       expect(e.label).toBe("Logged");
       expect(node(g, e.to)?.kind).toBe("handler");
     }
-    expect(ev.map((e) => e.variant).sort()).toEqual(["Approve", "Deny", undefined].sort());
+    // branch labels: the two variants plus the residual "else" (abstain) arm
+    expect(ev.map((e) => e.variant).sort()).toEqual(["Approve", "Deny", "else"].sort());
   });
 
-  it("records the spawn edge and no unconsumed-event nodes", () => {
-    expect(edges(g, "spawn").length).toBe(1);
+  it("omits the boilerplate program node (top level is only spawn/awake/when)", () => {
+    expect(node(g, "top")).toBeUndefined();
+    expect(edges(g, "spawn").length).toBe(0);
     expect(g.nodes.filter((n) => n.kind === "event").length).toBe(0);
   });
 });
