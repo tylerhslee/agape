@@ -149,41 +149,48 @@ function providerStatus(name: string, allowLive: boolean): StudioProvider | unde
   return providerStatuses(allowLive).find((p) => p.name === name);
 }
 
-// ---- projects: each SUBDIRECTORY of the served workspace is its own Agape project (§17: a
-// project = a directory with its own agape.toml), so per-demo config is genuinely per-demo.
-// Root-level .ag files remain the "root" project (project = ""), sharing the root agape.toml.
-const SAFE_PROJECT = /^[\w][\w.-]*$/; // one level, no dotfiles, no traversal
+// ---- workspace programs -------------------------------------------------------------------------
+//
+// The directory Studio is launched from is the project root for this Studio instance. Every visible
+// `.ag` file under that root uses the SAME root-level agape.toml; subfolder manifests are ignored by
+// design so the inspector has exactly one configuration surface per instance.
+const SAFE_DIR = /^[\w][\w.-]*$/; // no dotfiles, no traversal, friendly names only
+const SKIP_DIRS = new Set(["node_modules", ".git"]);
 
-function projectOf(name: string): string {
-  const i = name.indexOf("/");
+function folderOf(name: string): string {
+  const i = name.lastIndexOf("/");
   return i === -1 ? "" : name.slice(0, i);
 }
 
-// no provider in the request → the program's own project manifest decides ([provider].backend, §17).
+function insideRoot(root: string, p: string): boolean {
+  const r = resolve(root);
+  return p === r || p.startsWith(`${r}/`);
+}
+
+// no provider in the request → the root manifest decides ([provider].backend, §17).
 function resolveProviderName(dir: string, program: string, requested?: string): string {
   if (requested) return requested;
-  try { return loadProjectManifest(dir, projectOf(program), undefined).provider.backend || "mock"; }
+  try { return loadProjectManifest(dir, undefined).provider.backend || "mock"; }
   catch { return "mock"; }
 }
 
 function listProjectPrograms(dir: string) {
-  const out: { name: string; project: string; bytes: number; modified: string; origin: "project" }[] = [];
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry);
-    if (SAFE_NAME.test(entry) && statSync(full).isFile()) {
+  const out: { name: string; project: string; folder: string; bytes: number; modified: string; origin: "project" }[] = [];
+  const walk = (base: string, prefix = "") => {
+    for (const entry of readdirSync(base)) {
+      const full = join(base, entry);
       const st = statSync(full);
-      out.push({ name: entry, project: "", bytes: st.size, modified: st.mtime.toISOString(), origin: "project" });
-      continue;
+      if (st.isFile() && SAFE_NAME.test(entry)) {
+        const name = prefix ? `${prefix}/${entry}` : entry;
+        out.push({ name, project: "", folder: prefix, bytes: st.size, modified: st.mtime.toISOString(), origin: "project" });
+        continue;
+      }
+      if (!st.isDirectory() || SKIP_DIRS.has(entry) || !SAFE_DIR.test(entry)) continue;
+      walk(full, prefix ? `${prefix}/${entry}` : entry);
     }
-    if (!SAFE_PROJECT.test(entry) || entry === "node_modules") continue;
-    if (!statSync(full).isDirectory()) continue;
-    for (const f of readdirSync(full)) {
-      if (!SAFE_NAME.test(f)) continue;
-      const st = statSync(join(full, f));
-      out.push({ name: `${entry}/${f}`, project: entry, bytes: st.size, modified: st.mtime.toISOString(), origin: "project" });
-    }
-  }
-  return out.sort((a, b) => a.project.localeCompare(b.project) || a.name.localeCompare(b.name));
+  };
+  walk(dir);
+  return out.sort((a, b) => a.folder.localeCompare(b.folder) || a.name.localeCompare(b.name));
 }
 
 function bundledPrograms() {
@@ -205,20 +212,21 @@ function listPrograms(dir: string) {
   return project.length ? project : bundledPrograms();
 }
 
-// a program name is either `file.ag` (root project) or `project/file.ag` (one level deep).
+// a program name is `file.ag` or `folder/.../file.ag`, always relative to the Studio root.
 function safeProgramRel(name: string): string | undefined {
-  const project = projectOf(name);
-  const file = project ? name.slice(project.length + 1) : name;
-  if (project && !SAFE_PROJECT.test(project)) return undefined;
-  if (!SAFE_NAME.test(file)) return undefined;
-  return project ? `${project}/${file}` : file;
+  if (!name || name.includes("\\") || name.startsWith("/") || name.includes("//")) return undefined;
+  const parts = name.split("/");
+  const file = parts.pop();
+  if (!file || !SAFE_NAME.test(file)) return undefined;
+  if (parts.some((p) => !SAFE_DIR.test(p) || SKIP_DIRS.has(p))) return undefined;
+  return [...parts, file].join("/");
 }
 
 function safeProgramPath(dir: string, name: string): string | undefined {
   const rel = safeProgramRel(name);
   if (!rel) return undefined;
   const p = resolve(dir, rel);
-  if (!p.startsWith(resolve(dir))) return undefined;
+  if (!insideRoot(dir, p)) return undefined;
   return existsSync(p) ? p : undefined;
 }
 
@@ -226,7 +234,7 @@ function safeWritableProgramPath(dir: string, name: string): string | undefined 
   const rel = safeProgramRel(name);
   if (!rel) return undefined;
   const p = resolve(dir, rel);
-  return p.startsWith(resolve(dir)) ? p : undefined;
+  return insideRoot(dir, p) ? p : undefined;
 }
 
 function readProgramSource(dir: string, name: string): { source: string; origin: "project" | "example" } | undefined {
@@ -266,22 +274,13 @@ function saveProgramSource(dir: string, name: string, source: string) {
     status: 200 as const,
     body: {
       ok: true,
-      program: { name: safeProgramRel(name)!, bytes: st.size, modified: st.mtime.toISOString(), origin: "project" as const },
+      program: { name: safeProgramRel(name)!, project: "", folder: folderOf(safeProgramRel(name)!), bytes: st.size, modified: st.mtime.toISOString(), origin: "project" as const },
     },
   };
 }
 
-// project "" = the workspace root; otherwise a one-level subdirectory project (§17).
-function projectDir(dir: string, project: string): string | undefined {
-  if (!project) return resolve(dir);
-  if (!SAFE_PROJECT.test(project)) return undefined;
-  const p = resolve(dir, project);
-  return p.startsWith(resolve(dir)) ? p : undefined;
-}
-
-function configPath(dir: string, project = ""): string | undefined {
-  const pd = projectDir(dir, project);
-  return pd ? resolve(pd, CONFIG_NAME) : undefined;
+function configPath(dir: string): string {
+  return resolve(dir, CONFIG_NAME);
 }
 
 function defaultConfigSource(): string {
@@ -296,28 +295,37 @@ archive_retention = "forever"
 `;
 }
 
-function readConfigSource(dir: string, project = ""): { source: string; exists: boolean; name: string; project: string } {
-  const path = configPath(dir, project);
-  const name = project ? `${project}/${CONFIG_NAME}` : CONFIG_NAME;
-  if (path && existsSync(path)) return { source: readFileSync(path, "utf8"), exists: true, name, project };
-  return { source: defaultConfigSource(), exists: false, name, project };
+function readConfigSource(dir: string): { source: string; exists: boolean; name: string; project: string; scope: string } {
+  const path = configPath(dir);
+  if (existsSync(path)) return { source: readFileSync(path, "utf8"), exists: true, name: CONFIG_NAME, project: "", scope: "project root" };
+  return { source: defaultConfigSource(), exists: false, name: CONFIG_NAME, project: "", scope: "project root" };
 }
 
-function saveConfigSource(dir: string, project: string, source: string) {
-  const path = configPath(dir, project);
-  if (!path) return { status: 400 as const, body: { error: "invalid project" } };
-  const pd = projectDir(dir, project)!;
-  if (!existsSync(pd)) return { status: 404 as const, body: { error: `project '${project}' does not exist` } };
+function saveConfigSource(dir: string, source: string) {
+  const path = configPath(dir);
   const bytes = Buffer.byteLength(source, "utf8");
   if (bytes > MAX_CONFIG_BYTES) return { status: 413 as const, body: { error: "config is too large" } };
   writeFileSync(path, source, "utf8");
   const st = statSync(path);
-  return { status: 200 as const, body: { ok: true, config: { name: project ? `${project}/${CONFIG_NAME}` : CONFIG_NAME, bytes: st.size, modified: st.mtime.toISOString(), exists: true } } };
+  return { status: 200 as const, body: { ok: true, config: { name: CONFIG_NAME, bytes: st.size, modified: st.mtime.toISOString(), exists: true, scope: "project root" } } };
 }
 
-function loadProjectManifest(dir: string, project: string, providerName?: string) {
-  const path = configPath(dir, project);
-  return loadManifest(path && existsSync(path) ? path : undefined, providerName);
+function loadProjectManifest(dir: string, providerName?: string) {
+  const path = configPath(dir);
+  return loadManifest(existsSync(path) ? path : undefined, providerName);
+}
+
+function eventsWithResponseLatency<T extends { latency_ms?: number; elapsed_ms?: number }>(events: T[], ms: number): T[] {
+  const out = events.map((e) => ({ ...e }));
+  const last = out[out.length - 1];
+  if (!last) return out;
+  const accounted = out.reduce((sum, e) => sum + (Number.isFinite(e.latency_ms) ? e.latency_ms! : 0), 0);
+  const residual = Math.max(0, ms - accounted);
+  if (residual > 0) {
+    last.latency_ms = (last.latency_ms ?? 0) + residual;
+    last.elapsed_ms = Math.max(last.elapsed_ms ?? 0, ms);
+  }
+  return out;
 }
 
 // ---- structured config: the manifest as a data model -------------------------------------------
@@ -379,8 +387,8 @@ function patchTomlSource(src: string, table: string, key: string, tomlText: stri
 
 const PATCHABLE_TABLES = new Set(["project", "provider", "identity", "memory", "tools", "prompts"]);
 
-function applyConfigPatch(dir: string, project: string, sets: { table?: string; key?: string; value?: string }[]) {
-  const current = readConfigSource(dir, project);
+function applyConfigPatch(dir: string, sets: { table?: string; key?: string; value?: string }[]) {
+  const current = readConfigSource(dir);
   let src = current.exists ? current.source : "";
   for (const p of sets) {
     if (!p.table || !p.key || typeof p.value !== "string") return { status: 400 as const, body: { error: "each set needs table, key, and a TOML-text value" } };
@@ -389,7 +397,7 @@ function applyConfigPatch(dir: string, project: string, sets: { table?: string; 
     if (p.value.includes("\n") || p.value.length > 500) return { status: 400 as const, body: { error: "value must be single-line TOML text" } };
     src = patchTomlSource(src, p.table, p.key, p.value);
   }
-  return saveConfigSource(dir, project, src.endsWith("\n") || src === "" ? src : src + "\n");
+  return saveConfigSource(dir, src.endsWith("\n") || src === "" ? src : src + "\n");
 }
 
 async function readBody(req: IncomingMessage, limit = MAX_SOURCE_BYTES + 4096): Promise<string> {
@@ -443,18 +451,19 @@ async function runProgram(
   const map = mapProgram(program);
 
   // phase 3: check + run (the interpreter runs the static checker first).
-  const manifest = loadProjectManifest(opts.dir, projectOf(name), providerName);
+  const manifest = loadProjectManifest(opts.dir, providerName);
   const provider = createProvider(manifest);
   try {
-    const { ledger, stdout } = await run(program, { provider, manifest, promptInputs, principalAttestations });
+    const { ledger, stdout } = await run(program, { provider, manifest, promptInputs, principalAttestations, timingOriginMs: startedAt });
+    const ms = Date.now() - startedAt;
     return {
       status: 200 as const,
       body: {
         ok: true, phase: "run", source, map,
         provider: { backend: manifest.provider.backend, model: manifest.provider.model },
         sourceOrigin: sourceInfo.origin,
-        events: ledger.events, stdout, chainHead: ledger.head(),
-        ms: Date.now() - startedAt,
+        events: eventsWithResponseLatency(ledger.events, ms), stdout, chainHead: ledger.head(),
+        ms,
       },
     };
   } catch (e) {
@@ -523,7 +532,7 @@ function runBody(session: StudioRunSession, ms = Date.now() - session.startedAt)
     map: session.map,
     provider: session.provider,
     sourceOrigin: session.sourceOrigin,
-    events: ledger.events,
+    events: eventsWithResponseLatency(ledger.events, ms),
     stdout,
     chainHead: ledger.head(),
     ms,
@@ -564,7 +573,7 @@ async function startRunSession(
   }
 
   const map = mapProgram(program);
-  const manifest = loadProjectManifest(opts.dir, projectOf(name), providerName);
+  const manifest = loadProjectManifest(opts.dir, providerName);
   const provider = createProvider(manifest);
   try {
     const session: StudioRunSession = {
@@ -585,6 +594,7 @@ async function startRunSession(
       provider,
       manifest,
       principalAttestations,
+      timingOriginMs: startedAt,
       onConsult: (req) => new Promise<PrincipalAttestation | undefined>((resolveConsult) => {
         session.pending = { ...req, id: randomBytes(8).toString("base64url") };
         session.runState = "waiting";
@@ -680,21 +690,17 @@ export function startStudio(opts: StudioOptions): Promise<{ close: () => void }>
         return json(res, spec.status, spec.body);
       }
       if (req.method === "GET" && url.pathname === "/api/config") {
-        const project = url.searchParams.get("project") ?? "";
-        if (project && !SAFE_PROJECT.test(project)) return json(res, 400, { error: "bad project" });
-        const cfg = readConfigSource(opts.dir, project);
+        const cfg = readConfigSource(opts.dir);
         return json(res, 200, { ...cfg, values: parseTomlSubset(cfg.source) });
       }
       if (req.method === "POST" && url.pathname === "/api/config/patch") {
         // structured manifest edits (the form UI): each set is one `key = <toml text>` inside a
         // `[table]`, applied comment-preservingly to agape.toml — the file stays the source of truth.
         const body = JSON.parse((await readBody(req)) || "{}") as { project?: string; sets?: { table?: string; key?: string; value?: string }[] };
-        const project = body.project ?? "";
-        if (project && !SAFE_PROJECT.test(project)) return json(res, 400, { error: "bad project" });
-        const r = applyConfigPatch(opts.dir, project, body.sets ?? []);
+        const r = applyConfigPatch(opts.dir, body.sets ?? []);
         if (r.status !== 200) return json(res, r.status, r.body);
-        const cfg = readConfigSource(opts.dir, project);
-        return json(res, 200, { ...r.body, source: cfg.source, exists: cfg.exists, values: parseTomlSubset(cfg.source), project });
+        const cfg = readConfigSource(opts.dir);
+        return json(res, 200, { ...r.body, source: cfg.source, exists: cfg.exists, values: parseTomlSubset(cfg.source), project: "" });
       }
       if (req.method === "POST" && url.pathname === "/api/source") {
         const body = JSON.parse((await readBody(req)) || "{}") as { name?: string; source?: string };
@@ -705,9 +711,7 @@ export function startStudio(opts: StudioOptions): Promise<{ close: () => void }>
       if (req.method === "POST" && url.pathname === "/api/config") {
         const body = JSON.parse((await readBody(req)) || "{}") as { project?: string; source?: string };
         if (typeof body.source !== "string") return json(res, 400, { error: "missing config source" });
-        const project = body.project ?? "";
-        if (project && !SAFE_PROJECT.test(project)) return json(res, 400, { error: "bad project" });
-        const r = saveConfigSource(opts.dir, project, body.source);
+        const r = saveConfigSource(opts.dir, body.source);
         return json(res, r.status, r.body);
       }
       if (req.method === "POST" && url.pathname === "/api/run") {

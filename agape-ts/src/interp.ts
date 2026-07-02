@@ -231,6 +231,7 @@ type RunOptions = {
   onConsult?: (req: ConsultRequest) => Promise<PrincipalAttestation | undefined>;
   toolHandlers?: Record<string, ToolHandler>;
   strictConfig?: boolean;
+  timingOriginMs?: number;
 };
 
 export async function run(
@@ -254,11 +255,12 @@ export function createSession(program: A.Program, opts: RunOptions = {}): Runtim
     opts.onConsult,
     opts.manifest,
     opts.toolHandlers ?? {},
+    opts.timingOriginMs,
   );
 }
 
 class Interpreter {
-  private ledger = new Ledger();
+  private ledger: Ledger;
   private stdout: string[] = [];
   private started = false;
   private enums = new Map<string, string[]>();
@@ -308,7 +310,9 @@ class Interpreter {
     private onConsult?: (req: ConsultRequest) => Promise<PrincipalAttestation | undefined>,
     private manifest?: Manifest,
     private toolHandlers: Record<string, ToolHandler> = {},
+    timingOriginMs?: number,
   ) {
+    this.ledger = new Ledger(timingOriginMs);
     // §3: register the declared principal names so a `decide c by p` (the parser's {policy} rule form)
     // can be reinterpreted as a principal escalation by evalGate.
     for (const d of program.decls) if (d.kind === "principal") this.principals.add(d.name);
