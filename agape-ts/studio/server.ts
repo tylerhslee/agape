@@ -159,6 +159,13 @@ function projectOf(name: string): string {
   return i === -1 ? "" : name.slice(0, i);
 }
 
+// no provider in the request → the program's own project manifest decides ([provider].backend, §17).
+function resolveProviderName(dir: string, program: string, requested?: string): string {
+  if (requested) return requested;
+  try { return loadProjectManifest(dir, projectOf(program), undefined).provider.backend || "mock"; }
+  catch { return "mock"; }
+}
+
 function listProjectPrograms(dir: string) {
   const out: { name: string; project: string; bytes: number; modified: string; origin: "project" }[] = [];
   for (const entry of readdirSync(dir)) {
@@ -308,7 +315,7 @@ function saveConfigSource(dir: string, project: string, source: string) {
   return { status: 200 as const, body: { ok: true, config: { name: project ? `${project}/${CONFIG_NAME}` : CONFIG_NAME, bytes: st.size, modified: st.mtime.toISOString(), exists: true } } };
 }
 
-function loadProjectManifest(dir: string, project: string, providerName: string) {
+function loadProjectManifest(dir: string, project: string, providerName?: string) {
   const path = configPath(dir, project);
   return loadManifest(path && existsSync(path) ? path : undefined, providerName);
 }
@@ -649,7 +656,7 @@ export function startStudio(opts: StudioOptions): Promise<{ close: () => void }>
       if (req.method === "GET" && url.pathname === "/api/meta") {
         return json(res, 200, {
           dir: opts.dir,
-          version: "1.0.0-alpha.2026.7.2.0",
+          version: "1.0.0-alpha.2026.7.2.1",
           providers: providerStatuses(opts.allowLive),
           access: { liveEnabled: opts.allowLive, tokenRequired: Boolean(accessToken) },
         });
@@ -710,14 +717,15 @@ export function startStudio(opts: StudioOptions): Promise<{ close: () => void }>
           promptInputs?: PromptInput[];
           principalAttestations?: PrincipalAttestation[];
         };
-        const liveRun = body.provider && body.provider !== "mock";
+        const providerName = resolveProviderName(opts.dir, body.program ?? "", body.provider);
+        const liveRun = providerName !== "mock";
         if (liveRun && activeLiveRuns >= 1) return json(res, 429, { error: "a live-provider run is already in progress" });
         if (liveRun) activeLiveRuns++;
         try {
           const r = await runProgram(
             opts,
             body.program ?? "",
-            body.provider ?? "mock",
+            providerName,
             body.promptInputs ?? [],
             body.principalAttestations ?? [],
           );
@@ -732,7 +740,8 @@ export function startStudio(opts: StudioOptions): Promise<{ close: () => void }>
           provider?: string;
           principalAttestations?: PrincipalAttestation[];
         };
-        const liveRun = body.provider && body.provider !== "mock";
+        const providerName = resolveProviderName(opts.dir, body.program ?? "", body.provider);
+        const liveRun = providerName !== "mock";
         if (liveRun && activeLiveRuns >= 1) return json(res, 429, { error: "a live-provider run is already in progress" });
         if (liveRun) activeLiveRuns++;
         try {
@@ -740,7 +749,7 @@ export function startStudio(opts: StudioOptions): Promise<{ close: () => void }>
             opts,
             sessions,
             body.program ?? "",
-            body.provider ?? "mock",
+            providerName,
             body.principalAttestations ?? [],
           );
           return json(res, r.status, r.body);
