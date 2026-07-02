@@ -1727,17 +1727,43 @@ class Interpreter {
         case "basis": return { kind: "enumval", enumName: "Basis", variant: o.basis, trust: "settled" };
         case "margin": return { kind: "float", v: o.margin, trust: "settled" };
         case "decision_id": return { kind: "int", v: o.decisionId, trust: "settled" };
-        case "subject": if (o.kind === "endorsement") return o.subject; break;
+        case "subject": if (o.kind === "endorsement") {
+          // a committed-narrowed endorsement exposes its subject as the CERTIFIED (settled) datum —
+          // for DATA subjects; a gate-object subject (credence/decision/endorsement) keeps its own
+          // nature (sinkValue rejects those regardless).
+          return o.committedNarrowed ? this.settledEndorsedValue(o.subject) : o.subject;
+        } break;
       }
-      // §20.4: the metadata accessors (committed/basis/margin/subject) WIN a name collision; any OTHER field
-      // on an Endorsement delegates to the settled subject (`e.body` → the subject struct's `body`), which is
-      // also reachable through `.subject`. The subject inherits the endorsement's committed-narrowed trust.
+      // §13/§9: the metadata accessors (committed/basis/margin/decision_id/subject) WIN a name collision;
+      // any OTHER field on an Endorsement delegates to the subject (`e.body` → the subject struct's `body`),
+      // also reachable through `.subject`. The Endorsement IS the settled form of the subject, so a field
+      // read through a committed-narrowed endorsement is the CERTIFIED datum — it reads back settled (that
+      // is exactly what the endorsement settled); an un-narrowed endorsement never upgrades trust.
       if (o.kind === "endorsement" && o.subject.kind === "struct") {
         const f = o.subject.fields.get(e.field);
-        if (f) return f; // the field keeps its own trust (settled by construction here); never launder up
+        if (f) return o.committedNarrowed ? this.settledEndorsedValue(f) : f;
       }
     }
     throw new RuntimeError(`no field '${e.field}' on ${o.kind}`);
+  }
+
+  private settledEndorsedValue(v: Value): Value {
+    switch (v.kind) {
+      case "credence":
+      case "decision":
+      case "endorsement":
+        return v;
+      case "text": return { ...v, trust: "settled" };
+      case "int": return { ...v, trust: "settled" };
+      case "float": return { ...v, trust: "settled" };
+      case "bool": return { ...v, trust: "settled" };
+      case "null": return { ...v, trust: "settled" };
+      case "enumval": return { ...v, trust: "settled" };
+      case "agentref": return v;
+      case "memref": return v;
+      case "struct": return { ...v, trust: "settled" };
+      case "array": return { ...v, trust: "settled" };
+    }
   }
 
   private async evalBinary(e: A.BinaryExpr, scope: Scope): Promise<Value> {

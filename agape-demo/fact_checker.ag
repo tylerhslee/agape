@@ -26,7 +26,10 @@ struct AtomicClaim {
 
 struct ClaimBundle {
   subject: text,
-  claims: array<AtomicClaim>
+  claims: array<AtomicClaim>,
+  first: AtomicClaim,
+  second: AtomicClaim,
+  third: AtomicClaim
 }
 
 struct Verification {
@@ -40,7 +43,10 @@ struct Verification {
 
 struct VerificationAudit {
   subject: text,
-  claims: array<Verification>
+  claims: array<Verification>,
+  first: Verification,
+  second: Verification,
+  third: Verification
 }
 
 struct PublishedAnswer {
@@ -58,18 +64,19 @@ agent FactChecker grants { use search, perform PublishAnswer } {
     text user_prompt = p.text;
 
     ClaimBundle plan =
-      self <- f"Create a coherent claim plan for one natural-language answer. Return a single subject and an array of atomic claims. The claims should read like JSON extracted from one long answer: each claim must be small, individually checkable, and tagged as Factual or Opinionated. User request: {user_prompt}";
+      self <- f"Create a coherent claim plan for one natural-language answer. Return a single subject and exactly three atomic claims. The claims array is the JSON-style extraction from the imagined long answer; first, second, and third must mirror those same three claims in order so this alpha kernel can fan them out as events. Each claim must be small, individually checkable, and tagged as Factual or Opinionated. User request: {user_prompt}";
 
-    // The current core has no for-each surface. The verification path is event-based,
-    // so this demo verifies the first structured claim slot. Once iteration lands,
-    // this becomes `for claim in plan.claims { emit CheckClaim(claim); }`.
-    emit CheckClaim(plan.claims[0]);
+    // The current core has no for-each surface. These three fan-out slots mirror
+    // plan.claims[0..2], so the demo still sends one event per generated claim.
+    emit CheckClaim(plan.first);
+    emit CheckClaim(plan.second);
+    emit CheckClaim(plan.third);
 
     array<Event> verification_rows =
       select * from ledger where { etype == "ClaimVerified" };
 
     PublishedAnswer answer =
-      self <- f"Synthesize a user-facing answer from this atomic claim plan, not from a hidden draft. The prose must combine the atomic claims into one coherent natural-language response about the plan subject. The verification field is a structured JSON object with the subject and a claims array; include every checked claim with claim_id, claim, claim_kind, verdict, evidence, and note from the verification rows. Claim plan: {plan}. Verification rows: {verification_rows}";
+      self <- f"Synthesize a user-facing answer from this atomic claim plan, not from a hidden draft. The prose must combine all three atomic claims into one coherent natural-language response about the plan subject. The verification field is a structured JSON object with the subject, a claims array, and first/second/third audit slots; include every generated claim with claim_id, claim, claim_kind, verdict, evidence, and note from the matching verification rows. Claim plan: {plan}. Verification rows: {verification_rows}";
 
     Credence<PublishDecision> readiness =
       self <- f"Decide whether to Publish, Revise, or Abstain. Criteria: the candidate prose must faithfully synthesize the claim plan; the structured verification audit must disclose every checked claim and its verdict; the fact-check verdicts are mandatory evidence for the decision. Publish is allowed only when weak or unsupported claims are removed, caveated, or honestly disclosed in the audit. Choose Revise if the prose overstates a weak or unsupported claim, omits a verification result, or needs another pass. Choose Abstain if the checked claims are too unsupported to answer responsibly. Claim plan: {plan}. Verification rows: {verification_rows}. Candidate answer: {answer}";

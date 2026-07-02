@@ -43,7 +43,10 @@ struct Verification {
 
 struct VerificationAudit {
   subject: text,
-  claims: array<Verification>
+  claims: array<Verification>,
+  first: Verification,
+  second: Verification,
+  third: Verification
 }
 
 struct PublishedAnswer {
@@ -73,7 +76,7 @@ agent FactChecker grants { use search, perform PublishAnswer } {
       select * from ledger where { etype == "ClaimVerified" };
 
     PublishedAnswer answer =
-      self <- f"Synthesize a user-facing answer from this atomic claim plan, not from a hidden draft. The prose must combine all three atomic claims into one coherent natural-language response about the plan subject. The verification field is a structured JSON object with the subject and a claims array; include every generated claim with claim_id, claim, claim_kind, verdict, evidence, and note from the matching verification rows. Claim plan: {plan}. Verification rows: {verification_rows}";
+      self <- f"Synthesize a user-facing answer from this atomic claim plan, not from a hidden draft. The prose must combine all three atomic claims into one coherent natural-language response about the plan subject. The verification field is a structured JSON object with the subject, a claims array, and first/second/third audit slots; include every generated claim with claim_id, claim, claim_kind, verdict, evidence, and note from the matching verification rows. Claim plan: {plan}. Verification rows: {verification_rows}";
 
     Credence<PublishDecision> readiness =
       self <- f"Decide whether to Publish, Revise, or Abstain. Criteria: the candidate prose must faithfully synthesize the claim plan; the structured verification audit must disclose every checked claim and its verdict; the fact-check verdicts are mandatory evidence for the decision. Publish is allowed only when weak or unsupported claims are removed, caveated, or honestly disclosed in the audit. Choose Revise if the prose overstates a weak or unsupported claim, omits a verification result, or needs another pass. Choose Abstain if the checked claims are too unsupported to answer responsibly. Claim plan: {plan}. Verification rows: {verification_rows}. Candidate answer: {answer}";

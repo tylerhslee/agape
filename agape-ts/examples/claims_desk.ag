@@ -1,25 +1,28 @@
-// claims_desk.ag — a richer kernel walk: a claims desk drafts a claim summary, judges it,
-// gates the judgment with a margin, endorses the exact claim, and reimburses only inside
-// the committed Approve branch. A `when` subscription reacts to every Logged event.
+// claims_desk.ag — a richer kernel walk: a claims desk extracts a typed claim (amount +
+// summary), judges it, gates the judgment with a margin, endorses the exact claim, and
+// reimburses only inside the committed Approve branch — for the ENDORSED amount
+// (`e.amount_cents`), never a hard-coded figure. A `when` subscription reacts to every
+// Logged event.
 
 enum Verdict { Approve, Deny }
+
+struct Claim { amount_cents: int, summary: text }
 
 event  Logged(text note);
 action Reimburse(int cents);      // the consequential sink
 
 agent Desk grants { perform Reimburse } {
   on awake {
-    text claim = self <- "summarize the incoming claim";
+    Claim claim = self <- "extract the incoming claim: amount in cents, and a one-line summary";
 
-    Credence<Verdict> c = self <- f"should we approve this claim: {claim}";
+    Credence<Verdict> c = self <- f"should we approve this claim for {claim.amount_cents} cents: {claim.summary}";
     Decision<Verdict> d = decide c by confidence 0.85 margin 0.1;
 
     if (d.committed == Approve) {
-      Endorsement<text> e = endorse claim by d;
-      perform Reimburse(4200);
-      emit Logged("approved");
+      Endorsement<Claim> e = endorse claim by d;
+      perform Reimburse(e.amount_cents);
+      emit Logged(f"approved: {e.amount_cents} cents");
     } else if (d.committed == Deny) {
-      Endorsement<text> e = endorse claim by d;
       emit Logged("denied");
     } else {
       emit Logged("needs-review");

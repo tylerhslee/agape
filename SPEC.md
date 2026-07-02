@@ -1256,7 +1256,9 @@ its data is the ledger itself — its own past decisions and their recorded outc
 `readiness` minimum of labelled cases the gate cannot commit, so a principal-prefixed `decide`
 (`p decide c by r`) routes those cases to `p`. Those principal decisions become the first labelled
 cases; once enough accrue the gate commits autonomously, escalating thereafter only genuinely
-ambiguous (non-singleton) cases. A fresh agent is thus human-supervised by construction and earns
+ambiguous (non-singleton) cases. Only an actual ruling labels its judgment: a declined or
+unavailable consult (`FailedPrincipalDecision`) contributes **no** label — a refusal to rule is not
+evidence, so it never enters the gate's calibration set. A fresh agent is thus human-supervised by construction and earns
 autonomy as it accumulates grounded labels. A recorded outcome that labels a judgment references that
 judgment's ledger id, so the judgment↔label join stays auditable on the ledger rather than in untyped
 host state.
