@@ -63,12 +63,14 @@
     padding: 12px; overflow-y: auto; flex-shrink: 0;
   }
   nav h3 { font-size: 11px; text-transform: uppercase; letter-spacing: .12em; color: var(--faint); margin: 4px 6px 10px; }
+  .navTools { margin-bottom: 12px; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
   .prog {
     display: block; width: 100%; text-align: left; background: none; border: 1px solid transparent;
     border-radius: 8px; padding: 8px 10px; color: var(--dim); font: 13px var(--mono); margin-bottom: 2px;
   }
   .prog:hover { background: var(--panel2); color: var(--text); }
   .prog.active { background: var(--panel2); border-color: var(--line); color: var(--text); }
+  .prog.specLink { color: var(--accent2); }
   .prog.example { border-color: rgba(94, 234, 212, .25); }
   .prog small { display: block; color: var(--faint); font-size: 10px; margin-top: 2px; }
   .projHead {
@@ -84,6 +86,9 @@
     grid-template-columns: minmax(340px, 40%) minmax(360px, 1fr) minmax(280px, 340px);
   }
   main.noInputs { grid-template-columns: minmax(360px, 46%) minmax(0, 1fr); }
+  main.specMode { grid-template-columns: minmax(0, 1fr); }
+  main.specMode .col.source, main.specMode .inputRail { display: none; }
+  main.specMode .col.results { border-right: none; }
   .col, .inputRail { min-width: 0; overflow-y: auto; padding: 16px; }
   .col.source { border-right: 1px solid var(--line); }
   .col.results { border-right: 1px solid var(--line); }
@@ -300,6 +305,58 @@
   .scorebar .bar { height: 7px; border-radius: 999px; background: var(--line); overflow: hidden; }
   .scorebar .fill { height: 100%; background: var(--accent2); }
 
+  /* ---- spec viewer ---- */
+  .specShell { display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: 16px; align-items: start; }
+  .specSidebar {
+    position: sticky; top: 12px; display: grid; gap: 10px; max-height: calc(100vh - 108px);
+    overflow: auto; padding-right: 4px;
+  }
+  .specSearch {
+    width: 100%; border: 1px solid var(--line); border-radius: 8px; background: #0d111a;
+    color: var(--text); padding: 8px 10px; font: 12px var(--mono); outline: none;
+  }
+  .specSearch:focus { border-color: var(--accent); }
+  .specToc { display: grid; gap: 2px; }
+  .specToc a {
+    color: var(--dim); text-decoration: none; font: 11.5px/1.35 var(--mono);
+    border-radius: 6px; padding: 5px 7px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .specToc a:hover { background: var(--panel2); color: var(--text); }
+  .specToc a[data-level="2"] { padding-left: 16px; }
+  .specToc a[data-level="3"] { padding-left: 25px; color: var(--faint); }
+  .specDoc {
+    border: 1px solid var(--line); border-radius: 8px; background: rgba(255,255,255,.014);
+    padding: 22px 26px; font: 14px/1.65 -apple-system, "Segoe UI", Inter, Roboto, sans-serif;
+  }
+  .specDoc h1, .specDoc h2, .specDoc h3 {
+    line-height: 1.25; letter-spacing: 0; margin: 22px 0 9px; color: var(--text);
+    scroll-margin-top: 16px;
+  }
+  .specDoc h1 { font-size: 24px; margin-top: 0; }
+  .specDoc h2 { font-size: 18px; border-top: 1px solid var(--line); padding-top: 18px; }
+  .specDoc h3 { font-size: 15px; color: #cbd5e1; }
+  .specDoc p { margin: 9px 0; color: #c3ccdf; }
+  .specDoc ul, .specDoc ol { margin: 8px 0 8px 22px; color: #c3ccdf; }
+  .specDoc li { margin: 4px 0; }
+  .specDoc code {
+    font: 12px var(--mono); color: var(--teal); background: #0d111a;
+    border: 1px solid var(--line); border-radius: 5px; padding: 1px 4px;
+  }
+  .specDoc pre {
+    overflow: auto; padding: 12px 14px; margin: 10px 0; border-radius: 8px;
+    border: 1px solid var(--line); background: #0d111a; color: #c3ccdf; font: 12px/1.55 var(--mono);
+  }
+  .specDoc pre code { padding: 0; border: none; background: transparent; color: inherit; }
+  .specDoc blockquote {
+    border-left: 3px solid var(--accent); margin: 10px 0; padding: 6px 12px;
+    color: var(--dim); background: rgba(124,108,246,.06);
+  }
+  .specDoc table { width: 100%; border-collapse: collapse; margin: 12px 0; font: 12px/1.45 var(--mono); }
+  .specDoc th, .specDoc td { border: 1px solid var(--line); padding: 7px 9px; vertical-align: top; }
+  .specDoc th { color: var(--accent2); background: var(--panel2); text-align: left; }
+  mark.specHit { background: rgba(251,191,36,.28); color: var(--text); border-radius: 3px; padding: 0 2px; }
+  .specMeta { font: 11px var(--mono); color: var(--faint); }
+
   .empty { color: var(--faint); text-align: center; padding: 60px 20px; font-size: 13px; }
   .meta { font: 11px var(--mono); color: var(--faint); margin-top: 6px; }
 
@@ -316,7 +373,8 @@
       padding: 8px 12px; overflow-x: auto; overflow-y: hidden; -webkit-overflow-scrolling: touch;
     }
     nav h3 { display: none; }
-    #programs { display: flex; gap: 8px; }
+    .navTools { border-bottom: none; padding-bottom: 0; margin-bottom: 0; }
+    #programs, .navTools { display: flex; gap: 8px; }
     .prog { width: auto; white-space: nowrap; margin-bottom: 0; flex-shrink: 0; padding: 7px 12px; }
     .prog small { display: none; }
     main { display: flex; flex-direction: column; }
@@ -342,6 +400,10 @@
     .editorWrap { grid-template-columns: 3.5ch minmax(0, 1fr); gap: 8px; font-size: 11.5px; }
     textarea.editor { min-height: 52vh; }
     .kv { grid-template-columns: 1fr; }
+    .specShell { grid-template-columns: 1fr; }
+    .specSidebar { position: static; max-height: none; }
+    .specToc { max-height: 220px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; padding: 6px; }
+    .specDoc { padding: 16px; }
   }
 </style>
 </head>
@@ -359,6 +421,9 @@
 
 <div class="body">
   <nav>
+    <div class="navTools">
+      <button class="prog specLink" id="specNav">SPEC.md<small>kernel reference</small></button>
+    </div>
     <h3>Programs</h3>
     <div id="programs"></div>
   </nav>
@@ -443,10 +508,11 @@ const CATS = {
 };
 
 let state = {
-  programs: [], selected: null, meta: {}, source: "", sourceOrigin: null, map: null,
+  programs: [], selected: null, view: "program", meta: {}, source: "", sourceOrigin: null, map: null,
   configSource: "", configExists: false, configEditing: false, configDirty: false, configValues: {},
   editing: false, dirty: false, sessionId: null, listening: false, awaitingAttest: false,
   pollTimer: null, collapsed: {}, providerOverrides: {}, currentProject: null,
+  spec: null, specSearch: "",
 };
 
 // ---- persistence: the current view and settings survive a refresh -------------------------------
@@ -460,6 +526,7 @@ function persist() {
   try {
     localStorage.setItem(storeKey(), JSON.stringify({
       selected: state.selected,
+      view: state.view,
       collapsed: state.collapsed,
       providerOverrides: state.providerOverrides,
     }));
@@ -555,6 +622,173 @@ function renderCode(src, hi = highlight) {
   ).join("");
 }
 
+function stripMd(text) {
+  return text.replace(/`([^`]+)`/g, "$1").replace(/\*\*([^*]+)\*\*/g, "$1").replace(/[#*_>\[\]]/g, "").trim();
+}
+
+function specSlug(text, seen) {
+  const base = stripMd(text).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "section";
+  const n = seen[base] || 0;
+  seen[base] = n + 1;
+  return n ? `${base}-${n + 1}` : base;
+}
+
+function specModel(source) {
+  const seen = {};
+  const headings = [];
+  const lineIds = new Map();
+  source.split("\n").forEach((line, i) => {
+    const m = line.match(/^(#{1,3})\s+(.+?)\s*$/);
+    if (!m) return;
+    const level = m[1].length;
+    const title = stripMd(m[2]);
+    const id = specSlug(title, seen);
+    headings.push({ id, level, title });
+    lineIds.set(i, id);
+  });
+  return { headings, lineIds };
+}
+
+function markSpec(text, query) {
+  if (!query) return text;
+  const q = esc(query.trim()).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  if (!q) return text;
+  return text.replace(new RegExp(`(${q})`, "ig"), '<mark class="specHit">$1</mark>');
+}
+
+function inlineSpec(text, query) {
+  let html = markSpec(esc(text), query);
+  html = html.replace(/`([^`]+)`/g, "<code>$1</code>");
+  html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+  return html;
+}
+
+function tableCells(line) {
+  const trimmed = line.trim().replace(/^\|/, "").replace(/\|$/, "");
+  return trimmed.split("|").map((c) => c.trim());
+}
+
+function isTableDivider(line) {
+  return /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(line);
+}
+
+function renderSpecTable(lines, query) {
+  const head = tableCells(lines[0] || "");
+  const body = lines.slice(2).map(tableCells);
+  return `<table><thead><tr>${head.map((c) => `<th>${inlineSpec(c, query)}</th>`).join("")}</tr></thead><tbody>${
+    body.map((row) => `<tr>${row.map((c) => `<td>${inlineSpec(c, query)}</td>`).join("")}</tr>`).join("")
+  }</tbody></table>`;
+}
+
+function renderSpecMarkdown(source, query = "") {
+  const model = specModel(source);
+  const lines = source.split("\n");
+  const out = [];
+  let para = [];
+  let listType = null;
+  let listItems = [];
+  let inCode = false;
+  let code = [];
+
+  const flushPara = () => {
+    if (!para.length) return;
+    out.push(`<p>${inlineSpec(para.join(" "), query)}</p>`);
+    para = [];
+  };
+  const flushList = () => {
+    if (!listItems.length) return;
+    out.push(`<${listType}>${listItems.map((item) => `<li>${inlineSpec(item, query)}</li>`).join("")}</${listType}>`);
+    listItems = [];
+    listType = null;
+  };
+  const flushFlow = () => { flushPara(); flushList(); };
+  const flushCode = () => {
+    out.push(`<pre><code>${esc(code.join("\n"))}</code></pre>`);
+    code = [];
+  };
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i] || "";
+    if (/^```/.test(line.trim())) {
+      if (inCode) { flushCode(); inCode = false; }
+      else { flushFlow(); inCode = true; code = []; }
+      continue;
+    }
+    if (inCode) { code.push(line); continue; }
+
+    if (!line.trim()) { flushFlow(); continue; }
+
+    if (line.includes("|") && isTableDivider(lines[i + 1] || "")) {
+      flushFlow();
+      const table = [line, lines[i + 1] || ""];
+      i += 2;
+      while (i < lines.length && (lines[i] || "").includes("|") && (lines[i] || "").trim()) {
+        table.push(lines[i] || "");
+        i++;
+      }
+      i--;
+      out.push(renderSpecTable(table, query));
+      continue;
+    }
+
+    const h = line.match(/^(#{1,3})\s+(.+?)\s*$/);
+    if (h) {
+      flushFlow();
+      const level = h[1].length;
+      const id = model.lineIds.get(i);
+      out.push(`<h${level} id="${esc(id)}">${inlineSpec(h[2], query)}</h${level}>`);
+      continue;
+    }
+
+    const li = line.match(/^\s*((?:[-*])|\d+\.)\s+(.+)$/);
+    if (li) {
+      flushPara();
+      const nextType = /^\d+\./.test(li[1]) ? "ol" : "ul";
+      if (listType && listType !== nextType) flushList();
+      listType = nextType;
+      listItems.push(li[2]);
+      continue;
+    }
+
+    const bq = line.match(/^\s*>\s?(.*)$/);
+    if (bq) {
+      flushFlow();
+      out.push(`<blockquote>${inlineSpec(bq[1], query)}</blockquote>`);
+      continue;
+    }
+
+    para.push(line.trim());
+  }
+  if (inCode) flushCode();
+  flushFlow();
+  return { html: out.join("\n"), headings: model.headings };
+}
+
+function renderSpecViewer() {
+  const spec = state.spec;
+  if (!spec) return;
+  const rendered = renderSpecMarkdown(spec.source || "", state.specSearch);
+  const toc = rendered.headings.length
+    ? rendered.headings.map((h) => `<a href="#${esc(h.id)}" data-level="${h.level}" title="${esc(h.title)}">${esc(h.title)}</a>`).join("")
+    : `<div class="empty">no headings</div>`;
+  $("results").innerHTML = panel("spec-viewer", `${spec.name} · kernel reference`, `
+    <div class="specShell">
+      <aside class="specSidebar">
+        <input class="specSearch" id="specSearch" type="text" value="${esc(state.specSearch)}" placeholder="Search SPEC.md">
+        <div class="specMeta">${fmt(spec.bytes)} bytes · modified ${esc(spec.modified || "")}</div>
+        <nav class="specToc">${toc}</nav>
+      </aside>
+      <article class="specDoc">${rendered.html}</article>
+    </div>
+  `);
+  applyAllPanelStates($("results"));
+  $("specSearch").oninput = (e) => {
+    state.specSearch = e.target.value;
+    renderSpecViewer();
+    $("specSearch").focus();
+  };
+}
+
 function updateEditLines() { srcEd.refresh(); }
 function updateConfigEditLines() { cfgEd.refresh(); }
 
@@ -591,14 +825,14 @@ function setConfigEditing(on) {
 }
 
 function updateSourceButtons() {
-  const hasSource = Boolean(state.selected);
+  const hasSource = state.view === "program" && Boolean(state.selected);
   $("editSource").disabled = !hasSource || state.listening || state.configEditing;
   $("saveSource").disabled = !state.editing;
   $("saveSource").textContent = state.sourceOrigin === "example" ? "Save copy" : "Save";
 }
 
 function updateConfigButtons() {
-  $("editConfig").disabled = state.listening || state.editing;
+  $("editConfig").disabled = state.view !== "program" || state.listening || state.editing;
   $("saveConfig").disabled = !state.configEditing;
   $("saveConfig").textContent = state.configExists ? "Save" : "Create";
 }
@@ -618,7 +852,7 @@ function sessionMode() {
 }
 
 function updateRunControls() {
-  const canRun = Boolean(state.selected) && !state.editing && !state.configEditing && !state.awaitingAttest;
+  const canRun = state.view === "program" && Boolean(state.selected) && !state.editing && !state.configEditing && !state.awaitingAttest;
   $("run").disabled = !canRun;
   $("stop").hidden = !state.listening;
   $("run").textContent = state.awaitingAttest ? "Awaiting ruling…"
@@ -850,7 +1084,8 @@ function renderProgramList(programs) {
       return `<button class="${cls}" data-name="${esc(p.name)}">${esc(fileOfName(p.name))}<small>${esc(meta)}</small></button>`;
     }).join("")
   ).join("");
-  for (const b of document.querySelectorAll(".prog")) b.onclick = () => select(b.dataset.name);
+  for (const b of document.querySelectorAll("#programs .prog")) b.onclick = () => select(b.dataset.name);
+  $("specNav").classList.toggle("active", state.view === "spec");
 }
 
 async function loadPrograms(selectName) {
@@ -872,6 +1107,30 @@ async function loadConfig(project = state.currentProject || "") {
   syncProviderDropdown(); // the manifest default may have changed
   applyPanelState($("configCard"));
   updateConfigButtons();
+}
+
+async function showSpec() {
+  if (state.listening) {
+    if (!confirm("Stop the current listening session and open SPEC.md?")) return;
+    await stopSession(true);
+  }
+  if (state.editing && state.dirty && !confirm("Discard unsaved source edits?")) return;
+  if (state.configEditing && state.configDirty && !confirm("Discard unsaved config edits?")) return;
+  setEditing(false);
+  setConfigEditing(false);
+  state.view = "spec";
+  $("workspace").classList.add("specMode", "noInputs");
+  $("inputRail").hidden = true;
+  $("specNav").classList.add("active");
+  for (const b of document.querySelectorAll("#programs .prog")) b.classList.remove("active");
+  updateRunControls();
+  persist();
+  try {
+    if (!state.spec) state.spec = await api("/api/spec");
+    renderSpecViewer();
+  } catch (e) {
+    $("results").innerHTML = `<div class="verdict bad"><div class="light"></div><b>Spec load failed</b><span class="msg">${esc(e.message)}</span></div>`;
+  }
 }
 
 // ---- the config FORM: the manifest's options as UI ----------------------------------------------
@@ -977,6 +1236,7 @@ async function init() {
     renderProviders();
     await loadConfig();
     await loadPrograms(saved.selected);
+    if (saved.view === "spec") await showSpec();
   } catch (e) {
     $("programs").innerHTML = `<div class="empty" style="color:var(--red)">couldn't reach the studio server<br>
       <span style="font:11px var(--mono)">${esc(e.message)}</span><br><br>
@@ -992,8 +1252,12 @@ async function select(name) {
   if (state.editing && state.dirty && !confirm("Discard unsaved edits?")) return;
   if (state.configEditing && state.configDirty && !confirm("Discard unsaved config edits?")) return;
   setEditing(false);
+  setConfigEditing(false);
+  state.view = "program";
+  $("workspace").classList.remove("specMode");
+  $("specNav").classList.remove("active");
   state.selected = name;
-  for (const b of document.querySelectorAll(".prog")) b.classList.toggle("active", b.dataset.name === name);
+  for (const b of document.querySelectorAll("#programs .prog")) b.classList.toggle("active", b.dataset.name === name);
   const info = state.programs.find((p) => p.name === name);
   $("srcTitle").textContent = info?.origin === "example" ? `${fileOfName(name)} · bundled example` : fileOfName(name);
   const proj = projectOfName(name);
@@ -1004,6 +1268,7 @@ async function select(name) {
   state.map = map || null;
   $("source").innerHTML = renderCode(state.source);
   renderInputControls(state.map);
+  $("workspace").classList.remove("specMode");
   applyPanelState($("sourceCard"));
   state.sessionId = null;
   state.listening = false;
@@ -1026,6 +1291,7 @@ $("provider").onchange = () => {
   }
   updateProviderNote();
 };
+$("specNav").onclick = () => showSpec();
 $("editSource").onclick = () => setEditing(true);
 $("editConfig").onclick = () => setConfigEditing(true);
 $("cancelEdit").onclick = () => {

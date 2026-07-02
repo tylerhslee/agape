@@ -27,10 +27,12 @@ export interface StudioOptions {
 
 const UI_PATH = join(dirname(fileURLToPath(import.meta.url)), "index.html");
 const EXAMPLES_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "../examples");
+const SPEC_PATH = resolve(dirname(fileURLToPath(import.meta.url)), "../../SPEC.md");
 const SAFE_NAME = /^[\w][\w.-]*\.ag$/; // basename-only, .ag-only — no traversal, no dotfiles
 const MAX_SOURCE_BYTES = 256 * 1024;
 const CONFIG_NAME = "agape.toml";
 const MAX_CONFIG_BYTES = 128 * 1024;
+const MAX_SPEC_BYTES = 2 * 1024 * 1024;
 
 const SECURITY_HEADERS = {
   "cache-control": "no-store",
@@ -229,6 +231,21 @@ function readProgramSource(dir: string, name: string): { source: string; origin:
     return { source, origin: "example" };
   }
   return undefined;
+}
+
+function readSpecSource() {
+  if (!existsSync(SPEC_PATH)) return { status: 404 as const, body: { error: "SPEC.md not found" } };
+  const st = statSync(SPEC_PATH);
+  if (st.size > MAX_SPEC_BYTES) return { status: 413 as const, body: { error: "SPEC.md is too large for Studio's built-in viewer" } };
+  return {
+    status: 200 as const,
+    body: {
+      name: "SPEC.md",
+      source: readFileSync(SPEC_PATH, "utf8"),
+      bytes: st.size,
+      modified: st.mtime.toISOString(),
+    },
+  };
 }
 
 function saveProgramSource(dir: string, name: string, source: string) {
@@ -650,6 +667,10 @@ export function startStudio(opts: StudioOptions): Promise<{ close: () => void }>
         let map: ProgramMap | undefined;
         try { map = mapProgram(parse(program.source)); } catch { /* source may be mid-edit; run will show parse errors */ }
         return json(res, 200, { ...program, map });
+      }
+      if (req.method === "GET" && url.pathname === "/api/spec") {
+        const spec = readSpecSource();
+        return json(res, spec.status, spec.body);
       }
       if (req.method === "GET" && url.pathname === "/api/config") {
         const project = url.searchParams.get("project") ?? "";
