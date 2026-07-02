@@ -83,9 +83,16 @@ Stable ids: `agent:<inst>`, `handler:<inst>/when:<i>`, `hook:<inst>/awake`,
   static-check rejection is reported alongside it (stderr note / `check` field / a UI badge) —
   a deliberately-rejected demo still shows the topology the checker refused to run.
 - **Studio**: `GET /api/graph?name=<program>` returns `{ ok, graph, check? }` (or the parse error).
-  The Graph panel renders it as layered SVG — sources (prompts) left, agent clusters ranked by
-  message depth, effects (sinks/tools/principals/ledger) right. Clicking a node jumps the source
-  view to its line.
+  The Graph panel renders a **vertical** flow (the kernel chain reads top → bottom): sources at the
+  top, agent clusters ranked by message depth, effects (sinks/principals/tools) at the bottom.
+  Connectors are **orthogonal** (LucidChart-style): down-edges leave spread ports on a node's bottom
+  edge, run along a dedicated per-edge horizontal channel in the inter-rank gap — where their labels
+  live, guaranteed box-free — and drop into spread ports on the target's top; up-edges route around
+  the right margin. A post-render pass measures real label boxes and nudges any residual contact.
+  The SVG scales to the column width (sized for 100% browser zoom). Clicking a node jumps the
+  source view to its line. **The static graph renders grey; executing the program lights the
+  witnessed path in color** (green testimony/gate chain, gold sinks, amber escalation — red on a
+  fail-closed decline), driven by the run's ledger events.
 - **Live overlay**: after (and during) a run, ledger events light up the elements they touched —
   `Decided`/`Endorsed` → the gate, `PrincipalDecision`/`FailedPrincipalDecision` → the escalate
   edge + principal, a sink etype → the sink node and its guarded edge, `Prompt` → the sensor,

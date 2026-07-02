@@ -343,40 +343,37 @@
   .empty { color: var(--faint); text-align: center; padding: 60px 20px; font-size: 13px; }
   .meta { font: 11px var(--mono); color: var(--faint); margin-top: 6px; }
 
-  /* ---- orchestration graph (derived from source; GRAPH.md) ---- */
+  /* ---- orchestration graph (derived from source; GRAPH.md) ----
+     Vertical flow, orthogonal connectors, sized for 100% zoom. GREY at rest; a run
+     lights the witnessed path in color. */
   .graphWrap { overflow: auto; -webkit-overflow-scrolling: touch; }
-  .graphWrap svg { display: block; }
-  .gcluster > rect { fill: rgba(255,255,255,.02); stroke: var(--line); }
-  .gcluster > text { fill: var(--dim); font: 600 10.5px var(--mono); }
+  .graphWrap svg { display: block; width: 100%; height: auto; margin: 0 auto; }
+  .gcluster > rect { fill: rgba(255,255,255,.02); stroke: #2b3347; }
+  .gcluster > text { fill: var(--dim); font: 600 12px var(--mono); }
   .gnode { cursor: pointer; }
-  .gnode rect { fill: var(--panel2); stroke: var(--faint); stroke-width: 1.1; transition: stroke .15s; }
-  .gnode text { fill: #c3ccdf; font: 10.5px var(--mono); pointer-events: none; }
-  .gnode text.sub { fill: var(--faint); font-size: 9px; }
+  .gnode rect { fill: var(--panel2); stroke: #3d465e; stroke-width: 1.2; transition: stroke .15s; }
+  .gnode text { fill: #9aa5bd; font: 12.5px var(--mono); pointer-events: none; }
+  .gnode text.sub { fill: #6b7488; font-size: 10.5px; }
   .gnode:hover rect { stroke: var(--accent); }
-  .gnode.k-gate rect { stroke: var(--violet); }
-  .gnode.k-sink rect { stroke: var(--gold); }
-  .gnode.k-tool rect { stroke: var(--orange); }
-  .gnode.k-principal rect { stroke: var(--amber); }
-  .gnode.k-prompt rect { stroke: var(--green); }
-  .gnode.k-mem rect, .gnode.k-ledger rect { stroke: var(--teal); stroke-dasharray: 4 3; }
-  .gnode.k-event rect { stroke: var(--faint); stroke-dasharray: 4 3; }
+  .gnode.k-mem rect, .gnode.k-ledger rect, .gnode.k-event rect { stroke-dasharray: 5 4; }
   .gnode.k-agent rect { fill: transparent; stroke: none; }
-  .gnode.k-agent text { fill: var(--text); font-weight: 600; }
-  .gedge path { fill: none; stroke-width: 1.3; opacity: .8; }
+  .gnode.k-agent text { fill: #b6c0d6; font-weight: 600; font-size: 12px; }
+  .gnode.k-ask text { font-style: italic; }
+  .gedge path { fill: none; stroke-width: 1.5; opacity: .9; }
   .gedge text {
-    font: 9.5px var(--mono); opacity: .95;
-    paint-order: stroke; stroke: var(--bg); stroke-width: 3px; stroke-linejoin: round;
+    font: 11px var(--mono); opacity: .95;
+    paint-order: stroke; stroke: var(--bg); stroke-width: 3.5px; stroke-linejoin: round;
   }
-  .gedge.dashed path { stroke-dasharray: 4 3; }
-  .gnode.k-ask rect { stroke: #7dd3fc; }
-  .gnode.k-ask text { fill: #a8c7e8; font-style: italic; }
-  .gnode.lit rect { stroke: var(--green); stroke-width: 1.8; filter: drop-shadow(0 0 5px rgba(52,211,153,.55)); }
-  .gedge.lit path { stroke: var(--green) !important; stroke-width: 2.2; opacity: 1; }
-  .gedge.lit text { fill: var(--green) !important; }
-  .gnode.fail rect { stroke: var(--red); stroke-width: 1.8; filter: drop-shadow(0 0 5px rgba(248,113,113,.55)); }
+  .gedge.dashed path { stroke-dasharray: 5 4; }
+  .gnode.lit rect { stroke: var(--green); stroke-width: 2; filter: drop-shadow(0 0 6px rgba(52,211,153,.55)); }
+  .gnode.lit text { fill: #dbe2f0; }
+  .gedge.lit path { stroke-width: 2.4; opacity: 1; filter: drop-shadow(0 0 3px rgba(52,211,153,.35)); }
+  .gnode.fail rect { stroke: var(--red); stroke-width: 2; filter: drop-shadow(0 0 6px rgba(248,113,113,.55)); }
+  .gnode.fail text { fill: #f3c6c6; }
   .gnode.pend rect, .gedge.pend path { animation: pulse 1.4s ease-in-out infinite; }
-  .gnode.pend rect { stroke: var(--amber); stroke-width: 1.8; }
-  .gedge.pend path { stroke: var(--amber) !important; stroke-width: 2.2; }
+  .gnode.pend rect { stroke: var(--amber); stroke-width: 2; }
+  .gnode.pend text { fill: #f4e3b2; }
+  .gedge.pend path { stroke: var(--amber) !important; stroke-width: 2.4; }
   .graphLegend { display: flex; gap: 4px 14px; flex-wrap: wrap; font: 10px var(--mono); color: var(--faint); margin-top: 10px; }
   .graphLegend span { display: inline-flex; align-items: center; gap: 5px; }
   .graphLegend i { width: 14px; height: 0; border-top: 2px solid var(--c, var(--faint)); }
@@ -1233,10 +1230,12 @@ async function select(name) {
   // the statically derived orchestration graph (GRAPH.md) — shown before any run.
   state.graph = null;
   state.graphCheck = null;
+  state.graphError = null;
   try {
     const gr = await api(`/api/graph?name=${encodeURIComponent(name)}`);
     state.graph = gr.ok ? gr.graph : null;
-    state.graphCheck = gr.check || null; // a rejected-by-design program still shows its topology
+    state.graphCheck = gr.check || null;  // a rejected-by-design program still shows its topology
+    state.graphError = gr.ok ? null : gr.error || null; // a parse rejection renders as the panel's message
   } catch { /* the graph is a lens, never a blocker */ }
   renderInputControls(state.map);
   $("workspace").classList.remove("specMode");
@@ -1250,10 +1249,10 @@ async function select(name) {
   updateRunControls();
   updateSourceButtons();
   const note = origin === "example" ? "This bundled example is not written into the project directory." : "Press Run to inspect the ledger — the graph below is derived statically from the source.";
-  $("results").innerHTML = (state.graph ? graphPanelHtml() : "") +
+  $("results").innerHTML = graphPanelHtml() +
     `<div class="empty"><b>${esc(name)}</b><br><br>${esc(note)}</div>`;
   applyAllPanelStates($("results"));
-  if (state.graph) drawGraph([], state.map);
+  drawGraph([], state.map);
 }
 
 $("specNav").onclick = () => showSpec();
@@ -2004,122 +2003,196 @@ function gtext(x, y, cls, s, max) {
 function drawGraph(events, map) {
   const host = $("graphWrap");
   if (!host) return;
+  const legend = $("graphLegend");
   const g = state.graph;
-  if (!g || !g.nodes.length) { host.innerHTML = `<div class="empty">no graph — the program has no declared topology</div>`; return; }
+  if (!g || !g.nodes.length) {
+    // generating the graph is fully generic (parse -> buildGraph); the only program without one
+    // is a program the PARSER rejects — and that rejection is shown here, not silently skipped.
+    host.innerHTML = state.graphError
+      ? `<div class="empty">the parser rejects this program, so there is no topology to draw<br><br><span class="mono" style="color:var(--red)">${esc(state.graphError.cls || "ParseError")}: ${esc(state.graphError.message || "")}</span></div>`
+      : `<div class="empty">no graph — the program declares no topology</div>`;
+    if (legend) legend.innerHTML = "";
+    return;
+  }
   const { units, unitOf } = graphUnits(g);
   const rank = rankUnits(units, unitOf, g.edges);
   const over = graphOverlay(g, events, map);
   const pend = state.pendingAttestation;
 
-  // ---- geometry ----
-  const UW = 216, PADX = 10, HEADH = 24, VGAP = 24, CGAP = 96, M = 14;
-  const rowH = (n) => (n.kind === "gate" ? 40 : n.kind === "ask" ? 26 : 28);
-  const cols = new Map();
-  for (const u of units) {
-    const r = rank.get(u.id);
-    if (!cols.has(r)) cols.set(r, []);
-    cols.get(r).push(u);
-  }
-  const KIND_ORDER = { top: 0, prompt: 1, agent: 2, handler: 3, gate: 4, sink: 5, tool: 6, event: 7, principal: 8, mem: 9, ledger: 10, hook: 3 };
-  const pos = new Map(); // nodeId -> {x,y,w,h}
-  let maxR = 0, svgH = 0;
-  for (const r of cols.keys()) maxR = Math.max(maxR, r);
-  for (const [r, list] of [...cols.entries()].sort((a, b) => a[0] - b[0])) {
+  // ---- vertical layout: ranks are ROWS, the kernel chain reads top -> bottom ----
+  const UW = 250, PADX = 12, HEADH = 30, MGAP = 10, RGAP = 92, HGAP = 64, M = 18;
+  const GREY = "#3d465e", GREYTEXT = "#828ca3";
+  const rowH = (n) => (n.kind === "gate" ? 52 : n.kind === "ask" ? 34 : 36);
+  const unitH = (u) => u.members.length ? HEADH + 8 + u.members.reduce((a, m) => a + rowH(m) + MGAP, 0) + 2 : 40;
+  const rows = new Map();
+  for (const u of units) { const r = rank.get(u.id); if (!rows.has(r)) rows.set(r, []); rows.get(r).push(u); }
+  const KIND_ORDER = { top: 0, prompt: 1, agent: 2, sink: 3, tool: 4, event: 5, handler: 6, principal: 7, ledger: 8, mem: 9 };
+  const sortedRanks = [...rows.keys()].sort((a, b) => a - b);
+  const rankIndex = new Map(sortedRanks.map((r, i) => [r, i]));
+  const hasUp = g.edges.some((e) => {
+    const a = unitOf.get(e.from), b = unitOf.get(e.to);
+    return a && b && a !== b && rank.get(b) < rank.get(a);
+  });
+  let maxRowW = 0;
+  const rowWidth = new Map();
+  for (const [r, list] of rows) { const w = list.length * UW + (list.length - 1) * HGAP; rowWidth.set(r, w); maxRowW = Math.max(maxRowW, w); }
+  const sideW = hasUp ? 96 : 0;
+  const svgW = M * 2 + maxRowW + sideW;
+  const pos = new Map(), unitRect = new Map(), rowTop = new Map(), rowBottom = new Map();
+  let y = M;
+  for (const r of sortedRanks) {
+    const list = rows.get(r);
     list.sort((a, b) => (KIND_ORDER[a.head.kind] ?? 9) - (KIND_ORDER[b.head.kind] ?? 9) || a.head.line - b.head.line);
-    const x = M + r * (UW + CGAP);
-    let y = M;
+    let x = M + (maxRowW - rowWidth.get(r)) / 2;
+    let rh = 0;
+    rowTop.set(r, y);
     for (const u of list) {
+      const h = unitH(u);
       if (u.members.length) {
-        let h = HEADH + 8;
-        pos.set(u.head.id, { x, y, w: UW, h: HEADH, cluster: true, frameY: y });
+        pos.set(u.head.id, { x, y, w: UW, h: HEADH, cluster: true });
+        let my = y + HEADH + 8;
         for (const m of u.members) {
-          const ind = m.kind === "gate" || m.kind === "ask" ? 12 : 0;
-          pos.set(m.id, { x: x + PADX + ind, y: y + h, w: UW - 2 * PADX - ind, h: rowH(m) });
-          h += rowH(m) + 8;
+          const ind = m.kind === "gate" || m.kind === "ask" ? 14 : 0;
+          pos.set(m.id, { x: x + PADX + ind, y: my, w: UW - 2 * PADX - ind, h: rowH(m) });
+          my += rowH(m) + MGAP;
         }
-        u.frame = { x, y, w: UW, h: h + 4 };
-        y += h + 4 + VGAP;
+        u.frame = { x, y, w: UW, h };
+        unitRect.set(u.id, u.frame);
       } else {
-        const h = 30;
-        pos.set(u.head.id, { x, y, w: UW, h });
-        y += h + VGAP;
+        pos.set(u.head.id, { x, y, w: UW, h: 40 });
+        unitRect.set(u.id, { x, y, w: UW, h: 40 });
       }
-      svgH = Math.max(svgH, y);
+      rh = Math.max(rh, h);
+      x += UW + HGAP;
     }
+    rowBottom.set(r, y + rh);
+    y += rh + RGAP;
   }
-  const svgW = M * 2 + (maxR + 1) * UW + maxR * CGAP;
+  const svgH = y - RGAP + M;
 
-  // ---- edges: slot-spread anchors (no shared convergence point), vertical connectors inside a
-  // cluster (the ask→gate chain), labels near their TARGET, staggered per in-slot, with a halo.
+  // ---- edges: orthogonal (LucidChart-style) ----
+  // down edges leave a spread port on the source's bottom, run to a dedicated horizontal CHANNEL
+  // in the gap above the target row (one lane per edge — labels live there, never under a box),
+  // then drop into a spread port on the target's top. Up edges route around the right margin.
   const parentOf = new Map(g.nodes.map((n) => [n.id, n.parent || null]));
   const drawable = g.edges.filter((e) => pos.get(e.from) && pos.get(e.to));
-  const outLists = new Map(), inLists = new Map();
+  const rankOfNode = (id) => rank.get(unitOf.get(id));
+  const kindOf = { intra: [], down: [], up: [], flat: [] };
   for (const e of drawable) {
-    if (!outLists.has(e.from)) outLists.set(e.from, []);
-    outLists.get(e.from).push(e);
-    if (!inLists.has(e.to)) inLists.set(e.to, []);
-    inLists.get(e.to).push(e);
+    if (parentOf.get(e.from) && parentOf.get(e.from) === parentOf.get(e.to)) kindOf.intra.push(e);
+    else {
+      const ra = rankOfNode(e.from), rb = rankOfNode(e.to);
+      if (rb > ra) kindOf.down.push(e);
+      else if (rb < ra) kindOf.up.push(e);
+      else kindOf.flat.push(e);
+    }
   }
-  for (const list of outLists.values()) list.sort((a, b) => pos.get(a.to).y - pos.get(b.to).y || a.id.localeCompare(b.id));
-  for (const list of inLists.values()) list.sort((a, b) => pos.get(a.from).y - pos.get(b.from).y || a.id.localeCompare(b.id));
-  const slot = (p, i, k) => p.y + p.h * ((i + 1) / (k + 1));
-  const trim = (sTxt) => sTxt.length > 26 ? sTxt.slice(0, 25) + "…" : sTxt;
+  const botPorts = new Map(), topPorts = new Map();
+  for (const e of kindOf.down) {
+    if (!botPorts.has(e.from)) botPorts.set(e.from, []);
+    botPorts.get(e.from).push(e);
+    if (!topPorts.has(e.to)) topPorts.set(e.to, []);
+    topPorts.get(e.to).push(e);
+  }
+  for (const list of botPorts.values()) list.sort((a, b) => pos.get(a.to).x - pos.get(b.to).x || a.id.localeCompare(b.id));
+  for (const list of topPorts.values()) list.sort((a, b) => pos.get(a.from).x - pos.get(b.from).x || a.id.localeCompare(b.id));
+  const portX = (p, list, e) => p.x + p.w * ((list.indexOf(e) + 1) / (list.length + 1));
+  // one channel lane per edge entering a row, allocated across that row's gap
+  const gapEdges = new Map();
+  for (const e of kindOf.down) {
+    const rb = rankOfNode(e.to);
+    if (!gapEdges.has(rb)) gapEdges.set(rb, []);
+    gapEdges.get(rb).push(e);
+  }
+  const chanY = new Map();
+  for (const [rb, list] of gapEdges) {
+    list.sort((a, b) => portX(pos.get(a.to), topPorts.get(a.to), a) - portX(pos.get(b.to), topPorts.get(b.to), b));
+    const gapTop = rowTop.get(rb) - RGAP + 16, gapH = RGAP - 34;
+    list.forEach((e, i) => chanY.set(e.id, gapTop + gapH * ((i + 1) / (list.length + 1))));
+  }
+  const blockedDrop = (x, ra, rb) => { // does a straight drop at x cross a unit in rows between?
+    for (const r of sortedRanks) {
+      if (rankIndex.get(r) <= rankIndex.get(ra) || rankIndex.get(r) >= rankIndex.get(rb)) continue;
+      for (const u of rows.get(r)) { const b = unitRect.get(u.id); if (x > b.x - 8 && x < b.x + b.w + 8) return true; }
+    }
+    return false;
+  };
+  let sideLane = 0;
   const epaths = [], elabels = [];
-  const putLabel = (cls, color, anchor, x, y, text) => elabels.push({ cls, color, anchor, x, y, text });
-  for (const e of drawable) {
-    const s = pos.get(e.from), t = pos.get(e.to);
-    const outL = outLists.get(e.from), inL = inLists.get(e.to);
-    const sy = slot(s, outL.indexOf(e), outL.length);
-    const tIdx = inL.indexOf(e), ty = slot(t, tIdx, inL.length);
-    const color = EDGE_COLORS[e.kind] || "var(--faint)";
+  const edgeVisual = (e) => {
     const lit = over.le.has(e.id);
     const pendEdge = pend && e.kind === "escalate" && e.to === "principal:" + pend.principal;
-    const cls = `gedge${e.kind === "recall" || e.kind === "store" ? " dashed" : ""}${lit ? " lit" : ""}${pendEdge ? " pend" : ""}`;
-    const marker = `marker-end="url(#ar-${lit ? "lit" : pendEdge ? "pend" : e.kind})"`;
-    const label = e.label ? (e.variant ? `${e.label} · ${e.variant}` : e.label) : (e.variant ? `· ${e.variant}` : "");
-    let d;
-    if (parentOf.get(e.from) && parentOf.get(e.from) === parentOf.get(e.to)) {
-      // two rows of one cluster: a short vertical connector down (or up) the chain
-      const down = t.y >= s.y;
-      const x1 = s.x + Math.min(28, s.w / 2), x2 = t.x + Math.min(20, t.w / 2);
-      const y1 = down ? s.y + s.h : s.y, y2 = down ? t.y - 2 : t.y + t.h + 2;
-      d = `M ${x1} ${y1} C ${x1} ${(y1 + y2) / 2}, ${x2} ${(y1 + y2) / 2}, ${x2} ${y2}`;
-      if (label) putLabel(cls, color, "start", x2 + 10, (y1 + y2) / 2 + 3, trim(label));
-    } else if (t.x >= s.x + s.w) { // forward
-      const x1 = s.x + s.w, x2 = t.x, dx = Math.max(28, (x2 - x1) / 2.2);
-      d = `M ${x1} ${sy} C ${x1 + dx} ${sy}, ${x2 - dx} ${ty}, ${x2 - 5} ${ty}`;
-      if (label) {
-        const lx = Math.max(x1 + 12, x2 - 14 - (tIdx % 4) * 52);
-        const f = Math.min(0.92, Math.max(0.1, (lx - x1) / (x2 - x1)));
-        putLabel(cls, color, "end", lx, sy + (ty - sy) * f - 5, trim(label));
-      }
-    } else if (t.x + t.w <= s.x) { // backward
-      const x1 = s.x, x2 = t.x + t.w, dx = Math.max(28, (x1 - x2) / 2.2);
-      d = `M ${x1} ${sy} C ${x1 - dx} ${sy}, ${x2 + dx} ${ty}, ${x2 + 5} ${ty}`;
-      if (label) {
-        const lx = Math.min(x1 - 12, x2 + 14 + (tIdx % 4) * 52);
-        const f = Math.min(0.92, Math.max(0.1, (x1 - lx) / (x1 - x2)));
-        putLabel(cls, color, "start", lx, sy + (ty - sy) * f - 5, trim(label));
-      }
-    } else { // same column — bulge right
-      const x1 = s.x + s.w, x2 = t.x + t.w, bx = Math.max(x1, x2) + 40;
-      d = `M ${x1} ${sy} C ${bx} ${sy}, ${bx} ${ty}, ${x2 + 5} ${ty}`;
-      if (label) putLabel(cls, color, "start", bx - 30, (sy + ty) / 2 - 5, trim(label));
+    return {
+      lit, pendEdge,
+      cls: `gedge${e.kind === "recall" || e.kind === "store" ? " dashed" : ""}${lit ? " lit" : ""}${pendEdge ? " pend" : ""}`,
+      color: lit ? (EDGE_COLORS[e.kind] || "var(--green)") : GREY,
+      marker: `marker-end="url(#ar-${lit ? (EDGE_COLORS[e.kind] ? e.kind : "lit") : pendEdge ? "pend" : "grey"})"`,
+      label: e.label ? (e.variant ? `${e.label} · ${e.variant}` : e.label) : (e.variant ? `· ${e.variant}` : ""),
+    };
+  };
+  const trim = (t) => (t.length > 30 ? t.slice(0, 29) + "…" : t);
+  const putLabel = (v, anchor, x, y, text) => elabels.push({ cls: v.cls, color: v.lit ? v.color : GREYTEXT, anchor, x, y, text: trim(text) });
+
+  for (const e of kindOf.intra) { // vertical connector inside a cluster; label OUTSIDE the frame
+    const s = pos.get(e.from), t = pos.get(e.to), v = edgeVisual(e);
+    const down = t.y >= s.y;
+    const x1 = s.x + 24, x2 = t.x + 24;
+    const y1 = down ? s.y + s.h : s.y, y2 = down ? t.y - 3 : t.y + t.h + 3;
+    const midY = (y1 + y2) / 2;
+    const d = x1 === x2 ? `M ${x1} ${y1} L ${x2} ${y2}` : `M ${x1} ${y1} L ${x1} ${midY} L ${x2} ${midY} L ${x2} ${y2}`;
+    epaths.push(`<g class="${v.cls}"><path d="${d}" stroke="${v.color}" ${v.marker}></path></g>`);
+    if (v.label) {
+      const frame = unitRect.get(unitOf.get(e.from));
+      putLabel(v, "start", frame.x + frame.w + 10, midY + 4, v.label);
     }
-    epaths.push(`<g class="${cls}"><path d="${d}" stroke="${color}" ${marker}></path></g>`);
   }
-  // greedy de-collision: estimate each label's box, nudge later ones vertically until clear.
-  {
+  for (const e of kindOf.down) {
+    const s = pos.get(e.from), t = pos.get(e.to), v = edgeVisual(e);
+    const sx = portX(s, botPorts.get(e.from), e), tx = portX(t, topPorts.get(e.to), e);
+    const cy = chanY.get(e.id), ra = rankOfNode(e.from), rb = rankOfNode(e.to);
+    let d;
+    if (rankIndex.get(rb) - rankIndex.get(ra) > 1 && blockedDrop(sx, ra, rb)) {
+      const lane = M + maxRowW + 20 + (sideLane++ % 5) * 15; // detour via the right margin
+      const outY = rowBottom.get(ra) + 18;
+      d = `M ${sx} ${s.y + s.h} L ${sx} ${outY} L ${lane} ${outY} L ${lane} ${cy} L ${tx} ${cy} L ${tx} ${t.y - 3}`;
+    } else {
+      d = `M ${sx} ${s.y + s.h} L ${sx} ${cy} L ${tx} ${cy} L ${tx} ${t.y - 3}`;
+    }
+    epaths.push(`<g class="${v.cls}"><path d="${d}" stroke="${v.color}" ${v.marker}></path></g>`);
+    if (v.label) {
+      // the label lives on the channel run — guaranteed box-free space
+      const lx = Math.abs(tx - sx) > 60 ? (sx + tx) / 2 : tx + 10;
+      putLabel(v, Math.abs(tx - sx) > 60 ? "middle" : "start", lx, cy - 5, v.label);
+    }
+  }
+  for (const e of kindOf.up) { // around the right margin, entering the target's right side
+    const s = pos.get(e.from), t = pos.get(e.to), v = edgeVisual(e);
+    const lane = M + maxRowW + 24 + (sideLane++ % 5) * 15;
+    const sy = s.y + s.h / 2, ty = t.y + t.h / 2;
+    const d = `M ${s.x + s.w} ${sy} L ${lane} ${sy} L ${lane} ${ty} L ${t.x + t.w + 4} ${ty}`;
+    epaths.push(`<g class="${v.cls}"><path d="${d}" stroke="${v.color}" ${v.marker}></path></g>`);
+    if (v.label) putLabel(v, "end", lane - 8, (sy + ty) / 2, v.label);
+  }
+  for (const e of kindOf.flat) { // same row: side to side
+    const s = pos.get(e.from), t = pos.get(e.to), v = edgeVisual(e);
+    const ltr = t.x > s.x;
+    const x1 = ltr ? s.x + s.w : s.x, x2 = ltr ? t.x - 4 : t.x + t.w + 4;
+    const sy = s.y + s.h / 2, ty = t.y + t.h / 2, midX = (x1 + x2) / 2;
+    const d = sy === ty ? `M ${x1} ${sy} L ${x2} ${ty}` : `M ${x1} ${sy} L ${midX} ${sy} L ${midX} ${ty} L ${x2} ${ty}`;
+    epaths.push(`<g class="${v.cls}"><path d="${d}" stroke="${v.color}" ${v.marker}></path></g>`);
+    if (v.label) putLabel(v, "middle", midX, Math.min(sy, ty) - 7, v.label);
+  }
+  { // greedy de-collision: nudge any label whose box would overlap another's
     const placed = [];
     for (const l of elabels) {
-      const w = l.text.length * 5.8, h = 11, baseY = l.y;
-      const box = () => ({ x: l.anchor === "end" ? l.x - w : l.x, y: l.y - 9, w, h });
-      for (const off of [0, 11, -11, 22, -22, 33, -33]) {
+      const w = l.text.length * 6.2, h = 12, baseY = l.y;
+      const bx = () => ({ x: l.anchor === "end" ? l.x - w : l.anchor === "middle" ? l.x - w / 2 : l.x, y: l.y - 10, w, h });
+      for (const off of [0, 12, -12, 24, -24, 36, -36]) {
         l.y = baseY + off;
-        const b = box();
+        const b = bx();
         if (!placed.some((p) => b.x < p.x + p.w && p.x < b.x + b.w && b.y < p.y + p.h && p.y < b.y + b.h)) break;
       }
-      placed.push(box());
+      placed.push(bx());
       epaths.push(`<g class="${l.cls}"><text fill="${l.color}" text-anchor="${l.anchor}" x="${l.x}" y="${l.y}">${esc(l.text)}</text></g>`);
     }
   }
@@ -2127,7 +2200,7 @@ function drawGraph(events, map) {
   // ---- nodes ----
   const nparts = [];
   for (const u of units) {
-    if (u.frame) nparts.push(`<g class="gcluster"><rect x="${u.frame.x}" y="${u.frame.y}" width="${u.frame.w}" height="${u.frame.h}" rx="9"></rect></g>`);
+    if (u.frame) nparts.push(`<g class="gcluster"><rect x="${u.frame.x}" y="${u.frame.y}" width="${u.frame.w}" height="${u.frame.h}" rx="10"></rect></g>`);
   }
   for (const n of g.nodes) {
     const p = pos.get(n.id);
@@ -2135,33 +2208,58 @@ function drawGraph(events, map) {
     const lit = over.ln.has(n.id), failed = over.fail.has(n.id);
     const pendNode = pend && n.id === "principal:" + pend.principal;
     const cls = `gnode k-${n.kind}${lit && !failed ? " lit" : ""}${failed ? " fail" : ""}${pendNode ? " pend" : ""}`;
-    const maxChars = Math.floor((p.w - 14) / 6.4);
+    const maxChars = Math.floor((p.w - 16) / 7.2);
     let body;
     if (p.cluster) {
-      body = `${gtext(p.x + 9, p.y + 16, "", n.label, maxChars)}`;
+      body = `${gtext(p.x + 10, p.y + 20, "", n.label, maxChars)}`;
     } else {
-      body = `<rect x="${p.x}" y="${p.y}" width="${p.w}" height="${p.h}" rx="6"></rect>
-        ${gtext(p.x + 7, p.y + (n.kind === "gate" ? 15 : p.h / 2 + 3.5), "", n.label, maxChars)}
-        ${n.kind === "gate" && n.meta?.rule ? gtext(p.x + 7, p.y + 29, "sub", String(n.meta.rule) + (n.meta.principal ? ` · by ${n.meta.principal}` : ""), maxChars + 4) : ""}`;
+      body = `<rect x="${p.x}" y="${p.y}" width="${p.w}" height="${p.h}" rx="7"></rect>
+        ${gtext(p.x + 9, p.y + (n.kind === "gate" ? 20 : p.h / 2 + 4.5), "", n.label, maxChars)}
+        ${n.kind === "gate" && n.meta?.rule ? gtext(p.x + 9, p.y + 38, "sub", String(n.meta.rule) + (n.meta.principal ? ` · by ${n.meta.principal}` : ""), maxChars + 5) : ""}`;
     }
     nparts.push(`<g class="${cls}" data-node="${esc(n.id)}" data-line="${n.line || 1}"><title>${esc(n.label + (n.meta?.rule ? ` — ${n.meta.rule}` : ""))}</title>${body}</g>`);
   }
 
-  const markers = [...Object.entries(EDGE_COLORS), ["lit", "var(--green)"], ["pend", "var(--amber)"]].map(([k, c]) =>
-    `<marker id="ar-${k}" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+  const markers = [...Object.entries(EDGE_COLORS), ["lit", "var(--green)"], ["pend", "var(--amber)"], ["grey", GREY]].map(([k, c]) =>
+    `<marker id="ar-${k}" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
       <path d="M 0 0 L 8 4 L 0 8 z" fill="${c}"></path></marker>`).join("");
 
-  host.innerHTML = `<svg viewBox="0 0 ${svgW} ${Math.max(svgH + M, 80)}" width="${svgW}" height="${Math.max(svgH + M, 80)}" xmlns="http://www.w3.org/2000/svg">
+  // width:100% + viewBox scales the drawing to the column; cap the upscale so small graphs
+  // stay crisp instead of ballooning.
+  host.innerHTML = `<svg viewBox="0 0 ${svgW} ${Math.max(svgH, 90)}" style="max-width:${Math.round(svgW * 1.45)}px" xmlns="http://www.w3.org/2000/svg">
     <defs>${markers}</defs>${epaths.join("")}${nparts.join("")}</svg>`;
 
-  const legend = $("graphLegend");
+  { // exact de-collision: measure REAL text boxes post-render, nudge until label touches nothing
+    const rects = [...host.querySelectorAll(".gnode rect")].map((r) => ({
+      x: +r.getAttribute("x"), y: +r.getAttribute("y"), w: +r.getAttribute("width"), h: +r.getAttribute("height"),
+    }));
+    const PAD = 3; // breathing room: a corner-graze reads as an overlap too
+    const hit = (a, b) => a.x - PAD < b.x + b.w && b.x - PAD < a.x + a.w && a.y - PAD < b.y + b.h && b.y - PAD < a.y + a.h;
+    const norm = (b) => ({ x: b.x, y: b.y, w: b.width ?? b.w, h: b.height ?? b.h });
+    const placed = [];
+    for (const t of host.querySelectorAll(".gedge text")) {
+      const baseY = +t.getAttribute("y"), baseX = +t.getAttribute("x");
+      let done = false;
+      for (const dx of [0, 36, -36, 72]) { // vertical rungs first; shift sideways only if a column is full
+        for (const dy of [0, 16, -16, 32, -32, 48, -48, 64]) {
+          t.setAttribute("x", baseX + dx);
+          t.setAttribute("y", baseY + dy);
+          const b = norm(t.getBBox());
+          if (!placed.some((p) => hit(b, p)) && !rects.some((r) => hit(b, r))) { done = true; break; }
+        }
+        if (done) break;
+      }
+      placed.push(norm(t.getBBox()));
+    }
+  }
+
   if (legend) {
     const kinds = [...new Set(g.edges.map((e) => e.kind))];
     const checkNote = state.graphCheck
       ? `<span style="color:var(--red)">⚠ static check rejects this program — ${esc(state.graphCheck.cls)}: this topology never runs</span>`
       : "";
-    legend.innerHTML = kinds.map((k) => `<span><i style="--c:${EDGE_COLORS[k]}"></i>${k}</span>`).join("") +
-      checkNote + `<span style="margin-left:auto">derived from source · click a node to jump to its line</span>`;
+    legend.innerHTML = kinds.map((k) => `<span><i style="--c:${EDGE_COLORS[k]}"></i>${k}</span>`).join("") + checkNote +
+      `<span style="margin-left:auto">grey until a run lights the witnessed path · click a node to jump to its line</span>`;
   }
   host.onclick = (e) => {
     const gn = e.target.closest?.("[data-node]");
@@ -2223,7 +2321,7 @@ function render(r) {
   }</div>`));
 
   // the derived orchestration graph, with this run's ledger events lighting the witnessed path.
-  if (state.graph) out.push(graphPanelHtml());
+  out.push(graphPanelHtml());
 
   const detailHtml = renderRunDetails(r);
   if (detailHtml) out.push(panel("run-details", "Run details", `<div class="details">${detailHtml}</div>`));
@@ -2249,7 +2347,7 @@ function render(r) {
 
   $("results").innerHTML = out.join("");
   applyAllPanelStates($("results"));
-  if (state.graph) drawGraph(ev, r.map || state.map);
+  drawGraph(ev, r.map || state.map);
 }
 
 init();

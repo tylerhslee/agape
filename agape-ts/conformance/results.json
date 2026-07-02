@@ -1,6 +1,6 @@
 {
-  "passed": 167,
-  "total": 167,
+  "passed": 168,
+  "total": 168,
   "bySection": {
     "00_lexical": {
       "pass": 11,
@@ -47,8 +47,8 @@
       "total": 5
     },
     "12_aggregation": {
-      "pass": 5,
-      "total": 5
+      "pass": 6,
+      "total": 6
     },
     "13_governance": {
       "pass": 30,
@@ -1183,6 +1183,16 @@
       "pass": true,
       "reason": "rejected with TypeError",
       "errorClass": "TypeError",
+      "phase": "run",
+      "hadMatchers": false,
+      "directives": []
+    },
+    {
+      "id": "agg_pipe_fanout_ok",
+      "section": "12_aggregation",
+      "expect": "accept",
+      "pass": true,
+      "reason": "accepted",
       "phase": "run",
       "hadMatchers": false,
       "directives": []
