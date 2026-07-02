@@ -2,8 +2,8 @@
 //! section:   16_config
 //! expect:    accept
 //! contains:  Internalized
-//! spec:      §16.7 (the mandatory memory envelope internalizes every reaction's experience; consult+internalize is unconditional — there is no opt-in/opt-out config knob, and configuration tunes budget/fidelity, not whether memory is part of the turn)
-//! note:      a received reply is internalized into private memory with no config flag; the former `internalize_on_receive` opt-in was removed when the envelope became mandatory
+//! spec:      §16.7 (the mandatory memory envelope internalizes every reaction as first-person memory content; consult+internalize is unconditional — there is no opt-in/opt-out config knob, and configuration tunes budget/fidelity, not whether memory is part of the turn)
+//! note:      a received reply is internalized into private memory with no config flag; the former `internalize_on_receive` opt-in was removed when the envelope became mandatory, and the Internalized event is the episode rather than a payload `kind`
 //! ---
 agent A {
   on awake { text r = self <- "what happened today?"; }
