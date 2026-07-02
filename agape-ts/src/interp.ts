@@ -180,6 +180,21 @@ export interface RuntimeSession {
   snapshot(): RunResult;
 }
 
+// §13/§16.4 — the identity dependency's consult request. When a principal-prefixed `decide` escalates
+// (the rule could not commit) and no pre-supplied attestation or harness directive covers it, the
+// runtime PAUSES and presents `(p, c)` outward: the principal must rule with ONE OF E's VARIANTS
+// ("the human's reply arrives as one of `E`'s variants", §13) or decline. Resolving with an
+// attestation records PrincipalDecision (basis Principal); resolving undefined declines →
+// FailedPrincipalDecision and the decision stays abstained (fail closed).
+export interface ConsultRequest {
+  principal: string;
+  enumName: string;
+  variants: string[];
+  scores: Record<string, number>;
+  margin: number;
+  agent?: string;
+}
+
 type RunOptions = {
   provider?: Provider;
   modules?: ModuleInput[];
@@ -187,6 +202,7 @@ type RunOptions = {
   principal?: string;
   promptInputs?: PromptInput[];
   principalAttestations?: PrincipalAttestation[];
+  onConsult?: (req: ConsultRequest) => Promise<PrincipalAttestation | undefined>;
   strictConfig?: boolean;
 };
 
@@ -208,6 +224,7 @@ export function createSession(program: A.Program, opts: RunOptions = {}): Runtim
     opts.modules ?? [],
     opts.principal,
     opts.principalAttestations ?? [],
+    opts.onConsult,
   );
 }
 
@@ -256,6 +273,7 @@ class Interpreter {
     modules: ModuleInput[],
     private principalOutcome?: string,
     private principalAttestations: PrincipalAttestation[] = [],
+    private onConsult?: (req: ConsultRequest) => Promise<PrincipalAttestation | undefined>,
   ) {
     // §3: register the declared principal names so a `decide c by p` (the parser's {policy} rule form)
     // can be reinterpreted as a principal escalation by evalGate.
@@ -801,12 +819,12 @@ class Interpreter {
       let principalEvent: number | undefined;
       if (pureByForm) {
         // route directly to the principal; no rule collapse (the "rule" IS the principal name).
-        ({ committed, margin, basis, principalEvent } = this.principalRule(cred, scope, principalName!));
+        ({ committed, margin, basis, principalEvent } = await this.principalRule(cred, scope, principalName!));
       } else {
         ({ committed, margin, basis } = this.collapse(cred, gate.rule));
         // prefix form: escalate to the principal ONLY when the rule could not commit (§13).
         if (committed === "abstained" && principalName) {
-          ({ committed, margin, basis, principalEvent } = this.principalRule(cred, scope, principalName));
+          ({ committed, margin, basis, principalEvent } = await this.principalRule(cred, scope, principalName));
         }
       }
       const decisionSubject = bindName ?? (gate.credence.kind === "ident" ? gate.credence.name : this.agentSubject(scope));
@@ -946,37 +964,59 @@ class Interpreter {
   // fabricate an approval that never happened (a governance/authority soundness requirement). No
   // taint/authority/endorsement bypass: the Decision still settles a subject only through the unchanged
   // endorse machinery.
-  private principalRule(
+  private async principalRule(
     cred: Extract<Value, { kind: "credence" }>,
     scope: Scope,
     who: string,
-  ): { committed: Committed; margin: number; basis: string; principalEvent?: number } {
+  ): Promise<{ committed: Committed; margin: number; basis: string; principalEvent?: number }> {
     const { variant, score } = topVariant(cred.scores);
     const margin = score - secondScore(cred.scores);
-    const attested = this.principalAttestations.find((a) => a.principal === who);
-    if (attested) {
-      if (attested.approved === false) {
-        const attestation = localAttestation("principal-decline", { principal: who, credence: cred.enumName, scores: cred.scores }, attested);
+    // apply one attestation (pre-supplied by the harness/UI, or returned live by the consult seam):
+    // an explicit decline / an out-of-enum ruling → FailedPrincipalDecision (fail closed); a valid
+    // variant ruling → PrincipalDecision (basis Principal). §13: "the human's reply arrives as one
+    // of E's variants".
+    const apply = (att: PrincipalAttestation) => {
+      if (att.approved === false) {
+        const attestation = localAttestation("principal-decline", { principal: who, credence: cred.enumName, scores: cred.scores }, att);
         const ev = this.ledger.append("FailedPrincipalDecision", who, { credence: cred.enumName, ...scoreSummary(cred.scores), attestation }, scope.currentAgent()?.name);
-        return { committed: "abstained", margin, basis: "Principal", principalEvent: ev.tick };
+        return { committed: "abstained" as Committed, margin, basis: "Principal", principalEvent: ev.tick };
       }
-      const decision = attested.decision || variant;
+      const decision = att.decision || variant;
       if (!Object.prototype.hasOwnProperty.call(cred.scores, decision)) {
-        const attestation = localAttestation("principal-invalid", { principal: who, credence: cred.enumName, decision }, attested);
+        const attestation = localAttestation("principal-invalid", { principal: who, credence: cred.enumName, decision }, att);
         const ev = this.ledger.append("FailedPrincipalDecision", who, { credence: cred.enumName, decision, ...scoreSummary(cred.scores), attestation }, scope.currentAgent()?.name);
-        return { committed: "abstained", margin, basis: "Principal", principalEvent: ev.tick };
+        return { committed: "abstained" as Committed, margin, basis: "Principal", principalEvent: ev.tick };
       }
-      const attestation = localAttestation("principal-decision", { principal: who, credence: cred.enumName, decision, scores: cred.scores }, attested);
+      const attestation = localAttestation("principal-decision", { principal: who, credence: cred.enumName, decision, scores: cred.scores }, att);
       const ev = this.ledger.append("PrincipalDecision", who, { credence: cred.enumName, decision, ...scoreSummary(cred.scores), attestation }, scope.currentAgent()?.name);
-      return { committed: decision, margin, basis: "Principal", principalEvent: ev.tick };
+      return { committed: decision as Committed, margin, basis: "Principal", principalEvent: ev.tick };
+    };
+    const attested = this.principalAttestations.find((a) => a.principal === who);
+    if (attested) return apply(attested);
+    if (this.principalOutcome === "grant") {
+      const ev = this.ledger.append("PrincipalDecision", who, { credence: cred.enumName, decision: variant, ...scoreSummary(cred.scores) }, scope.currentAgent()?.name);
+      return { committed: variant, margin, basis: "Principal", principalEvent: ev.tick };
     }
-    if (this.principalOutcome !== "grant") {
-      // decline OR unavailable/unconfigured → fail closed (abstain), never a fabricated approval.
-      const ev = this.ledger.append("FailedPrincipalDecision", who, { credence: cred.enumName, ...scoreSummary(cred.scores) }, scope.currentAgent()?.name);
+    // §16.4 — the LIVE consult seam: no pre-supplied ruling and no harness directive, but a consult
+    // handler is attached (the studio's attestation flow). The run PAUSES here awaiting the principal's
+    // ruling: one of E's variants (→ PrincipalDecision) or a decline (→ FailedPrincipalDecision).
+    if (this.principalOutcome === undefined && this.onConsult) {
+      const supplied = await this.onConsult({
+        principal: who,
+        enumName: cred.enumName,
+        variants: this.enums.get(cred.enumName) ?? Object.keys(cred.scores),
+        scores: cred.scores,
+        margin,
+        agent: scope.currentAgent()?.name,
+      });
+      if (supplied) return apply({ ...supplied, principal: who });
+      const attestation = localAttestation("principal-decline", { principal: who, credence: cred.enumName, scores: cred.scores });
+      const ev = this.ledger.append("FailedPrincipalDecision", who, { credence: cred.enumName, ...scoreSummary(cred.scores), attestation }, scope.currentAgent()?.name);
       return { committed: "abstained", margin, basis: "Principal", principalEvent: ev.tick };
     }
-    const ev = this.ledger.append("PrincipalDecision", who, { credence: cred.enumName, decision: variant, ...scoreSummary(cred.scores) }, scope.currentAgent()?.name);
-    return { committed: variant, margin, basis: "Principal", principalEvent: ev.tick };
+    // explicit deny, OR unavailable/unconfigured → fail closed (abstain), never a fabricated approval.
+    const ev = this.ledger.append("FailedPrincipalDecision", who, { credence: cred.enumName, ...scoreSummary(cred.scores) }, scope.currentAgent()?.name);
+    return { committed: "abstained", margin, basis: "Principal", principalEvent: ev.tick };
   }
 
   // ---- expressions ----

@@ -150,6 +150,32 @@
   .verdict .light { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
   .verdict.ok .light  { background: var(--green); box-shadow: 0 0 12px var(--green); }
   .verdict.bad .light { background: var(--red);   box-shadow: 0 0 12px var(--red); }
+  .verdict.wait { background: #241c0c; border-color: #5a4716; }
+  .verdict.wait .light { background: var(--amber); box-shadow: 0 0 12px var(--amber); animation: pulse 1.4s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: .45; } }
+
+  /* ---- attestation panel (§13/§16.4) ---- */
+  .attest {
+    background: #241c0c; border: 1px solid #6b5518; border-radius: 12px;
+    padding: 16px; margin-bottom: 14px; box-shadow: 0 0 24px rgba(251, 191, 36, .07);
+  }
+  .attestHead { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; font-size: 15px; }
+  .attestHead .msg { color: var(--dim); font-size: 12.5px; }
+  .attestScores { margin: 12px 0 4px; max-width: 460px; }
+  .attestActions { display: flex; gap: 10px; flex-wrap: wrap; margin: 12px 0 8px; }
+  .attestActions button.rule {
+    background: var(--amber); border: 1px solid var(--amber); color: #1c1503; font-weight: 700;
+    padding: 9px 22px; border-radius: 9px; font-size: 14px;
+  }
+  .attestActions button.rule:hover { filter: brightness(1.1); }
+  .attestActions button.declineRule {
+    background: none; border: 1px solid var(--line); color: var(--dim); padding: 9px 16px; border-radius: 9px;
+  }
+  .attestActions button.declineRule:hover { border-color: var(--red); color: var(--red); }
+  .attestActions button:disabled { opacity: .5; cursor: default; }
+  .attestNote { font: 11px/1.5 var(--mono); color: var(--faint); }
+  .mono { font-family: var(--mono); }
+  .principalNote { font: 11.5px/1.5 var(--mono); color: var(--amber); opacity: .85; }
   .verdict b { font-size: 15px; }
   .verdict .cls { font: 12px var(--mono); border: 1px solid var(--red); color: var(--red); padding: 2px 8px; border-radius: 6px; }
   .verdict .msg { color: var(--dim); font-size: 12.5px; }
@@ -300,7 +326,7 @@ const CATS = {
   error:     { color: "var(--red)",    types: ["Error","TypeMismatch","MarginFloorViolation","Contradiction"] },
 };
 
-let state = { programs: [], selected: null, meta: {}, source: "", sourceOrigin: null, map: null, editing: false, dirty: false, sessionId: null, listening: false };
+let state = { programs: [], selected: null, meta: {}, source: "", sourceOrigin: null, map: null, editing: false, dirty: false, sessionId: null, listening: false, awaitingAttest: false, pollTimer: null };
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c]));
@@ -396,11 +422,23 @@ function hasPromptInputs() {
   return (state.map?.prompts || []).length > 0;
 }
 
+function hasPrincipals() {
+  return (state.map?.principals || []).length > 0;
+}
+
+// a program with prompts OR principals runs as a SESSION (/api/listen): prompts feed arrivals in,
+// and a principal consult can pause the run awaiting the user's attestation (§13/§16.4).
+function sessionMode() {
+  return hasPromptInputs() || hasPrincipals();
+}
+
 function updateRunControls() {
-  const canRun = Boolean(state.selected) && !state.editing;
+  const canRun = Boolean(state.selected) && !state.editing && !state.awaitingAttest;
   $("run").disabled = !canRun;
   $("stop").hidden = !state.listening;
-  $("run").textContent = state.listening ? "Send prompt" : hasPromptInputs() ? "Listen ▸" : "Run ▸";
+  $("run").textContent = state.awaitingAttest ? "Awaiting ruling…"
+    : state.listening ? (hasPromptInputs() ? "Send prompt" : "Waiting…")
+    : hasPromptInputs() ? "Listen ▸" : "Run ▸";
   updateSourceButtons();
 }
 
@@ -430,9 +468,12 @@ function renderInputControls(map) {
       <textarea id="${esc(inputId("prompt", p.name))}" data-prompt="${esc(p.name)}" data-type="${esc(p.type)}" placeholder="${esc(promptPlaceholder(p))}">${esc(defaultPromptValue(p))}</textarea>
       <div class="checkLine"><input id="${esc(inputId("prompt_attest", p.name))}" type="checkbox" checked><label for="${esc(inputId("prompt_attest", p.name))}">attest as local user</label></div>
     </div>`),
+    // §13/§16.4: a principal is NOT a pre-run toggle — it is consulted LIVE when a gate escalates,
+    // and the ruling is a manual choice of one of the gate enum's variants (or a decline). The row
+    // below is informational only; the actual attestation panel appears when the run pauses.
     ...principals.map((name) => `<div class="inputRow">
       <label>${esc(name)}<span>principal</span></label>
-      <div class="checkLine"><input id="${esc(inputId("principal", name))}" data-principal="${esc(name)}" type="checkbox" checked><label for="${esc(inputId("principal", name))}">approve top variant</label></div>
+      <div class="principalNote">⚖ consulted live when a gate escalates — you will rule by choosing one of the enum's variants (or declining)</div>
     </div>`),
   ].join("");
 }
@@ -447,11 +488,7 @@ function collectInputs() {
       attestation: attest?.checked ? { attester: "studio-user" } : { attester: "unattested" },
     };
   }).filter((p) => String(p.value).trim() !== "");
-  const principalAttestations = (state.map?.principals || []).map((principal) => {
-    const el = $(inputId("principal", principal));
-    return { principal, approved: Boolean(el?.checked), attester: "studio-user" };
-  });
-  return { promptInputs, principalAttestations };
+  return { promptInputs };
 }
 
 function validateInputs() {
@@ -649,32 +686,78 @@ async function stopSession(silent = false) {
 
 $("stop").onclick = () => stopSession(false);
 
+// handle a session-shaped response: track ids, render, keep polling while running, auto-close a
+// principal-only session when its run finishes (a prompt session stays listening for more arrivals).
+function handleSessionResponse(r) {
+  if (r.sessionId) { state.sessionId = r.sessionId; state.listening = true; }
+  state.awaitingAttest = Boolean(r.pendingAttestation);
+  render(r);
+  if (state.pollTimer) { clearTimeout(state.pollTimer); state.pollTimer = null; }
+  if (r.runState === "running" && state.sessionId) {
+    state.pollTimer = setTimeout(pollSession, 700);
+  } else if ((r.runState === "done" || r.runState === "error") && !hasPromptInputs()) {
+    // principal-only session: the run is over — release the session but keep the results on screen.
+    const id = state.sessionId;
+    state.sessionId = null; state.listening = false;
+    if (id) api("/api/stop", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sessionId: id }) }).catch(() => {});
+  }
+  updateRunControls();
+}
+
+async function pollSession() {
+  if (!state.sessionId) return;
+  try {
+    const r = await api(`/api/session?sessionId=${encodeURIComponent(state.sessionId)}`);
+    handleSessionResponse(r);
+  } catch { state.pollTimer = setTimeout(pollSession, 1500); }
+}
+
+// §13/§16.4 — submit the principal's ruling: a chosen variant, or a decline (fail closed).
+async function attest(decision) {
+  const pending = state.pendingAttestation;
+  if (!pending || !state.sessionId) return;
+  for (const b of document.querySelectorAll(".attest button")) b.disabled = true;
+  try {
+    const r = await api("/api/attest", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        sessionId: state.sessionId,
+        attestationId: pending.id,
+        ...(decision === null ? { decline: true } : { decision }),
+      }),
+    });
+    state.pendingAttestation = null;
+    handleSessionResponse(r);
+  } catch (e) {
+    $("results").innerHTML = `<div class="verdict bad"><div class="light"></div><b>Attestation failed</b>
+      <span class="msg">${esc(e.message)}</span></div>`;
+    state.awaitingAttest = false;
+    updateRunControls();
+  }
+}
+
 $("run").onclick = async () => {
   if (!state.selected) return;
-  const promptMode = hasPromptInputs();
-  if (promptMode && state.listening && !validateInputs()) return;
+  const useSession = sessionMode();
+  if (hasPromptInputs() && state.listening && !validateInputs()) return;
   $("run").disabled = true;
-  $("run").textContent = promptMode ? (state.listening ? "Sending…" : "Listening…") : "Running…";
+  $("run").textContent = state.listening ? "Sending…" : useSession ? "Starting…" : "Running…";
   try {
     let r;
-    if (promptMode && !state.listening) {
+    if (useSession && !state.listening) {
       r = await api("/api/listen", {
         method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          program: state.selected,
-          provider: $("provider").value,
-          principalAttestations: collectInputs().principalAttestations,
-        }),
+        body: JSON.stringify({ program: state.selected, provider: $("provider").value }),
       });
-      if (r.ok && r.sessionId) {
-        state.sessionId = r.sessionId;
-        state.listening = true;
-      }
-    } else if (promptMode && state.listening) {
+      handleSessionResponse(r);
+      return;
+    } else if (useSession && state.listening) {
       r = await api("/api/prompt", {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ sessionId: state.sessionId, promptInputs: collectInputs().promptInputs }),
       });
+      handleSessionResponse(r);
+      return;
     } else {
       r = await api("/api/run", {
         method: "POST", headers: { "content-type": "application/json" },
@@ -938,9 +1021,32 @@ function renderRunDetails(r) {
 
 function render(r) {
   const out = [];
+  state.pendingAttestation = r.pendingAttestation || null;
+
+  // §13/§16.4 — the attestation panel: the run is PAUSED at the identity dependency. The principal
+  // rules by choosing ONE of the gate enum's variants ("the human's reply arrives as one of E's
+  // variants"), or declines → FailedPrincipalDecision and the decision stays abstained (fail closed).
+  if (r.pendingAttestation) {
+    const p = r.pendingAttestation;
+    out.push(`<div class="attest">
+      <div class="attestHead">⚖ <b>Attestation required</b>
+        <span class="msg">the run is paused — principal <b>${esc(p.principal)}</b> must rule on
+        <span class="mono">Credence&lt;${esc(p.enumName)}&gt;</span>${p.agent ? ` (agent <span class="mono">${esc(p.agent)}</span>)` : ""}</span></div>
+      <div class="attestScores">${scoreBars({ scores: p.scores })}</div>
+      <div class="attestActions">
+        ${p.variants.map((v) => `<button class="rule" onclick="attest(${JSON.stringify(v).replace(/"/g, "&quot;")})">${esc(v)}</button>`).join("")}
+        <button class="declineRule" onclick="attest(null)">Decline to rule</button>
+      </div>
+      <div class="attestNote">choosing a variant records <span class="mono">PrincipalDecision</span> (basis Principal) and becomes a calibration label;
+      declining records <span class="mono">FailedPrincipalDecision</span> — the decision stays abstained and the sink never fires (fail closed)</div>
+    </div>`);
+  }
 
   // verdict
-  if (r.ok) {
+  if (r.runState === "waiting") {
+    out.push(`<div class="verdict wait"><div class="light"></div><b>Paused — awaiting attestation</b>
+      <span class="msg">${(r.events || []).length} ledger events so far · provider ${esc(r.provider?.backend ?? "")}</span></div>`);
+  } else if (r.ok) {
     out.push(`<div class="verdict ok"><div class="light"></div><b>Accepted &amp; executed</b>
       <span class="msg">${r.events.length} ledger events · ${r.ms} ms · provider ${esc(r.provider.backend)}</span>
       <span class="head">chain-head <b>${esc(r.chainHead)}</b></span></div>`);

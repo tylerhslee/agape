@@ -14,7 +14,7 @@ import { readFileSync, readdirSync, statSync, existsSync, writeFileSync } from "
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse } from "../src/parser.js";
-import { createSession, run, type PrincipalAttestation, type PromptInput, type RuntimeSession } from "../src/interp.js";
+import { createSession, run, type ConsultRequest, type PrincipalAttestation, type PromptInput, type RuntimeSession } from "../src/interp.js";
 import { createProvider, loadManifest } from "../src/config.js";
 import type * as A from "../src/ast.js";
 
@@ -302,15 +302,45 @@ interface StudioRunSession {
   provider: { backend: string; model?: string };
   runtime: RuntimeSession;
   startedAt: number;
+  // §13/§16.4 attestation flow: while the run is PAUSED at a principal consult, `pending` describes the
+  // ruling being requested (the enum's variants are the choices); `resolveConsult` resumes the run with
+  // the principal's attestation (a variant ruling) or undefined (decline → FailedPrincipalDecision).
+  runState: "running" | "waiting" | "done" | "error";
+  error?: { cls: string; message: string };
+  pending?: ConsultRequest & { id: string };
+  resolveConsult?: (att: PrincipalAttestation | undefined) => void;
+  work: Promise<void>; // the in-flight start()/sendPrompt() chain, tracked for state + errors
+}
+
+// track an in-flight runtime promise onto the session's state machine.
+function track(session: StudioRunSession, p: Promise<unknown>): void {
+  session.runState = session.runState === "waiting" ? "waiting" : "running";
+  session.work = p.then(
+    () => { if (session.runState !== "waiting") session.runState = "done"; },
+    (e) => {
+      session.runState = "error";
+      const cls = (e as { cls?: string }).cls ?? ((e as Error).constructor?.name === "ParseError" ? "ParseError" : "RuntimeError");
+      session.error = { cls, message: (e as Error).message };
+    },
+  );
+}
+
+// give the run a short beat to finish (or to reach a consult pause) before responding, so fast runs
+// return complete and consult-blocked runs return `waiting` + pendingAttestation for the UI to render.
+async function settle(session: StudioRunSession, ms: number): Promise<void> {
+  await Promise.race([session.work, new Promise((r) => setTimeout(r, ms))]);
 }
 
 function runBody(session: StudioRunSession, ms = Date.now() - session.startedAt) {
   const { ledger, stdout } = session.runtime.snapshot();
   return {
-    ok: true,
+    ok: session.runState !== "error",
     phase: "run",
     listening: true,
     sessionId: session.id,
+    runState: session.runState,
+    ...(session.error ? { error: session.error } : {}),
+    ...(session.pending ? { pendingAttestation: session.pending } : {}),
     source: session.source,
     map: session.map,
     provider: session.provider,
@@ -359,8 +389,6 @@ async function startRunSession(
   const manifest = loadManifest(undefined, providerName);
   const provider = createProvider(manifest);
   try {
-    const runtime = createSession(program, { provider, principalAttestations });
-    await runtime.start();
     const session: StudioRunSession = {
       id: randomBytes(12).toString("base64url"),
       name,
@@ -368,9 +396,42 @@ async function startRunSession(
       sourceOrigin: sourceInfo.origin,
       map,
       provider: { backend: manifest.provider.backend, model: manifest.provider.model },
-      runtime,
+      runtime: undefined as unknown as RuntimeSession, // set right below (the consult closure needs `session`)
       startedAt,
+      runState: "running",
+      work: Promise.resolve(),
     };
+    // the live identity seam (§16.4): an escalated principal consult PAUSES the run and surfaces a
+    // pendingAttestation for the UI; POST /api/attest resolves it with the ruling (or a decline).
+    session.runtime = createSession(program, {
+      provider,
+      principalAttestations,
+      onConsult: (req) => new Promise<PrincipalAttestation | undefined>((resolveConsult) => {
+        session.pending = { ...req, id: randomBytes(8).toString("base64url") };
+        session.runState = "waiting";
+        session.resolveConsult = (att) => {
+          session.pending = undefined;
+          session.resolveConsult = undefined;
+          session.runState = "running";
+          resolveConsult(att);
+        };
+      }),
+    });
+    track(session, session.runtime.start());
+    await settle(session, 400);
+    // a synchronous front-end rejection (check error) surfaces as an immediate error state — return the
+    // classic one-shot error body for it, matching /api/run.
+    if (session.runState === "error" && session.error) {
+      return {
+        status: 200 as const,
+        body: {
+          ok: false, phase: "run", source, map,
+          sourceOrigin: sourceInfo.origin,
+          error: session.error,
+          ms: Date.now() - startedAt,
+        },
+      };
+    }
     sessions.set(session.id, session);
     return { status: 200 as const, body: runBody(session) };
   } catch (e) {
@@ -493,17 +554,45 @@ export function startStudio(opts: StudioOptions): Promise<{ close: () => void }>
         };
         const session = body.sessionId ? sessions.get(body.sessionId) : undefined;
         if (!session) return json(res, 404, { error: "listening session not found; press Listen again" });
-        try {
-          for (const input of body.promptInputs ?? []) await session.runtime.sendPrompt(input);
-          return json(res, 200, runBody(session));
-        } catch (e) {
-          const cls = (e as { cls?: string }).cls ?? "RuntimeError";
-          return json(res, 200, {
-            ...runBody(session),
-            ok: false,
-            error: { cls, message: (e as Error).message },
-          });
+        if (session.pending) return json(res, 409, { ...runBody(session), error: { cls: "AttestationPending", message: "a principal attestation is pending — rule on it first" } });
+        // a prompt reaction may itself escalate to a principal, so run it TRACKED and give it a settle
+        // beat: a fast reaction returns complete; a consult-blocked one returns `waiting` + the pending.
+        const inputs = body.promptInputs ?? [];
+        track(session, (async () => { for (const input of inputs) await session.runtime.sendPrompt(input); })());
+        await settle(session, 400);
+        return json(res, 200, runBody(session));
+      }
+      if (req.method === "GET" && url.pathname === "/api/session") {
+        const session = sessions.get(url.searchParams.get("sessionId") ?? "");
+        if (!session) return json(res, 404, { error: "listening session not found" });
+        return json(res, 200, runBody(session));
+      }
+      if (req.method === "POST" && url.pathname === "/api/attest") {
+        // §13/§16.4 — the principal's ruling. `decision` must be one of the gate enum's variants (the
+        // attestation IS the manual variant choice); `decline: true` refuses to rule →
+        // FailedPrincipalDecision, and the decision stays abstained (fail closed).
+        const body = JSON.parse((await readBody(req)) || "{}") as {
+          sessionId?: string;
+          attestationId?: string;
+          decision?: string;
+          decline?: boolean;
+          attester?: string;
+        };
+        const session = body.sessionId ? sessions.get(body.sessionId) : undefined;
+        if (!session) return json(res, 404, { error: "listening session not found" });
+        const pending = session.pending;
+        if (!pending || !session.resolveConsult) return json(res, 409, { error: "no attestation is pending on this session" });
+        if (body.attestationId && body.attestationId !== pending.id) return json(res, 409, { error: "stale attestation id — refresh the session" });
+        if (!body.decline && (!body.decision || !pending.variants.includes(body.decision))) {
+          return json(res, 400, { error: `the ruling must be one of the enum's variants: ${pending.variants.join(", ")} (or decline)` });
         }
+        session.resolveConsult(
+          body.decline
+            ? undefined
+            : { principal: pending.principal, decision: body.decision, attester: body.attester || "studio-user" },
+        );
+        await settle(session, 800); // let the resumed run finish (or reach the next consult)
+        return json(res, 200, runBody(session));
       }
       if (req.method === "POST" && url.pathname === "/api/stop") {
         const body = JSON.parse((await readBody(req)) || "{}") as { sessionId?: string };

@@ -1,0 +1,45 @@
+// attest_wire.ag — the principal attestation flow, live.
+//
+// A treasurer judges a wire request on a COLD conformal gate (no calibration labels yet),
+// so the rule can never commit autonomously — every run escalates to the principal `boss`
+// through the identity dependency (§13/§16.4). Studio pauses the run and asks YOU to rule:
+// choose one of the enum's variants (Approve / Deny), or decline to rule.
+//
+//   rule abstains (cold) ─► consult boss ─► your ruling arrives as a VARIANT
+//     Approve  → PrincipalDecision → Decided(Approve) → endorse → WireFunds fires
+//     Deny     → PrincipalDecision → Decided(Deny)    → no sink
+//     decline  → FailedPrincipalDecision → Decided(abstained) → withheld (fail closed)
+//
+// Every ruling you make is recorded with a signed attestation payload and becomes a
+// calibration label — the supervised-to-autonomous bootstrap (§13).
+
+enum Approval { Approve, Deny }
+
+event  Wired(text note);
+action WireFunds(int cents);        // the consequential sink
+
+principal boss;
+
+agent Treasurer grants { perform WireFunds } {
+  on awake {
+    text request = self <- "summarize the incoming wire request";
+
+    Credence<Approval> c = self <- f"should we wire the funds: {request}";
+    Decision<Approval>  d = boss decide c by conformal 0.05;
+
+    if (d.committed == Approve) {
+      Endorsement<text> e = endorse request by d;
+      perform WireFunds(250000);
+      emit Wired("wired on boss's attestation");
+    } else if (d.committed == Deny) {
+      emit Wired("denied by boss");
+    } else {
+      emit Wired("no ruling — withheld (fail closed)");
+    }
+  }
+}
+
+when (Wired w) { say(f"outcome: {w.note}"); }
+
+spawn Treasurer t;
+awake t;
