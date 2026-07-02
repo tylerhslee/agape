@@ -2046,6 +2046,13 @@ function drawGraph(events, map) {
     const a = unitOf.get(e.from), b = unitOf.get(e.to);
     return a && b && a !== b && rank.get(b) < rank.get(a);
   });
+  // channel demand per row: every inter-unit downward edge into a rank needs its own lane
+  const downInto = new Map();
+  for (const e of g.edges) {
+    const a = unitOf.get(e.from), b = unitOf.get(e.to);
+    if (a && b && a !== b && rank.get(b) > rank.get(a)) downInto.set(rank.get(b), (downInto.get(rank.get(b)) || 0) + 1);
+  }
+  const gapFor = (r) => Math.max(RGAP, 46 + 19 * (downInto.get(r) || 0));
   let maxRowW = 0;
   const rowWidth = new Map();
   for (const [r, list] of rows) { const w = list.length * UW + (list.length - 1) * HGAP; rowWidth.set(r, w); maxRowW = Math.max(maxRowW, w); }
@@ -2053,8 +2060,10 @@ function drawGraph(events, map) {
   const svgW = M * 2 + maxRowW + sideW;
   const pos = new Map(), unitRect = new Map(), rowTop = new Map(), rowBottom = new Map();
   const firstMem = new Set(), lastMem = new Set();
-  let y = M;
+  let y = M, firstRow = true;
   for (const r of sortedRanks) {
+    if (!firstRow) y += gapFor(r);
+    firstRow = false;
     const list = rows.get(r);
     list.sort((a, b) => (KIND_ORDER[a.head.kind] ?? 9) - (KIND_ORDER[b.head.kind] ?? 9) || a.head.line - b.head.line);
     let x = M + (maxRowW - rowWidth.get(r)) / 2;
@@ -2083,9 +2092,9 @@ function drawGraph(events, map) {
       x += UW + HGAP;
     }
     rowBottom.set(r, y + rh);
-    y += rh + RGAP;
+    y += rh;
   }
-  const svgH = y - RGAP + M;
+  const svgH = y + M;
 
   // ---- edges: orthogonal, box-avoiding ----
   // Invariant: an edge never crosses a node box. A source with member rows BELOW it exits its
@@ -2128,7 +2137,8 @@ function drawGraph(events, map) {
   const chanY = new Map();
   for (const [rb, list] of gapEdges) {
     list.sort((a, b) => pos.get(a.to).x - pos.get(b.to).x || a.id.localeCompare(b.id));
-    const gapTop = rowTop.get(rb) - RGAP + 16, gapH = RGAP - 34;
+    const gap = gapFor(rb);
+    const gapTop = rowTop.get(rb) - gap + 16, gapH = gap - 34;
     list.forEach((e, i) => chanY.set(e.id, gapTop + gapH * ((i + 1) / (list.length + 1))));
   }
   const blockedDrop = (x, ra, rb) => {
@@ -2150,8 +2160,8 @@ function drawGraph(events, map) {
     const lit = over.le.has(e.id);
     const pendEdge = pend && e.kind === "escalate" && e.to === "principal:" + pend.principal;
     let label;
-    if (e.kind === "escalate") label = "escalate";
-    else if (nodeKind.get(e.from) === "gate") label = e.variant || ""; // branch label only
+    if (e.kind === "escalate") label = "Escalate";
+    else if (nodeKind.get(e.from) === "gate") label = e.variant === "abstain" ? "Abstain" : (e.variant || ""); // branch label only
     else if (e.kind === "prompt") label = ""; // the sensor node already says it
     else label = e.label || "";
     return {
@@ -2224,7 +2234,7 @@ function drawGraph(events, map) {
     epaths.push(`<g class="${v.cls}"><path d="${head}${tail}" stroke="${v.color}" ${v.marker}></path></g>`);
     if (v.label) {
       if (e._sideOut) putLabel(v, "start", s.x + s.w + 8, scy - 6, v.label); // beside the exit run
-      else putLabel(v, "start", dropX + 6, s.y + s.h + 17, v.label);         // at the fork, beside its own drop
+      else putLabel(v, "start", dropX + 6, cy - 5, v.label); // at the elbow corner of its own lane
     }
   }
   for (const e of kindOf.up) {
@@ -2278,7 +2288,7 @@ function drawGraph(events, map) {
     } else if (n.kind === "gate") {
       // the decision DIAMOND, named by the enum; the rule reads as a sub-line under the name
       const cx = p.x + p.w / 2, cy0 = p.y + p.h / 2;
-      const ruleText = String(n.meta?.rule || "") + (n.meta?.principal ? ` · by ${n.meta.principal}` : "");
+      const ruleText = String(n.meta?.rule || "");
       body = `<polygon points="${cx},${p.y} ${p.x + p.w},${cy0} ${cx},${p.y + p.h} ${p.x},${cy0}"></polygon>
         <text text-anchor="middle" x="${cx}" y="${cy0 - 2}">${esc(String(n.meta?.enum || "decide"))}</text>
         ${ruleText ? `<text text-anchor="middle" class="sub" x="${cx}" y="${cy0 + 14}">${esc(ruleText.length > 24 ? ruleText.slice(0, 23) + "…" : ruleText)}</text>` : ""}`;
