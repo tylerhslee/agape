@@ -2,14 +2,15 @@
   "name": "agape-ts",
   "private": true,
   "type": "module",
-  "version": "1.0.0-alpha.2026.6.30.0",
-  "description": "A TypeScript compiler + runtime for the Agape language (SPEC.md v1.0.0-alpha.2026.6.30.0). Eventually embedded in Agape Studio.",
+  "version": "1.0.0-alpha.2026.7.1.0",
+  "description": "A TypeScript compiler + runtime for the Agape core kernel (SPEC.md v1.0.0-alpha.2026.7.1.0). Embedded in Agape Studio.",
   "bin": {
     "agape-ts": "src/cli.ts"
   },
   "scripts": {
     "run": "tsx src/cli.ts",
     "hello": "tsx src/cli.ts run examples/hello.ag",
+    "studio": "tsx src/cli.ts studio",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },

@@ -1,0 +1,32 @@
+// claims_desk.ag — a richer kernel walk: a claims desk drafts a claim summary, judges it,
+// gates the judgment with a margin, endorses the exact claim, and reimburses only inside
+// the committed Approve branch. A `when` subscription reacts to every Logged event.
+
+enum Verdict { Approve, Deny }
+
+event  Logged(text note);
+action Reimburse(int cents);      // the consequential sink
+
+agent Desk grants { perform Reimburse } {
+  on awake {
+    text claim = self <- "summarize the incoming claim";
+
+    Credence<Verdict> c = self <- f"should we approve this claim: {claim}";
+    Decision<Verdict> d = decide c by confidence 0.85 margin 0.1;
+    Endorsement<text> e = endorse claim by d;
+
+    if (e.committed == Approve) {
+      perform Reimburse(4200);
+      emit Logged("approved");
+    } else if (e.committed == Deny) {
+      emit Logged("denied");
+    } else {
+      emit Logged("needs-review");
+    }
+  }
+}
+
+when (Logged l) { say(f"log: {l.note}"); }
+
+spawn Desk desk;
+awake desk;

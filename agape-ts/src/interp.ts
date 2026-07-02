@@ -90,7 +90,7 @@ class Interpreter {
   // §7/§16.3 event-driven `when` dispatch: an agent's `when` handlers become active SUBSCRIPTIONS when it
   // awakes (in lexical/registration order). Appending a matching event fires them — by subtype (§9), the
   // `about <subj>` filter, and the `if (guard)` predicate — in registration order, before the next statement.
-  private subscriptions: { inst: AgentInstance; when: A.WhenStmt }[] = [];
+  private subscriptions: { inst?: AgentInstance; when: A.WhenStmt }[] = []; // inst absent = a top-level `when`
   private dispatchDepth = 0; // reentrancy guard: a handler's appends cascade, but bounded (events are finite).
   // §3: the set of declared `principal NAME;` names, so evalGate can recognize the suite's `decide c by p`
   // form — the parser records `by p` as a {policy} rule (it cannot tell principal from policy context-free),
@@ -206,6 +206,10 @@ class Interpreter {
       if (d.kind === "prompt") this.ledger.append("PromptOpened", d.name, undefined, undefined);
     }
     const top = new Scope();
+    // §16.3: subscriptions are HOISTED per scope — the program top level registers its `when`s (in
+    // lexical order) BEFORE its statements run, so a top-level `when (E e)` fires for events appended
+    // by any later statement (an agent's emit included). Prospective only: nothing before this fires it.
+    for (const s of this.program.stmts) if (s.kind === "when") this.subscriptions.push({ when: s });
     for (const s of this.program.stmts) await this.execStmt(s, top);
     return { ledger: this.ledger, stdout: this.stdout };
   }
@@ -472,8 +476,8 @@ class Interpreter {
     return (this.events.get(etype) ?? this.events.get(bare))?.errorSuper === true;
   }
   // qualify a companion agent's bare `when` event type in its home module (`when (Glitch)` in module m → m.Glitch).
-  private qualifyWhenEtype(etype: string, inst: AgentInstance): string {
-    if (etype.includes(".") || !inst.module) return etype;
+  private qualifyWhenEtype(etype: string, inst?: AgentInstance): string {
+    if (etype.includes(".") || !inst?.module) return etype;
     return this.moduleDeclNames.get(inst.module)?.has(etype) ? `${inst.module}.${etype}` : etype;
   }
   // the payload struct-fields of an emitted event, keyed by the event decl's field names (§7 binder access).

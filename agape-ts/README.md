@@ -1,11 +1,11 @@
 # agape-ts — a TypeScript compiler + runtime for Agape
 
-A from-scratch implementation of the Agape language (per `../SPEC.md`,
-v1.0.0-alpha.2026.6.30.0), written in TypeScript so it can eventually live inside Agape
-Studio. This is a **vertical slice**: it lexes, parses, and runs a useful subset of the
-language end-to-end, with the trusted kernel (`decide` → `endorse` → granted sink → ledger)
-enforced at runtime. It is not yet 100% conformant — that is validated against
-`../agape-conformance` as the suite is re-aligned to the finalized spec.
+A from-scratch implementation of the Agape **core kernel** (per `../SPEC.md`,
+v1.0.0-alpha.2026.7.1.0), written in TypeScript so it can live inside Agape Studio. It lexes,
+parses, statically checks, and runs the complete core language, with the trusted kernel
+(`decide` → `endorse` → granted sink → ledger) enforced both statically and at runtime.
+
+**Conformance: 164/164 (100%)** against `../agape-conformance` — see [CONFORMANCE.md](CONFORMANCE.md).
 
 ## Run
 
@@ -13,6 +13,7 @@ enforced at runtime. It is not yet 100% conformant — that is validated against
 npm install
 npm run hello                     # runs examples/hello.ag on the mock provider
 npx tsx src/cli.ts run examples/hello.ag --manifest agape.toml
+npx tsx src/cli.ts studio         # the execution-inspection UI (serves .ag files in the cwd)
 npm test                          # the kernel safety test suite
 
 # live providers — secrets come from the environment / a .env (never the manifest):
@@ -21,14 +22,13 @@ npx tsx src/cli.ts run examples/hello.ag --provider anthropic  # ANTHROPIC_API_K
 ```
 
 The runtime is **async** end-to-end (cognition is a model call): the mock resolves on a microtask, so
-tests and the demo exercise the same async path as a live model. Both live backends above are verified
-to run `examples/hello.ag` end-to-end — OpenAI reads `top_logprobs` for graded per-variant scores;
-Anthropic (no token logprobs) draws the forced choice `fallback_samples` times and uses the empirical
-frequency. Gemini is wired the same way (sampling fallback) and selectable, pending a key to exercise.
+tests and the demo exercise the same async path as a live model. OpenAI reads `top_logprobs` for
+graded per-variant scores; Anthropic (no token logprobs) draws the forced choice `fallback_samples`
+times and uses the empirical frequency; Gemini is wired the same way.
 
 `examples/hello.ag` is the whole trusted kernel on one screen — a Greeter that judges a draft,
-collapses the judgment with `decide`, and reaches the `Announce` sink only inside the committed
-`Publish` arm:
+collapses the judgment with `decide`, endorses the exact draft, and reaches the `Announce` sink only
+inside the committed `Publish` branch (`if (e.committed == Publish)`):
 
 ```
 testimony  ->  Credence<Verdict>  ->  Decision<Verdict>  ->  Endorsement<text>  ->  granted sink  ->  ledger
@@ -39,15 +39,24 @@ testimony  ->  Credence<Verdict>  ->  Decision<Verdict>  ->  Endorsement<text>  
 | stage | file | does |
 |---|---|---|
 | lexer | `src/lexer.ts` | source → tokens (§2) |
-| parser | `src/parser.ts` | tokens → AST (subset of §15.2) |
+| parser | `src/parser.ts` | tokens → AST (§15.2), + `assertCore` grammar lockstep |
 | AST | `src/ast.ts` | node types |
-| checker | `src/check.ts` | static pass: compile-error classes (TypeError/Exhaustiveness/…) before run |
+| checker | `src/check.ts` | the static semantics (§15.3): type/trust/color/authority + the gate |
 | errors | `src/errors.ts` | the error taxonomy (`AgapeError { cls }`) the suite asserts on |
 | runtime core | `src/runtime.ts` | values + the trust lattice, the **provider seam**, the ledger |
-| interpreter | `src/interp.ts` | discrete-event runtime; the gate; the consequential-action rule |
-| config | `src/config.ts` | binds the `provider` dependency to a backend (§17) |
-| cli | `src/cli.ts` | `agape-ts run <file.ag>` |
-| conformance | `conformance/run.mts` | runs the suite (`../agape-conformance`) against this impl — see [CONFORMANCE.md](CONFORMANCE.md) |
+| interpreter | `src/interp.ts` | discrete-event runtime (§15.4/§16); the gate; the consequential-action rule |
+| config | `src/config.ts` | binds the provider/identity/tool dependencies to backends (§17) |
+| cli | `src/cli.ts` | `run <file.ag>` · `studio [--port N]` |
+| studio | `studio/` | the execution-inspection web UI (see below) |
+| conformance | `conformance/run.mts` | runs the suite against this impl — see [CONFORMANCE.md](CONFORMANCE.md) |
+
+## Studio — execution inspection
+
+`npx tsx src/cli.ts studio` starts a local web UI that lists the `.ag` programs in the directory it
+was launched from, runs them through this interpreter, and visualizes the execution: the ledger
+timeline (every event, tick by tick), the trusted-kernel chain (Credence → Decision → Endorsement →
+sink), gate outcomes with basis/margin, say output, and the chain-head. A rejected program shows its
+error class and message — it is a quality-control lens over Agape runs, not an editor.
 
 ## Providers are configurable (not mock-locked)
 
@@ -71,13 +80,17 @@ For conformance, the harness injects a deterministic/scripted provider (the mock
 replay-stable (same scripted judgment → identical chain-head). Live API calls run through the same
 seam on an async execution path.
 
-## What's implemented (v0)
+## What's implemented
 
-agents + lifecycle (`spawn`/`awake`/`on awake`), the send `<-` bound to a `Credence<E>` slot,
-`decide c by confidence θ [margin δ]` (+ a conformal/principal stub), the `endorse subject by d { … }`
-arm sugar, `perform`/`emit`/`say`/`if`, enums/actions/events, default-deny `grants`, the
-consequential-action rule (settled + committed-narrowed at a sink; `Endorsement<T>` coerces to its
-subject), and a hash-chained ledger with a `chain-head`.
-
-Not yet: the full static checker, `when`/memory/tools/modules, the principal/identity backend, and
-the conformance harness directives.
+The complete core kernel: agents + lifecycle (`spawn`/`awake`/`sleep`/crash + `on` hooks +
+`extend` + `instruction`), the send `<-` with the three-phase lifecycle (+ `expires`/refusal),
+`Credence<E>` slots, `decide c by confidence θ [margin δ] [floor m]` / `conformal α [readiness N]
+[floor m]`, the principal escalation prefix (`p decide c by r`) with `PrincipalDecision`/
+`FailedPrincipalDecision`, `endorse` with Model-A `if (e.committed == V)` flow narrowing, the
+consequential-action rule (static admission + the runtime margin floor), default-deny `grants` with
+subtractive `extend`, read/write tools over the tool seam, `when` subscriptions (subtype match,
+`about`, guards, registration order), private memory (`mem` store/recall/`forget`, always-tainted
+recall) + `store()`, the objective `select … from ledger` (recorded trust), `quorum` fusion over
+`independent`/`dependent` declarations, structs/enums/events/actions, sync color, the §17.5
+conformance harness directives (fault injection, principal grant/deny, manifest fixtures, replay
+chain-head equality), and a hash-chained ledger.
