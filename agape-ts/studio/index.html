@@ -757,7 +757,8 @@ function renderProgramList(programs) {
   }
   $("programs").innerHTML = [...groups.entries()].map(([proj, list]) =>
     list.map((p) => {
-      const meta = p.origin === "example" ? "bundled example" : `${p.bytes} bytes`;
+      const proj2 = p.project ?? projectOfName(p.name);
+      const meta = p.origin === "example" ? "bundled example" : `${proj2 ? proj2 + "/ · " : ""}${p.bytes} bytes`;
       const cls = p.origin === "example" ? "prog example" : "prog";
       return `<button class="${cls}" data-name="${esc(p.name)}">${esc(fileOfName(p.name))}<small>${esc(meta)}</small></button>`;
     }).join("")
