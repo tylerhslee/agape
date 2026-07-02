@@ -1,0 +1,59 @@
+// conformal_human_loop.ag - cold conformal gate -> human ruling -> calibration label.
+//
+// Current alpha behavior: `by conformal` is implemented as the cold-start basis. It
+// abstains until a GateProfile/calibration pipeline exists. Prefixing the decision
+// with `reviewer` reaches the human-in-the-loop path; a human ruling records
+// PrincipalDecision and becomes a ledgered label. A decline records
+// FailedPrincipalDecision and produces no label.
+
+prompt text submission;
+principal reviewer;
+
+enum PublishVote { Publish, Revise, Reject }
+
+struct ReviewPacket {
+  request: text,
+  draft: text,
+  rationale: text
+}
+
+action PublishDraft(text draft);
+event ReviewStatus(text status);
+
+agent ReviewDesk grants { perform PublishDraft } {
+  when (Prompt p about submission) {
+    ReviewPacket packet =
+      self <- f"Prepare a review packet for a publication decision. Include the original request, a concise draft response, and a one-line rationale. Request: {p.text}";
+
+    Credence<PublishVote> vote =
+      self <- f"Classify this packet as Publish, Revise, or Reject. Packet: {packet}";
+
+    Decision<PublishVote> d =
+      reviewer decide vote by conformal 0.1 readiness 10;
+
+    if (d.committed == Publish) {
+      Endorsement<ReviewPacket> approved = endorse packet by d;
+      perform PublishDraft(approved.draft);
+      emit ReviewStatus("published after human conformal escalation");
+      say(f"published: {approved.draft}");
+    } else if (d.committed == Revise) {
+      Endorsement<ReviewPacket> revision = endorse packet by d;
+      emit ReviewStatus("human requested revision");
+      say(f"revise: {revision.rationale}");
+    } else if (d.committed == Reject) {
+      Endorsement<ReviewPacket> rejected = endorse packet by d;
+      emit ReviewStatus("human rejected publication");
+      say(f"rejected: {rejected.rationale}");
+    } else {
+      emit ReviewStatus("human declined or unavailable; no calibration label");
+      say("abstained: no endorsement, no publish");
+    }
+
+    Event[] labels =
+      select * from ledger where { etype == "PrincipalDecision" };
+    say(f"principal labels on ledger: {labels}");
+  }
+}
+
+spawn ReviewDesk desk;
+awake desk;

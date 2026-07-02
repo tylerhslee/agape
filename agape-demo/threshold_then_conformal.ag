@@ -1,0 +1,74 @@
+// threshold_then_conformal.ag - high-confidence threshold rail, otherwise conformal HITL.
+//
+// This is the practical bootstrap pattern for the current alpha:
+// - obvious cases can commit through an ordinary confidence+margin gate;
+// - uncertain cases fall through to a conformal gate with a human principal;
+// - while conformal is cold, the principal ruling records PrincipalDecision labels;
+// - once GateProfiles are implemented, this same conformal leg is where autonomous
+//   singleton conformal decisions would replace routine human review.
+
+prompt text submission;
+principal reviewer;
+
+enum PublishVote { Publish, Revise, Reject }
+
+struct ReviewPacket {
+  request: text,
+  draft: text,
+  rationale: text
+}
+
+action PublishDraft(text draft);
+event Routing(text route);
+
+agent BootstrapDesk grants { perform PublishDraft } {
+  when (Prompt p about submission) {
+    ReviewPacket packet =
+      self <- f"Prepare a publication review packet. Include request, draft, and rationale. Request: {p.text}";
+
+    Credence<PublishVote> vote =
+      self <- f"Classify this packet as Publish, Revise, or Reject. Packet: {packet}";
+
+    Decision<PublishVote> threshold =
+      decide vote by confidence 0.92 margin 0.2;
+
+    if (threshold.committed == Publish) {
+      Endorsement<ReviewPacket> approved = endorse packet by threshold;
+      perform PublishDraft(approved.draft);
+      emit Routing("threshold published without human escalation");
+      say(f"threshold publish: {approved.draft}");
+    } else if (threshold.committed == Reject) {
+      Endorsement<ReviewPacket> rejected = endorse packet by threshold;
+      emit Routing("threshold rejected without human escalation");
+      say(f"threshold reject: {rejected.rationale}");
+    } else {
+      Decision<PublishVote> conformal =
+        reviewer decide vote by conformal 0.1 readiness 10;
+
+      if (conformal.committed == Publish) {
+        Endorsement<ReviewPacket> approved = endorse packet by conformal;
+        perform PublishDraft(approved.draft);
+        emit Routing("conformal principal published and labeled");
+        say(f"reviewer publish: {approved.draft}");
+      } else if (conformal.committed == Revise) {
+        Endorsement<ReviewPacket> revision = endorse packet by conformal;
+        emit Routing("conformal principal requested revision and labeled");
+        say(f"reviewer revise: {revision.rationale}");
+      } else if (conformal.committed == Reject) {
+        Endorsement<ReviewPacket> rejected = endorse packet by conformal;
+        emit Routing("conformal principal rejected and labeled");
+        say(f"reviewer reject: {rejected.rationale}");
+      } else {
+        emit Routing("conformal principal declined; no label");
+        say("held: no endorsement, no publish");
+      }
+    }
+
+    Event[] labels =
+      select * from ledger where { etype == "PrincipalDecision" };
+    say(f"principal labels on ledger: {labels}");
+  }
+}
+
+spawn BootstrapDesk desk;
+awake desk;
