@@ -1,8 +1,0 @@
-//! id:        gen_fn_identity
-//! section:   20_generics
-//! expect:    accept
-//! spec:      §19.5 (user-generic function; monomorphized at the call site)
-//! ---
-sync T id<T>(T x) { return x; }
-int y = id<int>(5);
-say(y);

@@ -6,12 +6,12 @@
 //! ---
 agent A {
   on awake {
-    Credence<bool> c = self <- "is \"approve #42\" an approval?";
+    text item = self <- "state the request";
+    Credence<bool> c = self <- f"is this an approval: {item}";
     Decision<bool> d = decide c by confidence 0.9;
-    endorse c by d {
-      true as e { }
-      false as e { }
-    }
+    Endorsement<text> e = endorse item by d;
+    if (e.committed == true) { }
+    else if (e.committed == false) { }
   }
 }
 spawn A a; awake a;

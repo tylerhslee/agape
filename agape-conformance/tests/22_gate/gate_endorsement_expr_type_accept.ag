@@ -2,17 +2,17 @@
 //! section:   22_gate
 //! expect:    accept
 //! contains:  Endorsed
-//! spec:      §13, §20.4 (the `as e` arm binder has type Endorsement<E>, the recorded form of a gate decision)
+//! spec:      §13 (endorse yields an Endorsement<T>, the recorded settled form of a gate decision)
 //! ---
 enum R { Yes, No }
 agent Desk {
   on awake {
-    Credence<R> c = self <- "yes?";
+    text item = self <- "describe";
+    Credence<R> c = self <- f"yes: {item}";
     Decision<R> d = decide c by confidence 0.8;
-    endorse c by d {
-      Yes as e { say(f"{e.committed}"); }
-      No as e  { say(f"{e.committed}"); }
-    }
+    Endorsement<text> e = endorse item by d;
+    if (e.committed == Yes) { say(f"{e.committed}"); }
+    else if (e.committed == No) { say(f"{e.committed}"); }
   }
 }
 spawn Desk d; awake d;

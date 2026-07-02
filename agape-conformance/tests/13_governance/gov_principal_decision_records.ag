@@ -3,19 +3,19 @@
 //! expect:    accept
 //! principal: grant
 //! contains:  PrincipalDecision; Endorsed
-//! spec:      §13, §16.4 (a granted `decide c by p` records a PrincipalDecision event for the gated credence)
+//! spec:      §13, §16.4 (a granted `p decide c by r` records a PrincipalDecision event for the gated credence)
 //! ---
 enum Approval { Approve, Decline }
 action ReleaseFunds(int cents);
 principal alice;
 agent Drafter grants { perform ReleaseFunds } {
   on awake {
-    Credence<Approval> c = self <- "draft the refund memo: approve?";
+    text memo = self <- "draft the refund memo";
+    Credence<Approval> c = self <- f"approve: {memo}";
     Decision<Approval> d = alice decide c by conformal 0.05;
-    endorse c by d {
-      Approve as e { perform ReleaseFunds(5000); }
-      Decline as e { say("declined"); }
-    }
+    Endorsement<text> e = endorse memo by d;
+    if (e.committed == Approve) { perform ReleaseFunds(5000); }
+    else if (e.committed == Decline) { say("declined"); }
   }
 }
 spawn Drafter d; awake d;

@@ -2,7 +2,7 @@
 //! section:   13_governance
 //! expect:    reject
 //! error:     TaintViolation
-//! spec:      §13, §15.3.3 (an Endorsement is sink-admissible only in a committed-variant branch, not in abstain)
+//! spec:      §13, §15.3.3 (an Endorsement is sink-admissible only in a committed-variant branch, not in the abstained else branch)
 //! ---
 enum Verdict { Publish, Revise }
 action PublishMemo(text body);
@@ -11,12 +11,10 @@ agent A grants { perform PublishMemo } {
     text body = self <- "draft memo";
     Credence<Verdict> c = self <- f"is ready: {body}";
     Decision<Verdict> d = decide c by confidence 0.9 margin 0.2;
-    endorse body by d {
-      Publish as e { say("ok"); }
-      Revise { say("revise"); }
-    } abstain as e {
-      perform PublishMemo(e);
-    }
+    Endorsement<text> e = endorse body by d;
+    if (e.committed == Publish) { say("ok"); }
+    else if (e.committed == Revise) { say("revise"); }
+    else { perform PublishMemo(e); }
   }
 }
 spawn A a; awake a;

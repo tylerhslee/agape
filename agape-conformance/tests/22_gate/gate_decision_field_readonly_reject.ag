@@ -2,7 +2,7 @@
 //! section:   22_gate
 //! expect:    reject
 //! error:     TypeError
-//! spec:      §20.4 (Decision provenance fields are read-only)
+//! spec:      §13 (Decision provenance fields are read-only)
 //! ---
 enum R { Yes, No }
 agent A {

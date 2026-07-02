@@ -2,18 +2,18 @@
 //! section:   13_governance
 //! expect:    accept
 //! contains:  Endorsed
-//! spec:      §13 (a recorded subject endorsement may license a consequential perform in its commit arm)
+//! spec:      §13 (a recorded subject endorsement licenses a consequential perform in its committed branch)
 //! ---
 enum R { Fraud, Clean }
 action Flag(bool b);
 agent C grants { perform Flag } {
   on awake {
-    Credence<R> c = self <- "is this fraud?";
+    text report = self <- "describe the transaction";
+    Credence<R> c = self <- f"is this fraud: {report}";
     Decision<R> d = decide c by confidence 0.9 margin 0.2;
-    endorse c by d {
-      Fraud as e { perform Flag(true); }
-      Clean as e { }
-    }
+    Endorsement<text> e = endorse report by d;
+    if (e.committed == Fraud) { perform Flag(true); }
+    else if (e.committed == Clean) { }
   }
 }
 spawn C c; awake c;

@@ -2,7 +2,7 @@
 //! section:   13_governance
 //! expect:    reject
 //! error:     GateError
-//! spec:      §13, §20.3 (an endorsed subject must be in the decision's dependency scope; a decision about one subject cannot endorse another)
+//! spec:      §13 (an endorsed subject must be in the decision's dependency scope; a decision about one subject cannot endorse another)
 //! ---
 enum Verdict { Approved, Rejected }
 action Publish(text body);
@@ -12,10 +12,9 @@ agent Reviewer grants { perform Publish } {
     text second = self <- "draft the second memo";
     Credence<Verdict> c = self <- f"is this memo approved: {first}";
     Decision<Verdict> d = decide c by confidence 0.9;
-    endorse second by d {
-      Approved as e { perform Publish(e); }
-      Rejected { }
-    }
+    Endorsement<text> e = endorse second by d;
+    if (e.committed == Approved) { perform Publish(e); }
+    else if (e.committed == Rejected) { }
   }
 }
 spawn Reviewer r; awake r;

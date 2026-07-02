@@ -1,24 +1,22 @@
-//! id:        gate_decide_principal_subject_accept
+//! id:        gate_cold_consequential_defers_to_principal
 //! section:   22_gate
 //! expect:    accept
+//! provider:  credence(Approve=0.9, Reject=0.1)
 //! principal: grant
 //! contains:  PrincipalDecision; Endorsed
-//! spec:      §13 (`p decide c by r` uses a principal escalation prefix; the endorsed subject reaches the sink in the committed branch)
+//! spec:      §13 (a cold consequential path reaches a principal before the action commits; the principal's ruling is the first label)
 //! ---
-conformal 0.05;
 enum R { Approve, Reject }
-event Ask(text body);
 action Commit(text body);
 principal boss;
 agent Desk grants { perform Commit } {
-  when (Ask q) {
-    text body = q.body;
-    Credence<R> c = self <- f"commit: {body}";
+  on awake {
+    text body = self <- "state the request";
+    Credence<R> c = self <- f"approve: {body}";
     Decision<R> d = boss decide c by conformal 0.05;
     Endorsement<text> e = endorse body by d;
     if (e.committed == Approve) { perform Commit(e); }
     else if (e.committed == Reject) { say("rejected"); }
   }
-  on awake { emit Ask("go"); }
 }
 spawn Desk d; awake d;

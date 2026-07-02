@@ -1,7 +1,7 @@
 //! id:        gate_decision_introspection_accept
 //! section:   22_gate
 //! expect:    accept
-//! spec:      §20.4, §9 (Decision provenance: .basis over the Basis enum)
+//! spec:      §13, §9 (Decision provenance: .basis over the Basis enum)
 //! ---
 enum R { Yes, No }
 event Ask(text body);
@@ -11,5 +11,6 @@ agent Desk {
     Decision<R> d = decide c by conformal 0.05;
     if (d.basis == Conformal) { say("conformal"); } else { say("other"); }
   }
+  on awake { emit Ask("go"); }
 }
 spawn Desk d; awake d;

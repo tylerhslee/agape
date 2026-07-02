@@ -1,9 +1,0 @@
-//! id:        mod_import_cycle_reject
-//! section:   18_modules
-//! expect:    reject
-//! error:     ModuleError
-//! modules:   a.ag; b.ag
-//! spec:      §19.2 (imports are acyclic; a cycle is a ModuleError)
-//! ---
-import a;
-int y = a.f();

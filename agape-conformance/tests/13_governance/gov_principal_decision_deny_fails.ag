@@ -3,21 +3,20 @@
 //! expect:    accept
 //! principal: deny
 //! contains:  FailedPrincipalDecision
-//! spec:      §13 (when the principal declines, `decide c by p` records a FailedPrincipalDecision; the decision is the principal's, deferred to the model only for the clear cases)
+//! spec:      §13 (when the principal declines, `p decide c by r` records a FailedPrincipalDecision and the decision stays abstained)
 //! ---
 enum Approval { Approve, Decline }
 action ReleaseFunds(int cents);
 principal alice;
 agent Clerk grants { perform ReleaseFunds } {
   on awake {
-    Credence<Approval> c = self <- "assess this refund request";
+    text req = self <- "state the refund request";
+    Credence<Approval> c = self <- f"assess: {req}";
     Decision<Approval> d = alice decide c by conformal 0.05;
-    endorse c by d {
-      Approve as e { perform ReleaseFunds(10000); }
-      Decline as e { say("declined"); }
-    } abstain {
-      say("principal declined to rule");
-    }
+    Endorsement<text> e = endorse req by d;
+    if (e.committed == Approve) { perform ReleaseFunds(10000); }
+    else if (e.committed == Decline) { say("declined"); }
+    else { say("principal declined to rule"); }
   }
 }
 spawn Clerk a; awake a;

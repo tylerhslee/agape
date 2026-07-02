@@ -1,9 +1,9 @@
-//! id:        gate_decide_principal_subject_accept
+//! id:        gate_deference_in_else_accept
 //! section:   22_gate
 //! expect:    accept
 //! principal: grant
 //! contains:  PrincipalDecision; Endorsed
-//! spec:      §13 (`p decide c by r` uses a principal escalation prefix; the endorsed subject reaches the sink in the committed branch)
+//! spec:      §13 (deference is an ordinary principal-prefixed `decide` in the else branch when the autonomous gate abstains)
 //! ---
 conformal 0.05;
 enum R { Approve, Reject }
@@ -14,10 +14,16 @@ agent Desk grants { perform Commit } {
   when (Ask q) {
     text body = q.body;
     Credence<R> c = self <- f"commit: {body}";
-    Decision<R> d = boss decide c by conformal 0.05;
+    Decision<R> d = decide c by conformal 0.05;
     Endorsement<text> e = endorse body by d;
     if (e.committed == Approve) { perform Commit(e); }
     else if (e.committed == Reject) { say("rejected"); }
+    else {
+      Decision<R> h = boss decide c by conformal 0.05;
+      Endorsement<text> eh = endorse body by h;
+      if (eh.committed == Approve) { perform Commit(eh); }
+      else if (eh.committed == Reject) { say("rejected"); }
+    }
   }
   on awake { emit Ask("go"); }
 }

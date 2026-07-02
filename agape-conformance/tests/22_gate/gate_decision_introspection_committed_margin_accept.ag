@@ -1,7 +1,7 @@
 //! id:        gate_decision_introspection_committed_margin_accept
 //! section:   22_gate
 //! expect:    accept
-//! spec:      §20.4 (Decision provenance exposes .committed and .margin, not only .basis)
+//! spec:      §13 (Decision provenance exposes .committed and .margin, not only .basis)
 //! ---
 enum R { Yes, No }
 agent Desk {

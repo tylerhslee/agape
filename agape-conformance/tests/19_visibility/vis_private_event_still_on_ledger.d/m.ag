@@ -1,3 +1,0 @@
-module m;
-event Glitch(text reason) : Error;
-pub agent Worker { on awake { emit Glitch("oops"); } }

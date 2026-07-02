@@ -2,21 +2,20 @@
 //! section:   16_config
 //! expect:    accept
 //! manifest:  provider.exposes_logprobs=false; provider.sampling_fallback=false
-//! contains:  Abstained(c)
-//! absent:    Endorsed(c)
-//! spec:      §20.3, §17 (without logprobs or sampling fallback, conformal degrades to deferral/abstain)
+//! contains:  Abstained
+//! absent:    Endorsed
+//! spec:      §13, §17 (without logprobs or the sampling fallback, a conformal gate has no distribution and degrades to deferral/abstain)
 //! ---
 enum R { Yes, No }
 agent A {
   on awake {
-    Credence<R> c = self <- "yes?";
+    text req = self <- "state the request";
+    Credence<R> c = self <- f"yes: {req}";
     Decision<R> d = decide c by conformal 0.05;
-    endorse c by d {
-      Yes { say("yes"); }
-      No { say("no"); }
-    } abstain {
-      say("defer");
-    }
+    Endorsement<text> e = endorse req by d;
+    if (e.committed == Yes) { say("yes"); }
+    else if (e.committed == No) { say("no"); }
+    else { say("defer"); }
   }
 }
 spawn A a; awake a;

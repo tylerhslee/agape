@@ -11,7 +11,7 @@ agent A {
     dependent   c1, c2;
     independent c1, c3;
     independent c2, c3;
-    Credence<bool> fused = all(c1, c2, c3);
+    Credence<bool> fused = quorum(3, [c1, c2, c3]);
   }
 }
 spawn A a; awake a;

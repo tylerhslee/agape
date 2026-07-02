@@ -1,9 +1,0 @@
-//! id:        vis_private_qualified_reference_reject
-//! section:   19_visibility
-//! expect:    reject
-//! error:     VisibilityError
-//! modules:   m.ag
-//! spec:      §19.4 (a private declaration cannot be named from another module even by qualified reference)
-//! ---
-import m;
-m.Hidden h = m.Hidden { x: 1 };

@@ -2,17 +2,16 @@
 //! section:   22_gate
 //! expect:    reject
 //! error:     TypeError
-//! spec:      §20.4 (Endorsement provenance fields are read-only)
+//! spec:      §13 (Endorsement provenance fields are read-only)
 //! ---
 enum R { Yes, No }
 agent Desk {
   on awake {
-    Credence<R> c = self <- "yes?";
+    text item = self <- "describe";
+    Credence<R> c = self <- f"yes: {item}";
     Decision<R> d = decide c by confidence 0.8;
-    endorse c by d {
-      Yes as e { e.margin = 0.0; }
-      No as e  { say("no"); }
-    }
+    Endorsement<text> e = endorse item by d;
+    e.margin = 0.0;
   }
 }
 spawn Desk d; awake d;

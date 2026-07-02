@@ -1,7 +1,7 @@
 //! id:        fn_sync_inhand_decide_ok
 //! section:   04_functions
 //! expect:    accept
-//! spec:      §4, §13 (policy-driven `decide` over an in-hand Credence is a pure collapse, no dependency reach → sync-permitted)
-//! note:      a sync fn may policy-decide a Credence value already in hand.
+//! spec:      §4, §13 (a rule-driven `decide` over an in-hand Credence is a pure collapse, no dependency reach → sync-permitted)
+//! note:      a sync fn may rule-decide a Credence value already in hand.
 //! ---
 sync Decision<bool> over(Credence<bool> c) { return decide c by confidence 0.9; }

@@ -1,20 +1,22 @@
 //! id:        gate_per_gate_conformal_accept
 //! section:   22_gate
 //! expect:    accept
+//! principal: grant
 //! contains:  Endorsed
-//! spec:      §20 (per-gate conformal α override on a decide expression)
+//! spec:      §13 (a per-gate conformal α on a decide expression, distinct from the file default)
 //! ---
 enum R { Yes, No }
 event Ask(text body);
-reversible action Act(text body);
+action Act(text body);
+principal boss;
 agent Desk grants { perform Act } {
   when (Ask q) {
-    Credence<R> c = self <- q.body;
-    Decision<R> d = decide c by conformal 0.01;
-    endorse c by d {
-      Yes as e { perform Act(q.body); }
-      No as e  { say("no"); }
-    }
+    text body = q.body;
+    Credence<R> c = self <- f"act on: {body}";
+    Decision<R> d = boss decide c by conformal 0.01;
+    Endorsement<text> e = endorse body by d;
+    if (e.committed == Yes) { perform Act(e); }
+    else if (e.committed == No) { say("no"); }
   }
   on awake { emit Ask("go"); }
 }

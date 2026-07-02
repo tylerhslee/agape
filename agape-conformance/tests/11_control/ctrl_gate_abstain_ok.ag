@@ -1,17 +1,15 @@
 //! id:        ctrl_gate_abstain_ok
 //! section:   11_control
 //! expect:    accept
-//! spec:      §11, §13 (an abstain block makes a partial gate arm block exhaustive)
+//! spec:      §11, §13 (the `abstained` sentinel is the else case when the gate commits no variant)
 //! ---
 enum Color { Red, Green, Blue }
 agent A {
   on awake {
     Credence<Color> c = self <- "what color is grass?";
-    decide c by confidence 0.8 {
-      Green { say("g"); }
-    } abstain {
-      say("other");
-    }
+    Decision<Color> d = decide c by confidence 0.8;
+    if (d.committed == Green) { say("g"); }
+    else { say("other"); }
   }
 }
 spawn A a; awake a;

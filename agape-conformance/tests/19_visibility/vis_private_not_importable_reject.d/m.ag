@@ -1,2 +1,0 @@
-module m;
-sync int secret() { return 1; }

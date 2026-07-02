@@ -8,12 +8,12 @@ enum R { Pay, Hold }
 action Disburse(int amount);
 agent A grants { * } {
   on awake {
-    Credence<R> c = self <- "should we pay?";
+    text req = self <- "state the payment request";
+    Credence<R> c = self <- f"should we pay: {req}";
     Decision<R> d = decide c by confidence 0.9;
-    endorse c by d {
-      Pay as e { perform Disburse(100); }
-      Hold as e { }
-    }
+    Endorsement<text> e = endorse req by d;
+    if (e.committed == Pay) { perform Disburse(100); }
+    else if (e.committed == Hold) { }
   }
 }
 spawn A a; awake a;

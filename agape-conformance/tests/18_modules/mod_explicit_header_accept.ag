@@ -1,8 +1,0 @@
-//! id:        mod_explicit_header_accept
-//! section:   18_modules
-//! expect:    accept
-//! spec:      §15.2, §19.2 (an explicit module header overrides path-derived module naming)
-//! ---
-module explicit.root;
-pub struct Shape { sides: int }
-Shape s = Shape { sides: 4 };

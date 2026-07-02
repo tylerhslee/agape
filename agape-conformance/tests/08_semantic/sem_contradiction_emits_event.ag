@@ -8,11 +8,10 @@
 agent A {
   on awake {
     Credence<Entailment> j = self <- "does \"the sky is green\" entail \"the sky is blue\"?";
-    decide j by confidence 0.8 {
-      Entails { say("e"); }
-      Contradicts { say("c"); }
-      Neutral { say("n"); }
-    }
+    Decision<Entailment> d = decide j by confidence 0.8;
+    if      (d.committed == Entails)     { say("e"); }
+    else if (d.committed == Contradicts) { say("c"); }
+    else if (d.committed == Neutral)     { say("n"); }
   }
 }
 spawn A a; awake a;

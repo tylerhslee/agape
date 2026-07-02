@@ -2,17 +2,17 @@
 //! section:   15_reproducibility
 //! expect:    accept
 //! replay:    chain_head_equal
-//! spec:      §15.4.2, §15.5 / T4 (a recorded run replays to an identical chain-head: every oracle/tool result is re-served from the journal in order and nothing is re-invoked)
+//! spec:      §15.4.2, §15.5 / T4 (a recorded run replays to an identical chain-head: every oracle result is re-served from the journal in order and nothing is re-invoked)
 //! ---
 action Flag(bool b);
 agent A grants { perform Flag } {
   on awake {
-    Credence<bool> c = self <- "flag it?";
+    text note = self <- "describe";
+    Credence<bool> c = self <- f"flag it: {note}";
     Decision<bool> d = decide c by confidence 0.9;
-    endorse true by d {
-      true as e { perform Flag(e); }
-      false { }
-    }
+    Endorsement<text> e = endorse note by d;
+    if (e.committed == true) { perform Flag(true); }
+    else if (e.committed == false) { }
   }
 }
 spawn A a; awake a;

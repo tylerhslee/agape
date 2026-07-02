@@ -1,18 +1,19 @@
 //! id:        gov_endorse_abstain_ok
 //! section:   13_governance
 //! expect:    accept
-//! spec:      §13 (the optional abstain clause runs when the gate cannot commit a singleton prediction set)
+//! spec:      §13 (the else branch runs when the gate abstains; the endorsement is not committed-narrowed there)
 //! ---
 enum R { Fraud, Clean }
-action Flag(bool b);
+action Flag(text note);
 agent C grants { perform Flag } {
   on awake {
-    Credence<R> c = self <- "is this fraud?";
+    text report = self <- "describe the transaction";
+    Credence<R> c = self <- f"is this fraud: {report}";
     Decision<R> d = decide c by confidence 0.95 margin 0.2;
-    endorse c by d {
-      Fraud as e { perform Flag(true); }
-      Clean as e { }
-    } abstain { emit Event("escalate"); }
+    Endorsement<text> e = endorse report by d;
+    if (e.committed == Fraud) { perform Flag(e); }
+    else if (e.committed == Clean) { say("clean"); }
+    else { emit Event("escalate"); }
   }
 }
 spawn C c; awake c;

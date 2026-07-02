@@ -1,8 +1,0 @@
-//! id:        agg_pipe_fanout_ok
-//! section:   12_aggregation
-//! expect:    accept
-//! spec:      §12 (`coll |> fn` maps each element of a collection through fn)
-//! ---
-sync int dbl(int x) { return x * 2; }
-array<int> doubled = [1, 2, 3] |> dbl;
-say(f"{doubled}");

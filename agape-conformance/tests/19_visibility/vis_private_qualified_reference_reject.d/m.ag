@@ -1,2 +1,0 @@
-module m;
-struct Hidden { x: int }

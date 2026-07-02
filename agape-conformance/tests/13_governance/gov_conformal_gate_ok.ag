@@ -8,11 +8,10 @@ agent A {
   on awake {
     Credence<Ticket> k = self <- "classify: my card was charged twice";
     Decision<Ticket> d = decide k by conformal 0.1;
-    endorse k by d {
-      Billing as e { }
-      Bug as e { }
-      Feature as e { }
-    } abstain { emit Event("escalate"); }
+    if      (d.committed == Billing) { }
+    else if (d.committed == Bug)     { }
+    else if (d.committed == Feature) { }
+    else { emit Event("escalate"); }
   }
 }
 spawn A a; awake a;

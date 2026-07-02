@@ -3,9 +3,9 @@
 //! expect:    reject
 //! error:     ConfigError
 //! manifest:  policy.threshold=0.5
-//! spec:      §17.1, §17.2 (decision policy lives in source, not the manifest; config cannot set gate thresholds)
+//! spec:      §17.1, §17.2 (decision rules live in source, not the manifest; config cannot set gate thresholds)
 //! ---
 agent A {
-  on awake { say("policy is source"); }
+  on awake { say("rules live in source"); }
 }
 spawn A a; awake a;

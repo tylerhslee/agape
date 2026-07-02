@@ -3,19 +3,19 @@
 //! expect:    accept
 //! principal: grant
 //! contains:  PrincipalDecision; Endorsed
-//! spec:      §13 (`decide c by p` reaches the identity dependency and records a PrincipalDecision — the principal basis — then endorses the subject)
+//! spec:      §13 (`p decide c by r` reaches the identity dependency and records a PrincipalDecision when the rule cannot commit, then endorses the subject)
 //! ---
 enum Approval { Approve, Decline }
 action ReleaseFunds(int cents);
 principal alice;
 agent Clerk grants { perform ReleaseFunds } {
   on awake {
-    Credence<Approval> c = self <- "assess this refund request";
+    text req = self <- "state the refund request";
+    Credence<Approval> c = self <- f"assess: {req}";
     Decision<Approval> d = alice decide c by conformal 0.05;
-    endorse c by d {
-      Approve as e { perform ReleaseFunds(10000); }
-      Decline as e { say("declined"); }
-    }
+    Endorsement<text> e = endorse req by d;
+    if (e.committed == Approve) { perform ReleaseFunds(10000); }
+    else if (e.committed == Decline) { say("declined"); }
   }
 }
 spawn Clerk a; awake a;

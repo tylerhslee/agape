@@ -1,0 +1,17 @@
+//! id:        type_enum_decl_and_gate
+//! section:   03_types
+//! expect:    accept
+//! spec:      §3, §11, §13 (enum declaration; a gate decision branched with an if-chain over its variants)
+//! note:      a user enum, judged, gated, and branched over its variants.
+//! ---
+enum Ticket { Billing, Bug, Feature }
+agent Classifier {
+  on awake {
+    Credence<Ticket> k = self <- "classify: my card was charged twice";
+    Decision<Ticket> d = decide k by confidence 0.8;
+    if      (d.committed == Billing) { say("billing"); }
+    else if (d.committed == Bug)     { say("bug"); }
+    else if (d.committed == Feature) { say("feature"); }
+  }
+}
+spawn Classifier c; awake c;

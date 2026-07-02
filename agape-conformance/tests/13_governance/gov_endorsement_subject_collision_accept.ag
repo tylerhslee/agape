@@ -1,7 +1,7 @@
 //! id:        gov_endorsement_subject_collision_accept
 //! section:   13_governance
 //! expect:    accept
-//! spec:      §20.4 (Endorsement metadata accessors win name collisions; the subject field remains reachable through `.subject`)
+//! spec:      §13 (Endorsement metadata accessors win name collisions; the subject field remains reachable through `.subject`)
 //! ---
 enum Verdict { Publish, Revise }
 struct Memo { committed: text, body: text }
@@ -11,14 +11,12 @@ agent A grants { perform PublishMemo } {
     Memo memo = Memo { committed: "field", body: "draft" };
     Credence<Verdict> c = self <- f"is ready: {memo.body}";
     Decision<Verdict> d = decide c by confidence 0.9;
-    endorse memo by d {
-      Publish as e {
-        say(f"{e.committed}");
-        say(e.subject.committed);
-        perform PublishMemo(e.body);
-      }
-      Revise { }
-    }
+    Endorsement<Memo> e = endorse memo by d;
+    if (e.committed == Publish) {
+      say(f"{e.committed}");
+      say(e.subject.committed);
+      perform PublishMemo(e.body);
+    } else if (e.committed == Revise) { }
   }
 }
 spawn A a; awake a;

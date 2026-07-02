@@ -1,17 +1,16 @@
 //! id:        ctrl_gate_all_variants_ok
 //! section:   11_control
 //! expect:    accept
-//! spec:      §11, §13 (a gate arm block covering every enum variant is exhaustive)
+//! spec:      §11, §13 (branch on a Decision's .committed with an if-chain over the enum variants)
 //! ---
 enum Color { Red, Green, Blue }
 agent A {
   on awake {
     Credence<Color> c = self <- "what color is grass?";
-    decide c by confidence 0.8 {
-      Red { say("r"); }
-      Green { say("g"); }
-      Blue { say("b"); }
-    }
+    Decision<Color> d = decide c by confidence 0.8;
+    if      (d.committed == Red)   { say("r"); }
+    else if (d.committed == Green) { say("g"); }
+    else if (d.committed == Blue)  { say("b"); }
   }
 }
 spawn A a; awake a;

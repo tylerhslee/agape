@@ -4,19 +4,18 @@
 //! provider:  credence(true=0.55, false=0.45)
 //! contains:  Abstained
 //! absent:    Endorsed
-//! spec:      §13 (a gated decision whose margin is below its policy `floor` m abstains — the typed trigger for escalation — even when the threshold is met)
-//! note:      0.55 clears the policy's 0.5 threshold but its 0.10 margin is below the 0.20 floor; the policy is in source, not the manifest
+//! spec:      §13 (a rule's `margin δ` requires the top-vs-runner-up lead ≥ δ at decision time; a 0.10 lead below the 0.20 margin abstains, so no Endorsed is recorded; the rule is inline, not a manifest knob)
 //! ---
 action Flag(bool b);
-policy Strict { threshold 0.5  margin 0.2  floor 0.2 }
 agent A grants { perform Flag } {
   on awake {
-    Credence<bool> c = self <- "should we flag?";
-    Decision<bool> d = decide c by Strict;
-    endorse c by d {
-      true as e { perform Flag(true); }
-      false as e { }
-    } abstain { emit Event("escalate"); }
+    text subj = self <- "state the case";
+    Credence<bool> c = self <- f"should we flag: {subj}";
+    Decision<bool> d = decide c by confidence 0.5 margin 0.2 floor 0.2;
+    Endorsement<text> e = endorse subj by d;
+    if (e.committed == true) { perform Flag(true); }
+    else if (e.committed == false) { }
+    else { emit Event("escalate"); }
   }
 }
 spawn A a; awake a;

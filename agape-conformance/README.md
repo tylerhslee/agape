@@ -1,7 +1,7 @@
-# Agape — Black-Box Conformance Suite (v1.0.0-alpha.2026.6.30.0)
+# Agape — Black-Box Conformance Suite (v1.0.0-alpha.2026.7.1.0)
 
 A set of `.ag` programs, each tagged with an expected outcome, that together
-define when an implementation of **Agape v1.0.0-alpha.2026.6.30.0** is *valid* (every
+define when an implementation of **Agape v1.0.0-alpha.2026.7.1.0** is *valid* (every
 behavior matches the spec) and *complete* (every required behavior is exercised). Tests
 are derived **only** from `../SPEC.md` — never from any implementation. An
 implementation passes by feeding each test through its own front end + runtime
@@ -14,11 +14,11 @@ surface feature can bypass the trusted path:
 testimony -> Credence<E> -> Decision<E> -> recorded endorsement -> granted sink -> ledger
 ```
 
-When a new feature lands — module sugar, package resolution, interfaces, memory
-queries, readable `decide`, provider fallback, runtime adapters — it should add
-at least one positive conformance case and, more importantly, negative cases that
-show it cannot launder taint, invent authority, skip endorsement, write through
-an unsettled tool input, or evade replay.
+This is the **core kernel** suite — the complete language with no syntactic sugar.
+When a new construct lands — memory store/recall, the ledger query, provider
+fallback, runtime adapters — it should add at least one positive conformance case
+and, more importantly, negative cases that show it cannot launder taint, invent
+authority, skip endorsement, write through an unsettled tool input, or evade replay.
 
 ```
 agape-conformance/
@@ -81,7 +81,6 @@ sync text find(text q) { return search(q); }
 | `principal` | optional | identity-dependency ruling for `decide c by p` (`grant` / `deny`) |
 | `manifest` | optional | `[runtime]`/policy fixture values for the run (`; `-separated) |
 | `replay` | optional | replay assertion (`chain_head_equal`) |
-| `packages` | optional | package roots, `name=path/to/lib.ag`, `; `-separated |
 | `spec` | always | the `SPEC.md` clause(s) the test pins |
 | `note` | optional | one-line rationale |
 
@@ -95,14 +94,11 @@ sync text find(text q) { return search(q); }
 ### Error classes (`reject` tests)
 
 `LexError` · `ParseError` · `TypeError` · `ColorViolation` · `TaintViolation` ·
-`AuthorityViolation` · `ExhaustivenessError` · `ConfigError`. **The library layer adds:**
-`ModuleError` (import resolution: unresolved/cyclic/ambiguous names) ·
-`VisibilityError` (naming a non-`pub` declaration; a `pub` signature exposing a private type) ·
-`InterfaceError` (an `agent : Iface` that fails to satisfy the contract) ·
-`GateError` (a consequential `endorse`/`perform` path with no reachable principal fallback — the
-deference requirement, §20.3; the spec calls this a "compile error" and `GateError` is the suite's
-category for it). An implementation may use its own internal names but must map to these categories;
-the suite asserts the category, not the message text.
+`AuthorityViolation` · `ConfigError` ·
+`GateError` (a consequential `endorse`/`perform` path with no principal escalation and no mature
+profile — the deference requirement, §13; the spec calls this a "compile error" and `GateError` is
+the suite's category for it). An implementation may use its own internal names but must map to these
+categories; the suite asserts the category, not the message text.
 
 ## Ledger matcher vocabulary
 
@@ -112,7 +108,7 @@ the suite asserts the category, not the message text.
 Spawned(x) AgentAwake(x) SleepEvent(x) PromptOpened(x) Prompt(x)
 Event Error  Endorsed(x) Abstained(x) PrincipalDecision(x)
 Contradiction(x) QueryResult(x)  MemoryConsulted(x) ArtifactObserved(x) Internalized(x) Forgotten(x)
-RetryExhausted TypeMismatch
+TypeMismatch MarginFloorViolation(x)
 pair(op@subj)   ← a Started/Resolved pair for async op `op` on subject `subj`
 single(op@subj) ← a single (synchronous) event
 ```
@@ -146,19 +142,10 @@ these header directives. A test with no directives runs under the default record
   representation. Example: `event<Ticket> closed_enum(Billing,Bug)`.
 - `manifest:` — connector/dependency fixture config, `; `-separated, e.g.
   `manifest: provider.exposes_logprobs=false` — to exercise the sampling fallback (§16.8).
-  Decision policy is in the test's own source (a `policy` declaration, §13), never the manifest.
+  Decision rules are in the test's own source (an inline rule on the gate, §13), never the manifest.
 - `replay:` — `chain_head_equal`: record the run's journal, replay it, and assert the ledger's
   terminal hash is identical (§15.4.2 / T4). Replay re-serves every oracle/tool result from the
   recording and re-invokes nothing.
-- `modules:` — companion module files this test imports, `; `-separated. They live in a
-  sibling directory `<id>.d/` next to the test (two levels deep, so the one-level test glob
-  ignores them — they are not themselves tests). The implementation compiles the test entry
-  together with its companion modules. Example: a test `mod_import_qualified.ag` with
-  `modules: util.ag` has its companion at `tests/18_modules/mod_import_qualified.d/util.ag`.
-- `packages:` — package roots this test imports, `; `-separated as `name=path/to/lib.ag`.
-  Paths live under the sibling `<id>.d/` directory. The implementation compiles the listed
-  file as module `name`, mirroring `[dependencies] name = { path = ... }` plus the package's
-  `[package] lib` entry (§19.3).
 
 ## How an implementation consumes the suite
 

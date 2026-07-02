@@ -1,3 +1,0 @@
-module b;
-import a;
-pub sync int g() { return 2; }

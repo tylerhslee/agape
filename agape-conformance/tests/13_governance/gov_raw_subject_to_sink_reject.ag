@@ -1,0 +1,19 @@
+//! id:        gov_raw_subject_to_sink_reject
+//! section:   13_governance
+//! expect:    reject
+//! error:     TaintViolation
+//! spec:      §13 (endorse never settles the raw subject variable; only the endorsement binder reaches a sink — performing the raw subject is rejected, in any branch)
+//! ---
+enum Verdict { Faithful, Unsupported }
+action Reply(text body);
+agent A grants { perform Reply } {
+  on awake {
+    text draft = self <- "write the answer";
+    Credence<Verdict> c = self <- f"is this faithful: {draft}";
+    Decision<Verdict> d = decide c by confidence 0.9;
+    Endorsement<text> e = endorse draft by d;
+    if (e.committed == Faithful) { perform Reply(draft); }
+    else if (e.committed == Unsupported) { say("revise"); }
+  }
+}
+spawn A a; awake a;

@@ -6,12 +6,13 @@
 //! ---
 agent A {
   on awake {
-    Credence<bool> c = self <- "approve?";
+    text req = self <- "state the request";
+    Credence<bool> c = self <- f"approve: {req}";
     Decision<bool> d = decide c by conformal 0.1;
-    endorse c by d {
-      true as e { }
-      false as e { }
-    } abstain { emit Event("escalate"); }
+    Endorsement<text> e = endorse req by d;
+    if (e.committed == true) { }
+    else if (e.committed == false) { }
+    else { emit Event("escalate"); }
   }
 }
 spawn A a; awake a;

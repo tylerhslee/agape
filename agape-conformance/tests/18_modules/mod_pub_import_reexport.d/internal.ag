@@ -1,2 +1,0 @@
-module internal;
-pub struct Shape { sides: int }

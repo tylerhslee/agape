@@ -1,2 +1,0 @@
-module m;
-pub sync int ok() { return 1; }

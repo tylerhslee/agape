@@ -1,9 +1,0 @@
-//! id:        mod_selective_import_unknown_reject
-//! section:   18_modules
-//! expect:    reject
-//! error:     ModuleError
-//! modules:   util.ag
-//! spec:      §19.2 (selective import of a non-exported name is a ModuleError)
-//! ---
-import { missing } from util;
-int y = missing();

@@ -1,9 +1,0 @@
-//! id:        mod_pub_import_private_reject
-//! section:   18_modules
-//! expect:    reject
-//! error:     VisibilityError
-//! modules:   internal.ag
-//! spec:      §19.2a (pub import of a non-pub name is a VisibilityError)
-//! ---
-module facade;
-pub import { Hidden } from internal;

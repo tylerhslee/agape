@@ -11,7 +11,7 @@ agent A {
     Credence<bool> c2 = self <- "does this look like spam?";
     Credence<bool> c3 = self <- "would a user flag it?";
     independent c1, c2;
-    Credence<bool> fused = all(c1, c2, c3);
+    Credence<bool> fused = quorum(3, [c1, c2, c3]);
   }
 }
 spawn A a; awake a;

@@ -1,9 +1,0 @@
-//! id:        mod_import_selective
-//! section:   18_modules
-//! expect:    accept
-//! modules:   util.ag
-//! spec:      §19.2 (selective import binds the bare name)
-//! ---
-import { dbl } from util;
-int y = dbl(21);
-say(y);

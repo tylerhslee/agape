@@ -3,7 +3,7 @@
 //! expect:    accept
 //! principal: grant
 //! contains:  Endorsed
-//! spec:      §20 (file-level `conformal α;` declaration sets the default basis)
+//! spec:      §13, §15.2 (a file-level `conformal α;` declaration sets the default conformal level)
 //! ---
 conformal 0.02;
 enum R { Yes, No }
@@ -12,12 +12,12 @@ action Act(text body);
 principal boss;
 agent Desk grants { perform Act } {
   when (Ask q) {
-    Credence<R> c = self <- q.body;
+    text body = q.body;
+    Credence<R> c = self <- f"act: {body}";
     Decision<R> d = boss decide c by conformal 0.02;
-    endorse c by d {
-      Yes as e { perform Act(q.body); }
-      No as e  { say("no"); }
-    }
+    Endorsement<text> e = endorse body by d;
+    if (e.committed == Yes) { perform Act(e); }
+    else if (e.committed == No) { say("no"); }
   }
   on awake { emit Ask("go"); }
 }

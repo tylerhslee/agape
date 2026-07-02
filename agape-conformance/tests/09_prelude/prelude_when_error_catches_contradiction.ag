@@ -7,11 +7,10 @@ when (Error e) { say("caught"); }
 agent J {
   on awake {
     Credence<Entailment> v = self <- "does \"sky is blue\" entail \"sky is green\"?";
-    decide v by confidence 0.8 {
-      Entails { say("e"); }
-      Contradicts { say("c"); }
-      Neutral { say("n"); }
-    }
+    Decision<Entailment> d = decide v by confidence 0.8;
+    if      (d.committed == Entails)     { say("e"); }
+    else if (d.committed == Contradicts) { say("c"); }
+    else if (d.committed == Neutral)     { say("n"); }
   }
 }
 spawn J j; awake j;

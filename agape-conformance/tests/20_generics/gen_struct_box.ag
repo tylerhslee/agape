@@ -1,8 +1,0 @@
-//! id:        gen_struct_box
-//! section:   20_generics
-//! expect:    accept
-//! spec:      §19.5 (user-generic struct with a type parameter)
-//! ---
-struct Box<T> { value: T }
-Box<int> b = Box<int> { value: 7 };
-say(b.value);

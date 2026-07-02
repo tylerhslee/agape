@@ -1,9 +1,0 @@
-//! id:        mem_match_is_gate
-//! section:   10_memory
-//! expect:    accept
-//! spec:      §10 (match > θ is a gate; yields a settled result off-ledger)
-//! ---
-agent Recall {
-  on awake { match { hit: "agape language" } > 0.8; }
-}
-spawn Recall r; awake r;
