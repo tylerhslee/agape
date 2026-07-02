@@ -71,6 +71,13 @@
   .prog.active { background: var(--panel2); border-color: var(--line); color: var(--text); }
   .prog.example { border-color: rgba(94, 234, 212, .25); }
   .prog small { display: block; color: var(--faint); font-size: 10px; margin-top: 2px; }
+  .projHead {
+    display: flex; justify-content: space-between; align-items: baseline; gap: 8px;
+    margin: 12px 6px 4px; font: 10px var(--mono); text-transform: uppercase;
+    letter-spacing: .1em; color: var(--accent2); opacity: .85;
+  }
+  .projHead span { color: var(--faint); text-transform: none; letter-spacing: 0; }
+  .projHead:first-child { margin-top: 2px; }
 
   main {
     flex: 1; display: grid; min-width: 0; min-height: 0;
@@ -122,15 +129,38 @@
     font: 12.5px/1.65 var(--mono);
   }
   .editLines {
-    color: var(--faint); text-align: right; user-select: none; padding-right: 8px;
+    color: var(--faint); text-align: right; user-select: none; padding: 8px 8px 8px 0;
     border-right: 1px solid var(--line); white-space: pre; overflow: hidden;
   }
-  textarea.editor {
-    width: 100%; min-height: 62vh; resize: vertical; border: 1px solid var(--line); border-radius: 8px;
-    background: #0d111a; color: var(--text); padding: 0 10px; font: inherit; line-height: inherit;
-    outline: none; tab-size: 2; white-space: pre; overflow: auto;
+  .editLines span { display: block; }
+  .editLines span.cur { color: var(--accent2); }
+  /* the code-editor stack: a syntax-highlighted layer under a transparent-text textarea — the
+     caret and selection come from the textarea, the colors from the overlay. */
+  .editorStack {
+    position: relative; border: 1px solid var(--line); border-radius: 8px;
+    background: #0d111a; overflow: hidden;
   }
-  textarea.editor:focus { border-color: var(--accent); }
+  .editorStack:focus-within { border-color: var(--accent); }
+  .editorStack pre.hl, .editorStack textarea.editor {
+    margin: 0; font: 12.5px/1.65 var(--mono); tab-size: 2; white-space: pre; padding: 8px 10px;
+  }
+  .editorStack pre.hl {
+    position: absolute; inset: 0; overflow: hidden; pointer-events: none; color: #c3ccdf;
+  }
+  textarea.editor {
+    /* the stack is a stretched grid item (row height = the gutter content height);
+       the textarea must FILL it so the caret, overlay, and gutter always align. */
+    position: relative; z-index: 1; display: block; width: 100%; height: 100%; min-height: 62vh;
+    resize: none; border: none; border-radius: 0; background: transparent;
+    color: transparent; caret-color: #e8edf8; outline: none; overflow: auto;
+  }
+  textarea.editor::selection { background: rgba(124, 108, 246, .30); color: transparent; }
+  .editStatus {
+    display: flex; justify-content: flex-end; gap: 14px; padding: 4px 2px 0;
+    font: 10.5px var(--mono); color: var(--faint);
+  }
+  .editStatus[hidden] { display: none; }
+  .editing + .editStatus, .editing .editStatus { display: flex; }
   .editing pre.code { display: none; }
   .editing .editorWrap { display: grid; }
   .inputCard[hidden] { display: none; }
@@ -348,8 +378,12 @@
           <pre class="code" id="source">Select a program.</pre>
           <div class="editorWrap">
             <div class="editLines" id="editLines"></div>
-            <textarea class="editor" id="editor" spellcheck="false"></textarea>
+            <div class="editorStack">
+              <pre class="hl" id="editorHl" aria-hidden="true"></pre>
+              <textarea class="editor" id="editor" spellcheck="false" autocomplete="off" autocapitalize="off" wrap="off"></textarea>
+            </div>
           </div>
+          <div class="editStatus" id="editorStatus" hidden></div>
         </div>
       </div>
       <div class="card collapsible" id="configCard" data-panel="config">
@@ -368,8 +402,12 @@
           <pre class="code" id="configSource">Loading config.</pre>
           <div class="editorWrap">
             <div class="editLines" id="configEditLines"></div>
-            <textarea class="editor" id="configEditor" spellcheck="false"></textarea>
+            <div class="editorStack">
+              <pre class="hl" id="configEditorHl" aria-hidden="true"></pre>
+              <textarea class="editor" id="configEditor" spellcheck="false" autocomplete="off" autocapitalize="off" wrap="off"></textarea>
+            </div>
           </div>
+          <div class="editStatus" id="configEditorStatus" hidden></div>
         </div>
       </div>
     </div>
@@ -408,7 +446,7 @@ let state = {
   programs: [], selected: null, meta: {}, source: "", sourceOrigin: null, map: null,
   configSource: "", configExists: false, configEditing: false, configDirty: false, configValues: {},
   editing: false, dirty: false, sessionId: null, listening: false, awaitingAttest: false,
-  pollTimer: null, collapsed: {}, providerOverrides: {},
+  pollTimer: null, collapsed: {}, providerOverrides: {}, currentProject: null,
 };
 
 // ---- persistence: the current view and settings survive a refresh -------------------------------
@@ -484,21 +522,41 @@ function highlight(src) {
   return src.split("\n").map(highlightLine).join("\n");
 }
 
-function renderCode(src) {
-  return highlight(src).split("\n").map((line, i) =>
+// a small TOML highlighter for the config editor/view: comments, [tables], keys, strings,
+// numbers, booleans; inline-table values highlight their inner strings/numbers.
+function highlightTomlValue(v) {
+  return esc(v)
+    .replace(/&quot;([^&]|&(?!quot;))*?&quot;/g, (m) => `<span class="s">${m}</span>`)
+    .replace(/\b(true|false)\b/g, '<span class="k">$1</span>')
+    .replace(/(?<![\w&#"'])(-?\d+(?:\.\d+)?)\b(?![^<]*<\/span>)/g, '<span class="n">$1</span>');
+}
+function highlightTomlLine(line) {
+  // split a trailing comment (a # outside quotes)
+  let code = line, comment = "";
+  for (let i = 0, q = false; i < line.length; i++) {
+    if (line[i] === '"') q = !q;
+    else if (line[i] === "#" && !q) { code = line.slice(0, i); comment = line.slice(i); break; }
+  }
+  let out;
+  const th = code.match(/^(\s*)\[([\w.-]+)\](\s*)$/);
+  const kv = th ? null : code.match(/^(\s*)([\w.-]+)(\s*=\s*)([\s\S]*)$/);
+  if (th) out = `${th[1]}<span class="t">[${esc(th[2])}]</span>${th[3]}`;
+  else if (kv) out = `${kv[1]}<span class="k">${esc(kv[2])}</span>${kv[3]}${highlightTomlValue(kv[4])}`;
+  else out = esc(code);
+  return out + (comment ? `<span class="c">${esc(comment)}</span>` : "");
+}
+function highlightToml(src) {
+  return src.split("\n").map(highlightTomlLine).join("\n");
+}
+
+function renderCode(src, hi = highlight) {
+  return hi(src).split("\n").map((line, i) =>
     `<span class="codeLine"><span class="ln">${i + 1}</span><span class="codeText">${line || " "}</span></span>`
   ).join("");
 }
 
-function updateEditLines() {
-  const count = Math.max(1, $("editor").value.split("\n").length);
-  $("editLines").textContent = Array.from({ length: count }, (_, i) => i + 1).join("\n");
-}
-
-function updateConfigEditLines() {
-  const count = Math.max(1, $("configEditor").value.split("\n").length);
-  $("configEditLines").textContent = Array.from({ length: count }, (_, i) => i + 1).join("\n");
-}
+function updateEditLines() { srcEd.refresh(); }
+function updateConfigEditLines() { cfgEd.refresh(); }
 
 function setEditing(on) {
   state.editing = on;
@@ -729,7 +787,7 @@ async function makeProjectDefault() {
   try {
     await api("/api/config/patch", {
       method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ sets: [{ table: "provider", key: "backend", value: JSON.stringify(v) }] }),
+      body: JSON.stringify({ project: state.currentProject || "", sets: [{ table: "provider", key: "backend", value: JSON.stringify(v) }] }),
     });
     if (state.selected) delete state.providerOverrides[state.selected];
     persist();
@@ -765,14 +823,33 @@ function updateProviderNote() {
   $("providerNote").innerHTML = text;
 }
 
+function projectOfName(name) {
+  const i = (name || "").indexOf("/");
+  return i === -1 ? "" : name.slice(0, i);
+}
+
+function fileOfName(name) {
+  const i = (name || "").indexOf("/");
+  return i === -1 ? name : name.slice(i + 1);
+}
+
 function renderProgramList(programs) {
-  $("programs").innerHTML = programs.length
-    ? programs.map((p) => {
-        const meta = p.origin === "example" ? "bundled example" : `${p.bytes} bytes`;
-        const cls = p.origin === "example" ? "prog example" : "prog";
-        return `<button class="${cls}" data-name="${esc(p.name)}">${esc(p.name)}<small>${esc(meta)}</small></button>`;
-      }).join("")
-    : `<div class="empty">no .ag programs here</div>`;
+  if (!programs.length) { $("programs").innerHTML = `<div class="empty">no .ag programs here</div>`; return; }
+  // each subdirectory is its own PROJECT with its own agape.toml (§17); root files share the root manifest.
+  const groups = new Map();
+  for (const p of programs) {
+    const g = p.project ?? projectOfName(p.name);
+    if (!groups.has(g)) groups.set(g, []);
+    groups.get(g).push(p);
+  }
+  $("programs").innerHTML = [...groups.entries()].map(([proj, list]) =>
+    `<div class="projHead">${esc(proj || "project root")} <span>agape.toml</span></div>` +
+    list.map((p) => {
+      const meta = p.origin === "example" ? "bundled example" : `${p.bytes} bytes`;
+      const cls = p.origin === "example" ? "prog example" : "prog";
+      return `<button class="${cls}" data-name="${esc(p.name)}">${esc(fileOfName(p.name))}<small>${esc(meta)}</small></button>`;
+    }).join("")
+  ).join("");
   for (const b of document.querySelectorAll(".prog")) b.onclick = () => select(b.dataset.name);
 }
 
@@ -783,13 +860,14 @@ async function loadPrograms(selectName) {
   if (programs.length) await select(selectName && programs.some((p) => p.name === selectName) ? selectName : programs[0].name);
 }
 
-async function loadConfig() {
-  const cfg = await api("/api/config");
+async function loadConfig(project = state.currentProject || "") {
+  state.currentProject = project;
+  const cfg = await api(`/api/config?project=${encodeURIComponent(project)}`);
   state.configSource = cfg.source || "";
   state.configExists = Boolean(cfg.exists);
   state.configValues = cfg.values || {};
-  $("configTitle").textContent = state.configExists ? "Config · agape.toml" : "Config · agape.toml · not saved";
-  $("configSource").innerHTML = renderCode(state.configSource);
+  $("configTitle").textContent = `Config · ${cfg.name || "agape.toml"}${state.configExists ? "" : " · not saved"}`;
+  $("configSource").innerHTML = renderCode(state.configSource, highlightToml);
   renderConfigForm();
   syncProviderDropdown(); // the manifest default may have changed
   applyPanelState($("configCard"));
@@ -873,7 +951,7 @@ async function applyConfigForm() {
   try {
     await api("/api/config/patch", {
       method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ sets }),
+      body: JSON.stringify({ project: state.currentProject || "", sets }),
     });
     state.meta = await api("/api/meta"); // provider availability may change with the backend
     renderProviders();
@@ -917,7 +995,9 @@ async function select(name) {
   state.selected = name;
   for (const b of document.querySelectorAll(".prog")) b.classList.toggle("active", b.dataset.name === name);
   const info = state.programs.find((p) => p.name === name);
-  $("srcTitle").textContent = info?.origin === "example" ? `${name} · bundled example` : name;
+  $("srcTitle").textContent = info?.origin === "example" ? `${fileOfName(name)} · bundled example` : fileOfName(name);
+  const proj = projectOfName(name);
+  if (proj !== state.currentProject) await loadConfig(proj);
   const { source, origin, map } = await api(`/api/source?name=${encodeURIComponent(name)}`);
   state.source = source;
   state.sourceOrigin = origin;
@@ -954,7 +1034,7 @@ $("cancelEdit").onclick = () => {
 };
 $("cancelConfigEdit").onclick = () => {
   setConfigEditing(false);
-  $("configSource").innerHTML = renderCode(state.configSource);
+  $("configSource").innerHTML = renderCode(state.configSource, highlightToml);
 };
 $("saveSource").onclick = async () => {
   if (!state.selected) return;
@@ -978,19 +1058,137 @@ $("saveSource").onclick = async () => {
     updateSourceButtons();
   }
 };
-$("editor").oninput = () => { state.dirty = true; updateEditLines(); };
-$("editor").onscroll = () => { $("editLines").scrollTop = $("editor").scrollTop; };
-$("editor").onkeydown = (e) => {
-  if (e.key === "Tab") {
-    e.preventDefault();
-    const el = $("editor");
-    const start = el.selectionStart, end = el.selectionEnd;
-    el.value = el.value.slice(0, start) + "  " + el.value.slice(end);
-    el.selectionStart = el.selectionEnd = start + 2;
-    state.dirty = true;
-    updateEditLines();
+// ---- the code editor: overlay highlighting + editor behaviors -----------------------------------
+// Zero-dependency: a transparent-text textarea over a highlighted <pre>, kept scroll-synced.
+// Behaviors: auto-indent (extra after `{`, block expansion before `}`), bracket/quote auto-close +
+// wrap + skip-over + pair-backspace, Tab/Shift-Tab block indent/outdent, Ctrl+/ comment toggle,
+// Ctrl/Cmd+S save, active-line gutter, Ln/Col status.
+function makeCodeEditor(opts) {
+  const ta = opts.ta, hl = opts.hl, gutter = opts.gutter, status = opts.status;
+  const PAIR = { "{": "}", "(": ")", "[": "]", '"': '"' };
+  const CLOSERS = new Set(["}", ")", "]"]);
+
+  function refresh() {
+    hl.innerHTML = opts.highlighter(ta.value) + "\n";
+    const total = Math.max(1, ta.value.split("\n").length);
+    const cur = ta.value.slice(0, ta.selectionStart).split("\n").length;
+    gutter.innerHTML = Array.from({ length: total }, (_, i) =>
+      `<span class="${i + 1 === cur ? "cur" : ""}">${i + 1}</span>`).join("");
+    if (status) {
+      const col = ta.selectionStart - ta.value.lastIndexOf("\n", ta.selectionStart - 1);
+      status.hidden = false;
+      status.textContent = `${opts.lang} · Ln ${cur}, Col ${col} · ${total} lines · ⌘/Ctrl+S save · Ctrl+/ comment`;
+    }
+    sync();
   }
-};
+  function sync() { hl.scrollTop = ta.scrollTop; hl.scrollLeft = ta.scrollLeft; gutter.scrollTop = ta.scrollTop; }
+  function insert(text) {
+    // document.execCommand keeps the browser undo stack alive; fall back to setRangeText.
+    if (!document.execCommand("insertText", false, text)) {
+      ta.setRangeText(text, ta.selectionStart, ta.selectionEnd, "end");
+      ta.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+  }
+  function replaceRange(s, e, text, selS, selE) {
+    ta.setSelectionRange(s, e);
+    insert(text);
+    if (selS !== undefined) ta.setSelectionRange(selS, selE ?? selS);
+    refresh();
+  }
+
+  ta.addEventListener("keydown", (e) => {
+    const v = ta.value, s = ta.selectionStart, en = ta.selectionEnd;
+    const mod = e.ctrlKey || e.metaKey;
+    if (mod && e.key.toLowerCase() === "s") { e.preventDefault(); opts.onSave?.(); return; }
+    if (mod && e.key === "/") {
+      e.preventDefault();
+      const ls = v.lastIndexOf("\n", s - 1) + 1;
+      let le = v.indexOf("\n", Math.max(en - 1, s)); if (le === -1) le = v.length;
+      const lines = v.slice(ls, le).split("\n");
+      const allOn = lines.every((l) => !l.trim() || l.trimStart().startsWith("//"));
+      const out = lines.map((l) => {
+        if (!l.trim()) return l;
+        if (allOn) return l.replace(/^(\s*)\/\/ ?/, "$1");
+        const ind = (l.match(/^\s*/) || [""])[0];
+        return ind + "// " + l.slice(ind.length);
+      }).join("\n");
+      replaceRange(ls, le, out, ls, ls + out.length);
+      return;
+    }
+    if (e.key === "Tab") {
+      e.preventDefault();
+      if (s !== en && v.slice(s, en).includes("\n")) {
+        const ls = v.lastIndexOf("\n", s - 1) + 1;
+        let le = v.indexOf("\n", en - 1); if (le === -1) le = v.length;
+        const out = v.slice(ls, le).split("\n").map((l) =>
+          e.shiftKey ? l.replace(/^  /, "") : (l.length ? "  " + l : l)).join("\n");
+        replaceRange(ls, le, out, ls, ls + out.length);
+      } else if (e.shiftKey) {
+        const ls = v.lastIndexOf("\n", s - 1) + 1;
+        if (v.startsWith("  ", ls)) replaceRange(ls, ls + 2, "", Math.max(ls, s - 2));
+      } else {
+        insert("  ");
+        refresh();
+      }
+      return;
+    }
+    if (e.key === "Enter" && s === en) {
+      e.preventDefault();
+      const ls = v.lastIndexOf("\n", s - 1) + 1;
+      const line = v.slice(ls, s);
+      const ind = (line.match(/^\s*/) || [""])[0];
+      const opened = /\{\s*$/.test(line);
+      if (opened && v[s] === "}") {
+        // expand the block: newline+indent for the caret, newline+old indent for the `}`
+        insert("\n" + ind + "  " + "\n" + ind);
+        ta.setSelectionRange(s + 1 + ind.length + 2, s + 1 + ind.length + 2);
+      } else {
+        insert("\n" + ind + (opened ? "  " : ""));
+      }
+      refresh();
+      return;
+    }
+    if (PAIR[e.key]) {
+      if (s !== en) { // wrap the selection
+        e.preventDefault();
+        const inner = v.slice(s, en);
+        insert(e.key + inner + PAIR[e.key]);
+        ta.setSelectionRange(s + 1, s + 1 + inner.length);
+        refresh(); return;
+      }
+      if (e.key === '"' && v[s] === '"') { e.preventDefault(); ta.setSelectionRange(s + 1, s + 1); refresh(); return; }
+      e.preventDefault();
+      insert(e.key + PAIR[e.key]);
+      ta.setSelectionRange(s + 1, s + 1);
+      refresh(); return;
+    }
+    if (CLOSERS.has(e.key) && s === en && v[s] === e.key) {
+      e.preventDefault(); ta.setSelectionRange(s + 1, s + 1); refresh(); return; // skip over the closer
+    }
+    if (e.key === "Backspace" && s === en && s > 0 && PAIR[v[s - 1]] && PAIR[v[s - 1]] === v[s]) {
+      e.preventDefault(); replaceRange(s - 1, s + 1, "", s - 1); return; // delete the empty pair
+    }
+  });
+  ta.addEventListener("input", () => { opts.onInput?.(); refresh(); });
+  ta.addEventListener("scroll", sync);
+  ta.addEventListener("keyup", refresh);
+  ta.addEventListener("click", refresh);
+  ta.addEventListener("focus", refresh);
+  return { refresh };
+}
+
+const srcEd = makeCodeEditor({
+  ta: $("editor"), hl: $("editorHl"), gutter: $("editLines"), status: $("editorStatus"),
+  highlighter: highlight, lang: "agape",
+  onInput: () => { state.dirty = true; },
+  onSave: () => { if (!$("saveSource").hidden && !$("saveSource").disabled) $("saveSource").click(); },
+});
+const cfgEd = makeCodeEditor({
+  ta: $("configEditor"), hl: $("configEditorHl"), gutter: $("configEditLines"), status: $("configEditorStatus"),
+  highlighter: highlightToml, lang: "toml",
+  onInput: () => { state.configDirty = true; },
+  onSave: () => { if (!$("saveConfig").hidden && !$("saveConfig").disabled) $("saveConfig").click(); },
+});
 $("saveConfig").onclick = async () => {
   $("saveConfig").disabled = true;
   $("saveConfig").textContent = "Saving...";
@@ -998,12 +1196,12 @@ $("saveConfig").onclick = async () => {
     const source = $("configEditor").value;
     await api("/api/config", {
       method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ source }),
+      body: JSON.stringify({ project: state.currentProject || "", source }),
     });
     state.configSource = source;
     state.configExists = true;
     $("configTitle").textContent = "Config · agape.toml";
-    $("configSource").innerHTML = renderCode(state.configSource);
+    $("configSource").innerHTML = renderCode(state.configSource, highlightToml);
     setConfigEditing(false);
     await loadConfig(); // re-parse values → refresh the form + the effective provider
     state.meta = await api("/api/meta");
@@ -1018,19 +1216,7 @@ $("saveConfig").onclick = async () => {
     updateConfigButtons();
   }
 };
-$("configEditor").oninput = () => { state.configDirty = true; updateConfigEditLines(); };
-$("configEditor").onscroll = () => { $("configEditLines").scrollTop = $("configEditor").scrollTop; };
-$("configEditor").onkeydown = (e) => {
-  if (e.key === "Tab") {
-    e.preventDefault();
-    const el = $("configEditor");
-    const start = el.selectionStart, end = el.selectionEnd;
-    el.value = el.value.slice(0, start) + "  " + el.value.slice(end);
-    el.selectionStart = el.selectionEnd = start + 2;
-    state.configDirty = true;
-    updateConfigEditLines();
-  }
-};
+
 
 async function stopSession(silent = false) {
   if (!state.sessionId) {
