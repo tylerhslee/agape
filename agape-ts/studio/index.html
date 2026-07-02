@@ -1075,7 +1075,7 @@ function eventValue(e, map) {
   }
   if (e.etype === "Prompt") return `${e.subject} = ${renderedValue(p.input, false)}`;
   if (e.etype === "PromptOpened") return `${e.subject} opened`;
-  if (e.etype === "Internalized" && p.reply) return `${e.subject} ⇐ ${renderedValue(p.reply, false)}`;
+  if (e.etype === "Internalized" && p.reply) return `${e.subject} ⇐ ${p.memory || renderedValue(p.reply, false)}`;
   if (p.value) return `${e.subject} = ${renderedValue(p.value, false)}`;
   if (e.etype === "Forgotten") return `${e.subject} forgotten (${p.mode || "recorded"})`;
   if (e.etype === "MemoryConsulted") return `${e.subject} recalled ${JSON.stringify(p.recalled || "")}`;
@@ -1124,7 +1124,7 @@ function timelinePayload(e, map) {
     if (p.kind === "credence") return scoreText(p.scores);
     return reply ? renderedValue(reply, false) : "";
   }
-  if (e.etype === "Internalized") return renderedValue(p.reply || p.value, false);
+  if (e.etype === "Internalized") return p.memory || renderedValue(p.reply || p.value, false);
   if (e.etype === "Prompt") return renderedValue(p.input, false);
   if (e.etype === "Decided" || e.etype === "Endorsed") return eventValue(e, map);
   if (Array.isArray(p)) return fmt(p);
@@ -1148,8 +1148,11 @@ function renderRunDetails(r) {
         : `Memory write · ${eventValue(e, r.map)}`;
       parts.push(detail(title, [
         ["binding", e.subject],
+        ["memory", p.memory],
         [p.reply ? "reply" : "value", renderedValue(v)],
+        ["prompt", p.prompt],
         ["source event", p.source_event],
+        ["derived from", p.derived_from],
         ["effects", p.effects],
         ["refs", p.refs],
         ["policy", p.policy],

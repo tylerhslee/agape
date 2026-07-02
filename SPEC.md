@@ -2347,6 +2347,13 @@ store is shared — there is no cross-agent mutable state (§0.2).
   consequential sink. And **memory cannot rewrite behavior:** instructions, grants, and dependency
   bindings are source/config artifacts (§5, §13, §17) — memory may *guide* a turn but never silently
   override them.
+
+  When a received typed reply is internalized, the payload's memory content is written as an agent
+  recollection of the turn: who or what prompted it, what the agent did, what the provider returned,
+  and what was learned or found wanting. The event itself is the episode, so payloads do not need an
+  episode discriminator such as `kind: "episode"` and should not split the recollection into an
+  `experienced` field. Machine-readable backpointers such as `source_event` may accompany the memory
+  content for audit and replay.
 - **Provenance.** Every memory cell carries an immutable backpointer to the ledger event that produced it;
   `origin(n)` projects it (§10). A recalled value stays tainted regardless of its origin (§10); the
   recorded-trust reading of the same origin is the ledger query.
