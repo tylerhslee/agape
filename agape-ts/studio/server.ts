@@ -253,6 +253,78 @@ function loadProjectManifest(dir: string, providerName: string) {
   return loadManifest(existsSync(path) ? path : undefined, providerName);
 }
 
+// ---- structured config: the manifest as a data model -------------------------------------------
+//
+// The manifest (agape.toml) stays the single source of truth (§17); the UI is a FORM-EDITOR over
+// it, and the raw TOML remains for inspection / occasional direct edits. parseTomlSubset reads the
+// simple shape the manifest uses (tables of `key = value`, values: string/number/bool/inline
+// table); patchTomlSource applies `key = value` updates LINE-WISE inside a `[table]`, preserving
+// every comment and unrelated line (creating the table/key when absent).
+
+type TomlValue = string | number | boolean | { raw: string };
+
+function parseTomlSubset(src: string): Record<string, Record<string, TomlValue>> {
+  const tables: Record<string, Record<string, TomlValue>> = {};
+  let current = "";
+  for (const line of src.split("\n")) {
+    const t = line.trim();
+    if (!t || t.startsWith("#")) continue;
+    const th = t.match(/^\[([\w.-]+)\]$/);
+    if (th) { current = th[1]!; tables[current] ??= {}; continue; }
+    const kv = t.match(/^([\w.-]+)\s*=\s*(.+?)\s*$/);
+    if (!kv) continue;
+    const [, key, rawVal] = kv;
+    let value: TomlValue;
+    const stripped = rawVal!.replace(/\s+#.*$/, "").trim();
+    if (/^".*"$/.test(stripped)) value = stripped.slice(1, -1);
+    else if (stripped === "true" || stripped === "false") value = stripped === "true";
+    else if (/^-?\d+(\.\d+)?$/.test(stripped)) value = Number(stripped);
+    else value = { raw: stripped }; // an inline table (`{ mcp = "…" }`) or anything else — kept verbatim
+    (tables[current] ??= {})[key!] = value;
+  }
+  return tables;
+}
+
+// one `key = <toml text>` update inside `[table]` — comment-preserving, create-if-missing.
+function patchTomlSource(src: string, table: string, key: string, tomlText: string): string {
+  const lines = src.length ? src.split("\n") : [];
+  const header = `[${table}]`;
+  let tStart = -1;
+  for (let i = 0; i < lines.length; i++) if (lines[i]!.trim() === header) { tStart = i; break; }
+  if (tStart === -1) {
+    if (lines.length && lines[lines.length - 1]!.trim() !== "") lines.push("");
+    lines.push(header, `${key} = ${tomlText}`);
+    return lines.join("\n");
+  }
+  let tEnd = lines.length;
+  for (let i = tStart + 1; i < lines.length; i++) if (/^\s*\[[\w.-]+\]\s*$/.test(lines[i]!)) { tEnd = i; break; }
+  const keyRe = new RegExp(`^(\\s*)${key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*=`);
+  for (let i = tStart + 1; i < tEnd; i++) {
+    const m = lines[i]!.match(keyRe);
+    if (m) { lines[i] = `${m[1]}${key} = ${tomlText}`; return lines.join("\n"); }
+  }
+  // key absent — insert at the end of the table body (before the span's trailing blank lines)
+  let insertAt = tEnd;
+  while (insertAt > tStart + 1 && lines[insertAt - 1]!.trim() === "") insertAt--;
+  lines.splice(insertAt, 0, `${key} = ${tomlText}`);
+  return lines.join("\n");
+}
+
+const PATCHABLE_TABLES = new Set(["project", "provider", "identity", "memory", "tools", "prompts"]);
+
+function applyConfigPatch(dir: string, sets: { table?: string; key?: string; value?: string }[]) {
+  const current = readConfigSource(dir);
+  let src = current.exists ? current.source : "";
+  for (const p of sets) {
+    if (!p.table || !p.key || typeof p.value !== "string") return { status: 400 as const, body: { error: "each set needs table, key, and a TOML-text value" } };
+    if (!PATCHABLE_TABLES.has(p.table)) return { status: 400 as const, body: { error: `table '${p.table}' is not configurable here` } };
+    if (!/^[\w.-]+$/.test(p.key)) return { status: 400 as const, body: { error: `bad key '${p.key}'` } };
+    if (p.value.includes("\n") || p.value.length > 500) return { status: 400 as const, body: { error: "value must be single-line TOML text" } };
+    src = patchTomlSource(src, p.table, p.key, p.value);
+  }
+  return saveConfigSource(dir, src.endsWith("\n") || src === "" ? src : src + "\n");
+}
+
 async function readBody(req: IncomingMessage, limit = MAX_SOURCE_BYTES + 4096): Promise<string> {
   const chunks: Buffer[] = [];
   let bytes = 0;
@@ -537,7 +609,17 @@ export function startStudio(opts: StudioOptions): Promise<{ close: () => void }>
         return json(res, 200, { ...program, map });
       }
       if (req.method === "GET" && url.pathname === "/api/config") {
-        return json(res, 200, readConfigSource(opts.dir));
+        const cfg = readConfigSource(opts.dir);
+        return json(res, 200, { ...cfg, values: parseTomlSubset(cfg.source) });
+      }
+      if (req.method === "POST" && url.pathname === "/api/config/patch") {
+        // structured manifest edits (the form UI): each set is one `key = <toml text>` inside a
+        // `[table]`, applied comment-preservingly to agape.toml — the file stays the source of truth.
+        const body = JSON.parse((await readBody(req)) || "{}") as { sets?: { table?: string; key?: string; value?: string }[] };
+        const r = applyConfigPatch(opts.dir, body.sets ?? []);
+        if (r.status !== 200) return json(res, r.status, r.body);
+        const cfg = readConfigSource(opts.dir);
+        return json(res, 200, { ...r.body, source: cfg.source, exists: cfg.exists, values: parseTomlSubset(cfg.source) });
       }
       if (req.method === "POST" && url.pathname === "/api/source") {
         const body = JSON.parse((await readBody(req)) || "{}") as { name?: string; source?: string };

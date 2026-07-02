@@ -150,6 +150,25 @@
   }
   .inputRow textarea { min-height: 76px; resize: vertical; }
   .inputRow textarea:focus, .inputRow input[type="text"]:focus { border-color: var(--accent); }
+
+  /* ---- config form (the manifest as UI; the TOML below stays canonical) ---- */
+  .configForm { display: grid; gap: 8px; margin-bottom: 12px; }
+  .cfgRow { display: grid; grid-template-columns: minmax(150px, 40%) 1fr; gap: 10px; align-items: center; }
+  .cfgRow label { display: flex; justify-content: space-between; gap: 8px; color: var(--dim); font: 11px var(--mono); }
+  .cfgRow label span { color: var(--faint); }
+  .cfgRow input[type="text"], .cfgRow select {
+    width: 100%; border: 1px solid var(--line); border-radius: 7px; background: #0d111a;
+    color: var(--text); padding: 6px 9px; font: 12px var(--mono); outline: none;
+  }
+  .cfgRow input[type="text"]:focus, .cfgRow select:focus { border-color: var(--accent); }
+  .cfgRow input[type="checkbox"] { justify-self: start; accent-color: var(--accent); }
+  .cfgActions { display: flex; align-items: center; gap: 10px; margin-top: 2px; }
+  .cfgNote { font: 10.5px var(--mono); color: var(--faint); }
+  .rawHead {
+    font: 10px var(--mono); text-transform: uppercase; letter-spacing: .1em; color: var(--faint);
+    border-top: 1px solid var(--line); padding-top: 10px; margin-bottom: 8px;
+  }
+  .providerNote a { color: var(--amber); text-decoration: underline; }
   .k  { color: #c792ea; }              /* keywords */
   .t  { color: #82aaff; }              /* types */
   .s  { color: #c3e88d; }              /* strings */
@@ -344,6 +363,8 @@
           </div>
         </div>
         <div class="cardBody">
+          <div id="configForm" class="configForm"></div>
+          <div class="rawHead">agape.toml — the source of truth · for inspection &amp; direct edits</div>
           <pre class="code" id="configSource">Loading config.</pre>
           <div class="editorWrap">
             <div class="editLines" id="configEditLines"></div>
@@ -385,10 +406,27 @@ const CATS = {
 
 let state = {
   programs: [], selected: null, meta: {}, source: "", sourceOrigin: null, map: null,
-  configSource: "", configExists: false, configEditing: false, configDirty: false,
+  configSource: "", configExists: false, configEditing: false, configDirty: false, configValues: {},
   editing: false, dirty: false, sessionId: null, listening: false, awaitingAttest: false,
-  pollTimer: null, collapsed: {},
+  pollTimer: null, collapsed: {}, providerOverrides: {},
 };
+
+// ---- persistence: the current view and settings survive a refresh -------------------------------
+// localStorage, keyed per served directory: selected program, panel collapse states, and per-file
+// provider overrides. The manifest itself lives in agape.toml (the source of truth) — never here.
+function storeKey() { return `agape-studio:${state.meta.dir || ""}`; }
+function loadPersisted() {
+  try { return JSON.parse(localStorage.getItem(storeKey()) || "{}") || {}; } catch { return {}; }
+}
+function persist() {
+  try {
+    localStorage.setItem(storeKey(), JSON.stringify({
+      selected: state.selected,
+      collapsed: state.collapsed,
+      providerOverrides: state.providerOverrides,
+    }));
+  } catch { /* private mode etc. — persistence is best-effort */ }
+}
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c]));
@@ -570,6 +608,7 @@ document.addEventListener("click", (e) => {
   if (!id) return;
   state.collapsed[id] = !state.collapsed[id];
   applyPanelState(card);
+  persist(); // panel states survive a refresh
 });
 
 function inputId(prefix, name) {
@@ -657,15 +696,49 @@ function providers() {
   });
 }
 
+// The dropdown shows the EFFECTIVE provider for the selected program: a local per-file override
+// when one is set, else the project default from the manifest ([provider].backend in agape.toml).
+// Changing it sets/clears the per-file override (persisted locally, never written to the manifest);
+// "make project default" writes the manifest through the structured patch endpoint.
+function manifestProvider() {
+  const b = state.configValues?.provider?.backend;
+  return typeof b === "string" ? b : "mock";
+}
+
+function effectiveProvider(file) {
+  return (file && state.providerOverrides[file]) || manifestProvider();
+}
+
+function syncProviderDropdown() {
+  const eff = effectiveProvider(state.selected);
+  if (providers().some((p) => p.name === eff)) $("provider").value = eff;
+  updateProviderNote();
+}
+
 function renderProviders() {
   const ps = providers();
   $("provider").innerHTML = ps.map((p) => {
     const label = `${p.label || p.name}${p.enabled ? "" : " (locked)"}`;
     return `<option value="${esc(p.name)}" ${p.enabled ? "" : "disabled"}>${esc(label)}</option>`;
   }).join("");
-  const first = ps.find((p) => p.enabled);
-  if (first) $("provider").value = first.name;
-  updateProviderNote();
+  syncProviderDropdown();
+}
+
+async function makeProjectDefault() {
+  const v = $("provider").value;
+  try {
+    await api("/api/config/patch", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sets: [{ table: "provider", key: "backend", value: JSON.stringify(v) }] }),
+    });
+    if (state.selected) delete state.providerOverrides[state.selected];
+    persist();
+    state.meta = await api("/api/meta");
+    await loadConfig();
+    renderProviders();
+  } catch (e) {
+    $("results").innerHTML = `<div class="verdict bad"><div class="light"></div><b>Config write failed</b><span class="msg">${esc(e.message)}</span></div>`;
+  }
 }
 
 function updateProviderNote() {
@@ -673,7 +746,9 @@ function updateProviderNote() {
   const selected = ps.find((p) => p.name === $("provider").value) || ps.find((p) => p.enabled);
   const liveLocked = ps.some((p) => p.live && !p.enabled && state.meta.access && !state.meta.access.liveEnabled);
   const noLiveKeys = state.meta.access?.liveEnabled && !ps.some((p) => p.live && p.enabled);
-  let text = selected?.detail || "";
+  const overridden = state.selected && state.providerOverrides[state.selected]
+    && state.providerOverrides[state.selected] !== manifestProvider();
+  let text = esc(selected?.detail || "");
   let cls = "providerNote";
   if (selected?.live && selected.enabled) cls += " ready";
   if (liveLocked && selected?.name === "mock") {
@@ -682,9 +757,12 @@ function updateProviderNote() {
   } else if (noLiveKeys && selected?.name === "mock") {
     text = "Live mode is on; add provider API keys to .env.";
     cls += " warn";
+  } else if (overridden) {
+    text = `override for this file · project default: ${esc(manifestProvider())} · <a href="#" onclick="makeProjectDefault();return false">make default</a>`;
+    cls += " warn";
   }
   $("providerNote").className = cls;
-  $("providerNote").textContent = text;
+  $("providerNote").innerHTML = text;
 }
 
 function renderProgramList(programs) {
@@ -709,10 +787,102 @@ async function loadConfig() {
   const cfg = await api("/api/config");
   state.configSource = cfg.source || "";
   state.configExists = Boolean(cfg.exists);
+  state.configValues = cfg.values || {};
   $("configTitle").textContent = state.configExists ? "Config · agape.toml" : "Config · agape.toml · not saved";
   $("configSource").innerHTML = renderCode(state.configSource);
+  renderConfigForm();
+  syncProviderDropdown(); // the manifest default may have changed
   applyPanelState($("configCard"));
   updateConfigButtons();
+}
+
+// ---- the config FORM: the manifest's options as UI ----------------------------------------------
+// The form edits agape.toml through /api/config/patch (comment-preserving, per-key); the raw TOML
+// below it remains the canonical file, for inspection and occasional direct edits. Decision rules
+// are deliberately absent: thresholds/margins/floors live inline on the gate in source (§13/§17.2).
+const CONFIG_FIELDS = [
+  { table: "provider", key: "backend",              type: "provider", label: "provider backend" },
+  { table: "provider", key: "model",                type: "text",     label: "model" },
+  { table: "provider", key: "temperature",          type: "number",   label: "temperature" },
+  { table: "provider", key: "sampling_fallback",    type: "bool",     label: "sampling fallback" },
+  { table: "provider", key: "fallback_samples",     type: "number",   label: "fallback samples" },
+  { table: "provider", key: "fallback_temperature", type: "number",   label: "fallback temperature" },
+  { table: "identity", key: "backend",              type: "text",     label: "identity backend" },
+];
+
+function cfgFieldId(f) { return `cfg_${f.table}_${f.key}`; }
+
+function cfgCurrent(f) {
+  const v = state.configValues?.[f.table]?.[f.key];
+  return v === undefined ? "" : (typeof v === "object" ? v.raw : v);
+}
+
+function renderConfigForm() {
+  const fixed = CONFIG_FIELDS.map((f) => {
+    const cur = cfgCurrent(f);
+    let control;
+    if (f.type === "provider") {
+      const opts = providers().map((p) =>
+        `<option value="${esc(p.name)}" ${String(cur || "mock") === p.name ? "selected" : ""}>${esc(p.label || p.name)}</option>`).join("");
+      control = `<select id="${cfgFieldId(f)}" data-orig="${esc(String(cur))}">${opts}</select>`;
+    } else if (f.type === "bool") {
+      control = `<input id="${cfgFieldId(f)}" type="checkbox" ${cur === true ? "checked" : ""} data-orig="${esc(String(cur))}">`;
+    } else {
+      control = `<input id="${cfgFieldId(f)}" type="text" value="${esc(String(cur))}" data-orig="${esc(String(cur))}" placeholder="—">`;
+    }
+    return `<div class="cfgRow"><label>${esc(f.label)}<span>${esc(f.table)}</span></label>${control}</div>`;
+  });
+  // generic rows for the binding tables: each existing entry is editable as raw TOML text.
+  const generic = ["tools", "prompts", "memory"].flatMap((table) =>
+    Object.entries(state.configValues?.[table] || {}).map(([key, v]) => {
+      const raw = typeof v === "object" ? v.raw : (typeof v === "string" ? JSON.stringify(v) : String(v));
+      const id = `cfgraw_${table}_${key.replace(/[^\w.-]/g, "_")}`;
+      return `<div class="cfgRow"><label>${esc(key)}<span>${esc(table)}</span></label>
+        <input id="${esc(id)}" type="text" class="mono" value="${esc(raw)}" data-orig="${esc(raw)}" data-table="${esc(table)}" data-key="${esc(key)}"></div>`;
+    }));
+  $("configForm").innerHTML = fixed.join("") + generic.join("") +
+    `<div class="cfgActions"><button class="mini primary" id="applyConfig">Apply to agape.toml</button>
+     <span class="cfgNote">writes only the changed keys · comments preserved</span></div>`;
+  $("applyConfig").onclick = applyConfigForm;
+}
+
+function cfgTomlText(f, el) {
+  if (f.type === "bool") return el.checked ? "true" : "false";
+  const v = el.value.trim();
+  if (f.type === "number") return v; // validated server-side by TOML shape; empty = skip
+  return JSON.stringify(v); // text (and provider backend) → a quoted TOML string
+}
+
+async function applyConfigForm() {
+  const sets = [];
+  for (const f of CONFIG_FIELDS) {
+    const el = $(cfgFieldId(f));
+    if (!el) continue;
+    const now = f.type === "bool" ? String(el.checked) : (f.type === "provider" ? el.value : el.value.trim());
+    if (now === el.dataset.orig) continue;          // untouched
+    if (now === "" && el.dataset.orig === "") continue;
+    if (now === "") continue;                        // no way to delete keys from the form; use the raw editor
+    sets.push({ table: f.table, key: f.key, value: cfgTomlText(f, el) });
+  }
+  for (const el of document.querySelectorAll("#configForm input[data-table]")) {
+    if (el.value.trim() === el.dataset.orig || el.value.trim() === "") continue;
+    sets.push({ table: el.dataset.table, key: el.dataset.key, value: el.value.trim() });
+  }
+  if (!sets.length) return;
+  $("applyConfig").disabled = true;
+  try {
+    await api("/api/config/patch", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sets }),
+    });
+    state.meta = await api("/api/meta"); // provider availability may change with the backend
+    renderProviders();
+    await loadConfig();
+    $("results").innerHTML = `<div class="verdict ok"><div class="light"></div><b>Config applied</b><span class="msg">${sets.length} key(s) written to agape.toml — used on the next run.</span></div>`;
+  } catch (e) {
+    $("results").innerHTML = `<div class="verdict bad"><div class="light"></div><b>Config write failed</b><span class="msg">${esc(e.message)}</span></div>`;
+    $("applyConfig").disabled = false;
+  }
 }
 
 async function init() {
@@ -721,9 +891,14 @@ async function init() {
   try {
     state.meta = await api("/api/meta");
     $("dir").textContent = state.meta.dir;
+    // restore the persisted view: panel states, per-file provider overrides, and the last selection.
+    const saved = loadPersisted();
+    state.collapsed = saved.collapsed || {};
+    state.providerOverrides = saved.providerOverrides || {};
+    applyAllPanelStates();
     renderProviders();
     await loadConfig();
-    await loadPrograms();
+    await loadPrograms(saved.selected);
   } catch (e) {
     $("programs").innerHTML = `<div class="empty" style="color:var(--red)">couldn't reach the studio server<br>
       <span style="font:11px var(--mono)">${esc(e.message)}</span><br><br>
@@ -752,13 +927,25 @@ async function select(name) {
   applyPanelState($("sourceCard"));
   state.sessionId = null;
   state.listening = false;
+  syncProviderDropdown();  // effective provider = per-file override ?? manifest default
+  persist();               // the selection survives a refresh
   updateRunControls();
   updateSourceButtons();
   const note = origin === "example" ? "This bundled example is not written into the project directory." : "Press Run to inspect the ledger.";
   $("results").innerHTML = `<div class="empty"><b>${esc(name)}</b><br><br>${esc(note)}</div>`;
 }
 
-$("provider").onchange = updateProviderNote;
+$("provider").onchange = () => {
+  // selecting a provider sets a per-file override (cleared when it matches the project default);
+  // the manifest changes only through "make default" or the config form.
+  if (state.selected) {
+    const v = $("provider").value;
+    if (v === manifestProvider()) delete state.providerOverrides[state.selected];
+    else state.providerOverrides[state.selected] = v;
+    persist();
+  }
+  updateProviderNote();
+};
 $("editSource").onclick = () => setEditing(true);
 $("editConfig").onclick = () => setConfigEditing(true);
 $("cancelEdit").onclick = () => {
@@ -818,6 +1005,7 @@ $("saveConfig").onclick = async () => {
     $("configTitle").textContent = "Config · agape.toml";
     $("configSource").innerHTML = renderCode(state.configSource);
     setConfigEditing(false);
+    await loadConfig(); // re-parse values → refresh the form + the effective provider
     state.meta = await api("/api/meta");
     const selectedProvider = $("provider").value;
     renderProviders();
