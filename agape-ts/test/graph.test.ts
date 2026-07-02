@@ -45,14 +45,15 @@ awake desk;
 describe("graph: the gated-sink chain", () => {
   const g = graphOf(GATED);
 
-  it("has the instance cluster, its hook, and the gate", () => {
+  it("has the instance cluster, its hook, and the standalone gate diamond", () => {
     const agent = node(g, "agent:desk");
     expect(agent?.kind).toBe("agent");
     expect(agent?.label).toBe("desk: Desk");
     const hook = node(g, "hook:desk/awake");
     expect(hook?.parent).toBe("agent:desk");
     const gate = g.nodes.find((n) => n.kind === "gate");
-    expect(gate?.parent).toBe("agent:desk");
+    expect(gate?.parent).toBeUndefined(); // the decision is pulled OUT of the agent box
+    expect(gate?.meta?.agent).toBe("desk");
     expect(gate?.meta?.enum).toBe("Verdict");
     expect(String(gate?.meta?.rule)).toContain("confidence 0.85");
     expect(String(gate?.meta?.rule)).toContain("margin 0.1");
@@ -74,31 +75,39 @@ describe("graph: the gated-sink chain", () => {
     expect(flow.some((e) => e.from === askClaim.id && e.to === gate.id)).toBe(true);
   });
 
-  it("guards the sink edge with the committed variant", () => {
-    expect(node(g, "sink:Reimburse")?.kind).toBe("sink");
+  it("guards the per-site sink box with the committed variant", () => {
+    const site = g.nodes.find((n) => n.kind === "sink")!;
+    expect(site.label).toBe("perform Reimburse");
+    expect(site.meta?.action).toBe("Reimburse");
+    expect(site.meta?.variant).toBe("Approve");
     const sink = edges(g, "sink");
     expect(sink.length).toBe(1);
-    expect(sink[0]!.to).toBe("sink:Reimburse");
+    expect(sink[0]!.to).toBe(site.id);
     expect(sink[0]!.variant).toBe("Approve");
     // the edge leaves the GATE, not the hook — the sink is reachable only through the gate.
     expect(sink[0]!.from).toBe(g.nodes.find((n) => n.kind === "gate")!.id);
   });
 
-  it("wires emit -> the top-level subscriber, with variant guards where present", () => {
-    const ev = edges(g, "event");
-    expect(ev.length).toBe(3); // one per emit site (Approve / Deny / abstain arms)
-    for (const e of ev) {
-      expect(e.label).toBe("Logged");
-      expect(node(g, e.to)?.kind).toBe("handler");
+  it("gives each emit its own site box and wires sites -> the subscriber", () => {
+    const sites = g.nodes.filter((n) => n.kind === "emit");
+    expect(sites.length).toBe(3); // one per arm (Approve / Deny / abstain)
+    for (const st of sites) {
+      expect(st.label).toBe("emit Logged");
+      expect(st.meta?.consumed).toBe(true);
     }
-    // branch labels: the two variants plus the residual "else" (abstain) arm
-    expect(ev.map((e) => e.variant).sort()).toEqual(["Approve", "Deny", "else"].sort());
+    expect(sites.map((st) => st.meta?.variant).sort()).toEqual(["Approve", "Deny", "abstain"].sort());
+    const ev = edges(g, "event");
+    const armEdges = ev.filter((e) => node(g, e.to)?.kind === "emit");
+    const subEdges = ev.filter((e) => node(g, e.to)?.kind === "handler");
+    expect(armEdges.length).toBe(3); // gate -> site, branch-guarded
+    expect(armEdges.map((e) => e.variant).sort()).toEqual(["Approve", "Deny", "abstain"].sort());
+    expect(subEdges.length).toBe(3); // site -> the top-level subscriber, labelled by the event
+    for (const e of subEdges) expect(e.label).toBe("Logged");
   });
 
   it("omits the boilerplate program node (top level is only spawn/awake/when)", () => {
     expect(node(g, "top")).toBeUndefined();
     expect(edges(g, "spawn").length).toBe(0);
-    expect(g.nodes.filter((n) => n.kind === "event").length).toBe(0);
   });
 });
 
@@ -130,12 +139,14 @@ awake t;
     expect(node(g, esc[0]!.from)?.kind).toBe("gate");
   });
 
-  it("keeps the unconsumed emit visible as a dead-end event node", () => {
-    const ev = node(g, "event:Wired");
-    expect(ev?.kind).toBe("event");
+  it("keeps the unconsumed emit visible as a dashed dead-end site", () => {
+    const site = g.nodes.find((n) => n.kind === "emit")!;
+    expect(site.label).toBe("emit Wired");
+    expect(site.meta?.consumed).toBe(false);
+    expect(site.meta?.variant).toBe("abstain"); // it lives in the residual arm
     const e = edges(g, "event");
-    expect(e.length).toBe(1);
-    expect(e[0]!.to).toBe("event:Wired");
+    expect(e.length).toBe(1); // gate -> site only; no subscriber edges
+    expect(e[0]!.to).toBe(site.id);
   });
 });
 
@@ -185,10 +196,11 @@ awake a;
     expect(q[0]!.label).toBe("Held");
   });
 
-  it("wires the intra-agent event edge emit Held -> when Held", () => {
-    const ev = edges(g, "event").filter((e) => e.label === "Held");
-    expect(ev.length).toBe(1);
-    expect(node(g, ev[0]!.to)?.label).toBe("when Held");
+  it("wires emit Held through its site to when Held", () => {
+    const sub = edges(g, "event").filter((e) => e.label === "Held");
+    expect(sub.length).toBe(1);
+    expect(node(g, sub[0]!.from)?.kind).toBe("emit");
+    expect(node(g, sub[0]!.to)?.label).toBe("when Held");
   });
 });
 
@@ -219,6 +231,6 @@ describe("graph: dot output", () => {
     const dot = toDot(graphOf(GATED));
     expect(dot).toContain("digraph");
     expect(dot).toContain("subgraph cluster_");
-    expect(dot).toContain("sink:Reimburse");
+    expect(dot).toContain("perform Reimburse");
   });
 });

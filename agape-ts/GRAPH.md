@@ -18,14 +18,14 @@ validates; a program that parses and checks always has a graph.
 | `agent`     | statically spawned instance                | `name: AgentType`        | `agentType`, `grants`, `spawnLine` |
 | `handler`   | `when` clause (in an agent or top-level)   | `when EventType`         | `guard`, `about` |
 | `hook`      | `on awake/sleep/crash` hook                | `on awake`               | — |
-| `ask`       | self-send (`self <- …`) — a testimony step | `ask Credence<E>`        | `reply` |
-| `gate`      | `decide` site                              | `decide Credence<E>`     | `enum`, `rule`, `principal`, `quorum`, `endorses` |
-| `sink`      | action that some `perform` targets         | action name              | `reversible`, `fields` |
+| `ask`       | self-send (`self <- …`) — a testimony step | `ask Credence<E>`        | `reply`, `binding` |
+| `gate`      | `decide` site — a STANDALONE decision diamond named by the enum (not a cluster member: the chain drops out of the agent box into it) | `decide Credence<E>` | `enum`, `rule`, `principal`, `quorum`, `endorses`, `agent` |
+| `sink`      | each `perform` SITE (one box per site)     | `perform Action`         | `action`, `variant`, `reversible`, `agent` |
+| `emit`      | each `emit` SITE (one box per site; dashed when no subscriber) | `emit Event` | `event`, `variant`, `consumed`, `agent` |
 | `tool`      | tool that some call targets                | tool name                | `effect`, `reversible` |
 | `principal` | declared `principal`                       | name                     | — |
 | `prompt`    | declared `prompt T NAME` sensor            | `prompt T NAME`          | `type` |
 | `mem`       | `mem` handle (per instance)                | handle name              | — |
-| `event`     | emitted event type with **no** subscriber  | `EventType (unconsumed)` | — |
 | `ledger`    | program that queries the ledger            | `ledger`                 | — |
 
 `agent`, `top` also act as **clusters**: `handler`/`hook`/`gate`/`mem` nodes carry a `parent`
@@ -40,12 +40,12 @@ agent node labelled with the binding name — the edge is still drawn, marked `r
 
 | kind       | drawn from → to                                        | label |
 |------------|--------------------------------------------------------|-------|
-| `event`    | emitting site's node → each subscribing `handler`      | event type |
+| `event`    | gate/context → its `emit` site (branch-guarded), and `emit` site → each subscribing `handler` (labelled by the event type) |  |
 | `prompt`   | `prompt` sensor → `when (Prompt p about NAME)` handler | `Prompt` |
 | `send`     | sending context → destination `agent`                  | expected reply type (when bound `T x = dest <- …`) |
 | `flow`     | the ask/gate dataflow chain: hook/handler → `ask` → … → `gate` (unlabelled — the target node names the type). An ask's in-edges come from the asks whose bindings its prompt references; a gate's from the asks that produced its credence **and** its endorsed subject. |
 | `escalate` | `gate` → `principal` (a principal-prefixed decide)     | `escalate` |
-| `sink`     | gate (or context) → `sink`                             | action; `variant` = the committed branch guarding it |
+| `sink`     | gate (or context) → the `perform` site                 | `variant` = the committed branch guarding it |
 | `tool`     | context → `tool`                                       | tool name |
 | `store`    | context → `mem`                                        | `store` |
 | `recall`   | `mem` → context                                        | `recall` (always-tainted; rendered dashed) |
@@ -54,8 +54,11 @@ agent node labelled with the binding name — the edge is still drawn, marked `r
 
 **Variant-guarded edges**: while walking a body, an `if (d.committed == V)` whose scrutinee binds a
 `decide` in the same context pushes that gate+variant; a `perform`/`emit`/send inside the branch is
-attributed to the *gate node* with `variant: V`. This is exactly the §13 story made visible: the
-sink edge exists only out of a committed branch, and the graph shows which variant arms it.
+attributed to the *gate node* with `variant: V` — and the residual `else` of the chain carries
+`variant: "abstain"`. In the UI a gate's out-edges are labelled by BRANCH only (`Publish`,
+`Revise`, `abstain`), flowchart-style, at the fork: the target box already names the consequence
+(`perform Announce`, `emit Revised`). This is the §13 story made visible: the sink edge exists
+only out of a committed branch, and the graph shows which variant arms it.
 
 Self-sends (`self <- …`, the agent's own cognition) are `ask` nodes — each one is a model call
 producing a typed reply, i.e. a TESTIMONY step in the §13 chain, so it is part of the topology.

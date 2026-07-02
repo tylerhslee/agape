@@ -8,7 +8,7 @@ import type * as A from "./ast.js";
 export interface GraphNode {
   id: string;
   kind:
-    | "top" | "agent" | "handler" | "hook" | "ask" | "gate" | "sink" | "tool"
+    | "top" | "agent" | "handler" | "hook" | "ask" | "gate" | "sink" | "emit" | "tool"
     | "principal" | "prompt" | "mem" | "event" | "ledger";
   label: string;
   parent?: string; // cluster (an agent instance, or "top")
@@ -254,15 +254,18 @@ export function buildGraph(program: A.Program, programName = ""): ProgramGraph {
       switch (e.kind) {
         case "decide": {
           const enumName = declType?.kind === "decision" ? declType.enumName : enumOfCredence(e.credence);
+          // the gate is a STANDALONE decision diamond (not a cluster member): the chain drops out
+          // of the agent box into it, and its arms fan to per-site consequence boxes.
           const gid = `gate:${ctx.nodeId}#${siteSeq++}`;
           addNode({
-            id: gid, kind: "gate", parent: ctx.instance ? `agent:${ctx.instance.name}` : undefined,
+            id: gid, kind: "gate",
             label: `decide${enumName ? ` Credence<${enumName}>` : ""}`, line: line(e),
             meta: {
               ...(enumName ? { enum: enumName, variants: enums.get(enumName)?.variants } : {}),
               rule: ruleLabel(e.rule),
               ...(e.principal ? { principal: e.principal } : {}),
               ...(e.credence.kind === "quorum" ? { quorum: e.credence.k } : {}),
+              ...(ctx.instance ? { agent: ctx.instance.name } : {}),
             },
           });
           // the credence flows in from the ask(s) that produced it — real dataflow, no label
@@ -390,22 +393,36 @@ export function buildGraph(program: A.Program, programName = ""): ProgramGraph {
           case "assign": visitExpr(s.value, at); break;
           case "exprstmt": visitExpr(s.expr, at); break;
           case "emit": {
+            // each emit SITE is its own consequence box (`emit E`); subscribers hang off the site.
             const consumers = subs.filter((x) => x.etype === s.name);
-            if (consumers.length === 0 && events.has(s.name)) {
-              addNode({ id: `event:${s.name}`, kind: "event", label: `${s.name} (unconsumed)`, line: line(events.get(s.name)!) });
-              addEdge({ from: at.nodeId, to: `event:${s.name}`, kind: "event", label: s.name, variant: at.variant, line: line(s) });
-            }
-            for (const c of consumers) addEdge({ from: at.nodeId, to: c.nodeId, kind: "event", label: s.name, variant: at.variant, line: line(s) });
+            const sid = `do:${ctx.nodeId}#${siteSeq++}`;
+            addNode({
+              id: sid, kind: "emit", label: `emit ${s.name}`, line: line(s),
+              meta: {
+                event: s.name, consumed: consumers.length > 0,
+                ...(at.variant ? { variant: at.variant } : {}),
+                ...(ctx.instance ? { agent: ctx.instance.name } : {}),
+              },
+            });
+            addEdge({ from: at.nodeId, to: sid, kind: "event", variant: at.variant, line: line(s) });
+            for (const c of consumers) addEdge({ from: sid, to: c.nodeId, kind: "event", label: s.name, line: line(s) });
             s.args.forEach((a) => visitExpr(a, at));
             break;
           }
           case "perform": {
+            // each perform SITE is its own consequence box (`perform A`).
             const a = actions.get(s.name);
+            const sid = `do:${ctx.nodeId}#${siteSeq++}`;
             addNode({
-              id: `sink:${s.name}`, kind: "sink", label: s.name, line: a ? line(a) : line(s),
-              meta: a ? { reversible: a.reversible, fields: a.fields.map((f) => `${typeLabel(f.type)} ${f.name}`) } : {},
+              id: sid, kind: "sink", label: `perform ${s.name}`, line: line(s),
+              meta: {
+                action: s.name,
+                ...(a ? { reversible: a.reversible } : {}),
+                ...(at.variant ? { variant: at.variant } : {}),
+                ...(ctx.instance ? { agent: ctx.instance.name } : {}),
+              },
             });
-            addEdge({ from: at.nodeId, to: `sink:${s.name}`, kind: "sink", label: s.name, variant: at.variant, line: line(s) });
+            addEdge({ from: at.nodeId, to: sid, kind: "sink", variant: at.variant, line: line(s) });
             s.args.forEach((x) => visitExpr(x, at));
             break;
           }
@@ -415,8 +432,8 @@ export function buildGraph(program: A.Program, programName = ""): ProgramGraph {
             if (n) {
               visitStmts(s.then, { nodeId: n.gate.nodeId, variant: n.variant });
               // the else of a narrowing chain is the residual arm; a nested `else if` narrowing
-              // overrides this with its own variant, so only the FINAL else keeps "else" (abstain).
-              if (s.else) visitStmts(s.else, { nodeId: n.gate.nodeId, variant: "else" });
+              // overrides this with its own variant, so only the FINAL else keeps "abstain" (§13).
+              if (s.else) visitStmts(s.else, { nodeId: n.gate.nodeId, variant: "abstain" });
             } else {
               visitStmts(s.then, at);
               if (s.else) visitStmts(s.else, at);
@@ -493,7 +510,7 @@ export function toDot(g: ProgramGraph): string {
   const q = (s: string) => JSON.stringify(s);
   const shape: Record<GraphNode["kind"], string> = {
     top: "box", agent: "box", handler: "box", hook: "box", ask: "ellipse", gate: "diamond", sink: "doubleoctagon",
-    tool: "component", principal: "house", prompt: "cds", mem: "cylinder", event: "note", ledger: "cylinder",
+    emit: "note", tool: "component", principal: "house", prompt: "cds", mem: "cylinder", event: "note", ledger: "cylinder",
   };
   const lines: string[] = [`digraph ${q(g.program || "agape")} {`, `  rankdir=LR;`, `  node [fontname="monospace", fontsize=10];`];
   const clustered = new Map<string, GraphNode[]>();

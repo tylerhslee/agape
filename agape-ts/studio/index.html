@@ -351,11 +351,12 @@
   .gcluster > rect { fill: rgba(255,255,255,.02); stroke: #2b3347; }
   .gcluster > text { fill: var(--dim); font: 600 12px var(--mono); }
   .gnode { cursor: pointer; }
-  .gnode rect { fill: var(--panel2); stroke: #3d465e; stroke-width: 1.2; transition: stroke .15s; }
+  .gnode rect, .gnode polygon { fill: var(--panel2); stroke: #3d465e; stroke-width: 1.2; transition: stroke .15s; }
   .gnode text { fill: #9aa5bd; font: 12.5px var(--mono); pointer-events: none; }
   .gnode text.sub { fill: #6b7488; font-size: 10.5px; }
-  .gnode:hover rect { stroke: var(--accent); }
-  .gnode.k-mem rect, .gnode.k-ledger rect, .gnode.k-event rect { stroke-dasharray: 5 4; }
+  .gnode:hover rect, .gnode:hover polygon { stroke: var(--accent); }
+  .gnode.k-mem rect, .gnode.k-ledger rect, .gnode.k-event rect, .gnode.unconsumed rect { stroke-dasharray: 5 4; }
+  .gnode.unconsumed text { opacity: .75; }
   .gnode.k-agent rect { fill: transparent; stroke: none; }
   .gnode.k-agent text { fill: #b6c0d6; font-weight: 600; font-size: 12px; }
   .gnode.k-ask text { font-style: italic; }
@@ -365,13 +366,13 @@
     paint-order: stroke; stroke: var(--bg); stroke-width: 3.5px; stroke-linejoin: round;
   }
   .gedge.dashed path { stroke-dasharray: 5 4; }
-  .gnode.lit rect { stroke: var(--green); stroke-width: 2; filter: drop-shadow(0 0 6px rgba(52,211,153,.55)); }
+  .gnode.lit rect, .gnode.lit polygon { stroke: var(--green); stroke-width: 2; filter: drop-shadow(0 0 6px rgba(52,211,153,.55)); }
   .gnode.lit text { fill: #dbe2f0; }
   .gedge.lit path { stroke-width: 2.4; opacity: 1; filter: drop-shadow(0 0 3px rgba(52,211,153,.35)); }
-  .gnode.fail rect { stroke: var(--red); stroke-width: 2; filter: drop-shadow(0 0 6px rgba(248,113,113,.55)); }
+  .gnode.fail rect, .gnode.fail polygon { stroke: var(--red); stroke-width: 2; filter: drop-shadow(0 0 6px rgba(248,113,113,.55)); }
   .gnode.fail text { fill: #f3c6c6; }
-  .gnode.pend rect, .gedge.pend path { animation: pulse 1.4s ease-in-out infinite; }
-  .gnode.pend rect { stroke: var(--amber); stroke-width: 2; }
+  .gnode.pend rect, .gnode.pend polygon, .gedge.pend path { animation: pulse 1.4s ease-in-out infinite; }
+  .gnode.pend rect, .gnode.pend polygon { stroke: var(--amber); stroke-width: 2; }
   .gnode.pend text { fill: #f4e3b2; }
   .gedge.pend path { stroke: var(--amber) !important; stroke-width: 2.4; }
   .graphLegend { display: flex; gap: 4px 14px; flex-wrap: wrap; font: 10px var(--mono); color: var(--faint); margin-top: 10px; }
@@ -1928,11 +1929,7 @@ function rankUnits(units, unitOf, edges) {
     }
     if (!moved) break;
   }
-  const EFFECT = new Set(["sink", "tool", "principal", "ledger", "event"]);
-  let maxR = 0;
-  for (const v of rank.values()) maxR = Math.max(maxR, v);
   for (const u of units) {
-    if (EFFECT.has(u.head.kind)) rank.set(u.id, Math.max(rank.get(u.id), maxR));
     if (u.head.kind === "prompt" || u.head.kind === "top") rank.set(u.id, 0);
   }
   return rank;
@@ -1950,20 +1947,30 @@ function graphOverlay(g, events, map) {
     const d = p.decision && typeof p.decision === "object" ? p.decision : p; // flat or nested payload
     const v = typeof p.decision === "string" ? p.decision : (d.effectiveCommitted || d.committed);
     if (v && v !== "abstained") committed.add(v);
-    else committed.add("else"); // an abstained decision witnesses the residual arm
+    else committed.add("abstain"); // an abstained decision witnesses the residual arm
   }
   const variantOk = (e) => !e.variant || committed.has(e.variant);
   const litEdges = (pred) => { for (const e of g.edges) if (pred(e) && variantOk(e)) le.add(e.id); };
   const gatesOf = (agent, en) => new Set(g.nodes.filter((n) =>
-    n.kind === "gate" && (!agent || n.parent === "agent:" + agent) && (!en || (n.meta || {}).enum === en)
+    n.kind === "gate" && (!agent || (n.meta || {}).agent === agent) && (!en || (n.meta || {}).enum === en)
   ).map((n) => n.id));
+  const siteOk = (n) => !n.meta?.variant || committed.has(n.meta.variant);
   for (const ev of events || []) {
     const t = ev.etype, p = ev.payload || {}, ag = ev.agent;
-    if (map?.actions?.includes(t)) { litNode("sink:" + t); litEdges((e) => e.kind === "sink" && e.to === "sink:" + t); continue; }
-    if (map?.events?.includes(t)) {
-      litNode("event:" + t);
-      // the event fired: light its edges AND the handlers that consumed it
-      for (const ed of g.edges) if (ed.kind === "event" && ed.label === t && variantOk(ed)) { le.add(ed.id); ln.add(ed.to); }
+    if (map?.actions?.includes(t)) { // a sink fired: light the site(s) in the committed arm
+      const sites = new Set(g.nodes.filter((n) => n.kind === "sink" && n.meta?.action === t && siteOk(n)).map((n) => n.id));
+      for (const id of sites) ln.add(id);
+      litEdges((e) => e.kind === "sink" && sites.has(e.to));
+      continue;
+    }
+    if (map?.events?.includes(t)) { // an event fired: light its site(s), sub edges, and consumers
+      const sites = new Set(g.nodes.filter((n) => n.kind === "emit" && n.meta?.event === t && siteOk(n)).map((n) => n.id));
+      for (const id of sites) ln.add(id);
+      for (const ed of g.edges) {
+        if (ed.kind !== "event") continue;
+        if (sites.has(ed.to) && variantOk(ed)) le.add(ed.id);          // gate/ctx -> site
+        if (sites.has(ed.from)) { le.add(ed.id); ln.add(ed.to); }       // site -> consumer
+      }
       continue;
     }
     switch (t) {
@@ -2029,10 +2036,10 @@ function drawGraph(events, map) {
   const UW = 250, PADX = 12, HEADH = 30, MGAP = 18, RGAP = 92, HGAP = 64, M = 18;
   const GREY = "#3d465e", GREYTEXT = "#828ca3";
   const rowH = (n) => (n.kind === "gate" ? 52 : n.kind === "ask" ? 34 : 36);
-  const unitH = (u) => u.members.length ? HEADH + 8 + u.members.reduce((a, m) => a + rowH(m) + MGAP, 0) + 2 : 40;
+  const unitH = (u) => u.members.length ? HEADH + 8 + u.members.reduce((a, m) => a + rowH(m) + MGAP, 0) + 2 : (u.head.kind === "gate" ? 76 : 40);
   const rows = new Map();
   for (const u of units) { const r = rank.get(u.id); if (!rows.has(r)) rows.set(r, []); rows.get(r).push(u); }
-  const KIND_ORDER = { top: 0, prompt: 1, agent: 2, sink: 3, tool: 4, event: 5, handler: 6, principal: 7, ledger: 8, mem: 9 };
+  const KIND_ORDER = { top: 0, prompt: 1, agent: 2, gate: 3, sink: 4, emit: 5, tool: 6, event: 7, handler: 8, principal: 9, ledger: 10, mem: 11 };
   const sortedRanks = [...rows.keys()].sort((a, b) => a - b);
   const rankIndex = new Map(sortedRanks.map((r, i) => [r, i]));
   const hasUp = g.edges.some((e) => {
@@ -2068,8 +2075,9 @@ function drawGraph(events, map) {
         u.frame = { x, y, w: UW, h };
         unitRect.set(u.id, u.frame);
       } else {
-        pos.set(u.head.id, { x, y, w: UW, h: 40 });
-        unitRect.set(u.id, { x, y, w: UW, h: 40 });
+        const sh = u.head.kind === "gate" ? 76 : 40;
+        pos.set(u.head.id, { x, y, w: UW, h: sh });
+        unitRect.set(u.id, { x, y, w: UW, h: sh });
       }
       rh = Math.max(rh, h);
       x += UW + HGAP;
@@ -2185,7 +2193,11 @@ function drawGraph(events, map) {
       dropX = lx;
     } else {
       const sx = portX(s, botPorts.get(e.from), e);
-      head = `M ${sx} ${s.y + s.h}`;
+      // a gate is a diamond: start the drop on its sloped lower edge, not the bounding box
+      const sy0 = nodeKind.get(e.from) === "gate"
+        ? s.y + s.h - (s.h / 2) * (Math.abs(sx - (s.x + s.w / 2)) / (s.w / 2))
+        : s.y + s.h;
+      head = `M ${sx} ${sy0}`;
       dropX = sx;
     }
     if (rankIndex.get(rb) - rankIndex.get(ra) > 1 && blockedDrop(dropX, ra, rb)) {
@@ -2203,7 +2215,10 @@ function drawGraph(events, map) {
       endX = lx;
     } else {
       const tx = portX(t, topPorts.get(e.to), e);
-      tail = ` L ${tx} ${cy} L ${tx} ${t.y - 3}`;
+      const ty0 = nodeKind.get(e.to) === "gate"
+        ? t.y + (t.h / 2) * (Math.abs(tx - (t.x + t.w / 2)) / (t.w / 2)) - 3
+        : t.y - 3;
+      tail = ` L ${tx} ${cy} L ${tx} ${ty0}`;
       endX = tx;
     }
     epaths.push(`<g class="${v.cls}"><path d="${head}${tail}" stroke="${v.color}" ${v.marker}></path></g>`);
@@ -2254,15 +2269,23 @@ function drawGraph(events, map) {
     if (!p) continue;
     const lit = over.ln.has(n.id), failed = over.fail.has(n.id);
     const pendNode = pend && n.id === "principal:" + pend.principal;
-    const cls = `gnode k-${n.kind}${lit && !failed ? " lit" : ""}${failed ? " fail" : ""}${pendNode ? " pend" : ""}`;
+    const unconsumed = n.kind === "emit" && n.meta?.consumed === false;
+    const cls = `gnode k-${n.kind}${lit && !failed ? " lit" : ""}${failed ? " fail" : ""}${pendNode ? " pend" : ""}${unconsumed ? " unconsumed" : ""}`;
     const maxChars = Math.floor((p.w - 16) / 7.2);
     let body;
     if (p.cluster) {
       body = `${gtext(p.x + 10, p.y + 20, "", n.label, maxChars)}`;
+    } else if (n.kind === "gate") {
+      // the decision DIAMOND, named by the enum; the rule reads as a sub-line under the name
+      const cx = p.x + p.w / 2, cy0 = p.y + p.h / 2;
+      const ruleText = String(n.meta?.rule || "") + (n.meta?.principal ? ` · by ${n.meta.principal}` : "");
+      body = `<polygon points="${cx},${p.y} ${p.x + p.w},${cy0} ${cx},${p.y + p.h} ${p.x},${cy0}"></polygon>
+        <text text-anchor="middle" x="${cx}" y="${cy0 - 2}">${esc(String(n.meta?.enum || "decide"))}</text>
+        ${ruleText ? `<text text-anchor="middle" class="sub" x="${cx}" y="${cy0 + 14}">${esc(ruleText.length > 24 ? ruleText.slice(0, 23) + "…" : ruleText)}</text>` : ""}`;
     } else {
       body = `<rect x="${p.x}" y="${p.y}" width="${p.w}" height="${p.h}" rx="7"></rect>
-        ${gtext(p.x + 9, p.y + (n.kind === "gate" ? 20 : p.h / 2 + 4.5), "", n.label, maxChars)}
-        ${n.kind === "gate" && n.meta?.rule ? gtext(p.x + 9, p.y + 38, "sub", String(n.meta.rule) + (n.meta.principal ? ` · by ${n.meta.principal}` : ""), maxChars + 5) : ""}`;
+        ${gtext(p.x + 9, p.y + (unconsumed ? p.h / 2 - 1 : p.h / 2 + 4.5), "", n.label, maxChars)}
+        ${unconsumed ? gtext(p.x + 9, p.y + p.h / 2 + 13, "sub", "no subscriber", maxChars) : ""}`;
     }
     nparts.push(`<g class="${cls}" data-node="${esc(n.id)}" data-line="${n.line || 1}"><title>${esc(n.label + (n.meta?.rule ? ` — ${n.meta.rule}` : ""))}</title>${body}</g>`);
   }
@@ -2277,9 +2300,10 @@ function drawGraph(events, map) {
     <defs>${markers}</defs>${epaths.join("")}${nparts.join("")}</svg>`;
 
   { // exact de-collision: measure REAL text boxes post-render, nudge until label touches nothing
-    const rects = [...host.querySelectorAll(".gnode rect")].map((r) => ({
-      x: +r.getAttribute("x"), y: +r.getAttribute("y"), w: +r.getAttribute("width"), h: +r.getAttribute("height"),
-    }));
+    const rects = [...host.querySelectorAll(".gnode rect, .gnode polygon")].map((r) => {
+      const b = r.getBBox();
+      return { x: b.x, y: b.y, w: b.width, h: b.height };
+    });
     const PAD = 3; // breathing room: a corner-graze reads as an overlap too
     const hit = (a, b) => a.x - PAD < b.x + b.w && b.x - PAD < a.x + a.w && a.y - PAD < b.y + b.h && b.y - PAD < a.y + a.h;
     const norm = (b) => ({ x: b.x, y: b.y, w: b.width ?? b.w, h: b.height ?? b.h });
