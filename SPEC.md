@@ -175,10 +175,12 @@ Trust is contagious upward; only a gate moves a value down toward **settled**. A
 ### Axis C — ledger presence: values vs ledger records
 
 Every dependency reach and kernel transition is ledgered, but ordinary provider replies
-are ordinary typed values. A binding such as `Receipt r = self <- "..."` records the
-send lifecycle (`Sent`/`Delivered`/`Resolved`) and yields a `Receipt` value; it does not
-wrap the value in a surface `event<T>` type. Ledger presence is inspected through events,
-receipts, and ledger queries, not by changing the reply's value type.
+are ordinary typed values. If a program declares `struct Receipt { text id }`, a binding
+such as `Receipt r = self <- "..."` records the send lifecycle
+(`Sent`/`Delivered`/`Resolved`) and yields an ordinary user-defined `Receipt` value; it
+does not wrap the value in a surface `event<T>` type or imply a built-in send handle.
+Ledger presence is inspected through events and ledger queries, not by changing the
+reply's value type.
 
 Named `event Foo(...)` declarations remain the way to define ledger-record payloads for
 `emit`, `when`, and typed ledger queries. A matched event binding exposes its payload
