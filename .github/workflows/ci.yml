@@ -12,6 +12,17 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  versions:
+    name: version references in sync
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Check VERSION.md against tracked references
+        run: node scripts/check-version.mjs
+
   # ── the language: compiler + runtime + the conformance suite ──────────────
   agape-rs:
     name: agape-rs (build · test · conformance)

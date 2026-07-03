@@ -1,6 +1,6 @@
 # Agape Runtime Conformance
 
-This is the TypeScript black-box conformance suite for the Agape runtime contract in `../SPEC.md` version `v1.0.0-alpha.2026.6.30.0`.
+This is the TypeScript black-box conformance suite for the Agape runtime contract in `../SPEC.md` version `v1.0.0-alpha.2026.7.2.2`.
 
 The tests are derived only from the spec, especially sections 16, 16.7, 16.8, 16.9, 17.5, and 17.6. They do not import or assume the Rust runtime, Studio runtime, or any existing implementation.
 

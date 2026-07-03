@@ -12,7 +12,8 @@
     "hello": "tsx src/cli.ts run examples/hello.ag",
     "studio": "tsx src/cli.ts studio",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "version:check": "node ../scripts/check-version.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "latest",
