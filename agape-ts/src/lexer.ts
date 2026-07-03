@@ -29,6 +29,7 @@ export const KEYWORDS = new Set([
   "decide", "endorse", "perform", "emit", "abstain",
   "find", "where", "select", "from", "match",
   "mem", "forget",
+  "task", "complete", "fail", "cancel",
   "all", "any", "quorum", "independent", "dependent",
   "true", "false", "abstained",
   "module", "import", "pub", "interface", "requires",

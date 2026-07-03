@@ -1,6 +1,6 @@
-# Agape v1.0.0-alpha.2026.7.2.2 — Conformance Test Index
+# Agape v1.0.0-alpha.2026.7.2.3 — Conformance Test Index
 
-**168 tests** — accept: 104, reject: 64
+**202 tests** — accept: 120, reject: 82
 
 A conformant implementation must satisfy every `accept`/`reject` test (rejects with the declared error class; accepts matching any asserted spine).
 
@@ -100,6 +100,40 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 | `comm_send_lost_no_delivery` | accept | — | §6 (a send to a non-awake agent is lost — the chain stalls at Sent, never Delivered; loss is the absence of Delivered, not an event) |
 | `comm_typed_reply` | accept | — | §6 (a typed reply binds the provider answer into a typed value; the send lifecycle is ledgered) |
 
+## 06c_delegation
+
+| id | expect | error | spec |
+|---|---|---|---|
+| `del_background_expiry_alias` | accept | — | §6c (TaskExpired is a subscription ALIAS for Expired filtered to task-sends — no row of its own; a background expiry never faults the delegator) |
+| `del_background_when_completed` | accept | — | §6c (a background task-send binds a settled Task<T> handle; the outcome is observed with `when (TaskCompleted … about h)`; delivery may span ticks — §6) |
+| `del_cancel_after_terminal_noop` | accept | — | §6c, §16.3a (the first terminal wins: cancel of an already-terminal task appends nothing) |
+| `del_cancel_non_handle_reject` | reject | TypeError | §6c, §15.3.3 (`cancel` takes a Task<T> handle) |
+| `del_cancel_tombstone` | accept | — | §6c (cancel appends the authoritative TaskCancelled tombstone; the first terminal wins — a cancelled task neither delivers nor expires) |
+| `del_complete_outside_task_reject` | reject | TypeError | §6c, §15.3.3 (`complete`/`fail` are legal only inside a task handler) |
+| `del_empty_task_block_reject` | reject | TypeError | §6c (an empty task block is a compile error — objective and acceptance are required) |
+| `del_endorsed_completion_settled_ok` | accept | — | §6c (a worker that completes with an Endorsement<T> hands over a settled, ledger-backed subject — the delegator may sink it directly) |
+| `del_endorsed_scoped_perform_ok` | accept | — | §6c, §13 (the canonical scoped flow: draft task → decide → endorse in the committed branch → send Endorsement<TaskSpec> → the worker's statically-granted perform is task-enabled) |
+| `del_expires_settled_expr_ok` | accept | — | §6, §6c (`expires` accepts any settled numeric expression, not only a literal) |
+| `del_expires_unsettled_reject` | reject | TaintViolation | §6, §6c (`expires` requires a SETTLED numeric expression; a cognition-derived lifetime is rejected) |
+| `del_expiry_faults_foreground` | accept | — | §6c, §16.6 (mandatory expiry converts a lost task-send into a signal: the Expired tombstone faults the awaiting foreground invocation) |
+| `del_foreground_complete_ok` | accept | — | §6c (a foreground task-send: the worker's `complete` produces the transport Resolved plus TaskCompleted, and the delegator's continuation resumes with the result) |
+| `del_foreground_failure_faults` | accept | — | §6c, §16.6 (a foreground task terminal other than TaskCompleted faults the delegator's awaiting invocation via the contained-crash path; `on crash` recovers with state intact) |
+| `del_missing_expires_reject` | reject | TypeError | §6c (`expires` is mandatory on every delegation — every task is terminal by construction) |
+| `del_no_assigned_handler_expires` | accept | — | §6c (an assigned task with no completing handler is not an error; the mandatory expiry backstops it with a tombstone) |
+| `del_objective_missing_reject` | reject | TypeError | §6c (a task literal requires BOTH `objective` and `acceptance`) |
+| `del_objective_not_text_reject` | reject | TypeError | §6c (`objective` and `acceptance` must be `text`) |
+| `del_perform_unscoped_task_faults` | accept | — | §6c, §13, §16.6 (a perform inside an assigned task requires the active task to be endorsed AND to name the action in scope; a plain task enables nothing — the action faults with TaskScopeViolation and does not run) |
+| `del_progress_outside_task_reject` | reject | TypeError | §6c (TaskProgress is emittable only inside a task handler — it correlates to the active task) |
+| `del_progress_then_cancelled_hook` | accept | — | §6c (TaskProgress is the repeatable worker event; cancel mid-task is cooperative — the worker's `on cancelled` hook fires, nothing is preempted) |
+| `del_reach_required_reject` | reject | AuthorityViolation | §6c, §13 (delegation is a send: reaching a worker requires the `reach` power, default-deny) |
+| `del_result_raw_to_sink_reject` | reject | TaintViolation | §6c, §13 (a delegated result is RAW by default — delegation never launders trust; it cannot drive a consequential sink un-gated) |
+| `del_scope_not_held_reject` | reject | AuthorityViolation | §6c, §15.3.3 W-Scope-Attenuate (a task scope can only ATTENUATE the delegator's authority — each scoped action must be held by the delegator itself) |
+| `del_scope_unendorsed_send_reject` | reject | TaintViolation | §6c, §15.3.3 W-Scope-Attenuate (a task carrying a `scope` clause is enabling only when endorsed; sending an unendorsed scoped task is rejected) |
+| `del_tainted_objective_ok` | accept | — | §6c (a generated objective stays tainted but an UNSCOPED task may still be sent — taint matters at sinks, and a plain task grants nothing) |
+| `del_taskspec_draft_binding_ok` | accept | — | §6c (a task literal is an expression: a TaskSpec draft may be bound first and sent later; expires stays mandatory at the send) |
+| `del_unbound_statement_reject` | reject | TypeError | §6c (bare statement-form delegation is a compile error — hold the result or the Task<T> handle; every task is addressable) |
+| `del_worker_fail_records` | accept | — | §6c (`fail reason` appends TaskFailed; the transport chain rests at its Delivered prefix — a stalled prefix is not a violation; a background delegator observes it with `when`) |
+
 ## 07_ledger
 
 | id | expect | error | spec |
@@ -179,7 +213,12 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 
 | id | expect | error | spec |
 |---|---|---|---|
+| `gov_action_uses_read_tool_reject` | reject | TypeError | §3, §6b (`uses` binds an action to a WRITE tool; naming a read tool is a TypeError) |
+| `gov_action_uses_undeclared_tool_reject` | reject | TypeError | §3, §6b (`uses` must name a declared tool; tools, like events, are not self-declaring) |
+| `gov_action_uses_write_tool_ok` | accept | — | §6b, §13 (perform of a bound action executes the write tool: the action record plus the correlated ToolStarted/ToolResolved pair) |
 | `gov_bare_decision_no_perform_reject` | reject | TaintViolation | §13 (a sealed Decision<E> alone does not settle a subject; performing the raw artifact without an `endorse` is a taint violation) |
+| `gov_bound_action_replay_chain_head` | accept | — | §16.5 (recorded replay of a bound action's write tool regenerates the same chain-head from journaled tool results) |
+| `gov_bound_action_unsettled_reject` | reject | TaintViolation | §6b, §13 (a bound action's perform is the write tool's only entrance and is a consequential sink; a cognition-derived argument is un-settled → reject) |
 | `gov_conformal_coldstart_abstains` | accept | — | §13 (a conformal gate with no recorded decisions is below its labelled-case readiness floor and records a Decided abstention — the supervised cold start) |
 | `gov_conformal_gate_ok` | accept | — | §13 (the conformal basis `by conformal α` is a distribution-free finite-sample gate calibrated from the ledger) |
 | `gov_consequential_bare_collapse_reject` | reject | TaintViolation | §13 (a sealed Decision may guide control flow but is not a subject endorsement → it may not license a perform) |
@@ -202,13 +241,13 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 | `gov_raw_subject_to_sink_reject` | reject | TaintViolation | §13 (endorse never settles the raw subject variable; only the endorsement binder reaches a sink — performing the raw subject is rejected, in any branch) |
 | `gov_reach_ungranted_reject` | reject | AuthorityViolation | §13 (sending into another agent requires a `reach` grant) |
 | `gov_read_tool_settled_perform_ok` | accept | — | §6b, §13 (a read tool over settled inputs yields a settled result — external data settled by origin — that may drive a perform) |
+| `gov_sync_perform_bound_action_reject` | reject | ColorViolation | §6b (a tool call reaches the tool dependency → async; a `sync` function may not perform a tool-BOUND action) |
 | `gov_tool_requires_effect_class_reject` | reject | ParseError | §6b, §15.2 (every tool declares an effect class — `read` or `write`; omitting it is a ParseError) |
 | `gov_tool_result_tainted_perform_reject` | reject | TaintViolation | §6b, §13 (a tool result carries the join of its inputs' trust; a cognition-derived input is un-settled → cannot drive a consequential perform without a gate) |
+| `gov_use_grant_write_tool_reject` | reject | TypeError | §6b, §13 (a `use` grant naming a write tool is illegal — the corresponding power is `perform` on a bound action) |
 | `gov_use_tool_granted_ok` | accept | — | §6b, §13 (a granted `use TOOL` permits the tool call) |
 | `gov_use_tool_ungranted_reject` | reject | AuthorityViolation | §6b, §13 (default-deny: a tool call needs a `use` grant) |
-| `gov_write_tool_replay_chain_head` | accept | — | §16.5 (recorded replay of a write tool regenerates the same chain-head from journaled tool results) |
-| `gov_write_tool_settled_ok` | accept | — | §6b, §13 (a write tool called with settled inputs is permitted) |
-| `gov_write_tool_unsettled_reject` | reject | TaintViolation | §6b, §13 (a write tool is a consequential sink; a cognition-derived input is un-settled → reject) |
+| `gov_write_tool_direct_call_reject` | reject | TypeError | §6b (the single door: a write tool is a declared mutation capability, not a callable expression; only `perform` of a bound action may execute it) |
 
 ## 15_reproducibility
 

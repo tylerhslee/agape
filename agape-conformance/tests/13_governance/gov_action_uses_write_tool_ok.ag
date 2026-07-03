@@ -1,0 +1,14 @@
+//! id:        gov_action_uses_write_tool_ok
+//! section:   13_governance
+//! expect:    accept
+//! contains:  pair(Tool@transfer)
+//! spec:      §6b, §13 (perform of a bound action executes the write tool: the action record plus the correlated ToolStarted/ToolResolved pair)
+//! ---
+write tool bool transfer(int amount, text to);
+action Pay(int amount, text to) uses transfer;
+agent Bank grants { perform Pay } {
+  on awake {
+    perform Pay(100, "bob");
+  }
+}
+spawn Bank b; awake b;

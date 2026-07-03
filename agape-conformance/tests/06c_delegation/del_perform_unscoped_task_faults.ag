@@ -1,0 +1,24 @@
+//! id:        del_perform_unscoped_task_faults
+//! section:   06c_delegation
+//! expect:    accept
+//! contains:  TaskScopeViolation(w); AgentCrashed(w)
+//! absent:    Deploy; TaskCompleted(h)
+//! spec:      §6c, §13, §16.6 (a perform inside an assigned task requires the active task to be endorsed AND to name the action in scope; a plain task enables nothing — the action faults with TaskScopeViolation and does not run)
+//! ---
+action Deploy(text artifact);
+agent Worker grants { perform Deploy } {
+  on assigned {
+    perform Deploy("artifact-v2");
+    complete 1;
+  }
+}
+agent Lead grants { reach Worker } {
+  on awake {
+    spawn Worker w; awake w;
+    Task<int> h = w <- task {
+      objective "ship it";
+      acceptance "an int";
+    } expires 10;
+  }
+}
+spawn Lead lead; awake lead;

@@ -15,6 +15,7 @@ export type TypeRef =
   | { kind: "credence"; enumName: string }
   | { kind: "decision"; enumName: string }
   | { kind: "endorsement"; inner: TypeRef }
+  | { kind: "task"; inner: TypeRef } // Task<T> — a background-task handle (§6c)
   | { kind: "named"; name: string; typeArgs?: TypeRef[] }; // enum/struct/agent/action/Principal/LedgerEntry; typeArgs at a generic-instantiation site (§19.5)
 
 // ---- Program & declarations ----
@@ -96,6 +97,10 @@ export interface ActionDecl extends Node {
   name: string;
   fields: Field[];
   reversible: boolean;
+  // `action NAME(fields) uses TOOL;` (§3/§6b) — binds this performative to ONE declared write tool:
+  // `perform NAME(args)` is then the single source syntax that executes that tool. Absent = a pure
+  // ledgered performative (the act's effect is the record itself).
+  uses?: string;
   pub?: boolean;
 }
 export interface EventDecl extends Node {
@@ -182,7 +187,27 @@ export type Stmt =
   | ForgetStmt
   | DepDeclStmt
   | RetryStmt
+  | CompleteStmt
+  | FailStmt
+  | CancelStmt
   | ExprStmt;
+
+// §6c task verbs. `complete e;` resolves the active assigned task with a computed value (the
+// programmatic Resolved); `fail e;` records a terminal TaskFailed(reason). Both are legal only
+// inside a task handler. `cancel h;` (delegator-side) appends the authoritative TaskCancelled
+// tombstone for the Task<T> handle `h` — cooperative, never preemptive.
+export interface CompleteStmt extends Node {
+  kind: "complete";
+  value: Expr;
+}
+export interface FailStmt extends Node {
+  kind: "fail";
+  reason: Expr;
+}
+export interface CancelStmt extends Node {
+  kind: "cancel";
+  handle: Expr;
+}
 
 // `{ block } retry(N)` (§11, §15.2) — the ONLY loop, bounded: re-attempt the block up to N times on a fault
 // (an `Error`, e.g. a `TypeMismatch` from a malformed reply); on exhaustion, emit `RetryExhausted` and the
@@ -265,7 +290,7 @@ export interface IfStmt extends Node {
 }
 export interface OnHook extends Node {
   kind: "on";
-  event: "awake" | "sleep" | "crash";
+  event: "awake" | "sleep" | "crash" | "assigned" | "cancelled";
   body: Stmt[];
 }
 export interface WhenStmt extends Node {
@@ -319,6 +344,7 @@ export type Expr =
   | AggExpr
   | QuorumExpr
   | PipeExpr
+  | TaskLit
   | ArrayLit;
 
 // `("all"|"any") "(" expr ("," expr)* ")"` — reduce a comma-list of operands OR a single
@@ -422,7 +448,17 @@ export interface SendExpr extends Node {
   kind: "send";
   dest: Expr;
   message: Expr;
-  expires?: number;
+  expires?: Expr; // a SETTLED numeric expression (§6); MANDATORY when the message is a TaskSpec (§6c)
+}
+
+// `task { objective o; acceptance a; scope { perform X } }` — a TaskSpec-building expression (§6c).
+// objective/acceptance are REQUIRED (text); the parser records what it saw and the checker/runtime
+// reject a missing/mistyped clause (a TypeError, not a ParseError). `scope` lists action names.
+export interface TaskLit extends Node {
+  kind: "tasklit";
+  objective?: Expr;
+  acceptance?: Expr;
+  scope: string[];
 }
 export interface FStringExpr extends Node {
   kind: "fstring";

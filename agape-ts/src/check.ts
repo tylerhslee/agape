@@ -20,6 +20,9 @@ interface Decls {
   enums: Map<string, string[]>;
   structs: Map<string, A.StructDecl>;
   actions: Map<string, A.Field[]>;
+  // the write tool an action is bound to via `uses` (§3/§6b), keyed by action name. A bound action's
+  // perform executes the tool (→ async), so a `sync` body performing one is a ColorViolation.
+  actionUses: Map<string, string | undefined>;
   // whether an action is declared `reversible` (§20.1): a `reversible action` is a low-stakes sink, so an
   // endorse arm reaching it is NOT a consequential path and does not require a principal fallback (§20.3).
   // A name absent from this map (or mapped false) is a non-reversible, consequential sink.
@@ -44,7 +47,9 @@ interface Decls {
 }
 
 // the built-in event roots (§9): a generic `Event`/`Error` may be emitted with any payload, no decl.
-const BUILTIN_EVENTS = new Set(["Event", "Error"]);
+// `TaskProgress` (§6c) is the worker-emittable repeatable task event — statically admissible; the
+// RUNTIME requires an active task handler (emitting it outside one is a TypeError there).
+const BUILTIN_EVENTS = new Set(["Event", "Error", "TaskProgress"]);
 
 class Scope {
   vars = new Map<string, Cls>();
@@ -398,7 +403,7 @@ function collectBareUses(program: A.Program): Set<string> {
   const out = new Set<string>();
   const addType = (t: A.TypeRef): void => {
     if (t.kind === "named" && !t.name.includes(".")) out.add(t.name);
-    if (t.kind === "array" || t.kind === "event" || t.kind === "endorsement") addType(t.inner);
+    if (t.kind === "array" || t.kind === "event" || t.kind === "endorsement" || t.kind === "task") addType(t.inner);
     if (t.kind === "named" && t.typeArgs) for (const a of t.typeArgs) addType(a);
   };
   const addExpr = (e: A.Expr): void => {
@@ -458,7 +463,7 @@ function collectQualifiedRefs(program: A.Program): Set<string> {
   const addName = (n: string): void => { if (n.includes(".")) out.add(n); };
   const addType = (t: A.TypeRef): void => {
     if (t.kind === "named") { addName(t.name); if (t.typeArgs) for (const a of t.typeArgs) addType(a); }
-    if (t.kind === "array" || t.kind === "event" || t.kind === "endorsement") addType(t.inner);
+    if (t.kind === "array" || t.kind === "event" || t.kind === "endorsement" || t.kind === "task") addType(t.inner);
   };
   // Flatten an ident-rooted member chain (`util.secretFn`, `facade.internal.f`) to its dotted name, so a
   // QUALIFIED reference — including a qualified CALLEE `util.secretFn(..)` — is submitted to the §19.4
@@ -601,14 +606,14 @@ export function check(program: A.Program, modules?: ModuleInput[], manifest?: Ma
   const decls: Decls = {
     enums: new Map([["bool", ["true", "false"]], ["Basis", ["Threshold", "Conformal", "Principal"]], ["Entailment", ["Entails", "Contradicts", "Neutral"]]]),
     structs: new Map(),
-    actions: new Map(), actionReversible: new Map(), events: new Map(), tools: new Map(), agents: new Map(),
+    actions: new Map(), actionUses: new Map(), actionReversible: new Map(), events: new Map(), tools: new Map(), agents: new Map(),
     interfaces: new Map(), pub: new Map(), fns: new Map(),
     principals: new Set(), prompts: new Set(),
   };
   for (const d of program.decls) {
     if (d.kind === "enum") decls.enums.set(d.name, d.variants);
     else if (d.kind === "struct") decls.structs.set(d.name, d);
-    else if (d.kind === "action") { decls.actions.set(d.name, d.fields); decls.actionReversible.set(d.name, d.reversible); }
+    else if (d.kind === "action") { decls.actions.set(d.name, d.fields); decls.actionUses.set(d.name, d.uses); decls.actionReversible.set(d.name, d.reversible); }
     else if (d.kind === "event") decls.events.set(d.name, d.fields);
     else if (d.kind === "tool") decls.tools.set(d.name, d);
     else if (d.kind === "agent") decls.agents.set(d.name, d);
@@ -650,6 +655,14 @@ export function check(program: A.Program, modules?: ModuleInput[], manifest?: Ma
   const implemented = new Set<string>();
   for (const d of program.decls) {
     if (d.kind === "agent") for (const i of d.ifaces ?? []) implemented.add(i);
+  }
+  // §3/§6b single-door statics: an action's `uses` must name a DECLARED WRITE tool.
+  for (const d of program.decls) {
+    if (d.kind === "action" && d.uses !== undefined) {
+      const t = decls.tools.get(d.uses);
+      if (!t) throw typeError(`action '${d.name}' uses undeclared tool '${d.uses}' — tools are not self-declaring (§3, §6b)`);
+      if (t.effect !== "write") throw typeError(`action '${d.name}' uses read tool '${d.uses}' — \`uses\` binds an action to a WRITE tool; read tools are called directly (§6b)`);
+    }
   }
   const c = new Checker(decls, implemented);
   // static well-formedness of every declared/annotated type: a type argument applied to a non-generic
@@ -790,6 +803,7 @@ class Checker {
       case "quorum": this.walkExpr(e.source); return;
       case "pipe": this.walkExpr(e.source); this.walkExpr(e.fn); return;
       case "arraylit": for (const it of e.items) this.walkExpr(it); return;
+      case "tasklit": if (e.objective) this.walkExpr(e.objective); if (e.acceptance) this.walkExpr(e.acceptance); return;
       default: return;
     }
   }
@@ -810,7 +824,7 @@ class Checker {
       }
       return;
     }
-    if (t.kind === "array" || t.kind === "event" || t.kind === "endorsement") this.checkTypeRef(t.inner);
+    if (t.kind === "array" || t.kind === "event" || t.kind === "endorsement" || t.kind === "task") this.checkTypeRef(t.inner);
   }
 
   // A type argument list `<…>` may instantiate ONLY a generic `struct` (the sole generic type-declaration
@@ -834,6 +848,15 @@ class Checker {
   }
 
   checkAgent(a: A.AgentDecl): void {
+    // §6b/§13: a `use` grant naming a WRITE tool is illegal — write tools are reached only through
+    // `perform` on a bound action, so the corresponding power is `perform`, never `use`.
+    if (Array.isArray(a.grants)) {
+      for (const g of a.grants) {
+        if (g.cap === "use" && this.d.tools.get(g.name)?.effect === "write") {
+          throw typeError(`agent '${a.name}': 'use ${g.name}' names a WRITE tool — write tools have no call syntax; grant 'perform' on an action bound to it via \`uses\` instead (§6b, §13)`);
+        }
+      }
+    }
     if (a.extends) this.checkSubtractiveGrants(a);
     for (const h of a.hooks) { this.checkBody(h.body, new Scope()); this.checkDeferenceFlow(h.body, new Scope()); }
     for (const w of a.whens) {
@@ -1002,7 +1025,7 @@ class Checker {
         const isPub = this.d.pub.get(t.name);
         return isPub === false; // declared and NOT pub; unknown/built-in (undefined) is exempt
       }
-      case "array": case "event": case "endorsement": return this.namesPrivate(t.inner);
+      case "array": case "event": case "endorsement": case "task": return this.namesPrivate(t.inner);
       default: return false;
     }
   }
@@ -1108,7 +1131,14 @@ class Checker {
       case "say": this.assertSyncExpr(s.arg); return;
       case "return": if (s.value) this.assertSyncExpr(s.value); return;
       case "exprstmt": this.assertSyncExpr(s.expr); return;
-      case "emit": case "perform": for (const a of s.args) this.assertSyncExpr(a); return;
+      case "perform":
+        // §6b: performing a tool-BOUND action executes its write tool — a tool-dependency reach → async.
+        if (this.d.actionUses.get(s.name)) {
+          throw colorViolation(`a \`sync\` function may not perform the tool-bound action '${s.name}' (its \`uses\` tool call reaches the tool dependency → async) (§6b)`);
+        }
+        for (const a of s.args) this.assertSyncExpr(a);
+        return;
+      case "emit": for (const a of s.args) this.assertSyncExpr(a); return;
       case "if": this.assertSyncExpr(s.cond); this.assertSyncBody(s.then); if (s.else) this.assertSyncBody(s.else); return;
       case "dispatch": this.assertSyncGate(s.gate); for (const arm of s.arms) this.assertSyncBody(arm.body); if (s.abstain) this.assertSyncBody(s.abstain.body); return;
       // §9/§10: a mem WRITE internalizes through the provider (decompose across the region's views) —
@@ -1270,6 +1300,13 @@ class Checker {
         return;
       }
       case "exprstmt": this.infer(s.expr, scope); return;
+      case "complete": this.infer(s.value, scope); return; // task-handler-only: enforced dynamically (§6c)
+      case "fail": {
+        const rc = this.infer(s.reason, scope);
+        if (rc !== "text" && rc !== "unknown") throw typeError(`\`fail\` requires a text reason, not ${rc} (§6c)`);
+        return;
+      }
+      case "cancel": this.infer(s.handle, scope); return; // Task<T> handle check is dynamic (§6c)
       case "spawn": {
         // an interface is a TYPE but is NOT instantiable — `spawn Iface` is a TypeError (§19.5). Fires only
         // when the spawned name is a declared interface; an unknown agent type is left to execSpawn.
@@ -1701,12 +1738,29 @@ class Checker {
         return "float";
       }
       case "unary": return e.op === "!" ? "bool" : "float";
+      case "tasklit": {
+        // §6c: objective and acceptance are REQUIRED and must be `text`.
+        if (!e.objective || !e.acceptance) {
+          throw typeError("a task literal requires BOTH `objective` and `acceptance` (§6c)");
+        }
+        const oc = this.infer(e.objective, scope);
+        if (oc !== "text" && oc !== "unknown") throw typeError(`task \`objective\` must be text, not ${oc} (§6c)`);
+        const ac = this.infer(e.acceptance, scope);
+        if (ac !== "text" && ac !== "unknown") throw typeError(`task \`acceptance\` must be text, not ${ac} (§6c)`);
+        return "unknown"; // a TaskSpec value (scope attenuation + endorsement rules are dynamic, §6c)
+      }
       case "call": {
         // a call to a declared tool has the tool's declared return class (§6b); other calls stay unknown.
         if (e.callee.kind === "ident") {
           const name = e.callee.name;
           const tool = this.d.tools.get(name);
-          if (tool) return declClass(tool.ret);
+          if (tool) {
+            // §6b the single door: a WRITE tool is not a callable expression.
+            if (tool.effect === "write") {
+              throw typeError(`'${name}' is a write tool and cannot be called from source — the single door is \`perform\` on an action bound via \`uses\` (§6b)`);
+            }
+            return declClass(tool.ret);
+          }
           // §6b/§8: a bare call to a name that is not a declared/imported tool or function is an
           // unknown-identifier TypeError — tools and functions are
           // declared dependencies, not self-declaring (e.g. an undeclared `search(…)` or a nonexistent
@@ -1850,7 +1904,10 @@ class Checker {
     // but a `send` bound to a RAW `text` slot is a raw reply that must be re-decided and endorsed BY A
     // DECISION ABOUT IT (§13). Endorsing it by a decision about something else is laundering, so a raw
     // send-reply binding is tracked as tainted for the endorse dependency-scope check.
-    const rawSendReply = init.kind === "send" && declared !== "credence";
+    // A send bound to an `Endorsement<T>` slot is a delegated task completed WITH an endorsement — a
+    // settled, ledger-backed subject (§6c); it is not a raw reply. The runtime verifies the completed
+    // value really is an endorsement (anything else stays raw at the sink).
+    const rawSendReply = init.kind === "send" && declared !== "credence" && declared !== "endorsement";
     scope.setTaintedTo(name, this.isTaintedExpr(init, scope) || rawSendReply);
     if (init.kind === "endorse") {
       // Model A (§13/§15.3.3): an endorsement is the SETTLED form of its subject. Construction already
@@ -1966,6 +2023,7 @@ class Checker {
         case "quorum": walk(x.source); return;
         case "pipe": walk(x.source); walk(x.fn); return;
         case "arraylit": for (const it of x.items) walk(it); return;
+        case "tasklit": if (x.objective) walk(x.objective); if (x.acceptance) walk(x.acceptance); return;
         default: return;
       }
     };

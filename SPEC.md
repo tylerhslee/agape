@@ -1,4 +1,4 @@
-# Agape Language Specification (v1.0.0-alpha.2026.7.2.2)
+# Agape Language Specification (v1.0.0-alpha.2026.7.2.3)
 
 > Agape is a programming language for multi-agent systems. This document is the
 > authoritative reference. The prose (§0–§14) defines the language for a reader; the formal
@@ -56,7 +56,7 @@ Two ideas underlie the language:
 
 These ideas form Agape's **trusted kernel**: `Credence`, sealed `Decision`, subject
 `Endorsement`, `decide`, `endorse`, the taint lattice, default-deny grants, consequential sink checks
-(`perform` and write tools), and ledger record/replay. Everything else in the language is
+(`perform` — the single door to write tools, §6b), and ledger record/replay. Everything else in the language is
 ordinary computation over already-settled values, or a reactive primitive over the ledger. No
 feature may introduce a new path from model testimony to world effect.
 
@@ -263,6 +263,7 @@ decide endorse perform emit               // gate collapse / subject endorsement
 select from where                         // the ledger query (§10)
 mem forget                                // private-memory handle + seams (§10): `mem m <- v` / `m -> q` / `forget m`
 quorum independent dependent              // graded fusion + dependence declaration (§12)
+task complete fail cancel                 // delegation: the task literal + task verbs (§6c)
 true false abstained                      // bool literals + the abstained-decision sentinel (§3, §13)
 ```
 
@@ -275,16 +276,20 @@ by `quorum` (§12).
 ordinary identifiers, and a declaration may not use one where it would collide with that position:
 `by` (gate rule), `about` (the `when` subject filter, §7), `reach` / `use` (grants), `origin`
 (query projection), `expires` (send-lifetime clause, §6), `confidence` / `margin` / `conformal` /
-`floor` / `readiness` (rule clauses, recognized positionally after `by`, §13). `Error` (a prelude
+`floor` / `readiness` (rule clauses, recognized positionally after `by`, §13), `uses` (the
+action→write-tool binding, after an `action` declaration's parameter list, §6b), `objective` /
+`acceptance` / `scope` (task-literal clauses, recognized only inside `task { … }`, §6c). `Error` (a prelude
 identifier) doubles as the only permitted user-event supertype in `event Foo(..) : Error;` (§9).
 
 **Prelude identifiers** (selected; the full set is defined in §9, not the grammar): the types
-`Credence`, `Decision`, `Endorsement`, `Principal`; the enum `Entailment` (`Entails`, `Contradicts`,
-`Neutral`) and `Basis`; the built-in events `Event`, `Error`, `Decided`, `Endorsed`,
-`PrincipalDecision`, `FailedPrincipalDecision`, `Contradiction`, `Spawned`, `AgentAwake`,
+`Credence`, `Decision`, `Endorsement`, `Principal`, `TaskSpec`, `Task`; the enum `Entailment`
+(`Entails`, `Contradicts`, `Neutral`) and `Basis`; the built-in events `Event`, `Error`, `Decided`,
+`Endorsed`, `PrincipalDecision`, `FailedPrincipalDecision`, `Contradiction`, `Spawned`, `AgentAwake`,
 `AgentAsleep`, `AgentCrashed`, `Sent`, `Delivered`, `Resolved`, `Expired`, `DeliveryRefused`,
 `PromptOpened`, `Prompt`, `QueryResult`, `MemoryConsulted`, `Internalized`, `ArtifactObserved`,
-`Forgotten`, `ToolStarted`, `ToolResolved`, `TypeMismatch`, `MarginFloorViolation`;
+`Forgotten`, `ToolStarted`, `ToolResolved`, `TypeMismatch`, `MarginFloorViolation`,
+`TaskCompleted`, `TaskFailed`, `TaskCancelled`, `TaskProgress`, `CompletionRefused` (and the
+subscription aliases `TaskSubmitted`, `TaskAssigned`, `TaskExpired`, §6c);
 the built-in function `say`; and the generic ledger row type `LedgerEntry<E>`. (`Rule` is
 the gate's parameter, not a type — §3.)
 
@@ -346,6 +351,7 @@ type is a declared name with a known payload.
 struct Memo  { amount: int, to: text }            // a record; all fields required
 enum  Ticket { Billing, Bug, Feature }            // a closed variant set
 action Transfer(int cents, text to);               // a performative; fields invoked positionally
+action Wire(int cents, text to) uses wire;         // a performative BOUND to a write tool (§6b)
 ```
 
 - `**struct NAME { field: T, … }**` — a record with named, typed fields. All fields are
@@ -355,8 +361,13 @@ every field; a missing field is a `TypeError`.
 - `**enum NAME { A, B, … }**` — a closed set of named variants; `if`/`==` branches on a committed
 variant (§11).
 - `**event NAME(T field, …);**` — a plain record (assertive); anyone may `emit` it, no power
-needed. `**action NAME(T field, …);**` — a performative: `perform NAME(v, …)` is a consequential
-act that needs the `perform NAME` power (§13) and only `settled` values. Event/action/tool/function
+needed. `**action NAME(T field, …) [uses TOOL];**` — a performative: `perform NAME(v, …)` is a
+consequential act that needs the `perform NAME` power (§13) and only `settled` values. The
+optional `uses TOOL` clause binds the action to at most **one** declared `write` tool (§6b):
+performing the action invokes the bound tool with the action's arguments. Several actions may
+share one write tool (different domain framings of the same endpoint); `uses` naming a `read`
+tool or an undeclared tool is a `TypeError`. An action with no `uses` is a **pure ledgered
+performative** — an act whose effect is the record itself. Event/action/tool/function
 parameters are declared **type-first** (`T name`, like a `var`); a **struct** field is the sole
 exception and is declared **name-first** (`name: T`, mirroring the struct literal `NAME { name: v }`).
 Event/action invocation is positional in declaration order: `emit E(a, b)` / `perform A(a, b)` must supply exactly one
@@ -526,6 +537,8 @@ agent NAME ( [TYPE PARAM] , ... ) [grants { CAP , ... }] {
     on awake { ... }
     on sleep { ... }
     on crash { ... }     // a contained fault — recover here; state is intact
+    on assigned { ... }  // a delegated task arrived (sugar over `when`, §6c)
+    on cancelled { ... } // the active task was cancelled by its delegator (§6c)
 }
 ```
 
@@ -602,7 +615,12 @@ runtime jotted note, which lands in tainted memory, §10). To change an agent's 
 `on awake` / `on sleep` / `on crash` are hooks tied to the agent's own transitions; `when (X)`
 is a general ledger subscription keyed by an arbitrary subject `X` (§7). `on crash` runs in the
 agent's own context after a contained fault (see Lifecycle), with state preserved, so it can
-compensate for or retry the abandoned work.
+compensate for or retry the abandoned work. The two task hooks are pure sugar over `when`
+(§6c): `on assigned` fires when a delegated task is delivered to this agent (the filtered
+`Delivered` subscription), `on cancelled` when the agent's active task is cancelled by its
+delegator. There is no `on submitted` (the delegator's next statement already follows the
+send) and no worker-side `on completed`/`on failed` — outcomes are observed with ordinary
+`when` subscriptions on the task events (§6c).
 
 ### §5b — `prompt`: the external input boundary
 
@@ -681,8 +699,9 @@ below `Delivered`. The delivery contract is at-most-once.
 
 ### Expiry — an optional tombstone
 
-A send may carry a lifetime: `dest <- message expires N;`. Expiry adds a second terminal
-branch:
+A send may carry a lifetime: `dest <- message expires N;`, where `N` is any **settled**
+numeric expression (a literal, an `int` variable, arithmetic over them — not a graded or raw
+value). Expiry adds a second terminal branch:
 
 ```
 Sent ─┬─→ Delivered ─→ Resolved
@@ -718,32 +737,48 @@ approved calls, never arbitrary linkage).
 
 ```agape
 read  tool text search(text query);          // observes the world; result carries its inputs' trust
-write tool bool transfer(int amount, text to);  // changes the world: a consequential sink (§13)
+write tool bool transfer(int amount, text to);  // changes the world — NOT callable from source
+
+action Pay(int amount, text to) uses transfer;   // the single door to the write tool (§3, §13)
 
 agent Researcher grants { use search } {
-    text hits = search("agape language");    // a tool call: needs `use search`
+    text hits = search("agape language");    // a read-tool call: needs `use search`
+}
+agent Teller grants { perform Pay } {
+    on awake { perform Pay(100, "bob"); }    // executes `transfer` through the bound action
 }
 ```
 
 - **Declaration.** `read tool RET NAME(params);` or `write tool RET NAME(params);` — every tool
-declares its **effect class**: a `read` tool observes the world, a `write` tool changes it (a
-consequential sink, below). The class is mandatory; omitting it is a `ParseError`. The return type
+declares its **effect class**: a `read` tool observes the world, a `write` tool changes it. The
+class is mandatory; omitting it is a `ParseError`. The return type
 leads, like a function signature; use `null` for a tool with no meaningful return. The
 binding to a concrete MCP server/endpoint is configuration (`[tools]` in the manifest,
 §17); no endpoint or secret appears in source, exactly as `<-` names no model. An
 undeclared tool call is a `TypeError`.
-- **Authority.** A tool call requires a `use NAME` capability in the agent's `grants`
+- **The single door.** Only `read` tools are callable expressions. A `write` tool is a declared
+mutation capability that **cannot be called from source** — a direct call is a `TypeError`. It is
+reached only through a bound action: `action NAME(fields) uses TOOL;` (§3) makes
+`perform NAME(args)` the one source syntax that executes the tool, under the full
+consequential-action rule (§13). The binding is **both layers**: source binds action→tool
+(auditable, compile-checked), config binds tool→endpoint. The asymmetry is the audit surface: a
+program's `write tool` declarations enumerate its entire mutation surface, and its
+`action … uses` declarations enumerate exactly how each mutation is reachable.
+- **Authority.** A read-tool call requires a `use NAME` capability in the agent's `grants`
 (§13). Default-deny applies: no `grants` ⇒ no tool calls. `use` is subtractive under
-`extend`, like `emit` and `reach`.
+`extend`, like `emit` and `reach`. A `use` grant naming a **write** tool is a compile error
+(`TypeError`) — the corresponding power is `perform` on a bound action, which subsumes the
+tool authority.
 - **Color.** A tool call reaches the tool dependency → async (`A`). A `sync` function may not
-call a tool.
+call a tool (nor `perform` a tool-bound action).
 - **Trust.** A read-tool result carries the join of its inputs' trust: `settled` when its inputs
 are settled (external data, settled by origin), `graded`/`raw` when a `Credence` flowed in. A
-**write** tool is a consequential sink — its inputs must be `settled` and endorsed, exactly
-like a `perform`. Agape gates the model's judgment, not the correctness of external data.
+**write** tool executes only behind a `perform`, whose arguments must be `settled` (§13).
+Agape gates the model's judgment, not the correctness of external data.
 - **Ledger.** A tool call appends a correlated `ToolStarted(NAME)` / `ToolResolved(NAME)`
-pair (§7). Every world-effect is on the log, so the ledger is a complete, replayable
-account of what the program did to the world, not only what it thought.
+pair (§7). A `perform` of a tool-bound action appends the action's own performative record
+**and** the correlated tool pair. Every world-effect is on the log, so the ledger is a
+complete, replayable account of what the program did to the world, not only what it thought.
 - **Replay.** A tool result is an external observation and is journaled (§15.4.2) like an
 oracle output; replay re-serves it from the recording and never re-invokes the tool. A
 write tool is replayed as its recorded result.
@@ -755,6 +790,154 @@ A tool is not a new trust hole; it is the same membrane discipline (capability +
 ledger + replay) applied to the world. This is what lets the host's deterministic work be a
 general-purpose language reached through a governed boundary rather than reimplemented
 inside Agape (§0.1).
+
+---
+
+## 6c. Delegation — the task-send
+
+Delegation is **not a new communication primitive**: it is a send whose message is a governed
+task payload and whose reply is produced by the recipient's *code* instead of one provider
+invocation. Everything else — lifecycle, expiry, correlation, loss — is the ordinary send
+discipline of §6.
+
+```agape
+struct ResearchResult { summary: text, refs: text }
+
+agent Researcher {
+  on assigned {                                        // a task arrived (sugar, §5)
+    ResearchResult r = self <- "complete the assigned task";
+    complete r;                                        // programmatic resolution
+  }
+  on cancelled { say("stopping"); }                    // cooperative cancellation
+}
+
+agent Lead grants { reach Researcher } {
+  on awake {
+    spawn Researcher worker; awake worker;
+    int ttl = 50;
+
+    // foreground — result-bound; this handler waits on r
+    ResearchResult r = worker <- task {
+      objective "Find relevant sources on conformal prediction";
+      acceptance "Concise findings; every claim carries an evidence ref";
+    } expires ttl;
+
+    // background — handle-bound; outcomes observed reactively
+    Task<ResearchResult> h = worker <- task {
+      objective "Survey related work";
+      acceptance "A one-paragraph map of the field";
+    } expires 200;
+    when (TaskCompleted done about h) { emit Event("survey landed"); }
+    when (TaskFailed oops about h)    { emit Event(f"survey failed: {oops.reason}"); }
+  }
+}
+spawn Lead lead; awake lead;
+```
+
+### The task literal
+
+`task { … }` is an expression building a **`TaskSpec`** (a prelude struct). It may be sent
+inline (`dest <- task { … } expires N`) or bound to a `TaskSpec` variable first — the draft
+form the endorsed flow gates before sending. Its clauses, recognized only inside the literal
+(§2):
+
+- `**objective EXPR;**` and `**acceptance EXPR;**` — both **required**, both `text` (literal or
+variable); an empty task block, a missing clause, or a non-`text` clause is a compile error.
+- `**scope { perform NAME, … }**` — optional; the perform authority this task *enables* on the
+worker (below). Each listed action must be held (`perform NAME`) by the **delegator** — a task
+can only attenuate its delegator's authority, never mint new authority.
+- `**expires N**` — **mandatory** on every delegation (postfix, exactly as §6; `N` is a settled
+numeric expression). Every task is therefore terminal by construction: exactly one of
+*completed / failed / expired / cancelled* is guaranteed to land on the ledger. Expiry is also
+what converts a lost task-send (never `Delivered` — silence, §6) into a signal: the `Expired`
+tombstone is appended by the delegator's runtime. A delegation without `expires` is a compile
+error.
+
+**Trust.** A `TaskSpec`'s trust is the join of its fields (ordinary contagion, §13): a generated
+objective stays `graded`/`raw` — **delegation does not launder trust**. A task that carries a
+`scope` clause is only *enabling* if it is **endorsed**: the message must be an
+`Endorsement<TaskSpec>`, constructible only inside a committed branch (§13). An unendorsed
+scoped task is a compile error at the send.
+
+### Binding — foreground and background
+
+Foreground vs background is **dataflow, not a keyword**:
+
+- `**T r = dest <- task { … } expires N;**` — foreground. The handler's continuation waits on
+`r`. The result of a delegated task is `**raw**` by default — like any send reply, it is the
+worker's cognition until the delegator gates it; a worker that completes with an
+`Endorsement<T>` hands over a settled, ledger-backed subject instead.
+- `**Task<T> h = dest <- task { … } expires N;**` — background. `h` is a settled handle used for
+correlation: `when (TaskCompleted x about h)`, `when (TaskFailed x about h)`, and `cancel h;`.
+- **Bare statement-form delegation is a compile error** — hold the result or the handle; every
+task is addressable.
+
+### The worker side
+
+While an assigned task is active, the worker's provider context composes in a fixed,
+documented order: global `instruction` → agent `instruction` → **the active task's objective
+and acceptance, as data**. A tainted objective is data in context, never an instruction — it
+cannot override instruction guardrails (§5: instructions are settled by source). The worker
+ends its task with one of two verbs, each legal **only inside a task handler**:
+
+- `**complete EXPR;**` — resolves the task-send: appends the transport `Resolved` plus a
+`TaskCompleted` record carrying the result (an event payload, like an `emit` — §7).
+- `**fail EXPR;**` — terminal failure: appends `TaskFailed(reason)` (`reason` is `text`); the
+transport chain simply stops at its `Delivered` prefix (a stalled prefix is not a violation, §6).
+
+`TaskProgress(text note)` may be emitted by the worker inside a task handler
+(`emit TaskProgress("halfway");`) — the one repeatable task event, correlated to the active task.
+
+### Cancellation — cooperative, tombstone-first
+
+`**cancel h;**` (delegator-side) appends `TaskCancelled` immediately — the **authoritative
+tombstone**. The worker's in-flight handler is **not preempted** (handler invocations stay
+atomic); its `on cancelled` hook fires, and a late `complete`/`fail` for a cancelled (or
+expired) task is **refused and recorded** as `CompletionRefused` — exactly the
+`DeliveryRefused` discipline of §6. The same refusal applies after expiry.
+
+### Failure reaches the delegator on two paths
+
+- **Foreground** (result-bound): `TaskFailed` / `TaskExpired` / `TaskCancelled` **fault the
+delegator's awaiting invocation** through the contained-crash path (§5) — the invocation is
+abandoned, `AgentCrashed` is appended, `on crash` runs with state intact. The reason is not
+lost: it is the `TaskFailed(reason)` row, one ledger query away by correlation. (Precedent: a
+task that comes back empty is the same shape as "the provider returns nothing," which already
+faults.)
+- **Background** (handle-bound): outcomes are ordinary `when` subscriptions. The backstop is
+the ledger itself — terminal task events are durable rows, findable later by query even if the
+delegator was asleep when they landed.
+
+### Ledger shape — aliases + four real events
+
+No `TaskUpdated`-style status event exists: `when` is keyed by event **type**, payloads are
+fixed-typed, and the §6 prefix-safety property is structural. Instead:
+
+- **Subscription aliases** (zero new rows): `TaskSubmitted ≡ Sent`, `TaskAssigned ≡ Delivered`,
+`TaskExpired ≡ Expired`, each filtered to task-sends. `when (TaskAssigned about h)` compiles to
+the filtered transport subscription.
+- **Real events** (new payloads, correlated to the task): `TaskCompleted(result)`,
+`TaskFailed(text reason)`, `TaskCancelled`, `TaskProgress(text note)` — plus the refusal record
+`CompletionRefused`.
+- The unified "one status per task" view is a **ledger projection** (a `select … from ledger`
+query folding the chain per correlation; §16), not an event.
+
+### Authority — static grant ∧ endorsed-task enablement
+
+A worker's `perform` executed **while running an assigned task** requires *both*: the static
+`perform NAME` grant (§13 — the upper bound, never widened at runtime) *and* an active task
+that is endorsed and names `NAME` in its `scope`. A perform outside any task needs only the
+static grant. The task check is a **runtime enablement at the sink**, exactly like the margin
+floor (§13); failing it faults the action (`TaskScopeViolation`, §16.6). Delegation therefore
+**attenuates** authority (delegator ∩ worker ∩ task scope) and never widens it — §14's
+invariants and the T1 soundness statement are unchanged.
+
+Re-delegation is governed by the worker's own `reach` grants (default-deny already covers it).
+Fan-out delegation composes with `|>` (§12): map an async delegating function over a finite
+collection of workers, then fuse the results with `quorum` under a declared dependence
+structure. There is no unbounded supervisor loop (§0.2, §11); the idiomatic retry shape is a
+bounded, reactive re-dispatch — a `when (TaskFailed about …)` subscription that submits a
+revised task.
 
 ---
 
@@ -931,6 +1114,8 @@ type Decision<E>                                           // a gate's ledgered 
 type Endorsement<T>                                        // the SETTLED subject of type T: .subject:T (coerces to T at a sink), exposes T's fields, + .decision_id/.committed/.basis/.margin (§13)
 enum Basis { Threshold, Conformal, Calibrated, Principal } // how a Decision was settled (Decision.basis, §13)
 type Principal                                             // an accountable identity — a declared dependency (§3)
+type TaskSpec                                              // a delegated-task payload built by `task { … }` (§6c); fields: .objective (text), .acceptance (text); trust = join of its fields
+type Task<T>                                               // a settled background-task handle (§6c): correlates `when (… about h)` and `cancel h`
 // Rule is the gate's PARAMETER, not a type: `confidence θ [margin δ] [floor m]` | `conformal [α] [readiness N] [floor m]`  (§3, §13)
 // abstained — the prelude sentinel value of Decision.committed when the gate did not commit (§3, §13)
 
@@ -953,13 +1138,20 @@ type Principal                                             // an accountable ide
 //   Sent / Delivered / Resolved                message lifecycle (§6); a send's provider reply is its Resolved
 //   Expired(corr) / DeliveryRefused(corr)      message expiry / refused-late-delivery (§6)
 //   PromptOpened(name) / Prompt(name)          external input sensor (§5b)
+//   TaskCompleted(subj) / TaskFailed(subj)     task terminals: `complete r` / `fail reason` (§6c)
+//   TaskCancelled(corr) / TaskProgress(subj)   delegator cancel tombstone / repeatable worker progress (§6c)
+//   CompletionRefused(corr)                    a late complete/fail after cancel/expiry, refused (§6c)
+//   TaskScopeViolation(subj)                   a perform outside the endorsed task's scope at the sink (§6c, §13)
+//   TaskSubmitted / TaskAssigned / TaskExpired subscription ALIASES for Sent/Delivered/Expired filtered to task-sends (§6c) — no rows of their own
 ```
 
 **Event-type hierarchy.** `Error` is the root; `Contradiction`, `TypeMismatch`,
-`FailedPrincipalDecision`, `MarginFloorViolation`, and `AgentCrashed` extend it. `when` matches by
+`FailedPrincipalDecision`, `MarginFloorViolation`, `TaskScopeViolation`, and `AgentCrashed` extend
+it. `when` matches by
 subtype, so `when (Error e)` catches a `Contradiction`; a contradiction is an `Error`
 subtype, and code that wants only faults matches the specific types. `Expired` and a lost
-send are not errors. A user `event` may extend this root — `event Foo(..) : Error;`
+send are not errors, and neither is `TaskFailed` — a recorded task outcome, not a program
+fault (the delegator-side fault, when foreground, is the `AgentCrashed` it induces, §6c). A user `event` may extend this root — `event Foo(..) : Error;`
 adds a *leaf* under `Error` so `when (Error e)` catches it too; the only permitted supertype is
 the built-in `Error` (no user intermediate supertypes), and `action` may not extend it (only
 `event` may).
@@ -1202,8 +1394,10 @@ grants { perform Transfer, reach Worker, use search } // concrete capabilities
 grants { * }                                          // the explicit unconstrained opt-out
 ```
 
-A grant entry is `perform NAME` (may perform action type `NAME`), `reach NAME` (may send
-into agents of type `NAME`), or `use NAME` (may call tool `NAME`).
+A grant entry is `perform NAME` (may perform action type `NAME` — including executing its bound
+write tool, §6b), `reach NAME` (may send into agents of type `NAME`), or `use NAME` (may call
+**read** tool `NAME`; a `use` grant naming a write tool is a `TypeError` — write tools are
+reached only through `perform` on a bound action, §6b).
 
 **Default is deny.** No `grants` clause ⇒ perform/reach/use nothing (fails closed). The only
 escape hatch is the explicit `grants { * }` (unconstrained, lattice top, visible in source
@@ -1386,16 +1580,22 @@ prevents future decisions from treating old evidence as current.
 
 ### The consequential-action rule
 
-A consequential sink — a `perform` argument or a write-tool input — may consume a value only if it is
+A consequential sink — a `perform` argument (whether or not the action is bound to a write tool,
+§6b; write tools have no other entrance) — may consume a value only if it is
 `**settled`**: it carries no un-endorsed cognition. A `Credence` reaches a usable settlement only
 through `decide` then `endorse`; `endorse` is constructible only inside a branch that has narrowed
 the `Decision` to a committed variant (so an `abstained` decision has no endorsement to give and
 statically cannot reach a sink). External data is `settled` by origin and passes freely — only
-un-endorsed cognition is rejected. This static check is joined by one runtime check at the sink: the
+un-endorsed cognition is rejected. This static check is joined by two runtime checks at the sink. First, the
 **margin floor** — `margin ≥ m`, with `m` the rule's `floor`. A committed decision whose margin is below `m`
 faults the action (`MarginFloorViolation`, §16.6), the typed trigger for escalation. A gate whose rule
 declares no `floor` performs only the static admission check and raises no `MarginFloorViolation`; to
-impose a runtime floor, give the rule a `floor m`.
+impose a runtime floor, give the rule a `floor m`. Second, the **task-scope enablement** (§6c):
+a `perform` executed while the agent is running an assigned task additionally requires the
+active task to be **endorsed** and to name that action in its `scope` clause; otherwise the
+action faults (`TaskScopeViolation`, §16.6). A perform with no active task needs only the
+static grant. The static grant is always the upper bound — the task check can only *disable*
+a granted power, never widen one (§14).
 
 **Fail-closed by default.** `m` (the margin floor) sets how confident the gate must be; when a
 consequential decision does not clear it, the action faults rather than proceeds — a consequential
@@ -1425,7 +1625,7 @@ Extending the consequential-action rule (§15.3.3):
 | ---------- | --------------- | ----------------- | ----- | -------------------------------------- |
 | provider   | a model         | `self <- p`       | `A`   | `raw` / `graded` (Credence slot)       |
 | identity   | a `principal`   | `p decide c by r` | `A`   | `Decision<E>` with principal provenance |
-| tool       | the world (MCP) | `name(args)`      | `A`   | `⊔` inputs (read) / a sink (write) |
+| tool       | the world (MCP) | `name(args)` (read) / `perform A(args)` (write, via `uses`, §6b) | `A`   | `⊔` inputs (read) / a sink (write) |
 
 All three are external, non-deterministic, journaled, and swappable by config. A rule-only gate
 needs no external dependency — a conformal gate calibrates from its own recorded decisions on the
@@ -1449,8 +1649,10 @@ sealed, ledgered committed-or-abstained form of a `Credence<E>`; `Endorsement<T>
 proof that a committed `Decision<E>` was applied to an exact subject value `T`; `decide` and
 `endorse` are the only source
 operations that discharge judgment trust; the taint lattice is monotone except at those gates;
-`grants` are default-deny and never widened by runtime data; `perform` and write tools are
-consequential sinks; the ledger is the root of replayable state.
+`grants` are default-deny and never widened by runtime data (an endorsed task's `scope` can only
+*disable* a statically granted power at the sink, never add one — attenuation, §6c); `perform`
+is the consequential sink, and a write tool is reachable only through a `perform` of its bound
+action (§6b); the ledger is the root of replayable state.
 
 **Allowed trust transitions** — there are no hidden declassifiers. The only legal path from
 model testimony to world effect is:
@@ -1467,7 +1669,7 @@ A helper function, memory recall, ledger query, or tool result may make this pat
 but may not add a second path. A `Decision` may guide control flow, but only an `Endorsement`
 (settled subject) can drive a consequential sink, and that endorsement can be constructed only after
 the `Decision` is narrowed to a committed variant. Recall from memory is always tainted; read tools
-join the trust of their inputs; write tools are sinks. If the checker cannot establish a value's type, trust,
+join the trust of their inputs; write tools execute only behind a `perform` (§6b). If the checker cannot establish a value's type, trust,
 endorsement, tool effect, grant, or replay source at a kernel boundary, the conformant behavior is
 to reject rather than infer authority.
 
@@ -1484,7 +1686,7 @@ typed provider replies are bare values whose send lifecycle is ledgered; a send 
 and records a sealed `Decision<E>`,
 `endorse subject by d` produces and records an `Endorsement<T>` of an exact subject only when `d`
 has been committed-narrowed, and only an `Endorsement` may drive a consequential sink
-(a `perform` arg or a write-tool input); fusion of two or more `Credence`s (including
+(a `perform` arg — write tools have no other entrance, §6b); fusion of two or more `Credence`s (including
 `quorum`) requires a total `independent`/`dependent` declaration over the `Credence[]`;
 a `principal` prefix on `decide` takes a `Principal` (no `text → Principal`); user
 `struct`/`enum`/`event`/`action` types are explicitly declared; a read `tool` requires a
@@ -1494,7 +1696,9 @@ tool-use are checked statically and interprocedurally; a violation is a compile 
 **Runtime** — ticks are system-level; structured output uses constrained decoding;
 subscriptions are prospective and hoisted (never retroactive), and history is reached by
 query; multi-handler firing is registration-order; a message trace is a prefix of
-`Sent→Delivered→Resolved`; every memory write carries a provenance backpointer; each agent
+`Sent→Delivered→Resolved`; a task-send additionally lands exactly one terminal task record
+(`TaskCompleted`/`TaskFailed`/`TaskCancelled`/`Expired`, §6c) and a late `complete`/`fail`
+after a tombstone is refused (`CompletionRefused`); every memory write carries a provenance backpointer; each agent
 instance's private memory is isolated and is consulted-then-internalized on every reaction (the
 mandatory envelope, §16.7), and recall cannot launder trust; all three
 dependencies journal their oracle/tool results to the ledger for replay (§15.4.2); replay
@@ -1576,7 +1780,7 @@ decl       ::= typedecl | tool | agent | fn | confdecl | stmt
 typedecl   ::= "struct" Ident "{" field ("," field)* "}"
              | "enum"   Ident "{" Ident ("," Ident)* "}"
              | "event"  Ident "(" field ("," field)* ")" (":" "Error")? ";"   // optional Error supertype (§9)
-             | "action" Ident "(" field ("," field)* ")" ";"                   // performative sink
+             | "action" Ident "(" field ("," field)* ")" ("uses" Ident)? ";"   // performative sink; `uses` binds ONE write tool (§6b)
 field      ::= type Ident                                     // "name: T" also accepted (struct fields)
 tool       ::= ("read"|"write") "tool" type Ident params config? ";"          // effect class mandatory (§6b)
 agent      ::= "agent" Ident params grants? "{" abody* "}"
@@ -1591,13 +1795,14 @@ operand    ::= Ident | String | Int | Float
 params     ::= "(" (type Ident ("," type Ident)*)? ")"
 abody      ::= extend | on | stmt
 extend     ::= "extend" Ident args ";"
-on         ::= "on" ("awake"|"sleep"|"crash") block
+on         ::= "on" ("awake"|"sleep"|"crash"|"assigned"|"cancelled") block    // task hooks are `when` sugar (§6c)
 
 type       ::= "int"|"float"|"bool"|"text"|"null" | "event" "<" type ">"
              | "array" "<" type ">"                     // collection (query results, fan-out source)
              | "Credence" "<" type ">"                  // graded judgment over enum
              | "Decision" "<" type ">"                  // a gate's committed outcome
              | "Endorsement" "<" type ">"               // a recorded subject endorsement
+             | "Task" "<" type ">"                      // a background-task handle (§6c)
              | Ident                                     // enum/struct/agent/action names, incl. Principal, mem
 
 stmt       ::= vardecl | assign | spawn | prompt | principal | depdecl
@@ -1605,6 +1810,9 @@ stmt       ::= vardecl | assign | spawn | prompt | principal | depdecl
              | "awake" Ident ";" | "sleep" Ident ";"
              | "emit" Ident "(" [expr ("," expr)*] ")" ";"     // plain event; args match fields positionally
              | "perform" Ident "(" [expr ("," expr)*] ")" ";"  // action; args match fields positionally
+             | "complete" expr ";"                      // resolve the active assigned task (§6c; task handler only)
+             | "fail" expr ";"                          // fail the active assigned task with a text reason (§6c)
+             | "cancel" postfix ";"                     // delegator-side task cancel; operand must be Task<T> (§6c)
              | "return" expr? ";"                       // `say(x)` is an ordinary call (`expr ;`)
              | "if" "(" expr ")" block ("else" block)?
              | when
@@ -1628,13 +1836,16 @@ rule       ::= "confidence" Number ("margin" Number)? ("floor" Number)?     // t
              | "conformal" Number? ("readiness" Int)? ("floor" Number)?     // conformal basis; with no α, inherits the file `conformal` default (else 0.05)
              | "(" expr ")"                              // a Rule-valued expression (parenthesized); must be Rule-typed (else TypeError)
 
-expr       ::= expr "<-" expr ("expires" Number)?        // send (agent on left); or STORE into a `mem` (mem on left, §10)
+expr       ::= expr "<-" expr ("expires" expr)?          // send (agent on left); or STORE into a `mem` (mem on left, §10); `expires` operand is a settled numeric expr; MANDATORY when the message is TaskSpec-typed (a tasklit or TaskSpec/Endorsement<TaskSpec>, §6c)
              | expr "->" expr                            // RECALL from a `mem` (always tainted, §10)
              | expr "|>" Ident                           // bounded fan-out: map async fn over a finite collection (§12)
              | gate                                      // a gate as an expression: decide → Decision<E>, endorse → Endorsement<T>
              | "quorum" "(" Int "," expr ")"             // at least k of a Credence<bool>[] (§12)
              | ledgerquery                               // objective ledger read → LedgerEntry<E>[] / Record[]
              | cmp
+tasklit    ::= "task" "{" taskclause* "}"                // builds a TaskSpec (§6c); objective+acceptance REQUIRED
+taskclause ::= "objective" expr ";" | "acceptance" expr ";"
+             | "scope" "{" "perform" Ident ("," "perform" Ident)* "}"   // enabling scope; delegator must hold each power
 ledgerquery ::= "select" Ident "as" Ident "from" "ledger" "where" "{" cond "}"
               | "select" (Ident ("," Ident)* | "*") "from" "ledger" "where" "{" cond "}"  // recorded-trust read of the log
 cond       ::= cmp (("&&"|"||") cmp)*                    // a boolean filter over fields
@@ -1646,11 +1857,12 @@ postfix    ::= primary ("." Ident | args | "[" expr "]")*    // "." Ident is fie
 primary    ::= Int|Float|String|FString|"true"|"false"|"null"|"abstained"|"self"|Ident
              | "(" expr ")"
              | Ident "{" (Ident ":" expr ("," Ident ":" expr)*)? "}"  // struct literal
+             | tasklit                                    // : TaskSpec — bindable (e.g. a draft to endorse) or sent directly (§6c)
              | "[" (expr ("," expr)*)? "]"               // array literal
 ```
 
 **Types.** `type[]` is the collection suffix. `Credence<E>`, `Decision<E>`,
-`Endorsement<T>`, and `LedgerEntry<E>` are the prelude generic types; there is no
+`Endorsement<T>`, `Task<T>`, and `LedgerEntry<E>` are the prelude generic types; there is no
 surface `event<T>` reply wrapper.
 
 **Collections.** `T[]` is the collection type *produced* by the ledger query (which may bind
@@ -1715,8 +1927,8 @@ dependence coverage over the `Credence[]`. Branching on a gate is an ordinary `i
 - `c_f ∈ {S,A}` — `A` if its body reaches any declared dependency (including a tool call) or calls any
 `A`-colored `g`; else `S`. A `sync`-declared `f` asserts `c_f = S`.
 - `ρ_f` — trust-transparent parameters (trust flows to the result, three-level).
-- `κ_f` — consequentially-consumed parameters (fed into a `perform`/reach/write-tool, or a
-`use` tool whose result is consequentially consumed).
+- `κ_f` — consequentially-consumed parameters (fed into a `perform`/reach, or a
+read tool whose result is consequentially consumed).
 
 `Φ` is the least fixpoint over the call graph; a builtin is `(A, ∅, ∅)` unless modeled.
 
@@ -1731,7 +1943,7 @@ allowed(C,kind,X) ⟺ G ≠ ⊥ ∧ ((kind,X) ∈ G ∨ G = {*})
 ──────────────────────────────────────────────────────────  (W-Auth)
 in C:  ⊢ perform A(e) ok ⟺ allowed(C,"perform",A)
        ⊢ (x <- p)    ok ⟺ x = self ∨ allowed(C,"reach",typeof(x))
-       ⊢ K(a…)       ok ⟺ allowed(C,"use",K)
+       ⊢ K(a…)       ok ⟺ allowed(C,"use",K) ∧ effect(K) = read   // a write-tool CALL is ill-formed (single door, §6b)
        ⊢ emit E(e)   ok                        // a plain event needs no power
 
 // AUTHORITY — subtractive extend:
@@ -1743,10 +1955,35 @@ grants(C) ⊆ grants(P)        // ⊥ ⊆ G ⊆ {*}; covers perform/reach/use un
 sink(s)     Γ ⊢ e : Te · t     ¬( t = settled )
 ──────────────────────────────────────────────────────────────  (W-Consequential-static)
 s(…e…)  is ILL-FORMED
-// sink = perform arg / write-tool input. A settled NON-Endorsement (a constant, a `prompt` value,
+// sink = perform arg (write tools are reached only through a bound action's perform, §6b).
+// A settled NON-Endorsement (a constant, a `prompt` value,
 // a settled read-tool result) passes freely — external data is settled by origin. An `Endorsement`
 // is settled only because T-Endorse required a committed-narrowed Decision. A graded/raw value is rejected.
 // At runtime, for an admitted `Endorsement`: margin(e) ≥ m, else the action faults (MarginFloorViolation).
+// At runtime, inside an assigned task: the active task must be endorsed and name the action in
+// its scope, else the action faults (TaskScopeViolation, §6c) — enablement, checked like the floor.
+
+// DELEGATION — the task-send (§6c):
+Γ ⊢ d : Agent    Γ ⊢ o : Text · t_o    Γ ⊢ a : Text · t_a    Γ ⊢ n : Int · settled
+──────────────────────────────────────────────────────────────  (T-Delegate)
+Γ ⊢ (d <- task { objective o; acceptance a; } expires n) : T_result ! A · raw
+        // bound as `T r = …` (foreground) or `Task<T> h = …` (background handle · settled).
+        // ILL-FORMED if: `expires` is absent; the result is unbound (statement form);
+        // objective/acceptance missing or not Text; the task block is empty.
+        // TaskSpec trust = t_o ⊔ t_a (delegation never launders trust).
+
+// DELEGATION — scope attenuation (compile time):
+task carries scope { perform A₁ … perform Aₙ } in agent C
+──────────────────────────────────────────────────────────────  (W-Scope-Attenuate)
+∀ i. allowed(C,"perform",Aᵢ)    ∧    the sent message : Endorsement<TaskSpec>
+        // a scoped task can only attenuate its DELEGATOR's authority, and is enabling only
+        // when endorsed (endorse requires a committed-narrowed Decision, T-Endorse).
+        // An unendorsed scoped task at a send is ILL-FORMED.
+
+// DELEGATION — task verbs (worker side):
+`complete e;` / `fail e;` ok ⟺ enclosing handler is a task handler (`on assigned` / the
+        filtered Delivered subscription); `fail` requires e : Text; `complete e` requires
+        e : T_result of the active task. `cancel h;` requires h : Task<T>. Elsewhere: ILL-FORMED.
 
 // DECISION / flow narrowing (subject endorsement is flow-sensitive on `d.committed`):
 Γ ⊢ d : Decision<E> · settled
@@ -1764,7 +2001,7 @@ inside the else / non-committed branch (d.committed == abstained):
 ```
 
 The endorsement half of the consequential rule is static (W-Consequential-static); the
-margin floor is runtime.
+margin floor and the task-scope enablement are runtime.
 
 ## 15.4 Dynamic semantics
 
@@ -1787,6 +2024,16 @@ All three oracles' results are journaled to the ledger as produced (the send's `
 each from the recording in order — a write tool is replayed as its recorded result, not re-run. The
 ledger is hash-chained, so a faithful replay regenerates an identical chain — chain-head equality is
 the proof of replay-equivalence.
+
+**Task-send dynamics (§6c).** A task-send is an ordinary send whose `Resolved` is produced by
+the recipient's `complete` statement rather than by `think`; `complete e` appends `Resolved`
+then `TaskCompleted(e)` in the same reaction; `fail e` appends `TaskFailed(e)` and the
+transport chain rests at its `Delivered` prefix; `cancel h` appends `TaskCancelled(corr(h))`.
+The first terminal for a correlation wins: after `TaskCancelled` or `Expired`, a `complete`/
+`fail` for that correlation appends `CompletionRefused(corr)` and its payload is discarded.
+A foreground (result-bound) delegation whose terminal is `TaskFailed`/`Expired`/`TaskCancelled`
+faults the awaiting invocation (the contained-crash path, §5 — `AgentCrashed`). All task rows
+are ordinary ledger events: replay folds them deterministically like every other record.
 
 ### 15.4.2a The ledger as an audit log — consensus, forking, forensics
 
@@ -1829,7 +2076,7 @@ ev = Endorsed(subject_hash(subject), decision_id(d), v')
 ("use",K) granted    (Ω, K, eval(a…)) ⇝ (v, Ω')    t = ⊔ trust(aᵢ)
 S' = append(append(S, ToolStarted(K)), ToolResolved(K, v))
 ─────────────────────────────────────────────  (E-Tool)
-⟨…|Ω|μ|S| x = K(a…); k⟩ → ⟨…|Ω'|μ[x↦v (trust t)]|S'| k⟩   // a write tool is a consequential sink (W-Consequential-static)
+⟨…|Ω|μ|S| x = K(a…); k⟩ → ⟨…|Ω'|μ[x↦v (trust t)]|S'| k⟩   // read tools only; a write tool executes inside E-Perform of its bound action (§6b)
 
 // SPAWN — allocate + bind ctor args + run constructor; mailbox closed; hoist subs:
 Â' = Â[name ↦ { type, params := eval(args), awake:false }] ;  register-hoisted-subs(ctor-body)
@@ -1869,6 +2116,22 @@ Sent(corr) ∈ S   ¬Delivered(corr)   lifetime(corr) elapsed
 // EMIT:
 ─────────────────────────────────────────────────────────────  (E-Emit)
 ⟨…|μ|S| emit E(e₁,…,eₙ); k⟩ → ⟨…|μ| append(S, E(subj, eval(e₁),…,eval(eₙ))) | k⟩
+
+// PERFORM — the consequential act; a bound action executes its write tool through Ω (§6b):
+allowed(C,"perform",A)   admitted (W-Consequential-static)   margin ≥ floor   task-scope enabled (§6c)
+A uses K ⇒ (Ω, K, eval(e…)) ⇝ (v, Ω') and the ToolStarted(K)/ToolResolved(K,v) pair is appended
+─────────────────────────────────────────────────────────────  (E-Perform)
+⟨…|Ω|S| perform A(e…); k⟩ → ⟨…|Ω'| append(S, A(subj, eval(e…)) [, ToolStarted, ToolResolved]) | k⟩
+// failing the margin or task-scope runtime check appends MarginFloorViolation / TaskScopeViolation
+// and faults the invocation instead (E-Crash); the action (and any bound tool) does not run.
+
+// DELEGATE — a task-send (§6c, §16.3a): E-Send transport, but Delivered fires the worker's task
+// handler instead of think, and Resolved is produced by that worker's `complete`:
+⟨…|S| complete e; k⟩ → ⟨…| append²(S, Resolved(corr), TaskCompleted(corr, eval(e))) | k⟩  // corr = the active task
+⟨…|S| fail e; k⟩     → ⟨…| append(S, TaskFailed(corr, eval(e))) | k⟩       // transport rests at its Delivered prefix
+⟨…|S| cancel h; k⟩   → ⟨…| append(S, TaskCancelled(corr(h))) | k⟩          // the authoritative tombstone
+tombstoned(corr) ∧ complete/fail for corr  →  append(S, CompletionRefused(corr))   // payload discarded
+foreground(corr) ∧ terminal(corr) ∈ {TaskFailed, Expired, TaskCancelled}  →  fault the awaiting invocation (E-Crash)
 
 // LEDGER QUERY (statement form) — reads the log, lands a QueryResult:
 ─────────────────────────────────────────────────────────────  (E-Query-Stmt)
@@ -1957,8 +2220,8 @@ sequence `d`, independent of every un-settled (`raw`/`graded`) value.
 > the invariant under `→`. Non-interference modulo delimited release (Sabelfeld–Myers;
 > Sabelfeld–Sands). A read-`tool` adds no declassifier: its result carries the join of its
 > inputs' provenance, so it reaches `obs` only as `settled` (clean inputs) or through a gate
-> (cognition in its inputs); a write tool is a consequential sink, covered by the same
-> rule as `perform`. ∎ *(The two-run bisimulation is the mechanization obligation — §15.7,
+> (cognition in its inputs); a write tool executes only inside a `perform` of its bound
+> action (§6b), so it is covered by exactly the `perform` rule. ∎ *(The two-run bisimulation is the mechanization obligation — §15.7,
 > and the first artifact to be built with Agape.)*
 
 **Lemma 2 — Per-gate flip bound.** For a gate with margin `δⱼ`, the probability its
@@ -2050,8 +2313,9 @@ judgment is `decide`, which yields a ledgered `Decision` whose `.committed` is a
 or `abstained`; the only operation that settles a subject value is `endorse subject by d`, yielding
 an `Endorsement` that records the exact subject and decision id, and only when `d` has been
 committed-narrowed. **(T3) Consequential non-interference** —
-no value carrying un-endorsed cognition reaches a consequential sink (a `perform` argument or a
-write-tool input), and an `Endorsement` can only be constructed from a committed-narrowed
+no value carrying un-endorsed cognition reaches a consequential sink (a `perform` argument —
+write tools, callable only through a bound action's `perform`, have no other input path, §6b),
+and an `Endorsement` can only be constructed from a committed-narrowed
 `Decision` (so an `abstained` decision cannot reach a sink), with the runtime margin floor
 `margin ≥ m` checked there; equivalently, varying the model's raw judgments
 changes no world-effect except through a gate (Lemma 1, §15.5). **(T4) Reproducibility up to
@@ -2218,6 +2482,27 @@ order**).
 - **Prospective.** A subscription never fires for an event whose tick precedes its registration (§7);
   history is reached only by query (§10).
 
+### 16.3a Task-send dispatch (§6c)
+
+A task-send routes like any send; what changes is who resolves it and what lands on the ledger.
+
+- **Assignment.** Delivery of a task-send fires the worker's `on assigned` hook — compiled to a
+  `Delivered` subscription filtered to task-sends — instead of a provider invocation. While that
+  handler (and any handler resolving the same task) runs, the worker's provider calls compose the
+  active task's `objective`/`acceptance` into context **after** the instruction blocks, as data
+  (§5, §6c). The runtime tracks the agent's *active task* (its correlation id) for the duration.
+- **Aliases.** `when (TaskSubmitted|TaskAssigned|TaskExpired about h)` are compile-time rewrites
+  to the corresponding `Sent`/`Delivered`/`Expired` subscriptions filtered by the handle's
+  correlation — they are not distinct rows (§6c), so the journal (§16.2) is unchanged by them.
+- **Terminals and refusal.** The first terminal for a correlation wins (`TaskCompleted` via
+  `complete` — which also appends the transport `Resolved` — or `TaskFailed`, `TaskCancelled`,
+  `Expired`). A late `complete`/`fail` after a tombstone appends `CompletionRefused(corr)`; the
+  payload is discarded (§15.4.2).
+- **Foreground fault.** A result-bound delegation whose terminal is not `TaskCompleted` faults
+  the delegator's awaiting invocation through the crash path (§16.6).
+- **Status projection.** "One status per task" is a ledger projection — a `select … from ledger`
+  fold over the correlation — maintained like any projection (§16.7a), never a stored event.
+
 ### 16.4 The seam protocol — provider, identity, tool
 
 The three declared dependencies are reached as oracles (§15.4.2): cognition through the **provider**,
@@ -2241,11 +2526,13 @@ appends its opening event, invokes the seam, journals the result (§16.5), and a
   records a `FailedPrincipalDecision` (§13). In both cases, and also when the rule commits without
   escalation, the resulting `Decision` is recorded as `Decided`. No key material appears in source
   (§3).
-- **Tool (`invoke`, MCP).** A call `K(a…)` resolves `K` to its MCP binding (`[tools]`, §17) and issues an
+- **Tool (`invoke`, MCP).** A read-tool call `K(a…)` — or a `perform` of an action bound to a write
+  tool by `uses` (§6b), which invokes the tool with the action's arguments — resolves `K` to its MCP
+  binding (`[tools]`, §17) and issues an
   MCP `tools/call` with the marshalled args, appending the `ToolStarted`/`ToolResolved` pair (§6b, §7).
   Args and result marshal between Agape values and MCP JSON by `K`'s declared signature. A
-  `read` tool's result carries the join of its inputs' trust; a `write` tool is a consequential sink whose
-  inputs must be settled (§6b, §13).
+  `read` tool's result carries the join of its inputs' trust; a `write` tool executes only behind a
+  `perform`, whose arguments must be settled (§6b, §13).
 
 ### 16.5 Record and replay
 
@@ -2291,6 +2578,15 @@ lifetime's firing (§6); a logical-tick lifetime is already deterministic.
   faults the invocation (the action does not run). Like `TypeMismatch` it is a catchable `Error`
   (§9): `when (Error e)` / `on crash` may handle it — it is the typed trigger for escalation, not a
   silent skip.
+- **TaskScopeViolation.** When a `perform` executes while the agent is running an assigned task and
+  the active task is not endorsed or does not name the action in its `scope` (§6c, §13), the runtime
+  appends a typed `TaskScopeViolation` and faults the invocation (the action does not run) — the
+  same shape and handling as the margin floor.
+- **Foreground task failure.** A result-bound delegation whose terminal is `TaskFailed`, `Expired`,
+  or `TaskCancelled` faults the delegator's awaiting invocation through the crash path above
+  (`AgentCrashed`; `on crash` recovers with state intact). The failure reason is the correlated
+  `TaskFailed(reason)` row, reached by query — a task that comes back empty is the same fault shape
+  as a provider that returns nothing (§5, §6c).
 
 ### 16.7 The memory runtime
 
@@ -2552,7 +2848,7 @@ The manifest binds those dependency names to concrete backends:
 name = "fact-checker"
 entry = "main.ag"
 version = "0.1.0"
-spec = "1.0.0-alpha.2026.7.2.2"
+spec = "1.0.0-alpha.2026.7.2.3"
 
 [provider]
 backend = "openai"

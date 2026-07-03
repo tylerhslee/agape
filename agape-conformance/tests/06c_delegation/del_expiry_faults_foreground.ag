@@ -1,0 +1,25 @@
+//! id:        del_expiry_faults_foreground
+//! section:   06c_delegation
+//! expect:    accept
+//! order:     Sent(r); Expired(r); AgentCrashed(lead); Recovered
+//! absent:    Delivered(r); Done
+//! spec:      §6c, §16.6 (mandatory expiry converts a lost task-send into a signal: the Expired tombstone faults the awaiting foreground invocation)
+//! note:      Worker is never awakened, so the 1-tick lifetime elapses undelivered
+//! ---
+event Done(int got);
+event Recovered(text how);
+agent Worker {
+  on assigned { complete 1; }
+}
+agent Lead grants { reach Worker } {
+  on awake {
+    spawn Worker w;
+    int r = w <- task {
+      objective "produce the number";
+      acceptance "an int";
+    } expires 1;
+    emit Done(r);
+  }
+  on crash { emit Recovered("compensated"); }
+}
+spawn Lead lead; awake lead;

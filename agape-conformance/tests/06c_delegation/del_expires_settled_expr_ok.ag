@@ -1,0 +1,20 @@
+//! id:        del_expires_settled_expr_ok
+//! section:   06c_delegation
+//! expect:    accept
+//! contains:  TaskCompleted(r)
+//! spec:      §6, §6c (`expires` accepts any settled numeric expression, not only a literal)
+//! ---
+agent Worker {
+  on assigned { complete 1; }
+}
+agent Lead grants { reach Worker } {
+  on awake {
+    spawn Worker w; awake w;
+    int ttl = 5;
+    int r = w <- task {
+      objective "produce the number";
+      acceptance "an int";
+    } expires ttl + 5;
+  }
+}
+spawn Lead lead; awake lead;

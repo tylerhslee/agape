@@ -1,0 +1,19 @@
+//! id:        del_objective_not_text_reject
+//! section:   06c_delegation
+//! expect:    reject
+//! error:     TypeError
+//! spec:      §6c (`objective` and `acceptance` must be `text`)
+//! ---
+agent Worker {
+  on assigned { complete 1; }
+}
+agent Lead grants { reach Worker } {
+  on awake {
+    spawn Worker w; awake w;
+    int r = w <- task {
+      objective 42;
+      acceptance "an int";
+    } expires 10;
+  }
+}
+spawn Lead lead; awake lead;

@@ -1,0 +1,21 @@
+//! id:        del_scope_unendorsed_send_reject
+//! section:   06c_delegation
+//! expect:    reject
+//! error:     TaintViolation
+//! spec:      §6c, §15.3.3 W-Scope-Attenuate (a task carrying a `scope` clause is enabling only when endorsed; sending an unendorsed scoped task is rejected)
+//! ---
+action Deploy(text artifact);
+agent Worker grants { perform Deploy } {
+  on assigned { complete 1; }
+}
+agent Lead grants { reach Worker, perform Deploy } {
+  on awake {
+    spawn Worker w; awake w;
+    int r = w <- task {
+      objective "ship it";
+      acceptance "an int";
+      scope { perform Deploy }
+    } expires 10;
+  }
+}
+spawn Lead lead; awake lead;

@@ -480,6 +480,7 @@ function typeLabel(t: A.TypeRef): string {
     case "credence": return `Credence<${t.enumName}>`;
     case "decision": return `Decision<${t.enumName}>`;
     case "endorsement": return `Endorsement<${typeLabel(t.inner)}>`;
+    case "task": return `Task<${typeLabel(t.inner)}>`;
     case "named": return t.typeArgs?.length ? `${t.name}<${t.typeArgs.map(typeLabel).join(", ")}>` : t.name;
   }
 }

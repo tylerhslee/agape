@@ -1,0 +1,19 @@
+//! id:        del_missing_expires_reject
+//! section:   06c_delegation
+//! expect:    reject
+//! error:     TypeError
+//! spec:      §6c (`expires` is mandatory on every delegation — every task is terminal by construction)
+//! ---
+agent Worker {
+  on assigned { complete 1; }
+}
+agent Lead grants { reach Worker } {
+  on awake {
+    spawn Worker w; awake w;
+    int r = w <- task {
+      objective "produce the number";
+      acceptance "an int";
+    };
+  }
+}
+spawn Lead lead; awake lead;

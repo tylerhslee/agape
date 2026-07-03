@@ -1,0 +1,21 @@
+//! id:        del_foreground_complete_ok
+//! section:   06c_delegation
+//! expect:    accept
+//! order:     Sent(r); Delivered(r); Resolved(r); TaskCompleted(r); Done
+//! spec:      §6c (a foreground task-send: the worker's `complete` produces the transport Resolved plus TaskCompleted, and the delegator's continuation resumes with the result)
+//! ---
+event Done(int got);
+agent Worker {
+  on assigned { complete 42; }
+}
+agent Lead grants { reach Worker } {
+  on awake {
+    spawn Worker w; awake w;
+    int r = w <- task {
+      objective "produce the number";
+      acceptance "an int";
+    } expires 10;
+    emit Done(r);
+  }
+}
+spawn Lead lead; awake lead;

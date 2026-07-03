@@ -1,0 +1,102 @@
+// Delegation showcase — v1.0.0-alpha.2026.7.2.3 (§6b single door, §6c task-send).
+// One file, the whole surface: the action/write-tool split, a foreground research task,
+// a background survey task with progress + cancel, and an endorsed scoped deploy task.
+
+// ---------- tools & actions: the single door (§6b) ----------
+
+read  tool text search(text query);            // read tools are directly callable
+write tool text ship(text artifact);           // a write tool is DECLARED, never called
+action Deploy(text artifact) uses ship;        // ...perform Deploy is its only entrance
+action Announce(text note);                    // unbound action: a pure ledgered performative
+
+// ship("v2");                                 // TypeError — write tools have no call syntax
+
+enum Go { Approve, Reject }
+
+struct Findings { summary: text, refs: text }
+
+// ---------- the worker (§6c: on assigned / complete / fail / progress) ----------
+
+agent Researcher grants { use search } {
+  instruction "Cite evidence for every claim.";
+
+  on assigned {                                // sugar for the filtered Delivered subscription
+    // the active task's objective/acceptance compose into context here, AS DATA (§16.3a)
+    text hits = search("prior art");
+    Credence<bool> ok = self <- f"can the acceptance criteria be met from: {hits}";
+    Decision<bool> d = decide ok by confidence 0.7;
+    emit TaskProgress("evidence gathered");    // the one repeatable task event
+
+    if (d.committed == true) {
+      Findings r = self <- "complete the assigned task";
+      complete r;                              // programmatic resolution → Resolved + TaskCompleted
+    } else {
+      fail "acceptance criteria unmeetable from available evidence";  // → TaskFailed(reason)
+    }
+  }
+
+  on cancelled { say("stopping cooperatively"); }   // cancel never preempts (§6c)
+}
+
+// ---------- a deploy worker that may perform ONLY under an endorsed task ----------
+
+agent Deployer grants { perform Deploy } {     // static grant = the immovable upper bound
+  on assigned {
+    Findings plan = self <- "produce the deploy plan per the objective";
+    perform Deploy("artifact-v2");             // enabled: active task is endorsed + in scope;
+    complete plan;                             //   outside such a task → TaskScopeViolation
+  }
+}
+
+// ---------- the delegator ----------
+
+agent Lead grants { reach Researcher, reach Deployer, perform Deploy, perform Announce } {
+  on awake {
+    spawn Researcher rex;  awake rex;
+    spawn Deployer   dep;  awake dep;
+    int ttl = 50;
+
+    // FOREGROUND — result-bound; expires is MANDATORY; failure faults this invocation (on crash)
+    Findings found = rex <- task {
+      objective  "Assess prior art for the v2 release";
+      acceptance "A summary where every claim carries an evidence ref";
+    } expires ttl;
+
+    // BACKGROUND — handle-bound; outcomes are ordinary `when` subscriptions
+    Task<Findings> survey = rex <- task {
+      objective  "Survey the competitive landscape";
+      acceptance "A one-paragraph map of the field";
+    } expires 200;
+    when (TaskProgress p about survey)  { say(f"survey progress: {p.note}"); }
+    when (TaskCompleted c about survey) { perform Announce("survey landed"); }
+    when (TaskFailed f about survey)    { say(f"survey failed: {f.reason}"); }
+    // cancel survey;                          // cooperative tombstone; late complete → CompletionRefused
+
+    // ENDORSED SCOPED TASK — perform authority travels only via the gate (§6c, §13)
+    TaskSpec draft = task {
+      objective  f"Deploy v2 given: {found.summary}";     // tainted objective stays tainted
+      acceptance "Deploy exactly one artifact and report the plan";
+      scope { perform Deploy }                 // ⊆ Lead's own grants — attenuation, never minting
+    };
+    Credence<Go> c = self <- f"is this deploy task safe to hand off: {draft.objective}";
+    Decision<Go> d = decide c by confidence 0.9 margin 0.1;
+
+    if (d.committed == Approve) {
+      Endorsement<TaskSpec> approved = endorse draft by d;   // only in a committed branch
+      Findings plan = dep <- approved expires 100;           // an unendorsed scoped send = compile error
+      say(f"deployed: {plan.summary}");
+    } else {
+      say("deploy withheld");                  // fail closed; no endorsement exists here
+    }
+  }
+
+  on crash { say("foreground task failed/expired — reason is one ledger query away"); }
+}
+
+spawn Lead lead;
+awake lead;
+
+// The ledger tells the whole story per task correlation:
+//   Sent(≡TaskSubmitted) → Delivered(≡TaskAssigned) → TaskProgress* →
+//   Resolved+TaskCompleted | TaskFailed | TaskCancelled | Expired(≡TaskExpired)
+// — exactly one terminal per task (expires is mandatory), status is a projection, not an event.

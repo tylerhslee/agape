@@ -1,0 +1,19 @@
+//! id:        del_unbound_statement_reject
+//! section:   06c_delegation
+//! expect:    reject
+//! error:     TypeError
+//! spec:      §6c (bare statement-form delegation is a compile error — hold the result or the Task<T> handle; every task is addressable)
+//! ---
+agent Worker {
+  on assigned { complete 1; }
+}
+agent Lead grants { reach Worker } {
+  on awake {
+    spawn Worker w; awake w;
+    w <- task {
+      objective "produce the number";
+      acceptance "an int";
+    } expires 10;
+  }
+}
+spawn Lead lead; awake lead;

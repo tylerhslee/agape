@@ -1,0 +1,22 @@
+//! id:        del_worker_fail_records
+//! section:   06c_delegation
+//! expect:    accept
+//! contains:  TaskFailed(h); FailSeen
+//! absent:    Resolved(h); TaskCompleted(h)
+//! spec:      §6c (`fail reason` appends TaskFailed; the transport chain rests at its Delivered prefix — a stalled prefix is not a violation; a background delegator observes it with `when`)
+//! ---
+event FailSeen(text why);
+agent Worker {
+  on assigned { fail "acceptance criteria unmeetable"; }
+}
+agent Lead grants { reach Worker } {
+  on awake {
+    spawn Worker w; awake w;
+    Task<int> h = w <- task {
+      objective "produce the number";
+      acceptance "an int";
+    } expires 10;
+    when (TaskFailed f about h) { emit FailSeen("seen"); }
+  }
+}
+spawn Lead lead; awake lead;

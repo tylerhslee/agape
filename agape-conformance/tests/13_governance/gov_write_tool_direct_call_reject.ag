@@ -1,0 +1,14 @@
+//! id:        gov_write_tool_direct_call_reject
+//! section:   13_governance
+//! expect:    reject
+//! error:     TypeError
+//! spec:      §6b (the single door: a write tool is a declared mutation capability, not a callable expression; only `perform` of a bound action may execute it)
+//! ---
+write tool bool transfer(int amount, text to);
+action Pay(int amount, text to) uses transfer;
+agent Bank grants { perform Pay } {
+  on awake {
+    bool ok = transfer(100, "bob");
+  }
+}
+spawn Bank b; awake b;

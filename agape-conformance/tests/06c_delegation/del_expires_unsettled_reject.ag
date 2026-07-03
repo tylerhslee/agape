@@ -1,0 +1,20 @@
+//! id:        del_expires_unsettled_reject
+//! section:   06c_delegation
+//! expect:    reject
+//! error:     TaintViolation
+//! spec:      §6, §6c (`expires` requires a SETTLED numeric expression; a cognition-derived lifetime is rejected)
+//! ---
+agent Worker {
+  on assigned { complete 1; }
+}
+agent Lead grants { reach Worker } {
+  on awake {
+    spawn Worker w; awake w;
+    int ttl = self <- "pick a lifetime";
+    int r = w <- task {
+      objective "produce the number";
+      acceptance "an int";
+    } expires ttl;
+  }
+}
+spawn Lead lead; awake lead;

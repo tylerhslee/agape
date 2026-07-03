@@ -97,6 +97,7 @@ function typeLabel(t: A.TypeRef): string {
     case "credence": return `Credence<${t.enumName}>`;
     case "decision": return `Decision<${t.enumName}>`;
     case "endorsement": return `Endorsement<${typeLabel(t.inner)}>`;
+    case "task": return `Task<${typeLabel(t.inner)}>`;
     case "named": return t.typeArgs?.length ? `${t.name}<${t.typeArgs.map(typeLabel).join(", ")}>` : t.name;
     case "mem": return "mem";
   }
@@ -668,7 +669,7 @@ export function startStudio(opts: StudioOptions): Promise<{ close: () => void }>
       if (req.method === "GET" && url.pathname === "/api/meta") {
         return json(res, 200, {
           dir: opts.dir,
-          version: "1.0.0-alpha.2026.7.2.2",
+          version: "1.0.0-alpha.2026.7.2.3",
           providers: providerStatuses(opts.allowLive),
           access: { liveEnabled: opts.allowLive, tokenRequired: Boolean(accessToken) },
         });

@@ -29,7 +29,7 @@ function assertCore(p: A.Program): void {
     if (t.kind === "named" && t.typeArgs && t.typeArgs.length && t.name !== "LedgerEntry") {
       bad("a generic type instantiation");
     }
-    if (t.kind === "event" || t.kind === "array") walkType(t.inner);
+    if (t.kind === "event" || t.kind === "array" || t.kind === "task") walkType(t.inner);
     if (t.kind === "named" && t.typeArgs) t.typeArgs.forEach(walkType);
   };
   const walkExpr = (e: A.Expr): void => {
@@ -51,6 +51,7 @@ function assertCore(p: A.Program): void {
       case "quorum": walkExpr(e.source); break;
       case "structlit": if (e.typeArgs && e.typeArgs.length) bad("a generic struct literal"); e.fields.forEach((f) => walkExpr(f.value)); break;
       case "arraylit": e.items.forEach(walkExpr); break;
+      case "tasklit": if (e.objective) walkExpr(e.objective); if (e.acceptance) walkExpr(e.acceptance); break; // core (§6c)
       case "fstring": e.parts.forEach((pt) => { if (pt.kind === "expr") walkExpr(pt.expr); }); break;
       default: break;
     }
@@ -59,6 +60,9 @@ function assertCore(p: A.Program): void {
     switch (s.kind) {
       case "dispatch": return bad("a gate arm block (branch on `.committed` with `if`)");
       case "retry": return bad("`retry` (the core has no unbounded or bounded loop)");
+      case "complete": walkExpr(s.value); break;  // core (§6c)
+      case "fail": walkExpr(s.reason); break;     // core (§6c)
+      case "cancel": walkExpr(s.handle); break;   // core (§6c)
       case "var": walkType(s.type); if (s.init) walkExpr(s.init); break;
       case "assign": walkExpr(s.target); walkExpr(s.value); break;
       case "spawn": s.args.forEach(walkExpr); break;
@@ -289,8 +293,15 @@ class Parser {
       this.eat("action");
       const name = this.eat("ident").value;
       const fields = this.parseFieldList();
+      // `uses TOOL` (§3/§6b): the contextual action→write-tool binding, recognized positionally
+      // after the parameter list. At most ONE tool.
+      let uses: string | undefined;
+      if (this.atIdent("uses")) {
+        this.next();
+        uses = this.eat("ident").value;
+      }
       this.eat(";");
-      return { kind: "action", name, fields, reversible: false, pub, pos };
+      return { kind: "action", name, fields, reversible: false, uses, pub, pos };
     }
     if (this.at("reversible")) {
       this.next();
@@ -596,11 +607,14 @@ class Parser {
 
   private parseOnHook(): A.OnHook {
     const pos = this.eat("on").pos;
-    let event: "awake" | "sleep" | "crash";
+    let event: A.OnHook["event"];
     if (this.at("awake")) event = "awake";
     else if (this.at("sleep")) event = "sleep";
     else if (this.at("crash")) event = "crash";
-    else this.err("expected awake/sleep/crash");
+    // the two task hooks (§6c): `assigned`/`cancelled` are contextual idents, not keywords.
+    else if (this.atIdent("assigned")) event = "assigned";
+    else if (this.atIdent("cancelled")) event = "cancelled";
+    else this.err("expected awake/sleep/crash/assigned/cancelled");
     this.next();
     const body = this.parseBlock();
     return { kind: "on", event, body, pos };
@@ -685,6 +699,14 @@ class Parser {
         this.eat(">");
         return { kind: "endorsement", inner };
       }
+      if (name === "Task") {
+        // Task<T> — a background-task handle (§6c).
+        this.next();
+        this.eat("<");
+        const inner = this.parseType();
+        this.eat(">");
+        return { kind: "task", inner };
+      }
       this.next();
       // a QUALIFIED type name `geometry.Shape` / `facade.internal.Shape` (§19.2): greedily consume
       // `('.' Ident)*` into a dotted name BEFORE the optional `<typeargs>`, so a cross-module type reads
@@ -747,6 +769,27 @@ class Parser {
         const name = this.eat("ident").value;
         this.eat(";");
         return { kind: "forget", name, pos: t.pos };
+      }
+      case "complete": {
+        // complete ::= "complete" expr ";"  (§6c) — resolve the active assigned task programmatically.
+        this.next();
+        const value = this.parseExpr();
+        this.eat(";");
+        return { kind: "complete", value, pos: t.pos };
+      }
+      case "fail": {
+        // fail ::= "fail" expr ";"  (§6c) — fail the active assigned task with a text reason.
+        this.next();
+        const reason = this.parseExpr();
+        this.eat(";");
+        return { kind: "fail", reason, pos: t.pos };
+      }
+      case "cancel": {
+        // cancel ::= "cancel" postfix ";"  (§6c) — delegator-side cooperative cancellation.
+        this.next();
+        const handle = this.parsePostfix();
+        this.eat(";");
+        return { kind: "cancel", handle, pos: t.pos };
       }
       case "independent":
       case "dependent": {
@@ -926,10 +969,11 @@ class Parser {
     if (this.at("<-")) {
       const pos = this.next().pos;
       const message = this.parsePipe();
-      let expires: number | undefined;
+      // `expires EXPR` (§6): any settled numeric expression, not only a literal.
+      let expires: A.Expr | undefined;
       if (this.atIdent("expires")) {
         this.next();
-        expires = this.number();
+        expires = this.parseGateOrBinary();
       }
       return { kind: "send", dest: left, message, expires, pos };
     }
@@ -1331,6 +1375,7 @@ class Parser {
       case "{": return this.parseStructLit(undefined, t.pos); // a bare struct literal `{ f: e, … }`
       case "(": { this.next(); const e = this.parseExpr(); this.eat(")"); return e; }
       case "[": return this.parseArrayLit(t.pos); // an array literal `[e, …]` (§15.2 primary)
+      case "task": return this.parseTaskLit(t.pos); // a TaskSpec-building task literal (§6c)
     }
     // `all`/`any`/`quorum` are contextual (§2): a fusion reducer only when immediately followed by `(`;
     // otherwise the word is an ordinary identifier in name-position.
@@ -1401,6 +1446,42 @@ class Parser {
     }
     this.eat("}");
     return { kind: "structlit", typeName, typeArgs, fields, pos };
+  }
+
+  // tasklit ::= "task" "{" taskclause* "}"  (§6c) — builds a TaskSpec. Clauses are contextual:
+  //   "objective" expr ";" | "acceptance" expr ";" | "scope" "{" "perform" Ident ("," "perform" Ident)* "}" ";"?
+  // Missing objective/acceptance is recorded here and rejected as a TypeError by the checker/runtime.
+  private parseTaskLit(pos: { line: number; col: number }): A.TaskLit {
+    this.eat("task");
+    this.eat("{");
+    let objective: A.Expr | undefined;
+    let acceptance: A.Expr | undefined;
+    const scope: string[] = [];
+    while (!this.at("}") && !this.at("eof")) {
+      if (this.atIdent("objective")) {
+        this.next();
+        objective = this.parseExpr();
+        this.eat(";");
+      } else if (this.atIdent("acceptance")) {
+        this.next();
+        acceptance = this.parseExpr();
+        this.eat(";");
+      } else if (this.atIdent("scope")) {
+        this.next();
+        this.eat("{");
+        while (!this.at("}") && !this.at("eof")) {
+          this.eat("perform");
+          scope.push(this.eat("ident").value);
+          if (this.at(",")) this.next();
+        }
+        this.eat("}");
+        if (this.at(";")) this.next();
+      } else {
+        this.err("expected a task clause (`objective`, `acceptance`, or `scope { perform … }`)");
+      }
+    }
+    this.eat("}");
+    return { kind: "tasklit", objective, acceptance, scope, pos };
   }
 
   // arraylit ::= "[" (expr ("," expr)*)? "]"  (§15.2 primary) — consumed by |>/all/any/quorum.

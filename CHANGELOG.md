@@ -6,6 +6,43 @@ All notable changes to Agape are recorded here. The format follows
 suite, and the studio move in lockstep — a release is the whole bundle at one
 version.
 
+## [1.0.0-alpha.2026.7.2.3] — 2026-07-02
+
+Subagent delegation and the single-door action/tool split. Design settled in
+`design/delegation-and-actions.md`; SPEC, conformance suite, and `agape-ts` move together.
+
+### Language — delegation is a send with a governed payload and a programmatic reply (§6c)
+
+- **The task literal.** `T r = worker <- task { objective o; acceptance a; } expires ttl;`
+  builds a `TaskSpec` and sends it. `objective`/`acceptance` are required `text`; `expires`
+  is **mandatory** (every task is terminal by construction); trust is the join of the fields —
+  delegation never launders trust.
+- **Two bindings, no keyword.** Result-bound = foreground (the continuation waits; a failed/
+  expired/cancelled task faults the awaiting invocation via the contained-crash path).
+  `Task<T>`-bound = background (a settled handle for `when (… about h)` and `cancel h;`).
+  Bare statement-form delegation is a compile error.
+- **Worker verbs and hooks.** `complete r;` / `fail reason;` resolve the assigned task
+  programmatically (task handlers only); `on assigned` / `on cancelled` are `when` sugar.
+  The active task composes into provider context after `instruction` blocks, **as data**.
+- **Cooperative cancel.** `cancel h;` appends the authoritative `TaskCancelled` tombstone; a
+  late `complete`/`fail` is refused (`CompletionRefused`), mirroring `DeliveryRefused`.
+- **Lean ledger.** `TaskSubmitted`/`TaskAssigned`/`TaskExpired` are subscription **aliases**
+  over `Sent`/`Delivered`/`Expired` (no rows); real events are `TaskCompleted`, `TaskFailed`,
+  `TaskCancelled`, `TaskProgress`; unified task status is a ledger projection.
+- **Authority = static grant ∧ endorsed-task enablement.** A scoped task
+  (`scope { perform X }`) must be sent as `Endorsement<TaskSpec>` and can only attenuate the
+  delegator's own authority; the sink check (`TaskScopeViolation`) sits beside the margin
+  floor. §14's never-widened invariant and T1 are unchanged.
+
+### Language — the single door (§6b)
+
+- **Write tools are declared, not callable.** A direct write-tool call is a `TypeError`;
+  `action NAME(fields) uses TOOL;` binds a performative to at most one write tool and
+  `perform` becomes the only source syntax that executes one. `use` grants naming a write
+  tool are illegal. Unbound actions remain legal (pure ledgered performatives). Source binds
+  action→tool; config still binds tool→endpoint.
+- `expires` now takes any settled numeric expression (was: numeric literal).
+
 ## [1.0.0-alpha.2026.6.30.0] — 2026-06-30
 
 A spec-led release that finalizes the decision-gate model and folds the runtime

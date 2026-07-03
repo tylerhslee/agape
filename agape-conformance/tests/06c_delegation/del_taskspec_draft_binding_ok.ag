@@ -1,0 +1,20 @@
+//! id:        del_taskspec_draft_binding_ok
+//! section:   06c_delegation
+//! expect:    accept
+//! contains:  TaskCompleted(r)
+//! spec:      §6c (a task literal is an expression: a TaskSpec draft may be bound first and sent later; expires stays mandatory at the send)
+//! ---
+agent Worker {
+  on assigned { complete 3; }
+}
+agent Lead grants { reach Worker } {
+  on awake {
+    spawn Worker w; awake w;
+    TaskSpec draft = task {
+      objective "produce the number";
+      acceptance "an int";
+    };
+    int r = w <- draft expires 10;
+  }
+}
+spawn Lead lead; awake lead;

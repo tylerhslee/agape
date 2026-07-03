@@ -1,0 +1,10 @@
+//! id:        del_progress_outside_task_reject
+//! section:   06c_delegation
+//! expect:    reject
+//! error:     TypeError
+//! spec:      §6c (TaskProgress is emittable only inside a task handler — it correlates to the active task)
+//! ---
+agent A {
+  on awake { emit TaskProgress("nothing to report"); }
+}
+spawn A a; awake a;

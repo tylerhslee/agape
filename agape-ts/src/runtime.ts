@@ -53,7 +53,10 @@ export type Value =
     }
   | { kind: "agentref"; name: string; agentType: string; trust: "settled" }
   | { kind: "memref"; name: string; trust: "settled" } // a handle into private memory (§10)
-  | { kind: "struct"; typeName?: string; fields: Map<string, Value>; trust: Trust } // a record value (§3)
+  | { kind: "taskref"; corr: string; trust: "settled" } // a background-task handle Task<T> (§6c)
+  // a record value (§3). `taskScope` is set only on a TaskSpec built by a task literal carrying a
+  // `scope { perform … }` clause (§6c) — the action names the endorsed task enables on the worker.
+  | { kind: "struct"; typeName?: string; fields: Map<string, Value>; trust: Trust; taskScope?: string[] }
   | { kind: "array"; items: Value[]; trust: Trust }; // a query result set (§10/§12)
 
 export type StructuredSchema =
@@ -80,6 +83,7 @@ export function show(v: Value): string {
     case "endorsement": return `Endorsement{subject:${show(v.subject)}, committed:${v.committed}, margin:${v.margin.toFixed(2)}}`;
     case "agentref": return `&${v.name}:${v.agentType}`;
     case "memref": return `mem ${v.name}`;
+    case "taskref": return `Task#${v.corr}`;
     case "struct": return `${v.typeName ?? ""}{${[...v.fields].map(([k, val]) => `${k}: ${show(val)}`).join(", ")}}`;
     case "array": return `[${v.items.map(show).join(", ")}]`;
   }
@@ -94,6 +98,7 @@ export function render(v: Value): string {
     case "null": return "null";
     case "enumval": return v.variant;
     case "endorsement": return render(v.subject);
+    case "taskref": return v.corr; // the correlation subject — what `when (… about h)` filters on (§6c)
     default: return show(v);
   }
 }

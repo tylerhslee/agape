@@ -1,0 +1,16 @@
+//! id:        del_empty_task_block_reject
+//! section:   06c_delegation
+//! expect:    reject
+//! error:     TypeError
+//! spec:      §6c (an empty task block is a compile error — objective and acceptance are required)
+//! ---
+agent Worker {
+  on assigned { complete 1; }
+}
+agent Lead grants { reach Worker } {
+  on awake {
+    spawn Worker w; awake w;
+    int r = w <- task { } expires 10;
+  }
+}
+spawn Lead lead; awake lead;

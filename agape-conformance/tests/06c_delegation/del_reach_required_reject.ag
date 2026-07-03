@@ -1,0 +1,19 @@
+//! id:        del_reach_required_reject
+//! section:   06c_delegation
+//! expect:    reject
+//! error:     AuthorityViolation
+//! spec:      §6c, §13 (delegation is a send: reaching a worker requires the `reach` power, default-deny)
+//! ---
+agent Worker {
+  on assigned { complete 1; }
+}
+agent Lead {
+  on awake {
+    spawn Worker w; awake w;
+    int r = w <- task {
+      objective "produce the number";
+      acceptance "an int";
+    } expires 10;
+  }
+}
+spawn Lead lead; awake lead;

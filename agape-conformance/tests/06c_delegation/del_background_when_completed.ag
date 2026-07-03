@@ -1,0 +1,21 @@
+//! id:        del_background_when_completed
+//! section:   06c_delegation
+//! expect:    accept
+//! contains:  TaskCompleted(h); Landed
+//! spec:      §6c (a background task-send binds a settled Task<T> handle; the outcome is observed with `when (TaskCompleted … about h)`; delivery may span ticks — §6)
+//! ---
+event Landed(int got);
+agent Worker {
+  on assigned { complete 7; }
+}
+agent Lead grants { reach Worker } {
+  on awake {
+    spawn Worker w; awake w;
+    Task<int> h = w <- task {
+      objective "produce the number";
+      acceptance "an int";
+    } expires 10;
+    when (TaskCompleted c about h) { emit Landed(7); }
+  }
+}
+spawn Lead lead; awake lead;

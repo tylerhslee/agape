@@ -1,0 +1,11 @@
+//! id:        gov_action_uses_undeclared_tool_reject
+//! section:   13_governance
+//! expect:    reject
+//! error:     TypeError
+//! spec:      §3, §6b (`uses` must name a declared tool; tools, like events, are not self-declaring)
+//! ---
+action Pay(int amount) uses transfer;
+agent Bank grants { perform Pay } {
+  on awake { perform Pay(100); }
+}
+spawn Bank b; awake b;

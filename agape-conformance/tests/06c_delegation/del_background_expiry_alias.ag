@@ -1,0 +1,22 @@
+//! id:        del_background_expiry_alias
+//! section:   06c_delegation
+//! expect:    accept
+//! contains:  Expired(h); ExpirySeen
+//! absent:    TaskExpired; AgentCrashed(lead)
+//! spec:      §6c (TaskExpired is a subscription ALIAS for Expired filtered to task-sends — no row of its own; a background expiry never faults the delegator)
+//! ---
+event ExpirySeen(text what);
+agent Worker {
+  on assigned { complete 1; }
+}
+agent Lead grants { reach Worker } {
+  on awake {
+    spawn Worker w;
+    Task<int> h = w <- task {
+      objective "produce the number";
+      acceptance "an int";
+    } expires 1;
+    when (TaskExpired e about h) { emit ExpirySeen("seen"); }
+  }
+}
+spawn Lead lead; awake lead;
