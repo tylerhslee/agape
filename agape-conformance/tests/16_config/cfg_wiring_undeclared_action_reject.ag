@@ -1,0 +1,11 @@
+//! id:        cfg_wiring_undeclared_action_reject
+//! section:   16_config
+//! expect:    reject
+//! error:     ConfigError
+//! manifest:  tools.search.driver=mock; actions.Search.tool=search
+//! spec:      §6b, §17.1 (an [actions.NAME]/[events.NAME] wiring must name a DECLARED action or event; wiring an undeclared name is a ConfigError)
+//! ---
+agent A {
+  on awake { say("no such action is declared"); }
+}
+spawn A a; awake a;

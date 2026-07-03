@@ -7,7 +7,7 @@
 import type * as A from "./ast.js";
 import { parse } from "./parser.js";
 import { typeError, exhaustivenessError, colorViolation, authorityViolation, taintViolation, interfaceError, visibilityError, moduleError, configError, gateError } from "./errors.js";
-import { hasConfiguredBinding, type Manifest, type BindingConfig } from "./config.js";
+import { hasConfiguredBinding, type Manifest, type BindingConfig, type WiringConfig } from "./config.js";
 
 // a coarse type class — enough to catch shape mismatches without a full type system.
 // `credarray` narrowly tracks an `array<Credence<…>>` (a credence collection produced by a query or an
@@ -20,15 +20,11 @@ interface Decls {
   enums: Map<string, string[]>;
   structs: Map<string, A.StructDecl>;
   actions: Map<string, A.Field[]>;
-  // the write tool an action is bound to via `uses` (§3/§6b), keyed by action name. A bound action's
-  // perform executes the tool (→ async), so a `sync` body performing one is a ColorViolation.
-  actionUses: Map<string, string | undefined>;
   // whether an action is declared `reversible` (§20.1): a `reversible action` is a low-stakes sink, so an
   // endorse arm reaching it is NOT a consequential path and does not require a principal fallback (§20.3).
   // A name absent from this map (or mapped false) is a non-reversible, consequential sink.
   actionReversible: Map<string, boolean>;
   events: Map<string, A.Field[]>;
-  tools: Map<string, A.ToolDecl>;
   agents: Map<string, A.AgentDecl>;
   interfaces: Map<string, A.InterfaceDecl>;
   // user function declarations (§4/§15.2), keyed by name (bare and, for imports, qualified). Used by the
@@ -542,7 +538,6 @@ function collectQualifiedRefs(program: A.Program): Set<string> {
     } else if (d.kind === "fn") { addType(d.ret); for (const p of d.params) addType(p.type); addStmts(d.body); }
     else if (d.kind === "struct") for (const f of d.fields) addType(f.type);
     else if (d.kind === "action" || d.kind === "event") for (const f of d.fields) addType(f.type);
-    else if (d.kind === "tool") { addType(d.ret); for (const f of d.params) addType(f.type); }
   }
   addStmts(program.stmts);
   return out;
@@ -554,7 +549,7 @@ export function check(program: A.Program, modules?: ModuleInput[], manifest?: Ma
   // section in configured/strict mode, where every declared `principal`/`prompt`/`tool` dependency MUST have a
   // manifest binding; elsewhere a declared dependency is auto-bound to a mock default (the compiler stays
   // general — only the harness maps the config section to strict mode).
-  const requireBinding = (kind: "principal" | "prompt" | "tool", bindings: Record<string, BindingConfig> | undefined, name: string, missingMsg: string): void => {
+  const requireBinding = (kind: "principal" | "prompt", bindings: Record<string, BindingConfig> | undefined, name: string, missingMsg: string): void => {
     const hasEntry = bindings && Object.prototype.hasOwnProperty.call(bindings, name);
     if (strictConfig && !hasEntry) throw configError(missingMsg);
     if (hasEntry && !hasConfiguredBinding(bindings, name)) {
@@ -578,14 +573,6 @@ export function check(program: A.Program, modules?: ModuleInput[], manifest?: Ma
         `prompt '${d.name}' is a declared dependency (§5b) with no configured binding — an unbound declared dependency is a ConfigError (§17.1)`,
       );
     }
-    if (d.kind === "tool") {
-      requireBinding(
-        "tool",
-        manifest?.tools,
-        d.name,
-        `tool '${d.name}' is a declared dependency (§6b) with no configured binding — an unbound declared dependency is a ConfigError (§17.1)`,
-      );
-    }
   }
   if (manifest?.policy && Object.keys(manifest.policy).length > 0) {
     // §17.2: decision policy is a SOURCE construct (`policy NAME { … }`), never a manifest binding.
@@ -606,16 +593,15 @@ export function check(program: A.Program, modules?: ModuleInput[], manifest?: Ma
   const decls: Decls = {
     enums: new Map([["bool", ["true", "false"]], ["Basis", ["Threshold", "Conformal", "Principal"]], ["Entailment", ["Entails", "Contradicts", "Neutral"]]]),
     structs: new Map(),
-    actions: new Map(), actionUses: new Map(), actionReversible: new Map(), events: new Map(), tools: new Map(), agents: new Map(),
+    actions: new Map(), actionReversible: new Map(), events: new Map(), agents: new Map(),
     interfaces: new Map(), pub: new Map(), fns: new Map(),
     principals: new Set(), prompts: new Set(),
   };
   for (const d of program.decls) {
     if (d.kind === "enum") decls.enums.set(d.name, d.variants);
     else if (d.kind === "struct") decls.structs.set(d.name, d);
-    else if (d.kind === "action") { decls.actions.set(d.name, d.fields); decls.actionUses.set(d.name, d.uses); decls.actionReversible.set(d.name, d.reversible); }
+    else if (d.kind === "action") { decls.actions.set(d.name, d.fields); decls.actionReversible.set(d.name, d.reversible); }
     else if (d.kind === "event") decls.events.set(d.name, d.fields);
-    else if (d.kind === "tool") decls.tools.set(d.name, d);
     else if (d.kind === "agent") decls.agents.set(d.name, d);
     else if (d.kind === "interface") decls.interfaces.set(d.name, d);
     else if (d.kind === "fn") decls.fns.set(d.name, d);
@@ -636,7 +622,6 @@ export function check(program: A.Program, modules?: ModuleInput[], manifest?: Ma
       else if (d.kind === "struct") decls.structs.set(name, d);
       else if (d.kind === "action") { decls.actions.set(name, d.fields); decls.actionReversible.set(name, d.reversible); }
       else if (d.kind === "event") decls.events.set(name, d.fields);
-      else if (d.kind === "tool") decls.tools.set(name, d);
       else if (d.kind === "agent") decls.agents.set(name, d);
       else if (d.kind === "interface") decls.interfaces.set(name, d);
       else if (d.kind === "fn") decls.fns.set(name, d);
@@ -656,15 +641,31 @@ export function check(program: A.Program, modules?: ModuleInput[], manifest?: Ma
   for (const d of program.decls) {
     if (d.kind === "agent") for (const i of d.ifaces ?? []) implemented.add(i);
   }
-  // §3/§6b single-door statics: an action's `uses` must name a DECLARED WRITE tool.
-  for (const d of program.decls) {
-    if (d.kind === "action" && d.uses !== undefined) {
-      const t = decls.tools.get(d.uses);
-      if (!t) throw typeError(`action '${d.name}' uses undeclared tool '${d.uses}' — tools are not self-declaring (§3, §6b)`);
-      if (t.effect !== "write") throw typeError(`action '${d.name}' uses read tool '${d.uses}' — \`uses\` binds an action to a WRITE tool; read tools are called directly (§6b)`);
+  // §6b/§17.1 wiring validation (STRICT/configured mode only, like dependency binding): a Studio root
+  // manifest is shared by every program under it, so an entry wiring a name THIS program does not
+  // declare is simply unused elsewhere — only the configuration harness runs with full lockstep.
+  const validateWiring = (kind: "actions" | "events", entries: Record<string, WiringConfig> | undefined): void => {
+    if (!strictConfig) return;
+    for (const [name, w] of Object.entries(entries ?? {})) {
+      const declared = kind === "actions" ? decls.actions.has(name) : decls.events.has(name) || BUILTIN_EVENTS.has(name);
+      if (!declared) throw configError(`[${kind}.${name}] wires an undeclared ${kind === "actions" ? "action" : "event"} — wiring must reference a declared name (§6b, §17.1)`);
+      if (w.tool !== undefined) {
+        if (!(manifest?.tools && Object.prototype.hasOwnProperty.call(manifest.tools, String(w.tool)))) {
+          throw configError(`[${kind}.${name}] references catalog entry [tools.${w.tool}], which is not configured (§6b, §17.1)`);
+        }
+        // a referenced catalog entry must name its driver; connector-specific fields are not enough (§17.1).
+        if (!hasConfiguredBinding(manifest.tools, String(w.tool))) {
+          throw configError(`[tools.${w.tool}] (referenced by [${kind}.${name}]) has no required driver field (§17.1)`);
+        }
+      }
+      if (w.result_event !== undefined && !decls.events.has(String(w.result_event))) {
+        throw configError(`[${kind}.${name}] names result_event '${w.result_event}', which is not a declared event (§6b, §17.1)`);
+      }
     }
-  }
-  const c = new Checker(decls, implemented);
+  };
+  validateWiring("actions", manifest?.actions);
+  validateWiring("events", manifest?.events);
+  const c = new Checker(decls, implemented, manifest);
   // static well-formedness of every declared/annotated type: a type argument applied to a non-generic
   // declaration is a TypeError (§19.5). Walk every type surface in the program before body checking.
   c.checkTypeSurfaces(program);
@@ -701,7 +702,7 @@ function conflicts(a: Cls, b: Cls): boolean {
 }
 
 class Checker {
-  constructor(private d: Decls, private implementedIfaces: Set<string> = new Set()) {}
+  constructor(private d: Decls, private implementedIfaces: Set<string> = new Set(), private manifest?: Manifest) {}
 
   // ---- §19.5 generics: a type argument may instantiate only a generic declaration ----
 
@@ -722,7 +723,6 @@ class Checker {
           for (const f of d.fields) this.checkTypeRef(f.type); break;
         case "action": for (const f of d.fields) this.checkTypeRef(f.type); break;
         case "prompt": this.checkTypeRef(d.type); break; // the sensor's element type (§5b)
-        case "tool": this.checkTypeRef(d.ret); for (const f of d.params) this.checkTypeRef(f.type); break;
         case "fn": this.checkTypeRef(d.ret); for (const f of d.params) this.checkTypeRef(f.type); this.walkStmts(d.body); break;
         case "interface":
           for (const m of d.members) if (m.kind === "handler") { this.checkTypeRef(m.event); this.checkTypeRef(m.outcome); }
@@ -804,6 +804,7 @@ class Checker {
       case "pipe": this.walkExpr(e.source); this.walkExpr(e.fn); return;
       case "arraylit": for (const it of e.items) this.walkExpr(it); return;
       case "tasklit": if (e.objective) this.walkExpr(e.objective); if (e.acceptance) this.walkExpr(e.acceptance); return;
+      case "performexpr": for (const a of e.args) this.walkExpr(a); if (e.expires) this.walkExpr(e.expires); return;
       default: return;
     }
   }
@@ -848,12 +849,12 @@ class Checker {
   }
 
   checkAgent(a: A.AgentDecl): void {
-    // §6b/§13: a `use` grant naming a WRITE tool is illegal — write tools are reached only through
-    // `perform` on a bound action, so the corresponding power is `perform`, never `use`.
+    // §6b/§13: grants are exactly `perform` and `reach`. The legacy `use` class parses (for a clean
+    // diagnostic) but names no power — tools left the language; observation is wired in the manifest.
     if (Array.isArray(a.grants)) {
       for (const g of a.grants) {
-        if (g.cap === "use" && this.d.tools.get(g.name)?.effect === "write") {
-          throw typeError(`agent '${a.name}': 'use ${g.name}' names a WRITE tool — write tools have no call syntax; grant 'perform' on an action bound to it via \`uses\` instead (§6b, §13)`);
+        if (g.cap === "use") {
+          throw typeError(`agent '${a.name}': 'use ${g.name}' — the \`use\` grant class no longer exists; grants are \`perform\` and \`reach\` (tools live in the manifest catalog, §6b, §13)`);
         }
       }
     }
@@ -1132,12 +1133,9 @@ class Checker {
       case "return": if (s.value) this.assertSyncExpr(s.value); return;
       case "exprstmt": this.assertSyncExpr(s.expr); return;
       case "perform":
-        // §6b: performing a tool-BOUND action executes its write tool — a tool-dependency reach → async.
-        if (this.d.actionUses.get(s.name)) {
-          throw colorViolation(`a \`sync\` function may not perform the tool-bound action '${s.name}' (its \`uses\` tool call reaches the tool dependency → async) (§6b)`);
-        }
-        for (const a of s.args) this.assertSyncExpr(a);
-        return;
+        // §6b: every perform is async — an action is an act on the world, and whether it is wired to an
+        // effector is a deployment fact the checker must not depend on.
+        throw colorViolation(`a \`sync\` function may not \`perform\` (an action is an outbound act → async) (§6b)`);
       case "emit": for (const a of s.args) this.assertSyncExpr(a); return;
       case "if": this.assertSyncExpr(s.cond); this.assertSyncBody(s.then); if (s.else) this.assertSyncBody(s.else); return;
       case "dispatch": this.assertSyncGate(s.gate); for (const arm of s.arms) this.assertSyncBody(arm.body); if (s.abstain) this.assertSyncBody(s.abstain.body); return;
@@ -1180,10 +1178,9 @@ class Checker {
       case "select": case "find": throw colorViolation("a `sync` function may not query memory (`select`/`find` reaches the async memory substrate → async)");
       case "match": throw colorViolation("a `sync` function may not `match` (a vector match reaches the async memory substrate → async)");
       case "decide": case "endorse": this.assertSyncGate(e); return;
+      case "performexpr":
+        throw colorViolation(`a \`sync\` function may not \`perform\` (an action is an outbound act → async) (§6b)`);
       case "call":
-        if (e.callee.kind === "ident" && this.d.tools.has(e.callee.name)) {
-          throw colorViolation(`a \`sync\` function may not call the tool '${e.callee.name}' (a tool call reaches the tool dependency → async)`);
-        }
         // §4: a `sync` fn may only call other `sync` fns. Calling a KNOWN user function that is not marked
         // `sync` (its body may reach a declared dependency — a send, recall, tool call, or principal-decide)
         // forces async → a ColorViolation. Conservative: only a declared user fn that is provably async
@@ -1516,11 +1513,8 @@ class Checker {
   // action, or a write-tool call. Walks nested control flow (if/else, nested dispatch arms + abstain, when).
   private reachesNonReversibleSink(stmts: A.Stmt[], scope: Scope): boolean {
     const sinkExpr = (e: A.Expr): boolean => {
-      // a call to a declared WRITE tool is a consequential sink (§6b/§20.1); a `reversible write tool` is not.
-      if (e.kind === "call" && e.callee.kind === "ident") {
-        const tool = this.d.tools.get(e.callee.name);
-        if (tool && tool.effect === "write" && !tool.reversible) return true;
-      }
+      // a result-bound perform is a consequential sink like any perform (§6b).
+      if (e.kind === "performexpr" && this.d.actionReversible.get(e.name) !== true) return true;
       switch (e.kind) {
         case "call": if (sinkExpr(e.callee)) return true; return e.args.some(sinkExpr);
         case "member": return sinkExpr(e.obj);
@@ -1750,24 +1744,31 @@ class Checker {
         return "unknown"; // a TaskSpec value (scope attenuation + endorsement rules are dynamic, §6c)
       }
       case "call": {
-        // a call to a declared tool has the tool's declared return class (§6b); other calls stay unknown.
         if (e.callee.kind === "ident") {
           const name = e.callee.name;
-          const tool = this.d.tools.get(name);
-          if (tool) {
-            // §6b the single door: a WRITE tool is not a callable expression.
-            if (tool.effect === "write") {
-              throw typeError(`'${name}' is a write tool and cannot be called from source — the single door is \`perform\` on an action bound via \`uses\` (§6b)`);
-            }
-            return declClass(tool.ret);
-          }
-          // §6b/§8: a bare call to a name that is not a declared/imported tool or function is an
-          // unknown-identifier TypeError — tools and functions are
-          // declared dependencies, not self-declaring (e.g. an undeclared `search(…)` or a nonexistent
-          // `sample(…)`). A qualified callee (`m.f(…)`) is a member, not an ident, so it is unaffected.
+          // §4/§8: a bare call to a name that is not a declared/imported function is an
+          // unknown-identifier TypeError — functions are declared, not self-declaring. Expressions can
+          // never reach the world (§6b): observation arrives as events, acts leave as performs.
           if (!this.d.fns.has(name)) {
-            throw typeError(`call to undeclared '${name}' — a tool or function is a declared dependency, not self-declaring (§6b/§8)`);
+            throw typeError(`call to undeclared function '${name}' — functions are declared, not self-declaring; the world is reached only through wired events and actions (§4/§6b/§8)`);
           }
+        }
+        return "unknown";
+      }
+      case "performexpr": {
+        // §6b foreground perform binding: `T r = perform A(args) expires N;` — result-bound only,
+        // `expires` MANDATORY, args under the uniform consequential-sink rule.
+        if (!e.expires) {
+          throw typeError("a result-bound `perform` requires `expires` — the reply is a deadline-bound observation (§6b/§6c)");
+        }
+        this.infer(e.expires, scope);
+        this.checkInvoke("perform", e.name, e.args, this.d.actions, scope);
+        // the binding is typed from the manifest-named result event (single-field event binds the field).
+        const w = this.manifest?.actions?.[e.name];
+        const resultEvent = typeof w?.result_event === "string" ? w.result_event : undefined;
+        if (resultEvent) {
+          const fields = this.d.events.get(resultEvent);
+          if (fields && fields.length === 1) return declClass(fields[0]!.type);
         }
         return "unknown";
       }
@@ -2024,6 +2025,7 @@ class Checker {
         case "pipe": walk(x.source); walk(x.fn); return;
         case "arraylit": for (const it of x.items) walk(it); return;
         case "tasklit": if (x.objective) walk(x.objective); if (x.acceptance) walk(x.acceptance); return;
+        case "performexpr": for (const a of x.args) walk(a); return;
         default: return;
       }
     };

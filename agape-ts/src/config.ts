@@ -24,16 +24,25 @@ export interface BindingConfig {
   [key: string]: ManifestValue | undefined;
 }
 export interface ToolBindingConfig extends BindingConfig {}
+// §6b wiring — how a declared action/event touches the world. `tool` names a [tools.*] catalog
+// entry; `result_event` names the declared event the effector's reply lands as.
+export interface WiringConfig extends BindingConfig {
+  tool?: string;
+  result_event?: string;
+}
 export interface Manifest {
   provider: ProviderConfig;
   project?: Record<string, ManifestValue>;
-  // §17.1 dependency BINDINGS — the manifest binds each declared `principal`/`prompt`/`tool` dependency
-  // to a configured world capability (identity for a principal, a prompt source, a tool implementation).
-  // A declared dependency with no binding is a ConfigError (checked statically, §17.1). Keyed by the
-  // dependency's simple name (`[identity.alice] driver="local"` → identity.alice).
+  // §17.1 dependency BINDINGS — the manifest binds each declared `principal`/`prompt` dependency
+  // to a configured world capability. A declared dependency with no binding is a ConfigError
+  // (checked statically, §17.1). Keyed by the dependency's simple name.
   identity?: Record<string, BindingConfig>;
   prompts?: Record<string, BindingConfig>;
+  // §6b the world interface: [tools.*] is the ENDPOINT CATALOG (the only place "tool" exists);
+  // [actions.NAME]/[events.NAME] wire declared actions/events to catalog entries.
   tools?: Record<string, ToolBindingConfig>;
+  actions?: Record<string, WiringConfig>;
+  events?: Record<string, WiringConfig>;
   memory?: Record<string, ManifestValue>;
   runtime?: Record<string, ManifestValue>;
   // §17.2 — decision policy lives in SOURCE, never the manifest; any `policy.*` key here is a ConfigError.
@@ -152,7 +161,7 @@ function setManifestValue(manifest: Manifest, tablePath: string[], keyPath: stri
     group[first] = value as ManifestValue;
     return;
   }
-  if (table === "identity" || table === "prompts" || table === "tools") {
+  if (table === "identity" || table === "prompts" || table === "tools" || table === "actions" || table === "events") {
     const group = manifest[table] ?? (manifest[table] = {});
     const name = tablePath.length > 1 ? tablePath[1]! : first;
     const rest = tablePath.length > 1 ? path : path.slice(1);

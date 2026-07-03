@@ -41,7 +41,7 @@ export interface ImportDecl extends Node {
   alias?: string; // the rebound prefix, when `import M as X` (whole-module only)
 }
 
-export type Decl = EnumDecl | StructDecl | ActionDecl | EventDecl | AgentDecl | InstructionDecl | ToolDecl | FnDecl | InterfaceDecl | PrincipalDecl | PromptDecl | ConfDecl | PolicyDecl;
+export type Decl = EnumDecl | StructDecl | ActionDecl | EventDecl | AgentDecl | InstructionDecl | FnDecl | InterfaceDecl | PrincipalDecl | PromptDecl | ConfDecl | PolicyDecl;
 
 // `principal NAME config?;` (§3, grammar §15.2 line 1463) — declares an accountable identity, a
 // declared dependency bound to an identity backend by config (§17.1). Opaque, unforgeable,
@@ -97,10 +97,6 @@ export interface ActionDecl extends Node {
   name: string;
   fields: Field[];
   reversible: boolean;
-  // `action NAME(fields) uses TOOL;` (§3/§6b) — binds this performative to ONE declared write tool:
-  // `perform NAME(args)` is then the single source syntax that executes that tool. Absent = a pure
-  // ledgered performative (the act's effect is the record itself).
-  uses?: string;
   pub?: boolean;
 }
 export interface EventDecl extends Node {
@@ -116,16 +112,6 @@ export interface EventDecl extends Node {
 export interface InstructionDecl extends Node {
   kind: "instruction";
   text: string;
-}
-// A tool — the world dependency (§6b). The effect class is mandatory.
-export interface ToolDecl extends Node {
-  kind: "tool";
-  effect: "read" | "write";
-  reversible: boolean;
-  ret: TypeRef;
-  name: string;
-  params: Field[];
-  pub?: boolean;
 }
 // A minimal function declaration (§15.2). Only `sync`-color checking is modeled here.
 export interface FnDecl extends Node {
@@ -164,6 +150,9 @@ export interface AgentDecl extends Node {
   ifaces?: string[]; // implemented interfaces (`: Iface, …`) — nominal conformance (§19.5)
   pub?: boolean;
 }
+// §13: grants are exactly the two outbound powers — `perform` (actions) and `reach` (agents).
+// The legacy `use` class still PARSES (so an old program is rejected with a clean TypeError by the
+// checker, not a ParseError) but grants no authority.
 export type Grant =
   | { cap: "perform"; name: string }
   | { cap: "reach"; name: string }
@@ -345,6 +334,7 @@ export type Expr =
   | QuorumExpr
   | PipeExpr
   | TaskLit
+  | PerformExpr
   | ArrayLit;
 
 // `("all"|"any") "(" expr ("," expr)* ")"` — reduce a comma-list of operands OR a single
@@ -449,6 +439,16 @@ export interface SendExpr extends Node {
   dest: Expr;
   message: Expr;
   expires?: Expr; // a SETTLED numeric expression (§6); MANDATORY when the message is a TaskSpec (§6c)
+}
+
+// §6b foreground perform binding: `T r = perform Search(q) expires N;` — an EXPRESSION-position
+// perform, legal only result-bound on an action wired with a `result_event`. Follows the §6c
+// delegation discipline: `expires` mandatory, failure/expiry faults the awaiting invocation.
+export interface PerformExpr extends Node {
+  kind: "performexpr";
+  name: string;
+  args: Expr[];
+  expires?: Expr;
 }
 
 // `task { objective o; acceptance a; scope { perform X } }` — a TaskSpec-building expression (§6c).

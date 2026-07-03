@@ -1,6 +1,6 @@
 {
-  "passed": 202,
-  "total": 202,
+  "passed": 200,
+  "total": 200,
   "bySection": {
     "00_lexical": {
       "pass": 11,
@@ -15,8 +15,8 @@
       "total": 22
     },
     "04_functions": {
-      "pass": 9,
-      "total": 9
+      "pass": 8,
+      "total": 8
     },
     "05_agents": {
       "pass": 12,
@@ -25,6 +25,10 @@
     "06_communication": {
       "pass": 7,
       "total": 7
+    },
+    "06b_world": {
+      "pass": 12,
+      "total": 12
     },
     "06c_delegation": {
       "pass": 29,
@@ -55,16 +59,16 @@
       "total": 6
     },
     "13_governance": {
-      "pass": 35,
-      "total": 35
+      "pass": 21,
+      "total": 21
     },
     "15_reproducibility": {
       "pass": 2,
       "total": 2
     },
     "16_config": {
-      "pass": 12,
-      "total": 12
+      "pass": 13,
+      "total": 13
     },
     "22_gate": {
       "pass": 14,
@@ -443,7 +447,7 @@
       "directives": []
     },
     {
-      "id": "type_undeclared_perform_reject",
+      "id": "type_undeclared_function_call_reject",
       "section": "03_types",
       "expect": "reject",
       "pass": true,
@@ -454,7 +458,7 @@
       "directives": []
     },
     {
-      "id": "type_undeclared_tool_call_reject",
+      "id": "type_undeclared_perform_reject",
       "section": "03_types",
       "expect": "reject",
       "pass": true,
@@ -529,17 +533,6 @@
     },
     {
       "id": "fn_sync_store_reject",
-      "section": "04_functions",
-      "expect": "reject",
-      "pass": true,
-      "reason": "rejected with ColorViolation",
-      "errorClass": "ColorViolation",
-      "phase": "run",
-      "hadMatchers": false,
-      "directives": []
-    },
-    {
-      "id": "fn_sync_tool_call_reject",
       "section": "04_functions",
       "expect": "reject",
       "pass": true,
@@ -752,6 +745,151 @@
       "phase": "run",
       "hadMatchers": false,
       "directives": []
+    },
+    {
+      "id": "world_emit_wired_result_taint_join_reject",
+      "section": "06b_world",
+      "expect": "reject",
+      "pass": true,
+      "reason": "rejected with TaintViolation",
+      "errorClass": "TaintViolation",
+      "phase": "run",
+      "hadMatchers": false,
+      "directives": [
+        "manifest"
+      ]
+    },
+    {
+      "id": "world_emit_wired_tainted_ok",
+      "section": "06b_world",
+      "expect": "accept",
+      "pass": true,
+      "reason": "accepted + ledger ok",
+      "phase": "run",
+      "hadMatchers": true,
+      "directives": [
+        "manifest"
+      ]
+    },
+    {
+      "id": "world_foreground_binding_no_result_event_reject",
+      "section": "06b_world",
+      "expect": "reject",
+      "pass": true,
+      "reason": "rejected with ConfigError",
+      "errorClass": "ConfigError",
+      "phase": "run",
+      "hadMatchers": false,
+      "directives": [
+        "manifest"
+      ]
+    },
+    {
+      "id": "world_foreground_binding_requires_expires_reject",
+      "section": "06b_world",
+      "expect": "reject",
+      "pass": true,
+      "reason": "rejected with TypeError",
+      "errorClass": "TypeError",
+      "phase": "run",
+      "hadMatchers": false,
+      "directives": [
+        "manifest"
+      ]
+    },
+    {
+      "id": "world_foreground_perform_binding_ok",
+      "section": "06b_world",
+      "expect": "accept",
+      "pass": true,
+      "reason": "accepted + ledger ok",
+      "phase": "run",
+      "hadMatchers": true,
+      "directives": [
+        "manifest"
+      ]
+    },
+    {
+      "id": "world_perform_unsettled_reject",
+      "section": "06b_world",
+      "expect": "reject",
+      "pass": true,
+      "reason": "rejected with TaintViolation",
+      "errorClass": "TaintViolation",
+      "phase": "run",
+      "hadMatchers": false,
+      "directives": [
+        "manifest"
+      ]
+    },
+    {
+      "id": "world_perform_unsettled_unwired_reject",
+      "section": "06b_world",
+      "expect": "reject",
+      "pass": true,
+      "reason": "rejected with TaintViolation",
+      "errorClass": "TaintViolation",
+      "phase": "run",
+      "hadMatchers": false,
+      "directives": []
+    },
+    {
+      "id": "world_replay_chain_head",
+      "section": "06b_world",
+      "expect": "accept",
+      "pass": true,
+      "reason": "accepted + ledger ok",
+      "phase": "run",
+      "hadMatchers": true,
+      "directives": [
+        "manifest",
+        "replay"
+      ]
+    },
+    {
+      "id": "world_sync_perform_reject",
+      "section": "06b_world",
+      "expect": "reject",
+      "pass": true,
+      "reason": "rejected with ColorViolation",
+      "errorClass": "ColorViolation",
+      "phase": "run",
+      "hadMatchers": false,
+      "directives": []
+    },
+    {
+      "id": "world_unwired_action_pure_ok",
+      "section": "06b_world",
+      "expect": "accept",
+      "pass": true,
+      "reason": "accepted + ledger ok",
+      "phase": "run",
+      "hadMatchers": true,
+      "directives": []
+    },
+    {
+      "id": "world_wired_perform_invokes_ok",
+      "section": "06b_world",
+      "expect": "accept",
+      "pass": true,
+      "reason": "accepted + ledger ok",
+      "phase": "run",
+      "hadMatchers": true,
+      "directives": [
+        "manifest"
+      ]
+    },
+    {
+      "id": "world_wired_perform_result_event_ok",
+      "section": "06b_world",
+      "expect": "accept",
+      "pass": true,
+      "reason": "accepted + ledger ok",
+      "phase": "run",
+      "hadMatchers": true,
+      "directives": [
+        "manifest"
+      ]
     },
     {
       "id": "del_background_expiry_alias",
@@ -1104,7 +1242,9 @@
       "reason": "accepted + ledger ok",
       "phase": "run",
       "hadMatchers": true,
-      "directives": []
+      "directives": [
+        "manifest"
+      ]
     },
     {
       "id": "ledger_when_about_filters",
@@ -1526,62 +1666,7 @@
       "directives": []
     },
     {
-      "id": "gov_action_uses_read_tool_reject",
-      "section": "13_governance",
-      "expect": "reject",
-      "pass": true,
-      "reason": "rejected with TypeError",
-      "errorClass": "TypeError",
-      "phase": "run",
-      "hadMatchers": false,
-      "directives": []
-    },
-    {
-      "id": "gov_action_uses_undeclared_tool_reject",
-      "section": "13_governance",
-      "expect": "reject",
-      "pass": true,
-      "reason": "rejected with TypeError",
-      "errorClass": "TypeError",
-      "phase": "run",
-      "hadMatchers": false,
-      "directives": []
-    },
-    {
-      "id": "gov_action_uses_write_tool_ok",
-      "section": "13_governance",
-      "expect": "accept",
-      "pass": true,
-      "reason": "accepted + ledger ok",
-      "phase": "run",
-      "hadMatchers": true,
-      "directives": []
-    },
-    {
       "id": "gov_bare_decision_no_perform_reject",
-      "section": "13_governance",
-      "expect": "reject",
-      "pass": true,
-      "reason": "rejected with TaintViolation",
-      "errorClass": "TaintViolation",
-      "phase": "run",
-      "hadMatchers": false,
-      "directives": []
-    },
-    {
-      "id": "gov_bound_action_replay_chain_head",
-      "section": "13_governance",
-      "expect": "accept",
-      "pass": true,
-      "reason": "accepted + ledger ok",
-      "phase": "run",
-      "hadMatchers": true,
-      "directives": [
-        "replay"
-      ]
-    },
-    {
-      "id": "gov_bound_action_unsettled_reject",
       "section": "13_governance",
       "expect": "reject",
       "pass": true,
@@ -1705,17 +1790,6 @@
       "directives": []
     },
     {
-      "id": "gov_extend_use_subtractive_reject",
-      "section": "13_governance",
-      "expect": "reject",
-      "pass": true,
-      "reason": "rejected with AuthorityViolation",
-      "errorClass": "AuthorityViolation",
-      "phase": "run",
-      "hadMatchers": false,
-      "directives": []
-    },
-    {
       "id": "gov_grants_star_ok",
       "section": "13_governance",
       "expect": "accept",
@@ -1818,92 +1892,6 @@
       "directives": []
     },
     {
-      "id": "gov_read_tool_settled_perform_ok",
-      "section": "13_governance",
-      "expect": "accept",
-      "pass": true,
-      "reason": "accepted",
-      "phase": "run",
-      "hadMatchers": false,
-      "directives": []
-    },
-    {
-      "id": "gov_sync_perform_bound_action_reject",
-      "section": "13_governance",
-      "expect": "reject",
-      "pass": true,
-      "reason": "rejected with ColorViolation",
-      "errorClass": "ColorViolation",
-      "phase": "run",
-      "hadMatchers": false,
-      "directives": []
-    },
-    {
-      "id": "gov_tool_requires_effect_class_reject",
-      "section": "13_governance",
-      "expect": "reject",
-      "pass": true,
-      "reason": "rejected with ParseError",
-      "errorClass": "ParseError",
-      "phase": "parse",
-      "hadMatchers": false,
-      "directives": []
-    },
-    {
-      "id": "gov_tool_result_tainted_perform_reject",
-      "section": "13_governance",
-      "expect": "reject",
-      "pass": true,
-      "reason": "rejected with TaintViolation",
-      "errorClass": "TaintViolation",
-      "phase": "run",
-      "hadMatchers": false,
-      "directives": []
-    },
-    {
-      "id": "gov_use_grant_write_tool_reject",
-      "section": "13_governance",
-      "expect": "reject",
-      "pass": true,
-      "reason": "rejected with TypeError",
-      "errorClass": "TypeError",
-      "phase": "run",
-      "hadMatchers": false,
-      "directives": []
-    },
-    {
-      "id": "gov_use_tool_granted_ok",
-      "section": "13_governance",
-      "expect": "accept",
-      "pass": true,
-      "reason": "accepted",
-      "phase": "run",
-      "hadMatchers": false,
-      "directives": []
-    },
-    {
-      "id": "gov_use_tool_ungranted_reject",
-      "section": "13_governance",
-      "expect": "reject",
-      "pass": true,
-      "reason": "rejected with AuthorityViolation",
-      "errorClass": "AuthorityViolation",
-      "phase": "run",
-      "hadMatchers": false,
-      "directives": []
-    },
-    {
-      "id": "gov_write_tool_direct_call_reject",
-      "section": "13_governance",
-      "expect": "reject",
-      "pass": true,
-      "reason": "rejected with TypeError",
-      "errorClass": "TypeError",
-      "phase": "run",
-      "hadMatchers": false,
-      "directives": []
-    },
-    {
       "id": "repro_chain_head_equal",
       "section": "15_reproducibility",
       "expect": "accept",
@@ -1961,17 +1949,6 @@
     },
     {
       "id": "cfg_missing_prompt_binding_reject",
-      "section": "16_config",
-      "expect": "reject",
-      "pass": true,
-      "reason": "rejected with ConfigError",
-      "errorClass": "ConfigError",
-      "phase": "run",
-      "hadMatchers": false,
-      "directives": []
-    },
-    {
-      "id": "cfg_missing_tool_binding_reject",
       "section": "16_config",
       "expect": "reject",
       "pass": true,
@@ -2062,6 +2039,32 @@
       "expect": "accept",
       "pass": true,
       "reason": "accepted",
+      "phase": "run",
+      "hadMatchers": false,
+      "directives": [
+        "manifest"
+      ]
+    },
+    {
+      "id": "cfg_wiring_missing_catalog_key_reject",
+      "section": "16_config",
+      "expect": "reject",
+      "pass": true,
+      "reason": "rejected with ConfigError",
+      "errorClass": "ConfigError",
+      "phase": "run",
+      "hadMatchers": false,
+      "directives": [
+        "manifest"
+      ]
+    },
+    {
+      "id": "cfg_wiring_undeclared_action_reject",
+      "section": "16_config",
+      "expect": "reject",
+      "pass": true,
+      "reason": "rejected with ConfigError",
+      "errorClass": "ConfigError",
       "phase": "run",
       "hadMatchers": false,
       "directives": [

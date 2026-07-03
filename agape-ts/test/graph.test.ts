@@ -150,18 +150,16 @@ awake t;
   });
 });
 
-describe("graph: prompts, sends, memory, ledger, tools", () => {
+describe("graph: prompts, sends, memory, ledger", () => {
   const g = graphOf(`
 prompt text request;
 enum Notice { Notify, Ignore }
 event Held(text reason);
-read tool int Lookup(text q);
-agent Notifier grants { use Lookup } {
+agent Notifier {
   mem notes;
   when (Prompt p about request) {
     notes <- p.text;
     text past = notes -> "similar requests";
-    int n = Lookup("prior notices");
     emit Held("seen");
   }
   when (Held h) {
@@ -187,9 +185,7 @@ awake a;
     expect(edges(g, "recall")[0]!.from).toBe("mem:a/notes");
   });
 
-  it("draws the tool call and the ledger query", () => {
-    expect(node(g, "tool:Lookup")?.meta?.effect).toBe("read");
-    expect(edges(g, "tool").length).toBe(1);
+  it("draws the ledger query", () => {
     expect(node(g, "ledger")).toBeTruthy();
     const q = edges(g, "query");
     expect(q.length).toBe(1);

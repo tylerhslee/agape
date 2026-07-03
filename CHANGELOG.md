@@ -6,10 +6,29 @@ All notable changes to Agape are recorded here. The format follows
 suite, and the studio move in lockstep — a release is the whole bundle at one
 version.
 
-## [1.0.0-alpha.2026.7.2.3] — 2026-07-02
+## [1.0.0-alpha.2026.7.3.0] — 2026-07-03
 
-Subagent delegation and the single-door action/tool split. Design settled in
-`design/delegation-and-actions.md`; SPEC, conformance suite, and `agape-ts` move together.
+Subagent delegation (§6c) and the wired world interface (§6b). Designs in
+`design/delegation-and-actions.md` and `design/world-interface.md`; SPEC, conformance
+suite (200 tests), and `agape-ts` move together.
+
+### Language — the world interface: `tool` leaves the language (§6b)
+
+- **Source speaks only `event` (inbound) and `action` (outbound).** The `tool`, `read`,
+  `write` keywords, the `uses` binding, and the `use` grant class are removed; grants are
+  exactly `perform` + `reach`. "Tool" survives only as the manifest's `[tools.*]` endpoint
+  catalog; `[actions.NAME]`/`[events.NAME]` wire declared names to catalog entries
+  (optionally naming the `result_event` a reply lands as). Unwired = pure record/performative.
+- **Read vs write moves to which verb you wire.** An emit-wired event is the loose
+  observation channel (emit is not a sink; the result event's payload JOINS the request's
+  trust — no laundering). A perform is the gated channel: **settled args only, uniformly**
+  — no un-endorsed cognition ever leaves the process (anti-exfiltration; T3 extends to
+  observation requests). Every `perform` is async.
+- **Foreground perform binding.** `text hits = perform Search("prior art") expires 5;` —
+  the §6c delegation discipline applied to the world: mandatory expires, reply typed from
+  the manifest-named result event, `ToolStarted`/`ToolResolved` demoted to the seam's
+  replay journal beneath the named domain rows.
+
 
 ### Language — delegation is a send with a governed payload and a programmatic reply (§6c)
 
@@ -34,7 +53,7 @@ Subagent delegation and the single-door action/tool split. Design settled in
   delegator's own authority; the sink check (`TaskScopeViolation`) sits beside the margin
   floor. §14's never-widened invariant and T1 are unchanged.
 
-### Language — the single door (§6b)
+### Language — the single door (§6b, superseded within this release by the world interface above)
 
 - **Write tools are declared, not callable.** A direct write-tool call is a `TypeError`;
   `action NAME(fields) uses TOOL;` binds a performative to at most one write tool and

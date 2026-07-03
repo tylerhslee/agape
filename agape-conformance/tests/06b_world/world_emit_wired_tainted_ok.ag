@@ -1,0 +1,16 @@
+//! id:        world_emit_wired_tainted_ok
+//! section:   06b_world
+//! expect:    accept
+//! order:     Q; ToolStarted(t1); ToolResolved(t1); Answer
+//! manifest:  tools.t1.driver=mock; events.Q.tool=t1; events.Q.result_event=Answer
+//! spec:      §6b (emit is not a consequential sink, so an emit-trigger wiring is the loose observation channel: a RAW payload may flow out — an explicit, manifest-visible opt-out of the perform path's guarantee)
+//! ---
+event Q(text query);
+event Answer(text body);
+agent A {
+  on awake {
+    text q = self <- "what should we look up?";
+    emit Q(q);
+  }
+}
+spawn A a; awake a;

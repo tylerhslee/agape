@@ -2,10 +2,10 @@
 //! section:   16_config
 //! expect:    reject
 //! error:     ConfigError
-//! manifest:  tools.search.provider=tavily
-//! spec:      §17.1 (a tool binding table must name a driver; connector-specific fields are not enough)
+//! manifest:  tools.search.provider=tavily; actions.Search.tool=search
+//! spec:      §17.1 (a [tools.*] catalog entry must name a driver; connector-specific fields are not enough)
 //! ---
-read tool text search(text q);
+action Search(text q);
 agent A {
   on awake { say("configured"); }
 }

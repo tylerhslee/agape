@@ -22,7 +22,7 @@ export type FStringPart = { kind: "text"; text: string } | { kind: "expr"; src: 
 export const KEYWORDS = new Set([
   "int", "float", "bool", "text", "null", "event", "action", "array",
   "agent", "extend", "sync", "struct", "enum",
-  "grants", "tool", "read", "write",
+  "grants",
   "spawn", "awake", "sleep", "crash", "self", "on", "prompt", "instruction",
   "principal", "policy",
   "when", "if", "else", "return", "retry",

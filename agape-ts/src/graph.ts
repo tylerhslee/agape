@@ -70,7 +70,6 @@ export function buildGraph(program: A.Program, programName = ""): ProgramGraph {
   const agents = new Map<string, A.AgentDecl>();
   const actions = new Map<string, A.ActionDecl>();
   const events = new Map<string, A.EventDecl>();
-  const tools = new Map<string, A.ToolDecl>();
   const enums = new Map<string, A.EnumDecl>();
   const prompts = new Map<string, A.PromptDecl>();
   const principals = new Set<string>();
@@ -79,7 +78,6 @@ export function buildGraph(program: A.Program, programName = ""): ProgramGraph {
       case "agent": agents.set(d.name, d); break;
       case "action": actions.set(d.name, d); break;
       case "event": events.set(d.name, d); break;
-      case "tool": tools.set(d.name, d); break;
       case "enum": enums.set(d.name, d); break;
       case "prompt": prompts.set(d.name, d); break;
       case "principal": principals.add(d.name); break;
@@ -348,11 +346,6 @@ export function buildGraph(program: A.Program, programName = ""): ProgramGraph {
           return;
         }
         case "call": {
-          if (e.callee.kind === "ident" && tools.has(e.callee.name)) {
-            const t = tools.get(e.callee.name)!;
-            addNode({ id: `tool:${t.name}`, kind: "tool", label: t.name, line: line(t), meta: { effect: t.effect, reversible: t.reversible } });
-            addEdge({ from: at.nodeId, to: `tool:${t.name}`, kind: "tool", label: t.name, variant: at.variant, line: line(e) });
-          }
           visitExpr(e.callee, at);
           for (const a of e.args) visitExpr(a, at);
           return;

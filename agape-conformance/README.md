@@ -1,7 +1,7 @@
-# Agape — Black-Box Conformance Suite (v1.0.0-alpha.2026.7.2.3)
+# Agape — Black-Box Conformance Suite (v1.0.0-alpha.2026.7.3.0)
 
 A set of `.ag` programs, each tagged with an expected outcome, that together
-define when an implementation of **Agape v1.0.0-alpha.2026.7.2.3** is *valid* (every
+define when an implementation of **Agape v1.0.0-alpha.2026.7.3.0** is *valid* (every
 behavior matches the spec) and *complete* (every required behavior is exercised). Tests
 are derived **only** from `../SPEC.md` — never from any implementation. An
 implementation passes by feeding each test through its own front end + runtime
@@ -18,7 +18,7 @@ This is the **core kernel** suite — the complete language with no syntactic su
 When a new construct lands — memory store/recall, the ledger query, provider
 fallback, runtime adapters — it should add at least one positive conformance case
 and, more importantly, negative cases that show it cannot launder taint, invent
-authority, skip endorsement, write through an unsettled tool input, or evade replay.
+authority, skip endorsement, push an unsettled value out through a perform, or evade replay.
 
 ```
 agape-conformance/
@@ -53,15 +53,15 @@ compiles the body), terminated by `//! ---`. Everything after is the program
 under test.
 
 ```
-//! id:        fn_sync_tool_call_reject
-//! section:   04_functions
+//! id:        world_sync_perform_reject
+//! section:   06b_world
 //! expect:    reject
 //! error:     ColorViolation
-//! spec:      §4, §6b (a tool call reaches the tool seam → async)
-//! note:      a sync function may not call a tool
+//! spec:      §4, §6b (a perform is an outbound act → async)
+//! note:      a sync function may not perform
 //! ---
-tool text search(text q);
-sync text find(text q) { return search(q); }
+action Ping(text note);
+sync null poke() { perform Ping("x"); return; }
 ```
 
 ### Header keys

@@ -386,12 +386,13 @@ describe("manifest dependency bindings", () => {
     expect(manifest.tools?.legacy).toMatchObject({ driver: "mock" });
   });
 
-  it("routes a configured non-mock tool through the host adapter and validates the declared return type", async () => {
+  it("routes a wired perform through the host adapter and lands the reply as the result event", async () => {
     const prog = `
-      read tool text search(text q);
-      agent A grants { use search } {
+      action Search(text q);
+      event SearchEvidence(text hits);
+      agent A grants { perform Search } {
         on awake {
-          text hit = search("northwind");
+          text hit = perform Search("northwind") expires 5;
           say(hit);
         }
       }
@@ -399,7 +400,11 @@ describe("manifest dependency bindings", () => {
     `;
     const calls: string[] = [];
     const r = await run(parse(prog), {
-      manifest: { provider: { backend: "mock" }, tools: { search: { driver: "host", provider: "fixture" } } },
+      manifest: {
+        provider: { backend: "mock" },
+        tools: { search: { driver: "host", provider: "fixture" } },
+        actions: { Search: { tool: "search", result_event: "SearchEvidence" } },
+      },
       toolHandlers: {
         search: ({ args, binding }) => {
           calls.push(`${binding.provider}:${args[0]?.kind === "text" ? args[0].v : ""}`);
@@ -418,7 +423,8 @@ describe("manifest dependency bindings", () => {
 describe("async fan-out", () => {
   it("runs `|>` mapped dependency paths concurrently while preserving the caller agent context", async () => {
     const prog = `
-      read tool text search(text q);
+      action Search(text q);
+      event SearchEvidence(text hits);
       enum Grounding { Grounded, Unsupported }
       struct Verification {
         claim: text,
@@ -427,7 +433,7 @@ describe("async fan-out", () => {
       }
 
       Verification verify(text claim) {
-        text evidence = search(claim);
+        text evidence = perform Search(claim) expires 5;
         Credence<Grounding> c = self <- f"judge this claim using evidence: {claim} / {evidence}";
         Decision<Grounding> d = decide c by confidence 0.5;
         Verification result = Verification {
@@ -445,7 +451,7 @@ describe("async fan-out", () => {
         return result;
       }
 
-      agent A grants { use search } {
+      agent A grants { perform Search } {
         on awake {
           text[] claims = ["alpha", "beta", "gamma"];
           Verification[] rows = claims |> verify;
@@ -473,7 +479,11 @@ describe("async fan-out", () => {
 
     const r = await run(parse(prog), {
       provider: new SlowJudgeProvider(() => ({ Grounded: 0.9, Unsupported: 0.1 })),
-      manifest: { provider: { backend: "mock" }, tools: { search: { driver: "host" } } },
+      manifest: {
+        provider: { backend: "mock" },
+        tools: { search: { driver: "host" } },
+        actions: { Search: { tool: "search", result_event: "SearchEvidence" } },
+      },
       toolHandlers: {
         search: async ({ args }) => {
           const q = args[0]?.kind === "text" ? args[0].v : "";

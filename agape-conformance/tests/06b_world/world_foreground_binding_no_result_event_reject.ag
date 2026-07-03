@@ -1,0 +1,14 @@
+//! id:        world_foreground_binding_no_result_event_reject
+//! section:   06b_world
+//! expect:    reject
+//! error:     ConfigError
+//! manifest:  tools.t1.driver=mock; actions.Ask.tool=t1
+//! spec:      §6b, §17.1 (a foreground binding on an action wired with no result_event is a ConfigError — there is nothing to bind the reply to)
+//! ---
+action Ask(text q);
+agent A grants { perform Ask } {
+  on awake {
+    text hits = perform Ask("prior art") expires 5;
+  }
+}
+spawn A a; awake a;

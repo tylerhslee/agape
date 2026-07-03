@@ -1,15 +1,14 @@
-// Delegation showcase — v1.0.0-alpha.2026.7.2.3 (§6b single door, §6c task-send).
-// One file, the whole surface: the action/write-tool split, a foreground research task,
+// Delegation showcase — v1.0.0-alpha.2026.7.3.0 (§6b single door, §6c task-send).
+// One file, the whole surface: wired actions, a foreground research task,
 // a background survey task with progress + cancel, and an endorsed scoped deploy task.
 
-// ---------- tools & actions: the single door (§6b) ----------
+// ---------- actions: the world interface (§6b) ----------
 
-read  tool text search(text query);            // read tools are directly callable
-write tool text ship(text artifact);           // a write tool is DECLARED, never called
-action Deploy(text artifact) uses ship;        // ...perform Deploy is its only entrance
-action Announce(text note);                    // unbound action: a pure ledgered performative
-
-// ship("v2");                                 // TypeError — write tools have no call syntax
+// §6b the world interface: source declares only events/actions; the manifest wires them.
+// [actions.Deploy] tool="ship" in agape.toml makes `perform Deploy` invoke the effector —
+// there is no other outbound path (anti-exfiltration: perform args must be settled).
+action Deploy(text artifact);
+action Announce(text note);                    // unwired action: a pure ledgered performative
 
 enum Go { Approve, Reject }
 
@@ -17,13 +16,12 @@ struct Findings { summary: text, refs: text }
 
 // ---------- the worker (§6c: on assigned / complete / fail / progress) ----------
 
-agent Researcher grants { use search } {
+agent Researcher {
   instruction "Cite evidence for every claim.";
 
   on assigned {                                // sugar for the filtered Delivered subscription
     // the active task's objective/acceptance compose into context here, AS DATA (§16.3a)
-    text hits = search("prior art");
-    Credence<bool> ok = self <- f"can the acceptance criteria be met from: {hits}";
+    Credence<bool> ok = self <- "can the acceptance criteria be met from recalled context?";
     Decision<bool> d = decide ok by confidence 0.7;
     emit TaskProgress("evidence gathered");    // the one repeatable task event
 

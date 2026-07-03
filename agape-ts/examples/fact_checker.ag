@@ -13,7 +13,10 @@
 
 prompt text question;
 
-read tool text search(text q);
+// §6b the world interface: `Search` is an outbound act, wired to a catalog effector in agape.toml
+// ([actions.Search] tool="web_search" result_event="SearchEvidence"); the reply lands as the event.
+action Search(text q);
+event SearchEvidence(text hits);
 
 enum ClaimKind { Factual, Opinionated }
 enum Grounding { Grounded, Weak, Unsupported }
@@ -61,7 +64,9 @@ event ClaimVerified(Verification result);
 event FinalAnswer(text status, VerificationAudit verification);
 
 Verification verifyClaim(AtomicClaim claim) {
-  text evidence = search(f"fact check this claim: {claim.statement}");
+  // the claim statement is model-generated (raw): under the uniform sink rule it may not leave the
+  // process un-endorsed (§6b anti-exfiltration), so per-claim grounding is judged from context.
+  text evidence = self <- f"summarize any grounding evidence you can recall for this claim: {claim.statement}";
 
   Credence<Grounding> grounded =
     self <- f"Dummy fact-check criteria: mark Grounded if the search evidence supports the claim, Weak if it is opinionated but plausibly grounded, Unsupported otherwise. Claim kind: {claim.kind}. Claim: {claim.statement}. Search evidence: {evidence}";
@@ -110,12 +115,16 @@ Verification verifyClaim(AtomicClaim claim) {
   return result;
 }
 
-agent FactChecker grants { use search, perform PublishAnswer } {
+agent FactChecker grants { perform Search, perform PublishAnswer } {
   when (Prompt p about question) {
     text user_prompt = p.text;
 
+    // the user's question is settled by origin (§5b), so it may drive the wired Search directly —
+    // a foreground perform binding (§6b): the reply is the SearchEvidence event's payload.
+    text background = perform Search(user_prompt) expires 5;
+
     ClaimBundle plan =
-      self <- f"Create a coherent claim plan for one natural-language answer. Return a single subject and exactly three atomic claims. The claims array is the JSON-style extraction from the imagined long answer; first, second, and third must mirror those same three claims in order so this alpha kernel can fan them out as events. Each claim must be small, individually checkable, and tagged as Factual or Opinionated. User request: {user_prompt}";
+      self <- f"Create a coherent claim plan for one natural-language answer. Return a single subject and exactly three atomic claims. The claims array is the JSON-style extraction from the imagined long answer; first, second, and third must mirror those same three claims in order so this alpha kernel can fan them out as events. Each claim must be small, individually checkable, and tagged as Factual or Opinionated. User request: {user_prompt}. Background evidence: {background}";
 
     Verification[] verification_rows = plan.claims |> verifyClaim;
 

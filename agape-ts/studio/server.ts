@@ -111,7 +111,6 @@ function mapProgram(p: A.Program): ProgramMap {
       case "action": m.actions.push(d.name); break;
       case "event": m.events.push(d.name); break;
       case "enum": m.enums[d.name] = d.variants; break;
-      case "tool": m.tools.push({ name: d.name, effect: d.effect }); break;
       case "principal": m.principals.push(d.name); break;
       case "prompt": m.prompts.push({ name: d.name, type: typeLabel(d.type) }); break;
       default: break;
@@ -669,7 +668,7 @@ export function startStudio(opts: StudioOptions): Promise<{ close: () => void }>
       if (req.method === "GET" && url.pathname === "/api/meta") {
         return json(res, 200, {
           dir: opts.dir,
-          version: "1.0.0-alpha.2026.7.2.3",
+          version: "1.0.0-alpha.2026.7.3.0",
           providers: providerStatuses(opts.allowLive),
           access: { liveEnabled: opts.allowLive, tokenRequired: Boolean(accessToken) },
         });

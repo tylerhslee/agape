@@ -1,6 +1,8 @@
 # Design: Subagent delegation and the action/tool split
 
-Status: **design settled, pre-implementation** (2026-07-02).
+Status: **shipped** (2026-07-02, commit 59ca03c) — EXCEPT §2 (the action/write-tool split),
+which owner review superseded on 2026-07-03: `tool` left the language entirely; see
+[[design/world-interface.md]]. The delegation half (§1, §3–§12) stands as shipped.
 Decided interactively with the owner; supersedes the earlier draft summary
 (`receiver <- self { … }` form) where they differ. Follows doc → test → build:
 this document first, conformance tests second, compiler/runtime third.

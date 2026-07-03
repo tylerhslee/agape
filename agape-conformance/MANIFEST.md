@@ -1,6 +1,6 @@
-# Agape v1.0.0-alpha.2026.7.2.3 — Conformance Test Index
+# Agape v1.0.0-alpha.2026.7.3.0 — Conformance Test Index
 
-**202 tests** — accept: 120, reject: 82
+**200 tests** — accept: 122, reject: 78
 
 A conformant implementation must satisfy every `accept`/`reject` test (rejects with the declared error class; accepts matching any asserted spine).
 
@@ -10,7 +10,7 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 | id | expect | error | spec |
 |---|---|---|---|
 | `lex_comment_fstring` | accept | — | §2 (line comments; f-string interpolation; INT/FLOAT literals) |
-| `lex_contextual_word_as_identifier` | accept | — | §2 (contextual words `as`/`by`/`reach`/`use`/`origin` lex as identifiers out of position) |
+| `lex_contextual_word_as_identifier` | accept | — | §2 (contextual words `as`/`by`/`reach`/`origin` lex as identifiers out of position) |
 | `lex_reject_fstring_escaped_brace` | reject | ParseError | §2 (f-string braces introduce parsed expressions; escaped literal braces are not part of the grammar) |
 | `lex_reject_keyword_as_identifier` | reject | ParseError | §2 (reserved keywords may not be used as identifiers) |
 | `lex_reject_leading_dot_number` | reject | ParseError | §2 (Float is decimal digits with a point; `.5` is not a numeric literal) |
@@ -54,8 +54,8 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 | `type_struct_extra_field_reject` | reject | TypeError | §3, §8 (struct literals/schema objects are exact; extra fields are rejected) |
 | `type_struct_missing_field_reject` | reject | TypeError | §3 (all struct fields required; no optional-by-omission) |
 | `type_undeclared_emit_reject` | reject | TypeError | §3 (events are not self-declaring; emit of an undeclared type is a TypeError) |
+| `type_undeclared_function_call_reject` | reject | TypeError | §4, §8 (a bare call to an undeclared name is a TypeError — functions, like events, are not self-declaring) |
 | `type_undeclared_perform_reject` | reject | TypeError | §3 (actions are not self-declaring; perform of an undeclared type is a TypeError) |
-| `type_undeclared_tool_call_reject` | reject | TypeError | §6b (an undeclared tool call is a TypeError — tools, like events, are not self-declaring) |
 
 ## 04_functions
 
@@ -68,7 +68,6 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 | `fn_sync_pure_ok` | accept | — | §4 (a sync fn that reaches no declared dependency is well-formed) |
 | `fn_sync_reaches_seam_reject` | reject | ColorViolation | §1 Axis A, §4 (a sync fn may not reach the provider via `<-`) |
 | `fn_sync_store_reject` | reject | ColorViolation | §9, §10 (a mem write reaches the provider-backed memory substrate to internalize, so a sync function may not store) |
-| `fn_sync_tool_call_reject` | reject | ColorViolation | §4, §6b (a tool call reaches the tool dependency → async) |
 | `fn_taint_flows_through_call_reject` | reject | TaintViolation | §15.3.3 (function calls are trust-transparent; taint flowing through a helper still cannot reach a consequential sink) |
 
 ## 05_agents
@@ -99,6 +98,23 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 | `comm_send_expires_ok` | accept | — | §6 (a send may carry a lifetime: `dest <- msg expires N`; reach into Worker is granted) |
 | `comm_send_lost_no_delivery` | accept | — | §6 (a send to a non-awake agent is lost — the chain stalls at Sent, never Delivered; loss is the absence of Delivered, not an event) |
 | `comm_typed_reply` | accept | — | §6 (a typed reply binds the provider answer into a typed value; the send lifecycle is ledgered) |
+
+## 06b_world
+
+| id | expect | error | spec |
+|---|---|---|---|
+| `world_emit_wired_result_taint_join_reject` | reject | TaintViolation | §6b, §13 (no laundering: a result_event payload carries the JOIN of the triggering emit's payload trust — a raw query taints its own results, which then cannot drive a consequential perform un-gated) |
+| `world_emit_wired_tainted_ok` | accept | — | §6b (emit is not a consequential sink, so an emit-trigger wiring is the loose observation channel: a RAW payload may flow out — an explicit, manifest-visible opt-out of the perform path's guarantee) |
+| `world_foreground_binding_no_result_event_reject` | reject | ConfigError | §6b, §17.1 (a foreground binding on an action wired with no result_event is a ConfigError — there is nothing to bind the reply to) |
+| `world_foreground_binding_requires_expires_reject` | reject | TypeError | §6b, §6c (`expires` is mandatory on the result-binding form of perform — terminal by construction, like every delegation) |
+| `world_foreground_perform_binding_ok` | accept | — | §6b, §13 (foreground perform binding: a wired action with a result_event binds its reply like a §6c delegation; a settled request yields settled results — external data settled by origin — which may drive a further perform) |
+| `world_perform_unsettled_reject` | reject | TaintViolation | §6b, §13 (every perform is a consequential sink taking settled args only — anti-exfiltration: un-endorsed cognition never leaves the process on the perform path) |
+| `world_perform_unsettled_unwired_reject` | reject | TaintViolation | §6b, §13 (the settled-only rule for perform args is UNIFORM: it does not depend on whether the deployment wires the action — checker semantics never depend on the manifest) |
+| `world_replay_chain_head` | accept | — | §6b, §16.5 (recorded replay of a wired perform regenerates the same chain-head: the seam's journal pair re-serves the endpoint result and nothing is re-invoked) |
+| `world_sync_perform_reject` | reject | ColorViolation | §4, §6b (every perform is async — whether an act reaches the world is a deployment fact the checker must not depend on; a `sync` function may not perform) |
+| `world_unwired_action_pure_ok` | accept | — | §6b (unwired = pure: an unwired action is a ledgered performative — the act is the record; no seam journal pair appears) |
+| `world_wired_perform_invokes_ok` | accept | — | §6b (an [actions.NAME] wiring makes perform invoke the catalog endpoint: the action's own domain row, then the seam's ToolStarted/ToolResolved journal pair correlated by catalog name) |
+| `world_wired_perform_result_event_ok` | accept | — | §6b (a wiring's result_event lands the endpoint's reply as the named event row after the journal pair; a statement-form perform consumes it reactively via `when`) |
 
 ## 06c_delegation
 
@@ -142,7 +158,7 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 | `ledger_multi_handler_order` | accept | — | §7 (when several subscriptions match one appended event in one tick, they fire in registration/hoist order — within a scope, lexical order) |
 | `ledger_prospective_only` | accept | — | §7 (subscriptions are prospective; never fire for prior events) |
 | `ledger_query_result_event` | accept | — | §10 (a query STATEMENT lands a QueryResult event on the ledger) |
-| `ledger_tool_pair` | accept | — | §6b, §7 (a tool call appends a ToolStarted/ToolResolved pair) |
+| `ledger_tool_pair` | accept | — | §6b, §7 (a wired perform appends the seam's ToolStarted/ToolResolved journal pair beneath the action's domain row, correlated by catalog name) |
 | `ledger_when_about_filters` | accept | — | §7 (a `when (Type b about subj)` fires only for events about the held subject; the bound event evaluates to its payload) |
 | `ledger_when_guard_ok` | accept | — | §7 (a `when … if (guard)` filters by an ordinary predicate over the bound event's fields) |
 
@@ -213,12 +229,7 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 
 | id | expect | error | spec |
 |---|---|---|---|
-| `gov_action_uses_read_tool_reject` | reject | TypeError | §3, §6b (`uses` binds an action to a WRITE tool; naming a read tool is a TypeError) |
-| `gov_action_uses_undeclared_tool_reject` | reject | TypeError | §3, §6b (`uses` must name a declared tool; tools, like events, are not self-declaring) |
-| `gov_action_uses_write_tool_ok` | accept | — | §6b, §13 (perform of a bound action executes the write tool: the action record plus the correlated ToolStarted/ToolResolved pair) |
 | `gov_bare_decision_no_perform_reject` | reject | TaintViolation | §13 (a sealed Decision<E> alone does not settle a subject; performing the raw artifact without an `endorse` is a taint violation) |
-| `gov_bound_action_replay_chain_head` | accept | — | §16.5 (recorded replay of a bound action's write tool regenerates the same chain-head from journaled tool results) |
-| `gov_bound_action_unsettled_reject` | reject | TaintViolation | §6b, §13 (a bound action's perform is the write tool's only entrance and is a consequential sink; a cognition-derived argument is un-settled → reject) |
 | `gov_conformal_coldstart_abstains` | accept | — | §13 (a conformal gate with no recorded decisions is below its labelled-case readiness floor and records a Decided abstention — the supervised cold start) |
 | `gov_conformal_gate_ok` | accept | — | §13 (the conformal basis `by conformal α` is a distribution-free finite-sample gate calibrated from the ledger) |
 | `gov_consequential_bare_collapse_reject` | reject | TaintViolation | §13 (a sealed Decision may guide control flow but is not a subject endorsement → it may not license a perform) |
@@ -230,7 +241,6 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 | `gov_endorsed_perform_ok` | accept | — | §13 (a recorded subject endorsement licenses a consequential perform in its committed branch) |
 | `gov_endorsed_subject_allows_perform` | accept | — | §13 (endorsing the exact subject settles it; the endorsement is sink-admissible inside a committed branch, licensing a perform) |
 | `gov_endorsement_subject_collision_accept` | accept | — | §13 (Endorsement metadata accessors win name collisions; the subject field remains reachable through `.subject`) |
-| `gov_extend_use_subtractive_reject` | reject | AuthorityViolation | §5, §13 (capabilities, incl. `use`, are subtractive under extend) |
 | `gov_grants_star_ok` | accept | — | §13 (grants { * } is the explicit unconstrained opt-out — lattice top) |
 | `gov_margin_floor_abstains` | accept | — | §13 (a rule's `margin δ` requires the top-vs-runner-up lead ≥ δ at decision time; a 0.10 lead below the 0.20 margin records a Decided abstention, so no Endorsed is recorded) |
 | `gov_perform_reach_subtractive_reject` | reject | AuthorityViolation | §5, §13 (grants are subtractive under extend for `perform`/`reach` too — a child may not exceed its parent's authority) |
@@ -240,14 +250,6 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 | `gov_principal_decision_records` | accept | — | §13, §16.4 (a granted `p decide c by r` records PrincipalDecision, then the canonical Decided outcome) |
 | `gov_raw_subject_to_sink_reject` | reject | TaintViolation | §13 (endorse never settles the raw subject variable; only the endorsement binder reaches a sink — performing the raw subject is rejected, in any branch) |
 | `gov_reach_ungranted_reject` | reject | AuthorityViolation | §13 (sending into another agent requires a `reach` grant) |
-| `gov_read_tool_settled_perform_ok` | accept | — | §6b, §13 (a read tool over settled inputs yields a settled result — external data settled by origin — that may drive a perform) |
-| `gov_sync_perform_bound_action_reject` | reject | ColorViolation | §6b (a tool call reaches the tool dependency → async; a `sync` function may not perform a tool-BOUND action) |
-| `gov_tool_requires_effect_class_reject` | reject | ParseError | §6b, §15.2 (every tool declares an effect class — `read` or `write`; omitting it is a ParseError) |
-| `gov_tool_result_tainted_perform_reject` | reject | TaintViolation | §6b, §13 (a tool result carries the join of its inputs' trust; a cognition-derived input is un-settled → cannot drive a consequential perform without a gate) |
-| `gov_use_grant_write_tool_reject` | reject | TypeError | §6b, §13 (a `use` grant naming a write tool is illegal — the corresponding power is `perform` on a bound action) |
-| `gov_use_tool_granted_ok` | accept | — | §6b, §13 (a granted `use TOOL` permits the tool call) |
-| `gov_use_tool_ungranted_reject` | reject | AuthorityViolation | §6b, §13 (default-deny: a tool call needs a `use` grant) |
-| `gov_write_tool_direct_call_reject` | reject | TypeError | §6b (the single door: a write tool is a declared mutation capability, not a callable expression; only `perform` of a bound action may execute it) |
 
 ## 15_reproducibility
 
@@ -264,14 +266,15 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 | `cfg_manifest_decision_policy_reject` | reject | ConfigError | §17.1, §17.2 (decision rules live in source, not the manifest; config cannot set gate thresholds) |
 | `cfg_missing_principal_binding_reject` | reject | ConfigError | §17.1 (each principal declaration resolves to an identity binding; an unbound declared dependency is ALWAYS a ConfigError, not a late runtime lookup — no opt-in flag) |
 | `cfg_missing_prompt_binding_reject` | reject | ConfigError | §17.1 (each prompt declaration resolves to a manifest binding; an unbound declared dependency is ALWAYS a ConfigError, not a late runtime lookup — no opt-in flag) |
-| `cfg_missing_tool_binding_reject` | reject | ConfigError | §17.1 (each tool declaration resolves to a configured world capability; an unbound declared dependency is ALWAYS a ConfigError, not a late runtime lookup — no opt-in flag) |
 | `cfg_require_fallback_temperature_reject` | reject | ConfigError | §17 (a text-only provider at temperature 0 requires fallback_temperature for the sampling fallback) |
 | `cfg_sampling_fallback` | accept | — | §16.8, §17 (a text-only provider is served by the sampling fallback: the credence is the empirical frequency of N forced draws; a confident judgment still commits) |
 | `cfg_sampling_fallback_disabled_defers` | accept | — | §13, §17 (without logprobs or the sampling fallback, a conformal gate has no distribution and degrades to deferral/abstain) |
-| `cfg_strict_bindings_ok` | accept | — | §17.1 (declared dependencies pass configuration binding when every dependency has a manifest entry) |
-| `cfg_tool_binding_missing_driver_reject` | reject | ConfigError | §17.1 (a tool binding table must name a driver; connector-specific fields are not enough) |
-| `cfg_tool_host_binding_accept` | accept | — | §17.1 ([tools.NAME] can bind a declared tool to implementation-defined host functions, scripts, processes, or skills) |
-| `cfg_tool_mcp_binding_accept` | accept | — | §17.1 ([tools.NAME] binds a declared tool dependency; MCP is one supported tool transport) |
+| `cfg_strict_bindings_ok` | accept | — | §17.1 (declared dependencies pass configuration binding when every dependency has a manifest entry and every wiring references an existing catalog key and a declared name) |
+| `cfg_tool_binding_missing_driver_reject` | reject | ConfigError | §17.1 (a [tools.*] catalog entry must name a driver; connector-specific fields are not enough) |
+| `cfg_tool_host_binding_accept` | accept | — | §6b, §17.1 (a [tools.*] catalog entry can bind to implementation-defined host functions, scripts, processes, or skills; the wiring is unchanged) |
+| `cfg_tool_mcp_binding_accept` | accept | — | §6b, §17.1 ([tools.*] is the endpoint catalog and MCP is one supported transport; an action wires to a catalog entry by its key) |
+| `cfg_wiring_missing_catalog_key_reject` | reject | ConfigError | §6b, §17.1 (an [actions.NAME] wiring must reference an existing [tools.*] catalog entry; a missing catalog key is ALWAYS a ConfigError, not a late runtime lookup) |
+| `cfg_wiring_undeclared_action_reject` | reject | ConfigError | §6b, §17.1 (an [actions.NAME]/[events.NAME] wiring must name a DECLARED action or event; wiring an undeclared name is a ConfigError) |
 
 ## 22_gate
 

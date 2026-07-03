@@ -1,0 +1,15 @@
+//! id:        world_foreground_binding_requires_expires_reject
+//! section:   06b_world
+//! expect:    reject
+//! error:     TypeError
+//! manifest:  tools.t1.driver=mock; actions.Ask.tool=t1; actions.Ask.result_event=Answer
+//! spec:      §6b, §6c (`expires` is mandatory on the result-binding form of perform — terminal by construction, like every delegation)
+//! ---
+event Answer(text body);
+action Ask(text q);
+agent A grants { perform Ask } {
+  on awake {
+    text hits = perform Ask("prior art");
+  }
+}
+spawn A a; awake a;

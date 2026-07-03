@@ -52,6 +52,7 @@ function assertCore(p: A.Program): void {
       case "structlit": if (e.typeArgs && e.typeArgs.length) bad("a generic struct literal"); e.fields.forEach((f) => walkExpr(f.value)); break;
       case "arraylit": e.items.forEach(walkExpr); break;
       case "tasklit": if (e.objective) walkExpr(e.objective); if (e.acceptance) walkExpr(e.acceptance); break; // core (§6c)
+      case "performexpr": e.args.forEach(walkExpr); if (e.expires) walkExpr(e.expires); break; // core (§6b)
       case "fstring": e.parts.forEach((pt) => { if (pt.kind === "expr") walkExpr(pt.expr); }); break;
       default: break;
     }
@@ -83,7 +84,6 @@ function assertCore(p: A.Program): void {
       case "struct": if (d.typarams && d.typarams.length) bad("a generic `struct`"); d.fields.forEach((f) => walkType(f.type)); break;
       case "fn": if (d.typarams && d.typarams.length) bad("a generic `fn`"); d.params.forEach((f) => walkType(f.type)); d.body.forEach(walkStmt); break;
       case "action": if (d.reversible) bad("a `reversible` action"); d.fields.forEach((f) => walkType(f.type)); break;
-      case "tool": if (d.reversible) bad("a `reversible` tool"); d.params.forEach((f) => walkType(f.type)); walkType(d.ret); break;
       case "event": d.fields.forEach((f) => walkType(f.type)); break;
       case "prompt": walkType(d.type); break;
       case "agent":
@@ -208,14 +208,8 @@ class Parser {
     // so only treat it as a decl head when a number literal immediately follows (an ordinary `conformal`
     // used as a name elsewhere is left alone). A `by conformal α` rule is parsed inside parseRule, not here.
     if (this.atIdent("conformal") && (this.peek(1).type === "int" || this.peek(1).type === "float")) return true;
-    // tool decl: `read|write tool …`, optionally prefixed by `reversible` (§15.2).
-    if (t === "read" || t === "write") return true;
-    // a bare `tool …` (no effect class) is still a tool decl — but an ILL-FORMED one: the class
-    // is mandatory (§6b/§15.2), so parseTool() raises a ParseError rather than silently defaulting.
-    if (t === "tool") return true;
     if (t === "reversible") {
-      const n = this.peek(1).type;
-      return n === "action" || n === "read" || n === "write" || n === "tool";
+      return this.peek(1).type === "action";
     }
     // function decl: `sync RET NAME(…)` or a bare top-level `RET NAME(…)` (async is default, §15.2).
     if (t === "sync") return true;
@@ -282,26 +276,12 @@ class Parser {
       return { kind: "struct", name, fields, typarams, pub, pos };
     }
     if (this.at("interface")) return this.parseInterface(pub);
-    // `reversible` may prefix either an `action` or a `tool` (§15.2).
-    if (this.at("reversible")) {
-      if (this.peek(1).type === "tool" || this.peek(1).type === "read" || this.peek(1).type === "write") {
-        return this.withPub(this.parseTool(), pub);
-      }
-    }
-    if (this.at("read") || this.at("write") || this.at("tool")) return this.withPub(this.parseTool(), pub);
     if (this.at("action")) {
       this.eat("action");
       const name = this.eat("ident").value;
       const fields = this.parseFieldList();
-      // `uses TOOL` (§3/§6b): the contextual action→write-tool binding, recognized positionally
-      // after the parameter list. At most ONE tool.
-      let uses: string | undefined;
-      if (this.atIdent("uses")) {
-        this.next();
-        uses = this.eat("ident").value;
-      }
       this.eat(";");
-      return { kind: "action", name, fields, reversible: false, uses, pub, pos };
+      return { kind: "action", name, fields, reversible: false, pub, pos };
     }
     if (this.at("reversible")) {
       this.next();
@@ -426,26 +406,6 @@ class Parser {
     }
     this.eat("}");
     return { kind: "interface", name, members, pub, pos };
-  }
-
-  // tool ::= "reversible"? ("read"|"write") "tool" type Ident params config? ";"  (§15.2)
-  private parseTool(): A.ToolDecl {
-    const pos = this.peek().pos;
-    let reversible = false;
-    if (this.at("reversible")) { reversible = true; this.next(); }
-    // the effect class is MANDATORY — a bare `tool` (no read/write) is a ParseError (§6b).
-    if (!this.at("read") && !this.at("write")) {
-      this.err("a tool must declare its effect class — `read tool …` or `write tool …`");
-    }
-    const effect = this.at("read") ? "read" : "write";
-    this.next();
-    this.eat("tool");
-    const ret = this.parseType();
-    const name = this.eat("ident").value;
-    const params = this.parseFieldList();
-    if (this.at("{")) this.skipBraces(); // optional `config { … }` binding block (§17) — ignored in v0
-    this.eat(";");
-    return { kind: "tool", effect, reversible, ret, name, params, pos };
   }
 
   // fn ::= "sync"? type Ident typarams? params block  (async is the default, §15.2)
@@ -1376,6 +1336,19 @@ class Parser {
       case "(": { this.next(); const e = this.parseExpr(); this.eat(")"); return e; }
       case "[": return this.parseArrayLit(t.pos); // an array literal `[e, …]` (§15.2 primary)
       case "task": return this.parseTaskLit(t.pos); // a TaskSpec-building task literal (§6c)
+      case "perform": {
+        // §6b foreground perform binding — an EXPRESSION-position perform (`T r = perform A(…) expires N`).
+        // Statement-position performs never reach here (parseStmt handles them first).
+        this.next();
+        const name = this.qname();
+        const args = this.at("(") ? this.parseArgs() : [];
+        let expires: A.Expr | undefined;
+        if (this.atIdent("expires")) {
+          this.next();
+          expires = this.parseGateOrBinary();
+        }
+        return { kind: "performexpr", name, args, expires, pos: t.pos };
+      }
     }
     // `all`/`any`/`quorum` are contextual (§2): a fusion reducer only when immediately followed by `(`;
     // otherwise the word is an ordinary identifier in name-position.

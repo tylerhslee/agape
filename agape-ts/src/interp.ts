@@ -238,9 +238,10 @@ export interface ConsultRequest {
   agent?: string;
 }
 
+// §6b: the host-supplied adapter for a [tools.*] catalog entry with a non-mock driver. `name` is the
+// catalog key; the declaration lives in the manifest, not in source (tools left the language).
 export interface ToolCallContext {
   name: string;
-  declaration: A.ToolDecl;
   binding: ToolBindingConfig;
   args: Value[];
   payload: string;
@@ -294,7 +295,6 @@ class Interpreter {
   private actions = new Map<string, A.ActionDecl>();
   private events = new Map<string, A.EventDecl>();
   private agents = new Map<string, A.AgentDecl>();
-  private tools = new Map<string, A.ToolDecl>();
   private fns = new Map<string, A.FnDecl>();
   private instances = new Map<string, AgentInstance>();
   // §7/§16.3 event-driven `when` dispatch: an agent's `when` handlers become active SUBSCRIPTIONS when it
@@ -393,7 +393,6 @@ class Interpreter {
       case "action": this.actions.set(name, d); break;
       case "event": this.events.set(name, d); break;
       case "agent": this.agents.set(name, d); break;
-      case "tool": this.tools.set(name, d); break;
       case "fn": this.fns.set(name, d); break;
       default: break;
     }
@@ -409,7 +408,6 @@ class Interpreter {
         case "action": this.actions.set(d.name, d); break;
         case "event": this.events.set(d.name, d); break;
         case "agent": this.agents.set(d.name, d); break;
-        case "tool": this.tools.set(d.name, d); break;
         case "fn": this.fns.set(d.name, d); break; // callable by name (e.g. `coll |> fn`, §12)
         case "instruction": break;
         case "interface": break; // interfaces erase before the dynamic semantics (§19.5) — no runtime machinery
@@ -610,6 +608,17 @@ class Interpreter {
         }
         // §7/§16.3: the append fires any matching `when` subscriptions before the next statement begins.
         await this.fireSubscriptions(etype, subj, this.eventFields(etype, args));
+        // §6b: a WIRED emit is the loose observation channel — emitting the event invokes the catalog
+        // effector (emit is not a sink, so tainted payloads may flow), and the reply lands as the
+        // configured result event whose payload JOINS the emitted payload's trust (no laundering).
+        const wiring = this.eventWiring(etype);
+        if (wiring) {
+          const requestTrust = trustJoin(args);
+          const reply = wiring.tool !== undefined ? await this.invokeWired(String(wiring.tool), args, scope) : undefined;
+          if (typeof wiring.result_event === "string") {
+            await this.landResultEvent(wiring.result_event, reply, requestTrust, subj, scope);
+          }
+        }
         return;
       }
       case "perform": return this.execPerform(s, scope);
@@ -958,28 +967,121 @@ class Interpreter {
       payload.push(render(sunk));
     }
     this.ledger.append(name, agent?.name ?? "<top>", payload, agent?.name);
-    // §6b the single door: a bound action's perform EXECUTES its write tool with the action's (already
-    // admitted) arguments, appending the correlated ToolStarted/ToolResolved pair.
-    const act = this.actions.get(name);
-    if (act?.uses) await this.invokeBoundTool(act.uses, argValues, scope);
+    // §6b the world interface: a WIRED action's perform invokes its catalog effector (the replay-journal
+    // ToolStarted/ToolResolved pair) and lands the configured result event, if any.
+    const wiring = this.actionWiring(name);
+    if (wiring) {
+      const reply = wiring.tool !== undefined ? await this.invokeWired(String(wiring.tool), argValues, scope) : undefined;
+      if (typeof wiring.result_event === "string") {
+        await this.landResultEvent(wiring.result_event, reply, "settled", agent?.name ?? name, scope);
+      }
+    }
   }
 
-  // invoke the write tool an action is bound to via `uses` (§6b). The perform already performed the
-  // authority and consequential-sink checks, so this is the tool-dependency reach + its ledger pair.
-  private async invokeBoundTool(toolName: string, args: Value[], scope: Scope): Promise<void> {
-    const tool = this.tools.get(toolName);
-    if (!tool) throw typeError(`action uses undeclared tool '${toolName}' (§6b)`);
+  // §6b foreground perform binding: `T r = perform A(args) expires N;` — the delegation discipline
+  // applied to the world: mandatory expires, settled args (uniform sink rule), the reply lands as the
+  // configured result event AND binds inline. Requires a result_event wiring (else ConfigError).
+  private async evalPerformExpr(e: A.PerformExpr, scope: Scope): Promise<Value> {
     const agent = scope.currentAgent();
-    const binding = this.toolBinding(toolName);
-    const payload = this.toolPayload(toolName, args);
+    const name = this.qualifyInModule(e.name, scope);
+    if (!this.actions.has(name)) throw typeError(`perform of undeclared action '${name}'`);
+    const grants = agent?.decl.grants;
+    const granted = grants === "all" || (Array.isArray(grants) && grants.some((g) => g.cap === "perform" && (g.name === name || this.qualifyInModule(g.name, scope) === name)));
+    if (!granted) throw authorityViolation(`agent lacks 'perform ${name}'`);
+    // §6c task-scope enablement applies to expression performs too.
+    const active = agent && this.activeTasks.get(agent.name);
+    if (active) {
+      const bare = name.includes(".") ? name.split(".").pop()! : name;
+      if (!active.endorsed || !(active.scope.includes(name) || active.scope.includes(bare))) {
+        this.ledger.append("TaskScopeViolation", agent.name, { action: name, task: active.corr }, agent.name);
+        throw new CrashError();
+      }
+    }
+    if (e.expires === undefined) throw typeError("a result-bound `perform` requires `expires` (§6b/§6c)");
+    const life = await this.evalExpr(e.expires, scope);
+    if (life.kind !== "int" && life.kind !== "float") throw typeError("`expires` requires a numeric lifetime (§6)");
+    if (life.trust !== "settled") throw taintViolation("`expires` requires a SETTLED numeric expression (§6, §6b)");
+    const argValues: Value[] = [];
+    const payload: string[] = [];
+    for (const a of e.args) {
+      const v = await this.evalExpr(a, scope);
+      const sunk = this.sinkValue(v, name);
+      argValues.push(sunk);
+      payload.push(render(sunk));
+    }
+    const wiring = this.actionWiring(name);
+    if (typeof wiring?.result_event !== "string") {
+      throw configError(`a result-bound perform of '${name}' requires an [actions.${name}] wiring with a result_event — there is nothing to bind (§6b, §17.1)`);
+    }
+    this.ledger.append(name, agent?.name ?? "<top>", payload, agent?.name);
+    const reply = wiring.tool !== undefined ? await this.invokeWired(String(wiring.tool), argValues, scope) : undefined;
+    return this.landResultEvent(wiring.result_event, reply, "settled", agent?.name ?? name, scope);
+  }
+
+  // §6b wiring lookups — [actions.NAME] / [events.NAME] manifest tables (bare name preferred).
+  private actionWiring(name: string) {
+    const bare = name.includes(".") ? name.split(".").pop()! : name;
+    return this.manifest?.actions?.[name] ?? this.manifest?.actions?.[bare];
+  }
+  private eventWiring(name: string) {
+    const bare = name.includes(".") ? name.split(".").pop()! : name;
+    return this.manifest?.events?.[name] ?? this.manifest?.events?.[bare];
+  }
+
+  // Invoke a [tools.*] catalog effector (§6b/§16.4): append the correlated ToolStarted/ToolResolved
+  // pair — the seam's REPLAY JOURNAL (§16.5), beneath the named domain rows — and return the reply.
+  private async invokeWired(catalogKey: string, args: Value[], scope: Scope): Promise<Value> {
+    const agent = scope.currentAgent();
+    const binding = this.catalogBinding(catalogKey);
+    const payload = this.toolPayload(catalogKey, args);
     const startedPayload = { binding: this.bindingSummary(binding), args: args.map(valueSummary), payload };
-    this.ledger.append("ToolStarted", toolName, startedPayload, agent?.name);
-    await this.inResolutionOrder(
-      this.toolResult(tool, args, scope, binding, payload),
+    this.ledger.append("ToolStarted", catalogKey, startedPayload, agent?.name);
+    return this.inResolutionOrder(
+      this.effectorResult(catalogKey, args, binding, payload),
       (resolved) => {
-        this.ledger.append("ToolResolved", toolName, { ...startedPayload, result: valueSummary(resolved) }, agent?.name);
+        this.ledger.append("ToolResolved", catalogKey, { ...startedPayload, result: valueSummary(resolved) }, agent?.name);
       },
     );
+  }
+
+  // Land a configured result event (§6b): the effector's reply becomes the event's typed payload.
+  // Trust = settled by origin (external data) ⊔ the REQUEST payload's trust — the perform path is
+  // settled; an emit-triggered read joins the emitted payload's trust (no laundering). Returns the
+  // value a foreground binding receives (single-field event → the field; else a struct of the fields).
+  private async landResultEvent(eventName: string, reply: Value | undefined, requestTrust: Trust, subj: string, scope: Scope): Promise<Value> {
+    const decl = this.events.get(eventName);
+    if (!decl) throw configError(`wiring names result_event '${eventName}', which is not a declared event (§6b, §17.1)`);
+    const agent = scope.currentAgent();
+    const fields = new Map<string, Value>();
+    decl.fields.forEach((f, i) => {
+      let v: Value;
+      if (decl.fields.length === 1 && reply && reply.kind === "text" && f.type.kind === "scalar" && f.type.name === "text") {
+        v = reply; // a single text field receives the reply verbatim
+      } else if (reply && reply.kind === "struct" && reply.fields.has(f.name)) {
+        v = reply.fields.get(f.name)!;
+      } else {
+        v = this.mockFieldValue(f.type, `${eventName}|${f.name}|${i}|${reply ? render(reply) : ""}`);
+      }
+      fields.set(f.name, this.withTrust(v, requestTrust === "settled" ? "settled" : requestTrust));
+    });
+    this.ledger.append(eventName, subj, Object.fromEntries([...fields].map(([k, v]) => [k, render(v)])), agent?.name);
+    await this.fireSubscriptions(eventName, subj, fields);
+    if (decl.fields.length === 1) return fields.get(decl.fields[0]!.name)!;
+    return { kind: "struct", typeName: eventName, fields, trust: requestTrust };
+  }
+
+  // a deterministic mock value for a result-event field (a pure function of its seed → replay-stable).
+  private mockFieldValue(t: A.TypeRef, seed: string): Value {
+    if (t.kind === "scalar") {
+      switch (t.name) {
+        case "int": return { kind: "int", v: hashInt(seed), trust: "settled" };
+        case "float": return { kind: "float", v: hashInt(seed) / 1000, trust: "settled" };
+        case "bool": return { kind: "bool", v: hashInt(seed) % 2 === 0, trust: "settled" };
+        case "text": return { kind: "text", v: `world:${seed}`, trust: "settled" };
+        case "null": return { kind: "null", trust: "settled" };
+      }
+    }
+    return { kind: "text", v: `world:${seed}`, trust: "settled" };
   }
 
   private async inResolutionOrder<T>(work: Promise<T>, apply: (result: T) => void | Promise<void>): Promise<T> {
@@ -1041,12 +1143,7 @@ class Interpreter {
   // or a call to a `reversible write tool`? A NON-reversible sink does NOT earn the cold-start commit (it must
   // defer, §20.3); an arm with no sink at all earns nothing (the supervised cold start abstains, §13).
   private armReachesReversibleSink(stmts: A.Stmt[]): boolean {
-    const revWriteTool = (name: string): boolean => {
-      const t = this.tools.get(name) ?? this.tools.get(name.includes(".") ? name.split(".").pop()! : name);
-      return !!t && t.effect === "write" && !!t.reversible;
-    };
     const exprRev = (e: A.Expr): boolean => {
-      if (e.kind === "call" && e.callee.kind === "ident" && revWriteTool(e.callee.name)) return true;
       switch (e.kind) {
         case "call": return exprRev(e.callee) || e.args.some(exprRev);
         case "member": return exprRev(e.obj);
@@ -1384,9 +1481,6 @@ class Interpreter {
         throw new RuntimeError(`bad unary ${e.op}`);
       }
       case "call": {
-        if (e.callee.kind === "ident" && this.tools.has(e.callee.name)) {
-          return this.evalToolCall(e.callee.name, e.args, scope);
-        }
         // a call to a user-declared function `f(a, …)` (§15.2). Generic functions are monomorphized and
         // their type arguments erased before this point (§19.5), so the concrete argument values suffice.
         if (e.callee.kind === "ident" && this.fns.has(e.callee.name)) {
@@ -1413,6 +1507,7 @@ class Interpreter {
       case "pipe": return this.evalPipe(e, scope);
       case "agg": return this.evalAgg(e, scope);
       case "quorum": return this.evalQuorum(e, scope);
+      case "performexpr": return this.evalPerformExpr(e, scope);
       case "tasklit": {
         // §6c the task literal: builds a TaskSpec. objective/acceptance REQUIRED text; trust is the join
         // of the fields (delegation never launders trust); a `scope` clause can only ATTENUATE the
@@ -1627,47 +1722,8 @@ class Interpreter {
     };
   }
 
-  // E-Tool (§15.4.2): a tool call requires `use NAME`; a write tool's inputs are a consequential sink;
-  // a read tool's result carries the join of its inputs' trust; the call records a ToolStarted/ToolResolved
-  // pair, and the result is a deterministic mock (a pure function of name+args) so replay is chain-stable.
-  private async evalToolCall(name: string, argExprs: A.Expr[], scope: Scope): Promise<Value> {
-    const tool = this.tools.get(name)!;
-    // §6b the single door: a WRITE tool is a declared mutation capability, never a callable expression.
-    if (tool.effect === "write") {
-      throw typeError(`'${name}' is a write tool and cannot be called from source — the single door is \`perform\` on an action bound via \`uses\` (§6b)`);
-    }
-    const agent = scope.currentAgent();
-
-    // AUTHORITY (W-Auth, default-deny): the call needs a `use NAME` grant. Match the bare grant against the
-    // target both as-written and qualified in the agent's home module (§19.2/§19.4), so a companion agent's
-    // `grants { use Save }` covers its own `m.Save` tool without letting a bare grant reach a foreign tool.
-    const grants = agent?.decl.grants;
-    const granted = grants === "all" || (Array.isArray(grants) && grants.some((g) => g.cap === "use" && (g.name === name || this.qualifyInModule(g.name, scope) === name)));
-    if (!granted) throw authorityViolation(`agent lacks 'use ${name}'`);
-
-    // evaluate the arguments (joining their trust for a read-tool result, per E-Tool t = ⊔ trust(aᵢ)).
-    const args: Value[] = [];
-    for (const a of argExprs) args.push(await this.evalExpr(a, scope));
-
-    // LEDGER (E-Tool): the correlated ToolStarted/ToolResolved pair, keyed on the tool name. The manifest
-    // selects the driver; the host supplies non-mock adapters (MCP, HTTP, process, in-process function, skill).
-    const binding = this.toolBinding(name);
-    const payload = this.toolPayload(name, args);
-    const startedPayload = { binding: this.bindingSummary(binding), args: args.map(valueSummary), payload };
-    this.ledger.append("ToolStarted", name, startedPayload, agent?.name);
-    const result = await this.inResolutionOrder(
-      this.toolResult(tool, args, scope, binding, payload),
-      (resolved) => {
-        this.ledger.append("ToolResolved", name, { ...startedPayload, result: valueSummary(resolved) }, agent?.name);
-      },
-    );
-    return result;
-  }
-
-  private toolBinding(name: string): ToolBindingConfig {
-    const tools = this.manifest?.tools;
-    const simple = name.includes(".") ? name.slice(name.lastIndexOf(".") + 1) : name;
-    return tools?.[name] ?? tools?.[simple] ?? { driver: "mock" };
+  private catalogBinding(key: string): ToolBindingConfig {
+    return this.manifest?.tools?.[key] ?? { driver: "mock" };
   }
 
   private bindingSummary(binding: ToolBindingConfig): Record<string, unknown> {
@@ -1677,49 +1733,20 @@ class Interpreter {
       .sort(([a], [b]) => a.localeCompare(b)));
   }
 
-  // Tool invocation is an adapter boundary. `mock` is built in for demos/replay-stable tests; every other
-  // driver is supplied by the embedding runtime via `toolHandlers`, so MCP is one supported transport, not a
-  // semantic requirement of the language.
-  private async toolResult(tool: A.ToolDecl, args: Value[], scope: Scope, binding: ToolBindingConfig, payload: string): Promise<Value> {
+  // Effector invocation is an adapter boundary (§6b/§16.4). `mock` is built in for demos/replay-stable
+  // tests (a deterministic pure function of the payload); every other driver is supplied by the embedding
+  // runtime via `toolHandlers`, keyed by the [tools.*] catalog key — MCP is one supported transport, not
+  // a semantic requirement of the language.
+  private async effectorResult(catalogKey: string, args: Value[], binding: ToolBindingConfig, payload: string): Promise<Value> {
     const driver = binding.driver ?? "mock";
-    if (driver === "mock") return this.mockToolResult(tool, args, payload);
-    const simple = tool.name.includes(".") ? tool.name.slice(tool.name.lastIndexOf(".") + 1) : tool.name;
-    const handler = this.toolHandlers[tool.name] ?? this.toolHandlers[simple];
+    if (driver === "mock") return { kind: "text", v: `tool:${catalogKey}(${payload})`, trust: "settled" };
+    const handler = this.toolHandlers[catalogKey];
     if (!handler) {
-      throw configError(`tool '${tool.name}' is configured with driver '${driver}', but this runtime has no adapter registered for it (§17.1)`);
+      throw configError(`catalog entry [tools.${catalogKey}] is configured with driver '${driver}', but this runtime has no adapter registered for it (§17.1)`);
     }
-    const raw = await handler({ name: tool.name, declaration: tool, binding, args, payload });
-    return this.toolValue(raw, tool.ret, tool.effect === "read" ? trustJoin(args) : "settled", scope);
-  }
-
-  // a deterministic mock tool result, typed by the tool's declared return; its trust is the join of the
-  // inputs' trust (read tool) — a write tool returns settled bool (its inputs were already gated).
-  private mockToolResult(tool: A.ToolDecl, args: Value[], seed?: string): Value {
-    const trust = tool.effect === "read" ? trustJoin(args) : "settled";
-    const ret = tool.ret;
-    seed ??= this.toolPayload(tool.name, args);
-    switch (ret.kind) {
-      case "scalar":
-        switch (ret.name) {
-          case "int": return { kind: "int", v: hashInt(seed), trust };
-          case "float": return { kind: "float", v: hashInt(seed) / 1000, trust };
-          case "bool": return { kind: "bool", v: hashInt(seed) % 2 === 0, trust };
-          case "text": return { kind: "text", v: `tool:${tool.name}(${seed})`, trust };
-          case "null": return { kind: "null", trust };
-        }
-        break;
-    }
-    // any other declared return collapses to a settled-by-origin text observation.
-    return { kind: "text", v: `tool:${tool.name}(${seed})`, trust };
-  }
-
-  private toolValue(raw: unknown, ret: A.TypeRef, trust: Trust, scope: Scope): Value {
-    if (isRuntimeValue(raw)) return this.withTrust(raw, trust);
-    try {
-      return this.withTrust(this.valueFromStructured(raw, ret, scope), trust);
-    } catch (e) {
-      throw configError(`tool adapter returned a value that does not satisfy '${typeLabel(ret)}': ${(e as Error).message}`);
-    }
+    const raw = await handler({ name: catalogKey, binding, args, payload });
+    if (isRuntimeValue(raw)) return raw;
+    return this.jsonValue(raw, "Reply");
   }
 
   // the deterministic correlation payload: a pure function of (name, rendered args), so two runs of the
