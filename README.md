@@ -1,242 +1,309 @@
 # Agape
 
-**A programming language for agent systems you can actually trust.**
+**A programming language for agent systems you can inspect, gate, and replay.**
 
-Agape treats a model's output as *testimony* — a typed, graded judgment that carries **no authority** until your program earns the right to act on it. Bounded authority, mandatory endorsement, and a complete replayable record are **compile-time guarantees**, not runtime hope.
+Agape is built around one idea: a model response is testimony, not authority. A
+program can ask a model for help, but the result has to be typed, graded,
+decided, endorsed, and recorded before it can reach a consequential action.
 
-The language is organized around a small trusted kernel: `Credence`, `Decision`,
-`endorse`/`attest`, taint, default-deny grants, write-tool gating, and ledger replay. Modules,
-interfaces, memory helpers, Studio, and the readable `decide` surface are useful only insofar
-as they preserve that kernel. The core chain is always the same:
-
-```
-testimony -> Credence<E> -> Decision<E> -> endorsed action -> ledger
+```text
+testimony -> Credence<E> -> Decision<E> -> Endorsement<T> -> granted action -> ledger
 ```
 
-The smallest useful Agape program is a guarded action. The text prompt asks the
-model for help, but the `Credence<Approval>` slot is what enforces the output
-shape: the provider receives a structured-output schema for the closed enum
-`Approval`, not permission to answer with arbitrary prose.
+The result is a small trusted kernel for agentic software: schema-constrained
+cognition, compile-time authority checks, mandatory gates, tainted memory
+recall, manifest-bound providers and tools, and an append-only hash-chained
+ledger for every run.
 
-```agape
-prompt text request;
+Agape is alpha software. The language and runtime are moving quickly, but the
+repository is usable today: the mock provider runs offline, the TypeScript
+runtime powers Agape Studio, and the Rust implementation is the source-installable
+CLI and package target.
 
-enum Approval { Approve, Decline }
-action ReleaseFunds(int cents);
-reversible action Notify(text message);
+## Quickstart: Try Agape Studio
 
-policy Payments { threshold 0.95  floor 0.20 }
+Use this path if you want the fastest way to run examples, edit `.ag` programs,
+switch providers, and inspect the ledger.
 
-agent Clerk grants { perform ReleaseFunds, perform Notify } {
-  when (Prompt p about request) {
-    Credence<Approval> decision =
-      self <- f"assess this payment request: {p}";
+**Prerequisites**
 
-    endorse (decision by Payments) {
-      Approve: perform ReleaseFunds(10000);
-      Decline: perform Notify("declined; no funds released");
-    } abstain {
-      perform Notify("needs human review");
-    }
-  }
-}
-
-spawn Clerk clerk;
-awake clerk;
-```
-
-> Most agent systems don't survive production. Across the seven frameworks in the [MAST taxonomy](https://arxiv.org/abs/2503.13657) — 1,642 annotated execution traces — multi-agent systems fail **41–87% of the time**, almost never because the model wasn't capable enough. They fail for *structural* reasons: agents coordinate through unstructured text and misread each other, act on testimony they had no grounds to trust, exceed the authority they were meant to hold, and leave no record to replay when something breaks. Those aren't model problems. They're the missing guarantees every other class of critical software takes for granted — types, contracts, access control, an audit log. Agape makes them properties of the *program*, checked before it runs.
-
-## Quickstart
-
-Agape needs [Rust](https://rustup.rs). From a clone of this repo, install the toolchain, scaffold a project, and run it — **offline, no API key** (a deterministic mock model ships in-box):
+- Node.js 20 or newer
+- npm
 
 ```sh
-cargo install --path agape-rs            # puts `agape` on your PATH
-agape init hello && cd hello
+git clone https://github.com/tylerhslee/agape.git agape
+cd agape/agape-ts
+npm install
+npm run studio -- --port 4317
+```
+
+Open the URL printed by the command, usually:
+
+```text
+http://localhost:4317
+```
+
+Studio serves the directory it was launched from. From `agape-ts`, it will find
+the checked-in examples under `examples/`:
+
+- `examples/hello.ag` - the smallest trusted-kernel example
+- `examples/rag_recall.ag` - private memory and RAG-style recall
+- `examples/fact_checker.ag` - structured extraction, tool use, verification,
+  and publication gating
+- `examples/attest_wire.ag` - prompt input and principal attestation flow
+
+In Studio, pick a program, run it with the mock provider, then inspect the
+ledger timeline, trusted-kernel chain, provider response data, prompt inputs,
+attestations, and config. The mock provider is deterministic and requires no API
+key.
+
+You can also run the same runtime from the terminal:
+
+```sh
+cd agape/agape-ts
+npx tsx src/cli.ts run examples/hello.ag --manifest agape.toml
+```
+
+## Use A Live Provider
+
+Live providers are intentionally locked unless Studio is started with `--live`
+or `--share`. Put keys in the environment or in a local `.env`; secrets are never
+stored in `agape.toml`.
+
+```sh
+cd agape/agape-ts
+printf 'OPENAI_API_KEY=sk-...\n' > .env
+npm run studio -- --live --port 4317
+```
+
+With `--live`, Studio prints a tokenized local URL such as:
+
+```text
+http://localhost:4317/?token=...
+```
+
+If you expose Studio through a short-lived tunnel, append the same token to the
+tunnel URL. For example:
+
+```sh
+cloudflared tunnel --url http://localhost:4317
+```
+
+Then open:
+
+```text
+https://<generated>.trycloudflare.com/?token=...
+```
+
+Provider selection is config-bound. A project manifest can use the deterministic
+mock backend or a live backend:
+
+```toml
+[provider]
+backend = "mock"       # or "openai", "anthropic", "gemini"
+model = "in-box"
+```
+
+OpenAI and Gemini expose token logprobs for graded credences when available.
+Anthropic uses the sampling fallback. The program source does not change when
+you switch providers.
+
+## Install The `agape` CLI From Source
+
+Use this path if you want the Rust CLI on your `PATH`.
+
+**Prerequisites**
+
+- Rust stable
+- Node.js 20 or newer if you want `agape studio`
+
+```sh
+git clone https://github.com/tylerhslee/agape.git agape
+cd agape
+cargo install --path agape-rs
+```
+
+Create and run a project:
+
+```sh
+agape init hello-agape
+cd hello-agape
 agape run main.ag --prompt question="is the earth round?"
 ```
 
-`agape init` scaffolds a fact-checked Q&A system — two agents and one decision gate — and `agape run` executes it, printing the **ledger**: the immutable, append-only, hash-chained log that *is* the program's state.
-
-```
-[  5] Prompt        question   is the earth round?
-[  6] Sent          answer     answer the user's question concisely: is the earth round?
-[  8] Resolved      answer      ok
-[  9] Answered      responder   ok
-[ 11] Resolved      sound       Entails 0.90       ← the model's graded judgment (a Credence)
-[ 13] Decided       sound       Entails            ← the gate endorsed it (conformal, ≤ 5% error)
-[ 14] Published     checker     ok                 ← only now may the answer be delivered
-
-15 events · chain-head 61b05688d023acf8
-```
-
-Every step is on the record, and `chain-head` hashes the whole run — replay it and you get the identical chain. Drop the model's confidence below the gate's bar and `Publish` never fires: no endorsement, no action.
+When `agape studio` is run from a source-installed binary outside the repository,
+point it at the Studio app in the checkout:
 
 ```sh
-agape check main.ag      # static guarantees only — authority, endorsement, types, trust
-agape studio             # open the project in Agape Studio (live ledger, eval, lifecycle)
+AGAPE_STUDIO_HOME=/absolute/path/to/agape/studio agape studio
 ```
 
-By default everything runs on the in-box mock provider. To run against a real model, name a backend in the manifest and bind its key from the environment — `anthropic` (sampling fallback), `openai`, or `gemini` (token-logprob credences). Configuration is Agape's ecosystem seam: providers, tools, prompts, identity, memory policy, and deployment endpoints are bound outside `.ag` source. See **[DISTRIBUTION.md](DISTRIBUTION.md)** and the runtime contract in **[SPEC.md](SPEC.md) §16–§17**.
-
-## Studio deployments
-
-Agape ships with Studio because the language is easiest to understand when you can
-drive agents, inspect the ledger, and watch gates resolve in one place:
+Release bundles produced by `scripts/package.sh` include the binary, examples, a
+default manifest, and the packaged Studio app:
 
 ```sh
-agape studio
+bash scripts/package.sh
+cd dist/agape-<version>-<target>
+bin/agape run examples/hello.ag
+bin/agape studio
 ```
 
-That bundled path is the default local developer experience. It should always work
-offline with the deterministic mock provider, and it can use live providers when
-`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or `GEMINI_API_KEY` are present in the
-environment or the repo `.env`.
+## A Small Agape Program
 
-Studio is also developed as a detachable frontend in `../agape-studio/`. That
-standalone package can attach to different Agape deployments without being tied to
-this repo layout:
-
-- **Embedded/local** — `agape studio` launches the Studio bundled with the Agape
-  toolchain and attaches to the current project.
-- **Standalone/local** — `../agape-studio` runs as its own Vite app and agent
-  server, attaching to the sibling `agape` runtime during development.
-- **Remote/cloud** — the same Studio frontend can point at a hosted Agape runtime
-  or a product-specific deployment, such as Soma, through the stable API seams for
-  project files, runs, provider config, memory, review, and ledger inspection.
-
-The intended rule is: **the Agape package includes a Studio, but Studio does not
-require living inside the Agape package.** Core language releases should not depend
-on frontend churn, and Studio should be free to grow into a cloud/runtime control
-plane for agentic work.
-
-Studio is versioned separately from both the language and runtime. The active
-project determines the language version Studio displays, and the configured
-runtime deployment determines the runtime endpoint/version. This keeps the same
-Studio usable against a local folder, a packaged runtime, or a future Soma/cloud
-deployment.
-
-## What Agape guarantees
-
-- **Cognition is typed.** A model's testimony returns as a schema-constrained `Credence<E>` — a calibrated distribution over a closed set of outcomes, enforced by the provider's structured-output API and read from token probabilities or sampling fallback — not a string to parse and pray over.
-- **Authority is bounded at compile time.** An agent may `perform` only what its `grants` permit, and nothing it computes at runtime can widen that set.
-- **Endorsement is unavoidable.** A value derived from cognition is untrusted until a gate endorses it. The type checker rejects any program that lets an unendorsed `Credence` drive an action — a missing endorsement is a compile error, not a latent incident.
-- **The kernel is fail-closed.** At a consequential boundary, unknown type, trust, endorsement, tool effect, grant, or replay source is a rejection, not a guessed permission.
-- **Behavior is versioned, not mutable.** An agent's system prompt is an `instruction` in source — settled, reviewable, append-only under inheritance. No recalled fact or injected memory can rewrite it; changing behavior means shipping a new version.
-- **Memory cannot launder trust.** Private memory stores anything, but every recall comes out **tainted** — taint-equivalent to a fresh model reply — so a remembered "fact" must be re-gated before it can drive an action, just like a new one.
-- **Every run replays.** Execution is an append-only, hash-chained ledger; state is a function of that ledger. A recorded run replays exactly, and any prefix can be replayed under altered facts to test a counterfactual.
-- **Every agent learns.** Every runtime must run each agent turn through the mandatory private-memory envelope in [SPEC.md](SPEC.md) §16.7: consult memory, act, record the result, and internalize the experience.
-
-## How a decision is made
-
-Work moves through four stages, each typed and each recorded — and because each value's standing (untrusted testimony → graded credence → endorsed decision) is part of its **type**, nothing slips from testimony to action without passing the gate. It's one path the compiler checks end to end, not a sequence the program is trusted to follow.
-
-1. **Testimony** — a model assertion, solicited with the cognition operator `self <- "…"`. Never trusted as a string; bound as a `Credence`.
-2. **Credence** — a graded judgment over a closed set of outcomes. Carries no authority on its own.
-3. **Decision** — the `endorse` gate collapses a credence to a `Decision` *only* when it meets a stated standard of confidence; short of that, it **abstains** and may defer to a `principal`.
-4. **Action** — an endorsed decision may license an `action`, performed only within the agent's granted authority. Every stage is appended to the ledger.
-
-## Complete workflow example
-
-The compact example shows the kernel. A fuller program can include safe replies,
-ledger records, and a realistic abstain path. The checked-in example models a
-support workflow: the agent may reply safely, but issuing credit is consequential.
-The model can classify the case; it cannot spend on its own. The typed
-`Credence<Outcome>` compiles to a structured-output schema over `Outcome`, and
-the resulting judgment has to pass a recorded gate first.
+This is the core shape. The model can judge a draft, but only an endorsed value
+can reach the sink.
 
 ```agape
-prompt text request;
+enum Verdict { Publish, Revise }
 
-enum Outcome { Refund, Explain, Escalate }
-event Case(text request);
-reversible action Reply(text message);
-action IssueCredit(int amount, text reason);
+action Announce(text body);
+event Revised(text note);
 
-policy Support { threshold 0.85  floor 0.15 }
+agent Greeter grants { perform Announce } {
+  on awake {
+    text draft = "hello, world";
 
-agent SupportDesk grants { perform Reply, perform IssueCredit } {
-  when (Prompt p about request) {
-    emit Case(p);
+    Credence<Verdict> v =
+      self <- f"is this greeting safe to publish: {draft}";
 
-    Credence<Outcome> outcome =
-      self <- f"classify this support request: {p}";
+    Decision<Verdict> d = decide v by confidence 0.8;
 
-    endorse (outcome by Support) {
-      Refund: {
-        perform IssueCredit(25, "duplicate charge");
-        perform Reply("I've issued a $25 credit and recorded the decision.");
-      }
-      Explain: perform Reply("I can explain the charge and the next step.");
-      Escalate: perform Reply("I'm routing this to a specialist.");
-    } abstain {
-      perform Reply("I need a human review before taking action.");
+    if (d.committed == Publish) {
+      Endorsement<text> e = endorse draft by d;
+      perform Announce(e);
+    } else if (d.committed == Revise) {
+      emit Revised("held for revision");
+    } else {
+      emit Revised("uncertain; needs review");
     }
   }
 }
 
-spawn SupportDesk desk;
-awake desk;
+spawn Greeter g;
+awake g;
 ```
 
 Run the checked-in version:
 
 ```sh
-agape check agape-rs/examples/support-desk.ag
-agape run agape-rs/examples/support-desk.ag --prompt request="my card was charged twice and I need help before rent is due"
+cd agape/agape-ts
+npx tsx src/cli.ts run examples/hello.ag
 ```
 
-With the deterministic mock provider, the ledger shows the whole chain:
+The run produces a ledger: every spawn, provider call, credence, decision,
+endorsement, action, and chain-head is recorded.
 
+## Configuration
+
+Agape source declares dependencies. The manifest binds those dependencies to the
+outside world.
+
+```toml
+[project]
+name = "fact-checker"
+entry = "examples/fact_checker.ag"
+
+[provider]
+backend = "openai"
+model = "gpt-4o-mini"
+
+[tools.search]
+driver = "mock"
+
+[memory]
+blob_store = "archive"
+background_reindex = true
+forget_policy = "cascade"
+archive_retention = "forever"
 ```
-[  3] Prompt       request  my card was charged twice and I need help before rent is due
-[  5] Sent         outcome  classify this support request: ...
-[  7] Resolved     outcome  Refund 0.90      ← typed model testimony
-[  8] Endorsed     outcome  Refund           ← endorsed by the Support policy
-[  9] IssueCredit  desk     {amount: 25, reason: duplicate charge}
-                                              ← money moves only after the gate
-[ 10] Reply        desk     I've issued a $25 credit and recorded the decision.
+
+The built-in `mock` tool driver is used for demos and replay-stable tests.
+Non-mock tool drivers are supplied by the embedding runtime. MCP is one possible
+transport; a host can also bind tools to HTTP services, local processes,
+in-process functions, or product-specific skill adapters.
+
+Decision policy belongs in source, not config. Thresholds, confidence rules,
+conformal parameters, and endorsement points are part of the program being
+reviewed.
+
+## What Agape Guarantees
+
+- **Typed cognition.** Provider replies are parsed as schema-constrained values,
+  structs, enums, credences, and events rather than unstructured strings.
+- **Default-deny authority.** Agents can only use tools and perform actions they
+  were granted.
+- **Mandatory endorsement.** A model-derived value cannot drive a consequential
+  action until a gate has committed and the subject has been endorsed.
+- **Fail-closed runtime behavior.** Unknown providers, missing tool bindings,
+  invalid schemas, ungranted effects, and failed gates reject rather than guess.
+- **Tainted memory recall.** Private memory can store and retrieve information,
+  but recalled values remain untrusted and must be re-gated before use at a sink.
+- **Replayable execution.** The ledger is append-only and hash-chained, so runs
+  can be inspected, replayed, and compared.
+
+## Repository Layout
+
+```text
+SPEC.md                    language and runtime specification
+agape-ts/                  TypeScript compiler/runtime used by current Studio
+agape-ts/studio/           local runner and inspector for .ag programs
+agape-ts/examples/         runnable examples for Studio
+agape-rs/                  Rust CLI and reference implementation
+agape-conformance/         black-box conformance suite
+studio/                    packaged Studio app used by the Rust CLI bundle path
+design/                    showcase programs and design notes
+scripts/package.sh         release bundle builder
 ```
 
-The model's answer is a `Credence` — **untrusted**. Calling `perform IssueCredit`
-straight from it *does not compile*: an action may consume only an **endorsed**
-value, and a `Credence` is endorsed only by passing the `endorse` gate. `Support`
-is the bar the judgment must clear; below it the gate **abstains** and only the
-safe reply path runs. The model can be wrong — but what it is allowed to *do*
-when it is wrong is fixed in advance, and on the record.
+## Development
 
-## The Alpha Surface
+TypeScript runtime and Studio runner:
 
-Agape is a real language, not a toy DSL. Beyond the four-stage core:
+```sh
+cd agape-ts
+npm install
+npm test
+npm run typecheck
+npm run studio
+```
 
-- **A library layer.** `module` / `import` / `pub` namespace and hide code; `interface` names an agent's external surface (the events it handles, the outcomes it decides) with nominal conformance; generics parameterize data and helpers. You build and ship libraries, not just scripts.
-- **The readable gate — `decide`.** State *intent + one fact about stakes* and the compiler derives the decision theory. Mark a sink `reversible` and the gate just acts (argmax); leave it unmarked and it runs **conformal** every time, certified to a single dial, `conformal α`. A non-reversible arm with no reachable `principal` is a *compile error* — autonomy is earned from labelled cases, never assumed.
-- **`instruction` — procedural memory in source.** The compile-time system prompt. Global or agent-scoped, append-only under `extend`; an agent's behavioral spec cannot drift without a reviewable release.
-- **Private memory — `mem` handles.** `mem m <- v` writes, `m -> "query"` recalls, `forget m` tombstones (audit-preserving). Recall is **always tainted**: re-gate it before any sink. The **ledger** is its dual — the objective, deterministic, untainted record of *what happened*, queried with `select … from ledger` and traversed by causal lineage.
-- **Provider-backed Credence.** The cognition backend produces the calibrated mass the gate consumes: providers with token probabilities read it from logprobs; text-only providers derive it through a sampling fallback. Capabilities are intrinsic to the backend (never hand-set knobs); secrets bind from the environment, never source.
+Rust implementation:
 
-The long-term deployment target is not merely "an Agape app server." The same kernel can be
-the infrastructure boundary: a cloud control plane, service fabric, or OS/runtime layer where
-process, network, storage, and tool effects are mediated by Agape grants, gates, and ledger
-replay.
+```sh
+cd agape-rs
+cargo build --all-targets
+cargo test
+cargo run --bin conformance
+```
 
-A single self-contained program touching all of this is **[`design/v1.0.0-showcase.ag`](design/v1.0.0-showcase.ag)**; the full alpha reference is **[`SPEC.md`](SPEC.md)**.
+Packaged Studio app:
 
-## Who it's for
+```sh
+cd studio/web && npm install && npm run build
+cd ../agent-server && npm install && npm test
+```
 
-Builders of agent systems that must be *trusted*, not hoped for — where the requirement isn't "the agent probably won't do X" but "the agent **cannot** do X, and here's the proof." Sharpest in regulated and high-stakes work; useful to anyone who needs an agent system to stay stable and auditable past its first week.
+## Documentation
 
-## Foundations
+- [`SPEC.md`](SPEC.md) - authoritative language and runtime reference
+- [`KERNEL.md`](KERNEL.md) - trusted-kernel notes
+- [`DISTRIBUTION.md`](DISTRIBUTION.md) - packaging and runtime distribution plan
+- [`agape-ts/README.md`](agape-ts/README.md) - TypeScript implementation details
+- [`studio/README.md`](studio/README.md) - packaged Studio architecture
 
-Agape is assembled from established ideas, not invented from nothing: treating model output as *testimony* requiring grounds before trust is the stance of the [epistemology of testimony](https://iep.utm.edu/ep-testi/); *credence* is formal epistemology's term for a graded degree of belief; *endorsement* — raising a value from untrusted to trusted — is the integrity operation from [information-flow control](https://www.cs.cornell.edu/andru/papers/robknowledge.pdf); performing an action by issuing it is a [speech-act](https://plato.stanford.edu/entries/speech-acts/) *performative* (Austin), valid only with the authority for it — a *power* in [Hohfeld's](https://en.wikipedia.org/wiki/Wesley_Newcomb_Hohfeld) analysis of rights. The contribution is the combination, enforced at compile time.
+## Status
 
-## Project
+Agape is pre-1.0 alpha software. The kernel concepts are stable enough to build
+against, but syntax, manifest details, and Studio workflows may still change.
 
-- [`SPEC.md`](SPEC.md) — the language specification (the authoritative reference).
-- [`design/v1.0.0-showcase.ag`](design/v1.0.0-showcase.ag) — one annotated program over the alpha surface.
-- [`agape-conformance/`](agape-conformance) — the black-box conformance suite an implementation must satisfy.
-- [`agape-rs/`](agape-rs) — the reference implementation (the `agape` toolchain).
-- `../agape-language-pack/` — editor support and syntax highlighting for Studio, VS Code, Cursor, and docs renderers.
+The current development loop is:
 
-The specification and conformance suite define the language; the reference implementation passes the suite in full.
+1. Use `agape-ts` and Agape Studio to try programs quickly.
+2. Use the mock provider for deterministic local runs.
+3. Switch providers through `agape.toml` and environment keys when you want live
+   cognition.
+4. Use the conformance suite to keep implementations aligned with `SPEC.md`.
+
+If you are evaluating Agape, start with Studio and `examples/hello.ag`, then run
+`examples/rag_recall.ag` to see why memory recall is useful but never trusted by
+default.

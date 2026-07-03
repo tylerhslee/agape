@@ -55,6 +55,13 @@ class Scope {
   set(name: string, v: Value) {
     this.vars.set(name, v);
   }
+  assign(name: string, v: Value) {
+    if (this.vars.has(name) || !this.parent || this.parent.get(name) === undefined) {
+      this.vars.set(name, v);
+    } else {
+      this.parent.assign(name, v);
+    }
+  }
   addDepGroup(relation: "independent" | "dependent", names: string[]) { this.depGroups.push({ relation, names }); }
   allDepGroups(): { relation: "independent" | "dependent"; names: string[] }[] {
     return [...this.depGroups, ...(this.parent ? this.parent.allDepGroups() : [])];
@@ -459,7 +466,7 @@ class Interpreter {
       }
       case "assign": {
         const v = await this.evalExpr(s.value, scope);
-        if (s.target.kind === "ident") scope.set(s.target.name, v);
+        if (s.target.kind === "ident") scope.assign(s.target.name, v);
         else throw new RuntimeError("v0 only supports simple identifier assignment targets");
         return;
       }
