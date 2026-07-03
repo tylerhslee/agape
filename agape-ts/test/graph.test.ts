@@ -63,6 +63,9 @@ describe("graph: the gated-sink chain", () => {
     const asks = g.nodes.filter((n) => n.kind === "ask");
     expect(asks.map((a) => a.label).sort()).toEqual(["ask Claim", "ask Credence<Verdict>"]);
     for (const a of asks) expect(a.parent).toBe("agent:desk");
+    const hookAsk = asks.find((a) => a.label === "ask Claim")!;
+    expect(hookAsk.context).toEqual({ id: "hook:desk/awake", kind: "hook", agent: "desk", name: "awake" });
+    expect(hookAsk.site).toBe(0);
     const flow = edges(g, "flow");
     const gate = g.nodes.find((n) => n.kind === "gate")!;
     const askClaim = asks.find((a) => a.label === "ask Claim")!;
@@ -172,6 +175,7 @@ awake a;
 
   it("wires prompt sensor -> the about-handler", () => {
     expect(node(g, "prompt:request")?.kind).toBe("prompt");
+    expect(node(g, "handler:a/when:0")?.index).toBe(0);
     const pe = edges(g, "prompt");
     expect(pe.length).toBe(1);
     expect(pe[0]!.from).toBe("prompt:request");
@@ -197,6 +201,81 @@ awake a;
     expect(sub.length).toBe(1);
     expect(node(g, sub[0]!.from)?.kind).toBe("emit");
     expect(node(g, sub[0]!.to)?.label).toBe("when Held");
+  });
+});
+
+describe("graph: memory declared inside a live body", () => {
+  const g = graphOf(`
+enum Verdict { Grounded, Ungrounded }
+action Publish(text body);
+agent Librarian grants { perform Publish } {
+  on awake {
+    mem notes <- "alpha";
+    notes <- "beta";
+    text context = notes -> "query";
+    text answer = self <- f"use {context}";
+    Credence<Verdict> c = self <- f"grounded: {answer}";
+    Decision<Verdict> d = decide c by confidence 0.8;
+    if (d.committed == Grounded) {
+      Endorsement<text> e = endorse answer by d;
+      perform Publish(e);
+    }
+  }
+}
+spawn Librarian lib;
+awake lib;
+`);
+
+  it("does not misdraw body-local mem writes as unresolved sends", () => {
+    expect(node(g, "mem:lib/notes")?.kind).toBe("mem");
+    expect(g.nodes.some((n) => n.id === "agent:?notes")).toBe(false);
+    expect(edges(g, "store").length).toBe(2);
+    expect(edges(g, "recall").length).toBe(1);
+    expect(edges(g, "flow").some((e) => e.from === "mem:lib/notes" && node(g, e.to)?.kind === "ask")).toBe(true);
+  });
+});
+
+describe("graph: piped helper functions", () => {
+  const g = graphOf(`
+prompt text question;
+enum Grounding { Grounded, Weak }
+enum PublishDecision { Publish, Revise }
+struct Claim { statement: text }
+struct Verification { note: text }
+action PublishAnswer(text answer);
+event ClaimVerified(Verification result);
+
+Verification verifyClaim(Claim claim) {
+  Credence<Grounding> grounded = self <- f"is grounded: {claim.statement}";
+  Decision<Grounding> d = decide grounded by confidence 0.75;
+  Verification result = Verification { note: "checked" };
+  emit ClaimVerified(result);
+  return result;
+}
+
+agent FactChecker grants { perform PublishAnswer } {
+  when (Prompt p about question) {
+    Claim[] claims = self <- f"extract claims from {p.text}";
+    Verification[] rows = claims |> verifyClaim;
+    text answer = self <- f"summarize {rows}";
+    Credence<PublishDecision> ready = self <- f"publish {answer}";
+    Decision<PublishDecision> d = decide ready by confidence 0.8;
+    if (d.committed == Publish) {
+      Endorsement<text> e = endorse answer by d;
+      perform PublishAnswer(e);
+    }
+  }
+}
+spawn FactChecker checker;
+awake checker;
+`);
+
+  it("shows the helper function as a static dependency with its own gate", () => {
+    expect(node(g, "fn:checker/verifyClaim")?.kind).toBe("fn");
+    expect(edges(g, "call").some((e) => e.to === "fn:checker/verifyClaim" && e.label === "|> verifyClaim")).toBe(true);
+    expect(g.nodes.some((n) => n.kind === "gate" && n.meta?.enum === "Grounding")).toBe(true);
+    expect(g.nodes.some((n) => n.kind === "emit" && n.meta?.event === "ClaimVerified")).toBe(true);
+    expect(edges(g, "flow").some((e) => e.from === "fn:checker/verifyClaim" && node(g, e.to)?.label === "ask Credence<Grounding>")).toBe(true);
   });
 });
 

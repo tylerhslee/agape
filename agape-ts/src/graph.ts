@@ -5,13 +5,25 @@
 
 import type * as A from "./ast.js";
 
+export interface GraphContext {
+  id: string;
+  kind: "top" | "agent" | "hook" | "handler" | "fn";
+  agent?: string;
+  name?: string;
+  event?: string;
+  index?: number;
+}
+
 export interface GraphNode {
   id: string;
   kind:
-    | "top" | "agent" | "handler" | "hook" | "ask" | "gate" | "sink" | "emit" | "tool"
+    | "top" | "agent" | "fn" | "handler" | "hook" | "ask" | "gate" | "sink" | "emit" | "tool"
     | "principal" | "prompt" | "mem" | "event" | "ledger";
   label: string;
   parent?: string; // cluster (an agent instance, or "top")
+  context?: GraphContext; // the body this generated node belongs to (asks/gates/sites)
+  index?: number; // structural ordinal, e.g. the Nth `when` handler in an agent/top level
+  site?: number;  // generated step ordinal inside `context`
   line: number;    // 1-based, for click-to-source
   meta?: Record<string, unknown>;
 }
@@ -21,7 +33,7 @@ export interface GraphEdge {
   from: string;
   to: string;
   kind:
-    | "event" | "prompt" | "send" | "flow" | "escalate" | "sink"
+    | "event" | "prompt" | "send" | "call" | "flow" | "escalate" | "sink"
     | "tool" | "store" | "recall" | "query" | "spawn";
   label?: string;
   variant?: string; // the committed variant guarding this edge, when inside `if (d.committed == V)`
@@ -46,8 +58,11 @@ interface Instance {
 // one walkable body: a hook, a handler, the agent ctor, or the top-level statement stream.
 interface Ctx {
   nodeId: string;      // the node edges attach to when no gate context is active
+  context: GraphContext;
   instance?: Instance; // owning instance (undefined = top level)
+  clusterId?: string;  // visual parent for member nodes (agent instance or function)
   body: A.Stmt[];
+  params?: string[];   // function params whose incoming value is represented by the fn node
 }
 
 export function buildGraph(program: A.Program, programName = ""): ProgramGraph {
@@ -70,6 +85,7 @@ export function buildGraph(program: A.Program, programName = ""): ProgramGraph {
   const agents = new Map<string, A.AgentDecl>();
   const actions = new Map<string, A.ActionDecl>();
   const events = new Map<string, A.EventDecl>();
+  const fns = new Map<string, A.FnDecl>();
   const enums = new Map<string, A.EnumDecl>();
   const prompts = new Map<string, A.PromptDecl>();
   const principals = new Set<string>();
@@ -78,6 +94,7 @@ export function buildGraph(program: A.Program, programName = ""): ProgramGraph {
       case "agent": agents.set(d.name, d); break;
       case "action": actions.set(d.name, d); break;
       case "event": events.set(d.name, d); break;
+      case "fn": fns.set(d.name, d); break;
       case "enum": enums.set(d.name, d); break;
       case "prompt": prompts.set(d.name, d); break;
       case "principal": principals.add(d.name); break;
@@ -115,6 +132,34 @@ export function buildGraph(program: A.Program, programName = ""): ProgramGraph {
 
   // ---- contexts: agent clusters (hooks/handlers/ctors/mems) + the top level -------------------
   const ctxs: Ctx[] = [];
+  const fnCtxs = new Set<string>();
+  const addMemNodes = (inst: Instance, stmts: A.Stmt[]): void => {
+    for (const f of walkStmtsForMems(stmts)) {
+      addNode({ id: `mem:${inst.name}/${f.name}`, kind: "mem", label: f.name, parent: `agent:${inst.name}`, line: line(f) });
+    }
+  };
+  const scheduleFn = (name: string, caller: Ctx): string | undefined => {
+    const fn = fns.get(name);
+    if (!fn) return undefined;
+    const owner = caller.instance?.name ?? "top";
+    const id = `fn:${owner}/${name}`;
+    addNode({
+      id, kind: "fn", label: `fn ${name}`, line: line(fn),
+      meta: { name, ...(caller.instance ? { agent: caller.instance.name } : {}) },
+    });
+    if (!fnCtxs.has(id)) {
+      fnCtxs.add(id);
+      ctxs.push({
+        nodeId: id,
+        context: { id, kind: "fn", name, ...(caller.instance ? { agent: caller.instance.name } : {}) },
+        instance: caller.instance,
+        clusterId: id,
+        body: fn.body,
+        params: fn.params.map((p) => p.name),
+      });
+    }
+    return id;
+  };
   // spawn/awake/sleep are wiring boilerplate — a program whose top level is ONLY that gets no
   // "program" node (the graph starts at the agents); anything more substantive keeps it.
   const topStmts = program.stmts.filter((s) => !["when", "spawn", "awake", "sleep"].includes(s.kind));
@@ -134,34 +179,59 @@ export function buildGraph(program: A.Program, programName = ""): ProgramGraph {
       },
     });
     if (!decl) continue;
-    for (const f of walkStmtsForMems(decl.ctor)) {
-      addNode({ id: `mem:${inst.name}/${f.name}`, kind: "mem", label: f.name, parent: `agent:${inst.name}`, line: line(f) });
-    }
+    addMemNodes(inst, decl.ctor);
+    for (const h of decl.hooks) addMemNodes(inst, h.body);
+    for (const w of decl.whens) addMemNodes(inst, w.body);
     decl.hooks.forEach((h) => {
       const id = `hook:${inst.name}/${h.event}`;
       addNode({ id, kind: "hook", label: `on ${h.event}`, parent: `agent:${inst.name}`, line: line(h) });
-      ctxs.push({ nodeId: id, instance: inst, body: h.body });
+      ctxs.push({
+        nodeId: id,
+        context: { id, kind: "hook", agent: inst.name, name: h.event },
+        instance: inst,
+        clusterId: `agent:${inst.name}`,
+        body: h.body,
+      });
     });
     decl.whens.forEach((w, i) => {
       const id = `handler:${inst.name}/when:${i}`;
       addNode({
-        id, kind: "handler", label: `when ${w.etype}`, parent: `agent:${inst.name}`, line: line(w),
+        id, kind: "handler", label: `when ${w.etype}`, parent: `agent:${inst.name}`, index: i, line: line(w),
         meta: { etype: w.etype, ...(w.about && w.about.kind === "ident" ? { about: w.about.name } : {}), ...(w.guard ? { guarded: true } : {}) },
       });
-      ctxs.push({ nodeId: id, instance: inst, body: w.body });
+      ctxs.push({
+        nodeId: id,
+        context: { id, kind: "handler", agent: inst.name, event: w.etype, index: i },
+        instance: inst,
+        clusterId: `agent:${inst.name}`,
+        body: w.body,
+      });
     });
     const ctorBody = decl.ctor.filter((s) => s.kind !== "memdecl");
-    if (ctorBody.length) ctxs.push({ nodeId: `agent:${inst.name}`, instance: inst, body: ctorBody });
+    if (ctorBody.length) {
+      const id = `agent:${inst.name}`;
+      ctxs.push({
+        nodeId: id,
+        context: { id, kind: "agent", agent: inst.name, name: "constructor" },
+        instance: inst,
+        clusterId: id,
+        body: ctorBody,
+      });
+    }
   }
   topWhens.forEach((w, i) => {
     const id = `handler:top/when:${i}`;
     addNode({
-      id, kind: "handler", label: `when ${w.etype}`, line: line(w),
+      id, kind: "handler", label: `when ${w.etype}`, index: i, line: line(w),
       meta: { etype: w.etype, ...(w.about && w.about.kind === "ident" ? { about: w.about.name } : {}) },
     });
-    ctxs.push({ nodeId: id, body: w.body });
+    ctxs.push({
+      nodeId: id,
+      context: { id, kind: "handler", event: w.etype, index: i },
+      body: w.body,
+    });
   });
-  if (needTop) ctxs.push({ nodeId: "top", body: topStmts });
+  if (needTop) ctxs.push({ nodeId: "top", context: { id: "top", kind: "top" }, body: topStmts });
   // spawn edges attach to the spawning context (top for top-level spawns).
   for (const s of program.stmts) {
     if (s.kind === "spawn") addEdge({ from: needTop ? "top" : "spawnsite", to: `agent:${s.name}`, kind: "spawn", label: "spawn", line: line(s) });
@@ -188,11 +258,13 @@ export function buildGraph(program: A.Program, programName = ""): ProgramGraph {
 
   // ---- walk each context body ------------------------------------------------------------------
   interface GateInfo { nodeId: string; enumName?: string; vars: Set<string> }
-  for (const ctx of ctxs) {
+  for (let ctxIndex = 0; ctxIndex < ctxs.length; ctxIndex++) {
+    const ctx = ctxs[ctxIndex]!;
     let siteSeq = 0; // shared ask/gate sequence, so the UI can order the chain within a context
     const gates = new Map<string, GateInfo>(); // decision-binding name -> gate
     const replyTypes = new Map<string, string>(); // binding name -> declared type label (for send labels)
     const bindingNode = new Map<string, string>(); // binding name -> the ask node that produced it
+    for (const p of ctx.params ?? []) bindingNode.set(p, ctx.nodeId);
 
     // the node a produced effect attributes to: the active gate (+variant) or the context itself.
     type Attribution = { nodeId: string; variant?: string };
@@ -231,6 +303,11 @@ export function buildGraph(program: A.Program, programName = ""): ProgramGraph {
       const srcs = [...identRefs(e, new Set<string>())].map((n) => bindingNode.get(n)).filter((x): x is string => Boolean(x));
       return srcs.length ? [...new Set(srcs)] : [at.nodeId];
     };
+    const addFlow = (from: string, to: string, at: Attribution, l: number): void => {
+      if (from === to) return;
+      if (edgeList.some((ed) => ed.from === from && ed.to === to && ed.kind === "flow" && ed.variant === at.variant)) return;
+      addEdge({ from, to, kind: "flow", variant: at.variant, line: l });
+    };
 
     const resolveDest = (e: A.Expr): { instName?: string; label: string } => {
       if (e.kind === "self") return { instName: ctx.instance?.name, label: "self" };
@@ -254,9 +331,10 @@ export function buildGraph(program: A.Program, programName = ""): ProgramGraph {
           const enumName = declType?.kind === "decision" ? declType.enumName : enumOfCredence(e.credence);
           // the gate is a STANDALONE decision diamond (not a cluster member): the chain drops out
           // of the agent box into it, and its arms fan to per-site consequence boxes.
-          const gid = `gate:${ctx.nodeId}#${siteSeq++}`;
+          const site = siteSeq++;
+          const gid = `gate:${ctx.nodeId}#${site}`;
           addNode({
-            id: gid, kind: "gate",
+            id: gid, kind: "gate", context: ctx.context, site,
             label: `decide${enumName ? ` Credence<${enumName}>` : ""}`, line: line(e),
             meta: {
               ...(enumName ? { enum: enumName, variants: enums.get(enumName)?.variants } : {}),
@@ -269,7 +347,7 @@ export function buildGraph(program: A.Program, programName = ""): ProgramGraph {
           // the credence flows in from the ask(s) that produced it — real dataflow, no label
           // needed (the gate node itself names the Credence type).
           for (const src of flowSources(e.credence, at)) {
-            addEdge({ from: src, to: gid, kind: "flow", variant: at.variant, line: line(e) });
+            addFlow(src, gid, at, line(e));
           }
           if (e.principal && principals.has(e.principal)) {
             addEdge({ from: gid, to: `principal:${e.principal}`, kind: "escalate", label: "escalate", line: line(e) });
@@ -288,11 +366,7 @@ export function buildGraph(program: A.Program, programName = ""): ProgramGraph {
             if (g) {
               const subjectAsks = [...identRefs(e.subject, new Set<string>())]
                 .map((n) => bindingNode.get(n)).filter((x): x is string => Boolean(x));
-              for (const src of new Set(subjectAsks)) {
-                if (!edgeList.some((ed) => ed.from === src && ed.to === g.nodeId && ed.kind === "flow")) {
-                  addEdge({ from: src, to: g.nodeId, kind: "flow", line: line(e) });
-                }
-              }
+              for (const src of new Set(subjectAsks)) addFlow(src, g.nodeId, { nodeId: at.nodeId }, line(e));
             }
           }
           visitExpr(e.subject, at); visitExpr(e.decision, at);
@@ -310,21 +384,23 @@ export function buildGraph(program: A.Program, programName = ""): ProgramGraph {
           if (selfSend) {
             // a self-send is the agent's own cognition: a TESTIMONY step, visible as an ask node
             // labelled by the typed reply it produces, chained from the asks its prompt references.
-            const aid = `ask:${ctx.nodeId}#${siteSeq++}`;
+            const site = siteSeq++;
+            const aid = `ask:${ctx.nodeId}#${site}`;
             addNode({
-              id: aid, kind: "ask", parent: ctx.instance ? `agent:${ctx.instance.name}` : undefined,
+              id: aid, kind: "ask", parent: ctx.clusterId, context: ctx.context, site,
               label: `ask ${declType ? typeLabel(declType) : "text"}`, line: line(e),
               // `binding` lets the live overlay match a Resolved ledger event (subjected by the
               // binding name) back to this ask.
               meta: { reply: declType ? typeLabel(declType) : "text", ...(bindName ? { binding: bindName } : {}) },
             });
             for (const src of flowSources(e.message, at)) {
-              addEdge({ from: src, to: aid, kind: "flow", variant: at.variant, line: line(e) });
+              addFlow(src, aid, at, line(e));
             }
             if (bindName) bindingNode.set(bindName, aid);
           } else {
             const to = dest.instName ? `agent:${dest.instName}` : addNode({ id: `agent:?${dest.label}`, kind: "agent", label: `${dest.label} (unresolved)`, line: line(e), meta: { resolved: false } }).id;
             addEdge({ from: at.nodeId, to, kind: "send", label: declType ? typeLabel(declType) : undefined, variant: at.variant, line: line(e), resolved: Boolean(dest.instName) });
+            if (bindName) bindingNode.set(bindName, to);
           }
           if (bindName && declType) replyTypes.set(bindName, typeLabel(declType));
           visitExpr(e.message, at);
@@ -332,7 +408,9 @@ export function buildGraph(program: A.Program, programName = ""): ProgramGraph {
         }
         case "recall": {
           if (e.mem.kind === "ident" && ctx.instance && nodes.has(`mem:${ctx.instance.name}/${e.mem.name}`)) {
-            addEdge({ from: `mem:${ctx.instance.name}/${e.mem.name}`, to: at.nodeId, kind: "recall", label: "recall", line: line(e) });
+            const memId = `mem:${ctx.instance.name}/${e.mem.name}`;
+            addEdge({ from: memId, to: at.nodeId, kind: "recall", label: "recall", line: line(e) });
+            if (bindName) bindingNode.set(bindName, memId);
           }
           visitExpr(e.query, at);
           return;
@@ -341,18 +419,37 @@ export function buildGraph(program: A.Program, programName = ""): ProgramGraph {
           if (e.target === "ledger") {
             addNode({ id: "ledger", kind: "ledger", label: "ledger", line: line(e) });
             addEdge({ from: "ledger", to: at.nodeId, kind: "query", label: e.eventType ?? "*", line: line(e) });
+            if (bindName) bindingNode.set(bindName, "ledger");
           }
           for (const c of e.cond) visitExpr(c.value, at);
           return;
         }
         case "call": {
+          if (e.callee.kind === "ident" && fns.has(e.callee.name)) {
+            const fid = scheduleFn(e.callee.name, ctx);
+            if (fid) {
+              addEdge({ from: at.nodeId, to: fid, kind: "call", label: e.callee.name, variant: at.variant, line: line(e) });
+              for (const a of e.args) for (const src of flowSources(a, at)) addFlow(src, fid, at, line(e));
+              if (bindName) bindingNode.set(bindName, fid);
+            }
+          }
           visitExpr(e.callee, at);
           for (const a of e.args) visitExpr(a, at);
           return;
         }
         case "quorum": visitExpr(e.source, at); return;
         case "agg": e.operands.forEach((o) => visitExpr(o, at)); return;
-        case "pipe": visitExpr(e.source, at); visitExpr(e.fn, at); return;
+        case "pipe": {
+          if (e.fn.kind === "ident" && fns.has(e.fn.name)) {
+            const fid = scheduleFn(e.fn.name, ctx);
+            if (fid) {
+              addEdge({ from: at.nodeId, to: fid, kind: "call", label: `|> ${e.fn.name}`, variant: at.variant, line: line(e) });
+              for (const src of flowSources(e.source, at)) addFlow(src, fid, at, line(e));
+              if (bindName) bindingNode.set(bindName, fid);
+            }
+          }
+          visitExpr(e.source, at); visitExpr(e.fn, at); return;
+        }
         case "arraylit": e.items.forEach((i) => visitExpr(i, at)); return;
         case "structlit": e.fields.forEach((f) => visitExpr(f.value, at)); return;
         case "fstring": e.parts.forEach((p) => { if (p.kind === "expr") visitExpr(p.expr, at); }); return;
@@ -383,14 +480,15 @@ export function buildGraph(program: A.Program, programName = ""): ProgramGraph {
       for (const s of stmts) {
         switch (s.kind) {
           case "var": if (s.init) visitExpr(s.init, at, s.type, s.name); break;
-          case "assign": visitExpr(s.value, at); break;
+          case "assign": visitExpr(s.value, at, undefined, s.target.kind === "ident" ? s.target.name : undefined); break;
           case "exprstmt": visitExpr(s.expr, at); break;
           case "emit": {
             // each emit SITE is its own consequence box (`emit E`); subscribers hang off the site.
             const consumers = subs.filter((x) => x.etype === s.name);
-            const sid = `do:${ctx.nodeId}#${siteSeq++}`;
+            const site = siteSeq++;
+            const sid = `do:${ctx.nodeId}#${site}`;
             addNode({
-              id: sid, kind: "emit", label: `emit ${s.name}`, line: line(s),
+              id: sid, kind: "emit", label: `emit ${s.name}`, context: ctx.context, site, line: line(s),
               meta: {
                 event: s.name, consumed: consumers.length > 0,
                 ...(at.variant ? { variant: at.variant } : {}),
@@ -405,9 +503,10 @@ export function buildGraph(program: A.Program, programName = ""): ProgramGraph {
           case "perform": {
             // each perform SITE is its own consequence box (`perform A`).
             const a = actions.get(s.name);
-            const sid = `do:${ctx.nodeId}#${siteSeq++}`;
+            const site = siteSeq++;
+            const sid = `do:${ctx.nodeId}#${site}`;
             addNode({
-              id: sid, kind: "sink", label: `perform ${s.name}`, line: line(s),
+              id: sid, kind: "sink", label: `perform ${s.name}`, context: ctx.context, site, line: line(s),
               meta: {
                 action: s.name,
                 ...(a ? { reversible: a.reversible } : {}),
@@ -440,7 +539,15 @@ export function buildGraph(program: A.Program, programName = ""): ProgramGraph {
           case "retry": visitStmts(s.body, at); break;
           case "say": visitExpr(s.arg, at); break;
           case "return": if (s.value) visitExpr(s.value, at); break;
-          case "memdecl": if (s.init) visitExpr(s.init, at); break;
+          case "memdecl": {
+            if (ctx.instance) {
+              const memId = `mem:${ctx.instance.name}/${s.name}`;
+              addNode({ id: memId, kind: "mem", label: s.name, parent: `agent:${ctx.instance.name}`, line: line(s) });
+              if (s.init) addEdge({ from: at.nodeId, to: memId, kind: "store", label: "store", variant: at.variant, line: line(s) });
+            }
+            if (s.init) visitExpr(s.init, at);
+            break;
+          }
           case "dispatch": {
             visitExpr(s.gate, at);
             for (const arm of s.arms) visitStmts(arm.body, at);
@@ -460,7 +567,18 @@ export function buildGraph(program: A.Program, programName = ""): ProgramGraph {
 
 function walkStmtsForMems(stmts: A.Stmt[]): A.MemDecl[] {
   const out: A.MemDecl[] = [];
-  for (const s of stmts) if (s.kind === "memdecl") out.push(s);
+  for (const s of stmts) {
+    if (s.kind === "memdecl") out.push(s);
+    else if (s.kind === "if") {
+      out.push(...walkStmtsForMems(s.then));
+      if (s.else) out.push(...walkStmtsForMems(s.else));
+    } else if (s.kind === "retry") {
+      out.push(...walkStmtsForMems(s.body));
+    } else if (s.kind === "dispatch") {
+      for (const arm of s.arms) out.push(...walkStmtsForMems(arm.body));
+      if (s.abstain) out.push(...walkStmtsForMems(s.abstain.body));
+    }
+  }
   return out;
 }
 
@@ -503,7 +621,7 @@ function exprLabel(e: A.Expr): string {
 export function toDot(g: ProgramGraph): string {
   const q = (s: string) => JSON.stringify(s);
   const shape: Record<GraphNode["kind"], string> = {
-    top: "box", agent: "box", handler: "box", hook: "box", ask: "ellipse", gate: "diamond", sink: "doubleoctagon",
+    top: "box", agent: "box", fn: "folder", handler: "box", hook: "box", ask: "ellipse", gate: "diamond", sink: "doubleoctagon",
     emit: "note", tool: "component", principal: "house", prompt: "cds", mem: "cylinder", event: "note", ledger: "cylinder",
   };
   const lines: string[] = [`digraph ${q(g.program || "agape")} {`, `  rankdir=LR;`, `  node [fontname="monospace", fontsize=10];`];
@@ -528,7 +646,7 @@ export function toDot(g: ProgramGraph): string {
   for (const e of g.edges) {
     const attrs = [
       e.label ? `label=${q(e.variant ? `${e.label} [${e.variant}]` : e.label)}` : e.variant ? `label=${q(`[${e.variant}]`)}` : "",
-      e.kind === "recall" || e.kind === "store" ? "style=dashed" : "",
+      e.kind === "recall" || e.kind === "store" ? "style=dashed" : e.kind === "call" ? "style=dotted" : "",
       e.kind === "escalate" ? "color=orange" : e.kind === "sink" ? "color=gold" : "",
     ].filter(Boolean).join(", ");
     lines.push(`  ${q(e.from)} -> ${q(e.to)}${attrs ? ` [${attrs}]` : ""};`);

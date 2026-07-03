@@ -16,6 +16,7 @@ validates; a program that parses and checks always has a graph.
 |-------------|--------------------------------------------|--------------------------|--------------|
 | `top`       | program with top-level statements/handlers | `program`                | — |
 | `agent`     | statically spawned instance                | `name: AgentType`        | `agentType`, `grants`, `spawnLine` |
+| `fn`        | statically reached helper function, specialized to the calling agent when applicable | `fn name` | `name`, `agent` |
 | `handler`   | `when` clause (in an agent or top-level)   | `when EventType`         | `guard`, `about` |
 | `hook`      | `on awake/sleep/crash` hook                | `on awake`               | — |
 | `ask`       | self-send (`self <- …`) — a testimony step | `ask Credence<E>`        | `reply`, `binding` |
@@ -28,9 +29,28 @@ validates; a program that parses and checks always has a graph.
 | `mem`       | `mem` handle (per instance)                | handle name              | — |
 | `ledger`    | program that queries the ledger            | `ledger`                 | — |
 
-`agent`, `top` also act as **clusters**: `handler`/`hook`/`gate`/`mem` nodes carry a `parent`
-pointing at the instance they live in. Every node carries a 1-based source `line` for
-click-to-source.
+`agent`, `fn`, and `top` also act as **clusters**: `handler`/`hook`/`ask`/`mem` nodes carry a
+`parent` pointing at the instance or helper function they live in. Gate nodes are standalone
+decision diamonds so the chain can visibly leave an agent or function box. Every node carries a
+1-based source `line` for click-to-source.
+
+Generated nodes (`ask`, `gate`, per-site `emit`, per-site `sink`) also carry explicit source-shape
+fields so readers do not have to parse ids:
+
+```jsonc
+{
+  "id": "ask:hook:lib/awake#0",
+  "kind": "ask",
+  "context": { "id": "hook:lib/awake", "kind": "hook", "agent": "lib", "name": "awake" },
+  "site": 0
+}
+```
+
+`handler` nodes carry `index` for the structural `when` ordinal:
+
+```jsonc
+{ "id": "handler:checker/when:0", "kind": "handler", "index": 0 }
+```
 
 Instances are statically known because `spawn Worker w;` names both. A send whose destination
 cannot be resolved to a static instance (e.g. an agent-typed parameter) yields an *unresolved*
@@ -43,6 +63,7 @@ agent node labelled with the binding name — the edge is still drawn, marked `r
 | `event`    | gate/context → its `emit` site (branch-guarded), and `emit` site → each subscribing `handler` (labelled by the event type) |  |
 | `prompt`   | `prompt` sensor → `when (Prompt p about NAME)` handler | `Prompt` |
 | `send`     | sending context → destination `agent`                  | expected reply type (when bound `T x = dest <- …`) |
+| `call`     | calling context → statically reached helper `fn`       | function name, or `\|> name` for a piped map |
 | `flow`     | the ask/gate dataflow chain: hook/handler → `ask` → … → `gate` (unlabelled — the target node names the type). An ask's in-edges come from the asks whose bindings its prompt references; a gate's from the asks that produced its credence **and** its endorsed subject. |
 | `escalate` | `gate` → `principal` (a principal-prefixed decide)     | `escalate` |
 | `sink`     | gate (or context) → the `perform` site                 | `variant` = the committed branch guarding it |
@@ -51,6 +72,12 @@ agent node labelled with the binding name — the edge is still drawn, marked `r
 | `recall`   | `mem` → context                                        | `recall` (always-tainted; rendered dashed) |
 | `query`    | `ledger` → context                                     | queried event type |
 | `spawn`    | spawning context → `agent`                             | `spawn` |
+
+Helper functions are static too. A direct call `f(x)` or mapped dependency `xs |> f` creates a
+`fn:<agent>/<name>` node, a `call` edge from the calling context, and a function-body context. Any
+self-sends, gates, emits, memory operations, or further helper calls inside that body are included
+in the same JSON graph. Function parameters are represented as inputs to the function node, so
+later prompts can show dependency flow from the caller into the helper.
 
 **Variant-guarded edges**: while walking a body, an `if (d.committed == V)` whose scrutinee binds a
 `decide` in the same context pushes that gate+variant; a `perform`/`emit`/send inside the branch is
@@ -76,8 +103,9 @@ producing a typed reply, i.e. a TESTIMONY step in the §13 chain, so it is part 
 ```
 
 Stable ids: `agent:<inst>`, `handler:<inst>/when:<i>`, `hook:<inst>/awake`,
-`gate:<ctx>#<j>`, `sink:<Action>`, `tool:<name>`, `principal:<name>`, `prompt:<name>`,
-`mem:<inst>/<name>`, `top`, `ledger`, `event:<E>`.
+`fn:<inst-or-top>/<name>`, `ask:<ctx>#<j>`, `gate:<ctx>#<j>`, `do:<ctx>#<j>` for
+per-site emits/sinks, `tool:<name>`, `principal:<name>`, `prompt:<name>`,
+`mem:<inst>/<name>`, `top`, and `ledger`.
 
 ## Surfaces
 
