@@ -6,6 +6,24 @@ All notable changes to Agape are recorded here. The format follows
 suite, and the studio move in lockstep — a release is the whole bundle at one
 version.
 
+## [1.0.0-alpha.2026.7.3.1] — 2026-07-04
+
+External ingress is screened before it can steer a provider prompt (§6b anti-injection,
+extends T3). SPEC, conformance suite, and `agape-ts` move together.
+
+### Language — gate external ingress to provider prompts
+
+- **Un-screened external data may not drive cognition.** A value that entered the process
+  from outside — a prompt-ingress payload (§5b) or a wired result-event payload (§6b) — is
+  *ingress-tainted*; interpolating it into a `self <- …` provider prompt is gated. Flowing it
+  in un-screened is a **deny** (or **warn**, per policy); a screened/endorsed value flows
+  cleanly. This closes the reflection where an attacker-controlled observation could rewrite
+  the agent's own instructions.
+- **Runtime + checker.** `agape-ts` (`check.ts`, `interp.ts`, `config.ts`, `runtime.ts`) enforce
+  the ingress→provider path; the manifest carries the screening policy. New conformance cases:
+  `agent_prompt_ingress_to_provider_{deny,warn}`, `agent_prompt_screened_ingress_to_provider_ok`,
+  `world_result_event_{ingress_to_provider_warn,screened_ingress_to_provider_ok}`.
+
 ## [1.0.0-alpha.2026.7.3.0] — 2026-07-03
 
 Subagent delegation (§6c) and the wired world interface (§6b). Designs in
