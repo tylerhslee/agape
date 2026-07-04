@@ -1,0 +1,15 @@
+//! id:        agent_prompt_ingress_to_provider_deny
+//! section:   05_agents
+//! expect:    reject
+//! error:     TaintViolation
+//! manifest:  security.tainted_ingress_to_provider=deny; prompts.question.driver=stdin
+//! spec:      §5b, §17 (deny-mode provider-prompt ingress policy rejects unscreened prompt ingress before it reaches cognition)
+//! ---
+prompt text question;
+agent A {
+  when (Prompt p about question) {
+    text draft = self <- f"answer using the user request: {p.text}";
+    say(draft);
+  }
+}
+spawn A a; awake a;

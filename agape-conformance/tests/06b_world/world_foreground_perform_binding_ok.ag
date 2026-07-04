@@ -3,7 +3,7 @@
 //! expect:    accept
 //! order:     Ask; ToolStarted(t1); ToolResolved(t1); Answer; Notify
 //! manifest:  tools.t1.driver=mock; actions.Ask.tool=t1; actions.Ask.result_event=Answer
-//! spec:      §6b, §13 (foreground perform binding: a wired action with a result_event binds its reply like a §6c delegation; a settled request yields settled results — external data settled by origin — which may drive a further perform)
+//! spec:      §6b, §13 (foreground perform binding: a wired action with a result_event binds its reply like a §6c delegation; a judgment-settled request yields judgment-settled external ingress, which may drive a further perform)
 //! ---
 event Answer(text body);
 action Ask(text q);

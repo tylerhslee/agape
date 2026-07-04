@@ -374,16 +374,113 @@ describe("the prompt sensor opens from its declaration (§5b)", () => {
   });
 });
 
+describe("manifest-level ingress provenance", () => {
+  const PROMPT_TO_PROVIDER = `
+    prompt text request;
+    enum Verdict { Yes, No }
+    agent A {
+      when (Prompt p about request) {
+        Credence<Verdict> c = self <- f"judge this request: {p.text}";
+        say("judged");
+      }
+    }
+    spawn A a; awake a;
+  `;
+
+  it("warns by default when a prompt input is rendered into a provider prompt", async () => {
+    const r = await run(parse(PROMPT_TO_PROVIDER), {
+      provider: new MockProvider(() => ({ Yes: 0.9, No: 0.1 })),
+      promptInputs: [{ name: "request", value: "hello from outside" }],
+    });
+    expect(r.stdout).toEqual(["judged"]);
+    expect(r.warnings).toHaveLength(1);
+    expect(r.warnings[0]).toMatchObject({
+      kind: "tainted_ingress_to_provider",
+      ingress: "external_unscreened",
+      subject: "c",
+    });
+    expect(r.warnings[0]!.prompt).toContain("hello from outside");
+    const prompt = r.ledger.events.find((e) => e.etype === "Prompt");
+    expect((prompt?.payload as any)?.input).toMatchObject({
+      kind: "text",
+      trust: "settled",
+      ingress: "external_unscreened",
+    });
+  });
+
+  it("denies provider prompts that render unscreened ingress when configured strict", async () => {
+    await expect(run(parse(PROMPT_TO_PROVIDER), {
+      provider: new MockProvider(() => ({ Yes: 0.9, No: 0.1 })),
+      manifest: { provider: { backend: "mock" }, security: { tainted_ingress_to_provider: "deny" } },
+      promptInputs: [{ name: "request", value: "deny this" }],
+    })).rejects.toMatchObject({ cls: "TaintViolation" });
+  });
+
+  it("does not apply the provider-ingress policy to action sinks", async () => {
+    const prog = `
+      prompt text request;
+      action Notify(text body);
+      agent A grants { perform Notify } {
+        when (Prompt p about request) {
+          perform Notify(p.text);
+        }
+      }
+      spawn A a; awake a;
+    `;
+    const r = await run(parse(prog), {
+      manifest: { provider: { backend: "mock" }, security: { tainted_ingress_to_provider: "deny" } },
+      promptInputs: [{ name: "request", value: "ship it" }],
+    });
+    const notify = r.ledger.events.find((e) => e.etype === "Notify");
+    expect(notify?.payload).toEqual(["ship it"]);
+    expect(r.warnings).toEqual([]);
+  });
+
+  it("warns when a result-bound perform output is rendered into a provider prompt", async () => {
+    const prog = `
+      action Search(text q);
+      event SearchEvidence(text hits);
+      enum Verdict { Grounded, Unsupported }
+      agent A grants { perform Search } {
+        on awake {
+          text hit = perform Search("northwind") expires 5;
+          Credence<Verdict> c = self <- f"judge evidence: {hit}";
+        }
+      }
+      spawn A a; awake a;
+    `;
+    const r = await run(parse(prog), {
+      provider: new MockProvider(() => ({ Grounded: 0.9, Unsupported: 0.1 })),
+      manifest: {
+        provider: { backend: "mock" },
+        actions: { Search: { tool: "search", result_event: "SearchEvidence" } },
+      },
+    });
+    expect(r.warnings).toHaveLength(1);
+    expect(r.warnings[0]!.prompt).toContain("tool:search(search|northwind)");
+    const resolved = r.ledger.events.find((e) => e.etype === "ToolResolved");
+    expect((resolved?.payload as any)?.result).toMatchObject({ trust: "settled", ingress: "external_unscreened" });
+    const resultEvent = r.ledger.events.find((e) => e.etype === "SearchEvidence");
+    expect((resultEvent?.payload as any)?.hits).toMatchObject({ trust: "settled", ingress: "external_unscreened" });
+  });
+});
+
 describe("manifest dependency bindings", () => {
   it("parses table-shaped conformance fixture bindings and the old flat shorthand", () => {
     const manifest = parseManifestDirective(
       "identity.alice.driver=local_keyring; prompts.question.driver=stdin; " +
-      "tools.search.driver=mcp; tools.search.server=local-search; tools.legacy=mock",
+      "tools.search.driver=mcp; tools.search.server=local-search; tools.legacy=mock; " +
+      "security.tainted_ingress_to_provider=deny; " +
+      "security.ingress.prompts.question.driver=mock-screen; " +
+      "security.ingress.events.SearchEvidence.accepted=true",
     );
     expect(manifest.identity?.alice).toMatchObject({ driver: "local_keyring" });
     expect(manifest.prompts?.question).toMatchObject({ driver: "stdin" });
     expect(manifest.tools?.search).toMatchObject({ driver: "mcp", server: "local-search" });
     expect(manifest.tools?.legacy).toMatchObject({ driver: "mock" });
+    expect(manifest.security?.tainted_ingress_to_provider).toBe("deny");
+    expect(manifest.security?.ingress?.prompts?.question).toMatchObject({ driver: "mock-screen" });
+    expect(manifest.security?.ingress?.events?.SearchEvidence).toMatchObject({ accepted: true });
   });
 
   it("routes a wired perform through the host adapter and lands the reply as the result event", async () => {

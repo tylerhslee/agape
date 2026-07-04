@@ -1,0 +1,17 @@
+//! id:        world_result_event_screened_ingress_to_provider_ok
+//! section:   06b_world
+//! expect:    accept
+//! absent_warning: tainted_ingress_to_provider
+//! manifest:  security.tainted_ingress_to_provider=deny; tools.t1.driver=mock; actions.Search.tool=t1; actions.Search.result_event=SearchResult; security.ingress.events.SearchResult.accepted=true
+//! spec:      §6b, §17 (a manifest-screened result-event ingress value is external_screened, so it may feed cognition without warning even under deny mode)
+//! ---
+event SearchResult(text body);
+action Search(text q);
+agent A grants { perform Search } {
+  on awake {
+    text evidence = perform Search("agape") expires 5;
+    text summary = self <- f"summarize screened external evidence: {evidence}";
+    say(summary);
+  }
+}
+spawn A a; awake a;

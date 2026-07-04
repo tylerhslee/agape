@@ -30,6 +30,15 @@ export interface WiringConfig extends BindingConfig {
   tool?: string;
   result_event?: string;
 }
+export type TaintedIngressToProviderPolicy = "warn" | "deny" | "off";
+export interface SecurityIngressConfig {
+  prompts?: Record<string, BindingConfig>;
+  events?: Record<string, BindingConfig>;
+}
+export interface SecurityConfig {
+  tainted_ingress_to_provider?: TaintedIngressToProviderPolicy;
+  ingress?: SecurityIngressConfig;
+}
 export interface Manifest {
   provider: ProviderConfig;
   project?: Record<string, ManifestValue>;
@@ -45,6 +54,7 @@ export interface Manifest {
   events?: Record<string, WiringConfig>;
   memory?: Record<string, ManifestValue>;
   runtime?: Record<string, ManifestValue>;
+  security?: SecurityConfig;
   // §17.2 — decision policy lives in SOURCE, never the manifest; any `policy.*` key here is a ConfigError.
   policy?: Record<string, ManifestValue>;
 }
@@ -64,6 +74,7 @@ export function loadManifest(path?: string, backendOverride?: string): Manifest 
     }
   }
   applyProviderDefaults(raw);
+  applySecurityDefaults(manifest);
   return manifest;
 }
 
@@ -91,6 +102,7 @@ export function parseManifestDirective(s: string): Manifest {
     if (eq < 0) continue;
     setManifestValue(manifest, [], entry.slice(0, eq).trim().split("."), parseTomlValue(entry.slice(eq + 1).trim()));
   }
+  applySecurityDefaults(manifest);
   return manifest;
 }
 
@@ -127,6 +139,7 @@ function readManifestToml(toml: string): Manifest {
     const [, key, valRaw] = m;
     setManifestValue(manifest, tablePath, key!.split("."), parseTomlValue(valRaw!.trim()));
   }
+  applySecurityDefaults(manifest);
   return manifest;
 }
 
@@ -161,6 +174,10 @@ function setManifestValue(manifest: Manifest, tablePath: string[], keyPath: stri
     group[first] = value as ManifestValue;
     return;
   }
+  if (table === "security") {
+    setSecurityManifestValue(manifest, tablePath, path, value);
+    return;
+  }
   if (table === "identity" || table === "prompts" || table === "tools" || table === "actions" || table === "events") {
     const group = manifest[table] ?? (manifest[table] = {});
     const name = tablePath.length > 1 ? tablePath[1]! : first;
@@ -171,6 +188,34 @@ function setManifestValue(manifest: Manifest, tablePath: string[], keyPath: stri
       const binding = group[name] ?? (group[name] = {});
       binding[rest.join(".")] = value as ManifestValue;
     }
+  }
+}
+
+function applySecurityDefaults(manifest: Manifest): void {
+  manifest.security ??= {};
+  manifest.security.tainted_ingress_to_provider ??= "warn";
+}
+
+function setSecurityManifestValue(manifest: Manifest, tablePath: string[], path: string[], value: unknown): void {
+  const security = manifest.security ?? (manifest.security = {});
+  if (path[0] === "tainted_ingress_to_provider") {
+    security.tainted_ingress_to_provider = String(value) as TaintedIngressToProviderPolicy;
+    return;
+  }
+  const full = tablePath.length ? [...tablePath.slice(1), ...path] : path;
+  if (full[0] !== "ingress") return;
+  const kind = full[1];
+  if (kind !== "prompts" && kind !== "events") return;
+  const name = full[2];
+  if (!name) return;
+  const rest = full.slice(3);
+  const ingress = security.ingress ?? (security.ingress = {});
+  const group = ingress[kind] ?? (ingress[kind] = {});
+  if (rest.length === 0) {
+    group[name] = bindingFromValue(value);
+  } else {
+    const binding = group[name] ?? (group[name] = {});
+    binding[rest.join(".")] = value as ManifestValue;
   }
 }
 

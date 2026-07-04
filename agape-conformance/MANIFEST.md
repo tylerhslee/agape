@@ -1,6 +1,6 @@
 # Agape v1.0.0-alpha.2026.7.3.0 — Conformance Test Index
 
-**200 tests** — accept: 122, reject: 78
+**205 tests** — accept: 126, reject: 79
 
 A conformant implementation must satisfy every `accept`/`reject` test (rejects with the declared error class; accepts matching any asserted spine).
 
@@ -81,8 +81,11 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 | `agent_instruction_global_accept` | accept | — | §5 (a top-level `instruction` is the global compile-time system prompt) |
 | `agent_instruction_requires_string_reject` | reject | ParseError | §5 (`instruction` takes a string literal — the system prompt) |
 | `agent_instruction_scoped_accept` | accept | — | §5 (an agent-scoped `instruction` composes after the global block) |
+| `agent_prompt_ingress_to_provider_deny` | reject | TaintViolation | §5b, §17 (deny-mode provider-prompt ingress policy rejects unscreened prompt ingress before it reaches cognition) |
+| `agent_prompt_ingress_to_provider_warn` | accept | — | §5b, §17 (default provider-prompt ingress policy warns when judgment-settled but unscreened prompt ingress is interpolated into cognition) |
 | `agent_prompt_opens_sensor` | accept | — | §5b (a `prompt` declaration opens a standing external input sensor) |
-| `agent_prompt_value_drives_perform_ok` | accept | — | §5b, §13 (a prompt value is external data, settled by origin, and may drive a perform) |
+| `agent_prompt_screened_ingress_to_provider_ok` | accept | — | §5b, §17 (a manifest-screened prompt ingress value is external_screened, so it may feed cognition without warning even under deny mode) |
+| `agent_prompt_value_drives_perform_ok` | accept | — | §5b, §13 (a prompt value is judgment-settled external ingress and may drive a perform) |
 | `agent_reawake_no_reconstruct` | accept | — | §5 (re-awake resumes the agent: no re-bind, no re-construct) |
 | `agent_sleep_runs_hook` | accept | — | §5 (sleep closes the mailbox and runs the on-sleep hook) |
 | `agent_spawn_instantiate_only` | accept | — | §5 (spawn instantiates + constructs only: no mailbox, no awake hook) |
@@ -107,10 +110,12 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 | `world_emit_wired_tainted_ok` | accept | — | §6b (emit is not a consequential sink, so an emit-trigger wiring is the loose observation channel: a RAW payload may flow out — an explicit, manifest-visible opt-out of the perform path's guarantee) |
 | `world_foreground_binding_no_result_event_reject` | reject | ConfigError | §6b, §17.1 (a foreground binding on an action wired with no result_event is a ConfigError — there is nothing to bind the reply to) |
 | `world_foreground_binding_requires_expires_reject` | reject | TypeError | §6b, §6c (`expires` is mandatory on the result-binding form of perform — terminal by construction, like every delegation) |
-| `world_foreground_perform_binding_ok` | accept | — | §6b, §13 (foreground perform binding: a wired action with a result_event binds its reply like a §6c delegation; a settled request yields settled results — external data settled by origin — which may drive a further perform) |
+| `world_foreground_perform_binding_ok` | accept | — | §6b, §13 (foreground perform binding: a wired action with a result_event binds its reply like a §6c delegation; a judgment-settled request yields judgment-settled external ingress, which may drive a further perform) |
 | `world_perform_unsettled_reject` | reject | TaintViolation | §6b, §13 (every perform is a consequential sink taking settled args only — anti-exfiltration: un-endorsed cognition never leaves the process on the perform path) |
 | `world_perform_unsettled_unwired_reject` | reject | TaintViolation | §6b, §13 (the settled-only rule for perform args is UNIFORM: it does not depend on whether the deployment wires the action — checker semantics never depend on the manifest) |
 | `world_replay_chain_head` | accept | — | §6b, §16.5 (recorded replay of a wired perform regenerates the same chain-head: the seam's journal pair re-serves the endpoint result and nothing is re-invoked) |
+| `world_result_event_ingress_to_provider_warn` | accept | — | §6b, §17 (default provider-prompt ingress policy warns when unscreened result-event ingress is interpolated into cognition) |
+| `world_result_event_screened_ingress_to_provider_ok` | accept | — | §6b, §17 (a manifest-screened result-event ingress value is external_screened, so it may feed cognition without warning even under deny mode) |
 | `world_sync_perform_reject` | reject | ColorViolation | §4, §6b (every perform is async — whether an act reaches the world is a deployment fact the checker must not depend on; a `sync` function may not perform) |
 | `world_unwired_action_pure_ok` | accept | — | §6b (unwired = pure: an unwired action is a ledgered performative — the act is the record; no seam journal pair appears) |
 | `world_wired_perform_invokes_ok` | accept | — | §6b (an [actions.NAME] wiring makes perform invoke the catalog endpoint: the action's own domain row, then the seam's ToolStarted/ToolResolved journal pair correlated by catalog name) |

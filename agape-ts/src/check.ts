@@ -578,6 +578,10 @@ export function check(program: A.Program, modules?: ModuleInput[], manifest?: Ma
     // §17.2: decision policy is a SOURCE construct (`policy NAME { … }`), never a manifest binding.
     throw configError(`the manifest sets a decision policy (${Object.keys(manifest.policy).join(", ")}); a decision policy lives in source, never the manifest (§17.2)`);
   }
+  const ingressPolicy = manifest?.security?.tainted_ingress_to_provider;
+  if (ingressPolicy !== undefined && !["warn", "deny", "off"].includes(String(ingressPolicy))) {
+    throw configError(`[security] tainted_ingress_to_provider must be "warn", "deny", or "off"`);
+  }
   const pc = manifest?.provider;
   if (pc && pc.exposes_logprobs === false && pc.temperature === 0 && pc.fallback_temperature === undefined) {
     // §17/§16.8: a text-only provider (no logprobs) at temperature 0 has no variance for the sampling

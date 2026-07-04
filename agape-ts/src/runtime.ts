@@ -1,19 +1,23 @@
-// Runtime core — values + trust lattice (§13/§15.3.1), the provider seam (§8), and the ledger (§7).
+// Runtime core — values, judgment trust + ingress provenance (§13/§15.3.1), the provider seam (§8),
+// and the ledger (§7).
 
 // ---- Trust lattice: settled ⊑ graded ⊑ raw ----
 export type Trust = "settled" | "graded" | "raw";
+export type IngressProvenance = "internal" | "external_unscreened" | "external_screened";
 
 export type Variant = string;
 export type Committed = Variant | "abstained";
 
+type ValueIngress = { ingress?: IngressProvenance };
+
 export type Value =
-  | { kind: "text"; v: string; trust: Trust }
-  | { kind: "int"; v: number; trust: Trust }
-  | { kind: "float"; v: number; trust: Trust }
-  | { kind: "bool"; v: boolean; trust: Trust }
-  | { kind: "null"; trust: Trust }
-  | { kind: "enumval"; enumName: string; variant: Variant; trust: Trust }
-  | {
+  | ({ kind: "text"; v: string; trust: Trust } & ValueIngress)
+  | ({ kind: "int"; v: number; trust: Trust } & ValueIngress)
+  | ({ kind: "float"; v: number; trust: Trust } & ValueIngress)
+  | ({ kind: "bool"; v: boolean; trust: Trust } & ValueIngress)
+  | ({ kind: "null"; trust: Trust } & ValueIngress)
+  | ({ kind: "enumval"; enumName: string; variant: Variant; trust: Trust } & ValueIngress)
+  | ({
       kind: "credence";
       enumName: string;
       scores: Record<Variant, number>;
@@ -22,8 +26,8 @@ export type Value =
       // where `d = decide c` is ABOUT `subject` when `subject` is `c` itself OR fed `c`'s prompt — the
       // endorse runtime backstop accepts exactly those, and fails closed on any other raw/graded subject.
       derivedFrom?: Value[];
-    }
-  | {
+    } & ValueIngress)
+  | ({
       kind: "decision";
       enumName: string;
       committed: Committed;
@@ -38,8 +42,8 @@ export type Value =
       // it to confirm a raw/graded subject is the very judgment the decision settled — "a decision about
       // other_response cannot endorse response" — and to fail closed otherwise (§14).
       source?: Value;
-    }
-  | {
+    } & ValueIngress)
+  | ({
       kind: "endorsement";
       subject: Value;
       enumName: string;
@@ -50,14 +54,14 @@ export type Value =
       trust: "settled";
       binding?: string;
       decisionId: number;
-    }
-  | { kind: "agentref"; name: string; agentType: string; trust: "settled" }
-  | { kind: "memref"; name: string; trust: "settled" } // a handle into private memory (§10)
-  | { kind: "taskref"; corr: string; trust: "settled" } // a background-task handle Task<T> (§6c)
+    } & ValueIngress)
+  | ({ kind: "agentref"; name: string; agentType: string; trust: "settled" } & ValueIngress)
+  | ({ kind: "memref"; name: string; trust: "settled" } & ValueIngress) // a handle into private memory (§10)
+  | ({ kind: "taskref"; corr: string; trust: "settled" } & ValueIngress) // a background-task handle Task<T> (§6c)
   // a record value (§3). `taskScope` is set only on a TaskSpec built by a task literal carrying a
   // `scope { perform … }` clause (§6c) — the action names the endorsed task enables on the worker.
-  | { kind: "struct"; typeName?: string; fields: Map<string, Value>; trust: Trust; taskScope?: string[] }
-  | { kind: "array"; items: Value[]; trust: Trust }; // a query result set (§10/§12)
+  | ({ kind: "struct"; typeName?: string; fields: Map<string, Value>; trust: Trust; taskScope?: string[] } & ValueIngress)
+  | ({ kind: "array"; items: Value[]; trust: Trust } & ValueIngress); // a query result set (§10/§12)
 
 export type StructuredSchema =
   | { type: "string" }
@@ -70,6 +74,20 @@ export type StructuredSchema =
   | { type: "object"; properties: Record<string, StructuredSchema>; required: string[]; additionalProperties: false };
 
 export const settledText = (v: string): Value => ({ kind: "text", v, trust: "settled" });
+
+export function ingressOf(v: { ingress?: IngressProvenance }): IngressProvenance {
+  return v.ingress ?? "internal";
+}
+
+export function ingressJoin(vs: { ingress?: IngressProvenance }[]): IngressProvenance {
+  let sawScreened = false;
+  for (const v of vs) {
+    const ingress = ingressOf(v);
+    if (ingress === "external_unscreened") return "external_unscreened";
+    if (ingress === "external_screened") sawScreened = true;
+  }
+  return sawScreened ? "external_screened" : "internal";
+}
 
 export function show(v: Value): string {
   switch (v.kind) {

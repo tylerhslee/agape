@@ -412,6 +412,24 @@ expect = "accept"
 spec = "§5 (an agent-scoped `instruction` composes after the global block)"
 
 [[test]]
+id = "agent_prompt_ingress_to_provider_deny"
+section = "05_agents"
+path = "tests/05_agents/agent_prompt_ingress_to_provider_deny.ag"
+expect = "reject"
+error = "TaintViolation"
+manifest = ["security.tainted_ingress_to_provider=deny", "prompts.question.driver=stdin"]
+spec = "§5b, §17 (deny-mode provider-prompt ingress policy rejects unscreened prompt ingress before it reaches cognition)"
+
+[[test]]
+id = "agent_prompt_ingress_to_provider_warn"
+section = "05_agents"
+path = "tests/05_agents/agent_prompt_ingress_to_provider_warn.ag"
+expect = "accept"
+warning = ["tainted_ingress_to_provider"]
+manifest = ["prompts.question.driver=stdin"]
+spec = "§5b, §17 (default provider-prompt ingress policy warns when judgment-settled but unscreened prompt ingress is interpolated into cognition)"
+
+[[test]]
 id = "agent_prompt_opens_sensor"
 section = "05_agents"
 path = "tests/05_agents/agent_prompt_opens_sensor.ag"
@@ -420,11 +438,20 @@ contains = ["PromptOpened(question)"]
 spec = "§5b (a `prompt` declaration opens a standing external input sensor)"
 
 [[test]]
+id = "agent_prompt_screened_ingress_to_provider_ok"
+section = "05_agents"
+path = "tests/05_agents/agent_prompt_screened_ingress_to_provider_ok.ag"
+expect = "accept"
+absent_warning = ["tainted_ingress_to_provider"]
+manifest = ["security.tainted_ingress_to_provider=deny", "prompts.question.driver=stdin", "security.ingress.prompts.question.driver=mock-screen"]
+spec = "§5b, §17 (a manifest-screened prompt ingress value is external_screened, so it may feed cognition without warning even under deny mode)"
+
+[[test]]
 id = "agent_prompt_value_drives_perform_ok"
 section = "05_agents"
 path = "tests/05_agents/agent_prompt_value_drives_perform_ok.ag"
 expect = "accept"
-spec = "§5b, §13 (a prompt value is external data, settled by origin, and may drive a perform)"
+spec = "§5b, §13 (a prompt value is judgment-settled external ingress and may drive a perform)"
 
 [[test]]
 id = "agent_reawake_no_reconstruct"
@@ -551,7 +578,7 @@ path = "tests/06b_world/world_foreground_perform_binding_ok.ag"
 expect = "accept"
 order = ["Ask", "ToolStarted(t1)", "ToolResolved(t1)", "Answer", "Notify"]
 manifest = ["tools.t1.driver=mock", "actions.Ask.tool=t1", "actions.Ask.result_event=Answer"]
-spec = "§6b, §13 (foreground perform binding: a wired action with a result_event binds its reply like a §6c delegation; a settled request yields settled results — external data settled by origin — which may drive a further perform)"
+spec = "§6b, §13 (foreground perform binding: a wired action with a result_event binds its reply like a §6c delegation; a judgment-settled request yields judgment-settled external ingress, which may drive a further perform)"
 
 [[test]]
 id = "world_perform_unsettled_reject"
@@ -579,6 +606,24 @@ contains = ["pair(Tool@t1)"]
 manifest = ["tools.t1.driver=mock", "actions.Pay.tool=t1"]
 replay = "chain_head_equal"
 spec = "§6b, §16.5 (recorded replay of a wired perform regenerates the same chain-head: the seam's journal pair re-serves the endpoint result and nothing is re-invoked)"
+
+[[test]]
+id = "world_result_event_ingress_to_provider_warn"
+section = "06b_world"
+path = "tests/06b_world/world_result_event_ingress_to_provider_warn.ag"
+expect = "accept"
+warning = ["tainted_ingress_to_provider"]
+manifest = ["tools.t1.driver=mock", "actions.Search.tool=t1", "actions.Search.result_event=SearchResult"]
+spec = "§6b, §17 (default provider-prompt ingress policy warns when unscreened result-event ingress is interpolated into cognition)"
+
+[[test]]
+id = "world_result_event_screened_ingress_to_provider_ok"
+section = "06b_world"
+path = "tests/06b_world/world_result_event_screened_ingress_to_provider_ok.ag"
+expect = "accept"
+absent_warning = ["tainted_ingress_to_provider"]
+manifest = ["security.tainted_ingress_to_provider=deny", "tools.t1.driver=mock", "actions.Search.tool=t1", "actions.Search.result_event=SearchResult", "security.ingress.events.SearchResult.accepted=true"]
+spec = "§6b, §17 (a manifest-screened result-event ingress value is external_screened, so it may feed cognition without warning even under deny mode)"
 
 [[test]]
 id = "world_sync_perform_reject"

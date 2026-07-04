@@ -139,9 +139,9 @@ concurrency.
 
 ---
 
-## 1. The three orthogonal axes
+## 1. The four orthogonal axes
 
-Agape tracks three independent properties that are easy to conflate.
+Agape tracks four independent properties that are easy to conflate.
 
 ### Axis A — function color: sync vs async
 
@@ -167,10 +167,16 @@ constrained distribution over a closed enum's variants, §3). More structured th
 — the model has been forced to commit to a fixed set of outcomes — but not yet
 committed by a gate. Recalled memory also defaults to **graded** (§10).
 - **settled** — a value carrying no un-endorsed cognition: a sealed `Decision`, an
-`Endorsement` of an exact subject value, a constant, or external data settled by
-origin (a `prompt`, a wired result-event payload over a settled request, §6b).
+`Endorsement` of an exact subject value, a constant, or external data at an ingress
+boundary (`prompt`, sensor, or wired result-event payload, §5b, §6b).
 
-Trust is contagious upward; only a gate moves a value down toward **settled**. A consequential action may consume only a **settled** value whose settling is recorded on the ledger — a `Decision` for branch control, and a committed `Endorsement` for a subject reaching a sink (§13). External data is settled by origin; only un-endorsed cognition is withheld.
+Trust is contagious upward; only a gate moves cognition down toward **settled**. A
+consequential action may consume only a **settled** value: for cognition-derived
+subjects, the settling is recorded on the ledger as a `Decision` plus committed
+`Endorsement`; constants and external ingress values may be ordinary program data
+because they carry no un-endorsed model cognition (§13). This says nothing about
+whether external bytes are safe, policy-compliant, or non-adversarial; that is tracked
+by the ingress axis below.
 
 ### Axis C — ledger presence: values vs ledger records
 
@@ -186,17 +192,38 @@ Named `event Foo(...)` declarations remain the way to define ledger-record paylo
 `emit`, `when`, and typed ledger queries. A matched event binding exposes its payload
 fields directly (`h.reason`) and reserves `_meta` for event metadata.
 
+### Axis D — ingress provenance: where did external bytes enter?
+
+Ingress provenance records whether a value contains data that entered from outside the
+Agape program. It is separate from judgment trust:
+
+- **internal** — produced inside the program or by trusted kernel operations without
+external payload bytes.
+- **external_unscreened** — carries prompt, standing-sensor, or result-event data that
+has entered from the world and has not passed a manifest-configured ingress screen.
+- **external_screened** — carries external ingress data whose configured screen ran and
+recorded an accepting verdict for the bytes delivered to the program.
+
+Ingress joins upward (`internal ⊑ external_screened ⊑ external_unscreened`) and is
+preserved by ordinary computation. Manifest-level screening may convert a value at an
+ingress boundary from `external_unscreened` to `external_screened`; there is no source
+syntax for screening and no expression-level cast. Unscreened ingress flowing into a
+provider/cognition prompt is governed by the manifest security policy (§17): default
+warn, strict deny, or off. Consequential actions are not governed by an ingress
+allow/warn/deny knob; they remain governed only by the fixed `perform` sink rule over
+judgment trust (§13).
+
 ### The axes are independent
 
-| construct                            | async? | trust of result      | # events | type             |
-| ------------------------------------ | ------ | -------------------- | --------- | ---------------- |
-| `Credence<bool> c = self <- "is …?"` | yes    | `graded`             | lifecycle | `Credence<bool>` |
-| `decide c by r`                      | no     | `settled`            | single    | `Decision<bool>` |
-| `endorse memo by d`                  | no¹    | `settled`            | single    | `Endorsement<text>` |
-| `alice decide c by r`                | yes    | `settled`            | 1 or 2¹   | `Decision<Verdict>` |
-| `Credence<E> c = peer <- "…?"`       | yes    | `graded`             | lifecycle | `Credence<E>`    |
-| `perform Search(q) expires 5` (wired, §6b) | yes | `settled` (⊔ args) | act+pair+result | `text`      |
-| `double(3)` (pure)                   | no     | `settled`            | no        | `int`            |
+| construct                            | async? | judgment trust       | ingress provenance | # events | type             |
+| ------------------------------------ | ------ | -------------------- | ------------------ | -------- | ---------------- |
+| `Credence<bool> c = self <- "is …?"` | yes    | `graded`             | joins prompt expr  | lifecycle | `Credence<bool>` |
+| `decide c by r`                      | no     | `settled`            | joins inputs       | single    | `Decision<bool>` |
+| `endorse memo by d`                  | no¹    | `settled`            | joins subject      | single    | `Endorsement<text>` |
+| `alice decide c by r`                | yes    | `settled`            | joins inputs       | 1 or 2¹   | `Decision<Verdict>` |
+| `Credence<E> c = peer <- "…?"`       | yes    | `graded`             | joins prompt expr  | lifecycle | `Credence<E>`    |
+| `perform Search(q) expires 5` (wired, §6b) | yes | `settled` (⊔ args) | external unless screened | act+pair+result | `text` |
+| `double(3)` (pure)                   | no     | `settled`            | `internal`         | no        | `int`            |
 
 ¹ `endorse` over an in-hand committed `Decision` is synchronous (record only, no dependency
 reach). A principal-prefixed `decide` is async (it may reach the identity dependency) and always
@@ -212,9 +239,10 @@ prefixed with a `principal`.
 - `endorse subject by d` applies the decision to that exact subject value and yields an
 `Endorsement<T>`, the settled form admissible for consequential use (§13).
 - A `Credence` is produced by binding a send to a `Credence<E>`-typed slot (§3, §8), whatever
-the destination.
+the destination. If the rendered prompt contains `external_unscreened` ingress, the
+manifest's provider-prompt ingress policy applies (§17).
 
-The three axes, one per comment, in a single agent:
+The axes, one per comment, in a single agent:
 
 ```agape
 sync int fee(int cents) { return cents / 10; }   // color S: provably no dependency reach
@@ -640,12 +668,20 @@ with `when (Prompt p about name)`, where `p` evaluates to the arrived value.
 
 - A `prompt` source makes a program always-on (§0.2): while open it cannot quiesce; when
 it closes (EOF) the program reaches quiescence and ends.
-- Its values are external data, `settled` by origin (§13): they carry no un-endorsed cognition,
-so they may drive an action. Agape gates the model's judgment, not the correctness of input.
+- Its values are external data at the program boundary. They are **judgment-settled**
+  (§13): they carry no un-endorsed model cognition and may be ordinary program data.
+  Separately, they enter with ingress provenance `external_unscreened` unless the
+  manifest binds the prompt source to a replayed screen that records an accepting verdict,
+  in which case the delivered value is `external_screened` (§17). Agape gates model
+  judgment; it does not by itself mark external input safe.
+- If a prompt value is interpolated into a provider/cognition prompt, the manifest's
+provider-prompt ingress policy applies: default warn, strict deny, or off (§17). That
+policy is only for ingress-to-cognition; it does not add an action-sink relaxation.
 - `prompt` is one of a family of sensors (socket, timer, queue, file watch — a standing
 sensor is an event wired in the manifest, `[events.NAME]`, §6b), sharing one runtime contract:
-an external source that appends events
-to the ledger as they arrive, so replay folds the recorded input stream deterministically.
+an external source that appends events to the ledger as they arrive, including the recorded
+ingress provenance and any screening verdict, so replay folds the recorded input stream
+deterministically.
 
 ---
 
@@ -794,17 +830,24 @@ flow — the loose observation channel (RAG-style, model-suggested queries), now
 manifest-visible opt-in. **No laundering:** the `result_event` payload carries the JOIN of
 the triggering emit's payload trust — a raw query taints its own results. Wire a read (or
 any effector) to a **`perform`** (`[actions.Search]`): the uniform consequential-sink rule
-applies (§13) — **settled args only**. Prompts and other external data are settled by
-origin, so ordinary flows work unchanged; model-generated payloads must be gated first.
+applies (§13) — **settled args only**. Prompt, sensor, and result-event values can satisfy
+this judgment-trust rule because they carry no un-endorsed model cognition, but they still
+carry ingress provenance (`external_unscreened` or `external_screened`). Model-generated
+payloads must be gated first.
 - **Anti-exfiltration.** On the perform path no un-endorsed cognition ever leaves the
 process — T3 non-interference (§15.6) extends to observation requests. A deployment that
 wires **all** its outbound seams to actions has the hard guarantee; each emit-wiring is a
-visible, auditable exception in the manifest.
-- **Trust.** A result-event or sensor payload is external data — `settled` by origin —
-**joined** with the request payload's trust: on the perform path a settled request yields
-settled results; on the emit path a tainted query taints its results. A standing-sensor
-arrival has no request payload and is settled by origin, like `prompt` (§5b). Agape gates
-the model's judgment, not the correctness of external data.
+visible, auditable exception in the manifest. This guarantee is about cognition-derived
+content; ingress provenance is handled by the provider-prompt policy below, not by a
+separate action-sink knob.
+- **Trust and ingress.** A result-event or sensor payload is external data. Its judgment
+trust is **joined** with the request payload's trust: on the perform path a settled
+request yields judgment-settled results; on the emit path a tainted query taints its own
+results. Separately, the result or sensor payload's ingress provenance is
+`external_unscreened` unless the manifest-configured screen for that ingress records an
+accepting verdict, in which case it is `external_screened`. A standing-sensor arrival has
+no request payload and is judgment-settled like `prompt` (§5b), while still carrying
+external ingress provenance.
 - **Authority.** `perform NAME` (grants, §13) governs all outbound acts, wired or not.
 Emitting stays grant-free: an emit-wired observation is deployment-controlled through the
 manifest, not grant-controlled — a documented posture mirroring `prompt`.
@@ -838,8 +881,9 @@ configured). For a wired `emit`: **event row → ToolStarted → ToolResolved �
 row**. Every world-effect is on the log, so the ledger is a complete, replayable account of
 what the program did to the world, not only what it thought.
 - **Replay.** A wired invocation's result is an external observation and is journaled
-(§15.4.2) like an oracle output; replay re-serves it from the recording and never re-invokes
-the effector (§16.5).
+(§15.4.2) like an oracle output, including its ingress provenance and any screening
+verdict; replay re-serves it from the recording and never re-invokes the effector or
+screen (§16.5).
 
 The world interface is not a new trust hole; it is the same membrane discipline (capability +
 trust + ledger + replay) applied to the world. This is what lets the host's deterministic
@@ -1473,13 +1517,36 @@ the subject's own fields plus the decision's `.decision_id`/`.committed`/`.basis
 `Endorsed(subject, decision_id, variant)` ledger record. It is constructible only inside a branch
 that has narrowed `d.committed` to a committed variant (below); an abstained `Decision` has no
 endorsement to give.
-- a constant, a `prompt`, and a wired result-event or sensor payload (§6b) → `settled` by
-origin, joined with the request payload's trust (a settled `perform` request yields settled
-results; a tainted emit-wired request taints its own results): external data carries no
-un-endorsed cognition.
+- a constant → `settled` and `internal`.
+- a `prompt`, standing-sensor payload, and wired result-event payload (§5b, §6b) →
+judgment-settled external data: it carries no un-endorsed model cognition, while separately
+carrying ingress provenance (`external_unscreened` unless a manifest-configured screen records
+an accepting verdict and marks it `external_screened`). Result-event judgment trust joins the
+request payload's trust: a settled `perform` request yields judgment-settled results; a tainted
+emit-wired request taints its own results.
 
 Trust is contagious upward (a value is as `raw` as its least-settled input). Only `decide` creates
 a `Decision`; only `endorse` produces a settled `Endorsement` of a subject value. A `Principal` is `settled`.
+
+### Ingress provenance — separate from judgment trust
+
+Ingress provenance is an independent lattice (§1): `internal ⊑ external_screened ⊑
+external_unscreened`. It answers "did these bytes enter from outside, and have they passed
+the configured ingress screen?" rather than "does this value contain un-endorsed model
+cognition?"
+
+Prompt arrivals, standing-sensor events, and world result-events enter as
+`external_unscreened` by default. The manifest may bind those ingress points to a screen; if
+the screen accepts, the delivered value is `external_screened`, and if it rejects the arrival
+is not delivered as ordinary data. Screening is configuration-only and replayed from the
+ledger; Agape source has no `screen` expression, cast, or annotation.
+
+The only policy knob attached to unscreened ingress is the provider-prompt policy (§17):
+when `external_unscreened` data flows into a cognition prompt, the manifest default is to
+warn, strict mode denies, and `off` suppresses the diagnostic. This policy does not govern
+`perform`. Consequential actions have no configurable ingress allow/warn/deny relaxation or
+denial layer; the sink rule below remains the fixed settled-only judgment-trust check plus
+the existing runtime margin and task-scope checks.
 
 ```agape
 enum Approval { Approve, Decline }
@@ -1539,7 +1606,7 @@ if (d.committed == Faithful) {
   Endorsement<text> e = endorse response by d;
   emit NeedsRevision(response);    // emit is not a sink; `perform X(response)` here would be rejected (raw)
 } else {                           // d.committed == abstained
-  perform Escalate("needs-review");// a literal is settled by origin
+  perform Escalate("needs-review");// a literal is settled internal data
 }
 ```
 
@@ -1580,7 +1647,8 @@ color-`S`.
 such as `if (d.committed == V)`; it records `Endorsed { subject_hash, decision_id, variant }` and
 returns `Endorsement<T>`. In the `else`/abstained branch (`d.committed == abstained`) no
 endorsement may be constructed, so the subject cannot reach a sink unless it is independently
-settled by origin.
+judgment-settled (for example, a literal or external ingress value with no un-endorsed model
+cognition).
 
 ### The rule selects the basis; the gate stays uniform
 
@@ -1641,8 +1709,12 @@ A consequential sink — a `perform` argument (whether or not the action is wire
 `**settled`**: it carries no un-endorsed cognition. A `Credence` reaches a usable settlement only
 through `decide` then `endorse`; `endorse` is constructible only inside a branch that has narrowed
 the `Decision` to a committed variant (so an `abstained` decision has no endorsement to give and
-statically cannot reach a sink). External data is `settled` by origin and passes freely — only
-un-endorsed cognition is rejected. This static check is joined by two runtime checks at the sink. First, the
+statically cannot reach a sink). External prompt, sensor, and result-event values may satisfy
+this judgment-trust check because they carry no un-endorsed cognition, but their ingress
+provenance is not erased and is not interpreted as action safety. There is deliberately no
+manifest option such as `tainted_to_action = allow|warn|deny`: ingress-tainted external data
+does not add an action-sink policy layer, and it does not relax the settled-only rule for
+model cognition. This static check is joined by two runtime checks at the sink. First, the
 **margin floor** — `margin ≥ m`, with `m` the rule's `floor`. A committed decision whose margin is below `m`
 faults the action (`MarginFloorViolation`, §16.6), the typed trigger for escalation. A gate whose rule
 declares no `floor` performs only the static admission check and raises no `MarginFloorViolation`; to
@@ -1677,11 +1749,11 @@ Extending the consequential-action rule (§15.3.3):
 
 ### The external dependencies, one discipline
 
-| dependency | supplies        | reached at        | color | trust of result                        |
-| ---------- | --------------- | ----------------- | ----- | -------------------------------------- |
-| provider   | a model         | `self <- p`       | `A`   | `raw` / `graded` (Credence slot)       |
-| identity   | a `principal`   | `p decide c by r` | `A`   | `Decision<E>` with principal provenance |
-| world      | the world (MCP) | `perform A(args)` / a wired `emit` / a standing sensor (§6b) | `A`   | `⊔` request payload (settled on the perform path) |
+| dependency | supplies        | reached at        | color | judgment trust of result               | ingress provenance |
+| ---------- | --------------- | ----------------- | ----- | -------------------------------------- | ------------------ |
+| provider   | a model         | `self <- p`       | `A`   | `raw` / `graded` (Credence slot)       | joins prompt expr  |
+| identity   | a `principal`   | `p decide c by r` | `A`   | `Decision<E>` with principal provenance | joins inputs       |
+| world      | the world (MCP) | `perform A(args)` / a wired `emit` / a standing sensor (§6b) | `A`   | `⊔` request payload (settled on the perform path) | external unless screened |
 
 All three are external, non-deterministic, journaled, and swappable by config. A rule-only gate
 needs no external dependency — a conformal gate calibrates from its own recorded decisions on the
@@ -1690,7 +1762,8 @@ ledger. The membrane — capability + trust + ledger + gate — is identical acr
 ### Provenance
 
 Authority is bounded at compile time, cognition is endorsed-and-recorded before
-it acts, and every fact's provenance is auditable on an append-only ledger.
+it acts, external ingress is labeled separately from judgment trust, and every fact's
+provenance is auditable on an append-only ledger.
 
 ---
 
@@ -1748,8 +1821,9 @@ has been committed-narrowed, and only an `Endorsement` may drive a consequential
 `quorum`) requires a total `independent`/`dependent` declaration over the `Credence[]`;
 a `principal` prefix on `decide` takes a `Principal` (no `text → Principal`); user
 `struct`/`enum`/`event`/`action` types are explicitly declared; a wired result-event payload
-carries settled-by-origin joined with its request payload's trust (§6b); authority, trust
-(three-level), and color are checked statically and interprocedurally; a violation is a compile error.
+carries judgment trust joined with its request payload's trust and separate ingress provenance
+(§6b); authority, trust (three-level), ingress, and color are checked statically and
+interprocedurally; a violation is a compile error.
 
 **Runtime** — ticks are system-level; structured output uses constrained decoding;
 subscriptions are prospective and hoisted (never retroactive), and history is reached by
@@ -1935,27 +2009,34 @@ reimplemented in the language.
 ### 15.3.1 Qualifier lattices
 
 `color: S ⊑ A`. `trust: settled ⊑ graded ⊑ raw`, tracking cognition-provenance: `settled`
-carries no un-endorsed cognition (constants, external data settled by origin, gated
-`Decision`s); `graded` is a `Credence`; `raw` is unstructured model output. `⊔` is the join;
-both contagious upward (a value is as `raw` as its least-settled input) unless a gate settles.
+carries no un-endorsed cognition (constants, judgment-settled external ingress, gated
+`Decision`s); `graded` is a `Credence`; `raw` is unstructured model output. `ingress:
+internal ⊑ external_screened ⊑ external_unscreened`, tracking whether a value carries
+external bytes and whether a manifest screen accepted them. `⊔` is the join; color, trust,
+and ingress are contagious upward unless a kernel gate settles trust or a manifest ingress
+screen marks a boundary value `external_screened`.
 
 ### 15.3.2 Expression rules (selected)
 
 ```
-Γ ⊢ d : Agent   Γ ⊢ p : Text                    // any send invokes cognition at d; raw until bound to a Credence
-──────────────────────────────  (T-Send)        Γ ⊢ (d <- p) : T_reply ! A · raw
+Γ ⊢ d : Agent   Γ ⊢ p : Text · t_p · ι_p        // any send invokes cognition at d; raw until bound to a Credence
+provider_ingress_policy(ι_p, manifest) ≠ deny
+──────────────────────────────  (T-Send)        Γ ⊢ (d <- p) : T_reply ! A · raw · ι_p
 
-Γ ⊢ d : Agent   Γ ⊢ p : Text    E an enum
+Γ ⊢ d : Agent   Γ ⊢ p : Text · t_p · ι_p    E an enum
+provider_ingress_policy(ι_p, manifest) ≠ deny
 ─────────────────────────────────────────────  (T-Credence)
-Γ ⊢ (Credence<E> _ = d <- p) : Credence<E> ! A · graded    // any destination d
+Γ ⊢ (Credence<E> _ = d <- p) : Credence<E> ! A · graded · ι_p    // any destination d
 
-Γ ⊢ aᵢ : Tᵢ · settled    action A(T₁..Tₙ) declared    ("perform",A) ∈ G ∨ G = {*}
+Γ ⊢ aᵢ : Tᵢ · settled · ιᵢ    action A(T₁..Tₙ) declared    ("perform",A) ∈ G ∨ G = {*}
 result_event(A) = E per the manifest    Γ ⊢ n : Int · settled
 ─────────────────────────────────────────────────────────────────────────  (T-Perform-Bound)
-Γ ⊢ (x = perform A(a₁..aₙ) expires n) : T_E ! A · settled
+Γ ⊢ (x = perform A(a₁..aₙ) expires n) : T_E ! A · settled · ingress(E)
 // T_E from the configured result event E: a single-field event binds that field's value; a
 // multi-field event binds a struct of its fields; no manifest in scope ⇒ conservative (`unknown`),
-// runtime-enforced. Result trust = settled by origin ⊔ (⊔ tᵢ) = settled (args are settled).
+// runtime-enforced. Result judgment trust = boundary-settled ⊔ (⊔ tᵢ) = settled (args are settled);
+// result ingress = external_unscreened unless E's manifest-configured screen accepts and records
+// external_screened.
 // `expires` MANDATORY on the binding form; failure/expiry faults the awaiting invocation (§6c, §16.6).
 // ILL-FORMED if any arg is not settled; a ConfigError at runtime if A has no result_event (§17.1).
 
@@ -1967,9 +2048,9 @@ result_event(A) = E per the manifest    Γ ⊢ n : Int · settled
 ────────────────────────────────────────────  (T-Decide-Principal / GATE, async)
 Γ ⊢ p decide e by r : Decision<E> ! A · settled
 
-Γ ⊢ a : T · _    Γ ⊢ d : Decision<E> · settled    a ∈ scope(d)    committed-narrowed(d)
+Γ ⊢ a : T · _ · ι_a    Γ ⊢ d : Decision<E> · settled    a ∈ scope(d)    committed-narrowed(d)
 ────────────────────────────────────────────  (T-Endorse / GATE)
-Γ ⊢ endorse a by d : Endorsement<T> ! S · settled
+Γ ⊢ endorse a by d : Endorsement<T> ! S · settled · ι_a
 
 Γ ⊢ cs : Credence<Bool>[] ! col · graded    dep-declared(cs)
 ──────────────────────────────────────────────────────────────  (T-Fuse)   // quorum
@@ -1991,7 +2072,7 @@ dependence coverage over the `Credence[]`. Branching on a gate is an ordinary `i
 
 - `c_f ∈ {S,A}` — `A` if its body reaches any declared dependency (including a `perform`) or calls any
 `A`-colored `g`; else `S`. A `sync`-declared `f` asserts `c_f = S`.
-- `ρ_f` — trust-transparent parameters (trust flows to the result, three-level).
+- `ρ_f` — transparent parameters (judgment trust and ingress flow to the result).
 - `κ_f` — consequentially-consumed parameters (fed into a `perform`/reach).
 
 `Φ` is the least fixpoint over the call graph; a builtin is `(A, ∅, ∅)` unless modeled.
@@ -2015,25 +2096,35 @@ agent C extends P
 grants(C) ⊆ grants(P)        // ⊥ ⊆ G ⊆ {*}; covers perform/reach uniformly
 
 // THE CONSEQUENTIAL-ACTION RULE (static admission + runtime margin floor):
-sink(s)     Γ ⊢ e : Te · t     ¬( t = settled )
+sink(s)     Γ ⊢ e : Te · t · ι     ¬( t = settled )
 ──────────────────────────────────────────────────────────────  (W-Consequential-static)
 s(…e…)  is ILL-FORMED
 // sink = perform arg — wired or unwired; there is no other outbound path (§6b).
 // A settled NON-Endorsement (a constant, a `prompt` value,
-// a settled result-event payload) passes freely — external data is settled by origin. An `Endorsement`
-// is settled only because T-Endorse required a committed-narrowed Decision. A graded/raw value is rejected.
+// a judgment-settled result-event payload) passes the judgment-trust check even when its ingress is
+// external_unscreened. An `Endorsement` is settled only because T-Endorse required a
+// committed-narrowed Decision. A graded/raw value is rejected. There is no manifest allow/warn/deny
+// policy for ingress-tainted data at this sink.
 // At runtime, for an admitted `Endorsement`: margin(e) ≥ m, else the action faults (MarginFloorViolation).
 // At runtime, inside an assigned task: the active task must be endorsed and name the action in
 // its scope, else the action faults (TaskScopeViolation, §6c) — enablement, checked like the floor.
 
+// PROVIDER-PROMPT INGRESS POLICY (manifest-aware; no source syntax):
+Γ ⊢ p : Text · _ · external_unscreened    provider_ingress_policy = deny
+──────────────────────────────────────────────────────────────  (W-ProviderIngress)
+⊢ (d <- p) is ILL-FORMED for this (source, manifest) pair
+// default warn emits a diagnostic and preserves external_unscreened in the rendered prompt's audit
+// metadata; off accepts silently. A configured ingress screen may mark the source value
+// external_screened before it reaches this rule.
+
 // DELEGATION — the task-send (§6c):
-Γ ⊢ d : Agent    Γ ⊢ o : Text · t_o    Γ ⊢ a : Text · t_a    Γ ⊢ n : Int · settled
+Γ ⊢ d : Agent    Γ ⊢ o : Text · t_o · ι_o    Γ ⊢ a : Text · t_a · ι_a    Γ ⊢ n : Int · settled
 ──────────────────────────────────────────────────────────────  (T-Delegate)
 Γ ⊢ (d <- task { objective o; acceptance a; } expires n) : T_result ! A · raw
         // bound as `T r = …` (foreground) or `Task<T> h = …` (background handle · settled).
         // ILL-FORMED if: `expires` is absent; the result is unbound (statement form);
         // objective/acceptance missing or not Text; the task block is empty.
-        // TaskSpec trust = t_o ⊔ t_a (delegation never launders trust).
+        // TaskSpec trust = t_o ⊔ t_a and ingress = ι_o ⊔ ι_a (delegation never launders either).
 
 // DELEGATION — scope attenuation (compile time):
 task carries scope { perform A₁ … perform Aₙ } in agent C
@@ -2056,11 +2147,11 @@ inside a branch where d.committed is narrowed to a real variant v (an `if (d.com
 inside the else / non-committed branch (d.committed == abstained):
     Γ[d ↦ Decision<E> · settled]                         ⊢ body ok    // no endorsement may be constructed
 
-// CALL — trust transfer and consequential-arg rejection:
-Γ ⊢ aᵢ : _ ! _ · tᵢ        t_result = ⊔ { tᵢ : i ∈ ρ_f }
+// CALL — trust/ingress transfer and consequential-arg rejection:
+Γ ⊢ aᵢ : _ ! _ · tᵢ · ιᵢ        t_result = ⊔ { tᵢ : i ∈ ρ_f }        ι_result = ⊔ { ιᵢ : i ∈ ρ_f }
 ∀ i ∈ κ_f.  tᵢ = settled
 ──────────────────────────────────────────────────────────────  (W-Call)
-Γ ⊢ f(a₁..aₙ) : T ! c_f · t_result     // ILL-FORMED if some i∈κ_f is not settled
+Γ ⊢ f(a₁..aₙ) : T ! c_f · t_result · ι_result     // ILL-FORMED if some i∈κ_f is not settled
 ```
 
 The endorsement half of the consequential rule is static (W-Consequential-static); the
@@ -2079,14 +2170,19 @@ margin floor and the task-scope enablement are runtime.
 think   : Π × Prompt × Schema   ⇝  Value × Π             (provider; NON-deterministic)
 consult : Ψ × Principal × Credence<E> ⇝ (E × Signature) × Ψ  (identity dependency; external, auditable; Signature = the principal's signed ruling)
 invoke  : Ω × Endpoint × Args   ⇝  Value × Ω              (the world seam — the wired [tools.*] endpoint; external, effectful)
+screen  : Σ × IngressPoint × Value ⇝ (accept|reject, Value) × Σ
+                                                            (optional manifest ingress screen; not source-visible)
 ```
 
-All three oracles' results are journaled to the ledger as produced (the send's `Resolved` /
-`PrincipalDecision` or `FailedPrincipalDecision` / `ToolResolved`). Gate collapses are journaled as
-`Decided`, whether they commit or abstain. Replay never re-invokes an oracle or an endpoint: it serves
-each from the recording in order — a wired effector is replayed as its recorded result, not re-run. The
-ledger is hash-chained, so a faithful replay regenerates an identical chain — chain-head equality is
-the proof of replay-equivalence.
+The three source-visible oracles' results are journaled to the ledger as produced (the send's
+`Resolved` / `PrincipalDecision` or `FailedPrincipalDecision` / `ToolResolved`). A configured
+ingress screen is also replay-bound: its input bytes, verdict, normalized output, and resulting
+ingress provenance (`external_screened` on accept, no ordinary delivery on reject) are recorded at
+the boundary that invoked it. Gate collapses are journaled as `Decided`, whether they commit or
+abstain. Replay never re-invokes an oracle, endpoint, or screen: it serves each from the recording
+in order — a wired effector is replayed as its recorded result, not re-run. The ledger is
+hash-chained, so a faithful replay regenerates an identical chain — chain-head equality is the
+proof of replay-equivalence.
 
 **Task-send dynamics (§6c).** A task-send is an ordinary send whose `Resolved` is produced by
 the recipient's `complete` statement rather than by `think`; `complete e` appends `Resolved`
@@ -2150,10 +2246,13 @@ fault in a handler invocation
 ⟨…|Â|S| …fault…; k⟩ → ⟨…|Â| append(S, AgentCrashed(name)); on-crash-hook; resume⟩   // not a death
 
 // SEND — three-phase lifecycle; reply raw until Credence-bound; content not stored (only the lifecycle):
-awake(dest)   (Π, render(p), schema(T)) ⇝ (v, Π')       // responder thinks through Π (the provider) — any dest
+awake(dest)   provider_ingress_policy(ingress(render(p)), manifest) ≠ deny
+(Π, render(p), schema(T)) ⇝ (v, Π')       // responder thinks through Π (the provider) — any dest
 S' = append³(S, Sent(x,@d), Delivered(x,@d), Resolved(x,@d))   // subjects only; v is not logged
 ─────────────────────────────────────────────────────────────  (E-Send)
-⟨Π|…|μ|S| x = (d <- p); k⟩ → ⟨Π'|…|μ[x↦v (trust raw; graded if x : Credence<E>, T-Credence)]|S'| k⟩
+⟨Π|…|μ|S| x = (d <- p); k⟩ → ⟨Π'|…|μ[x↦v (trust raw; graded if x : Credence<E>, T-Credence; ingress ingress(render(p)))]|S'| k⟩
+// default warn records an audit diagnostic for external_unscreened prompt ingress; off is silent.
+// strict deny aborts before `think`, so no provider call is made.
 
 // SEND (lost) — dest not awake at delivery: chain stalls at Sent:
 ¬awake(dest)
@@ -2176,16 +2275,19 @@ Sent(corr) ∈ S   ¬Delivered(corr)   lifetime(corr) elapsed
 
 // EMIT (wired) — an emit-trigger wiring invokes its catalog endpoint through Ω (§6b):
 [events.E] wired to K    (Ω, K, eval(e…)) ⇝ (v, Ω')
-result_event(E) = E' ⇒ the result row E'(v) is appended, trust settled-by-origin ⊔ trust(eval(e…))
+result_event(E) = E' ⇒ the result row E'(v) is appended, judgment trust boundary-settled ⊔ trust(eval(e…)),
+                         ingress external_unscreened unless E' screening records external_screened
 ─────────────────────────────────────────────────────────────  (E-Emit-Wired)
 ⟨…|Ω|S| emit E(e…); k⟩ → ⟨…|Ω'| append(S, E(subj, eval(e…)), ToolStarted(K), ToolResolved(K, v) [, E'(v)]) | k⟩
 // order: event row → ToolStarted → ToolResolved → result event row (§6b). No laundering:
-// a tainted emitted payload taints the result event's payload (the JOIN above).
+// a tainted emitted payload taints the result event's judgment trust (the JOIN above); ingress remains
+// external unless screened.
 
 // PERFORM — the consequential act; a wired action invokes its catalog endpoint through Ω (§6b):
 allowed(C,"perform",A)   admitted (W-Consequential-static)   margin ≥ floor   task-scope enabled (§6c)
 [actions.A] wired to K ⇒ (Ω, K, eval(e…)) ⇝ (v, Ω') and the ToolStarted(K)/ToolResolved(K,v) pair is appended
-result_event(A) = E ⇒ the result row E(v) is appended, trust settled-by-origin ⊔ trust(eval(e…)) = settled
+result_event(A) = E ⇒ the result row E(v) is appended, judgment trust boundary-settled ⊔ trust(eval(e…)) = settled,
+                      ingress external_unscreened unless E screening records external_screened
 ─────────────────────────────────────────────────────────────  (E-Perform)
 ⟨…|Ω|S| perform A(e…); k⟩ → ⟨…|Ω'| append(S, A(subj, eval(e…)) [, ToolStarted, ToolResolved, E(v)]) | k⟩
 // order: action row → ToolStarted → ToolResolved → result event row (§6b). A result-bound
@@ -2285,11 +2387,11 @@ sequence `d`, independent of every un-settled (`raw`/`graded`) value.
 > `graded` judgment into a sealed `Decision`, and `endorse` is the only operation that settles an
 > exact subject value from that decision. Both record their discharge on the ledger. By
 > the consequential rule (W-Consequential-static) and W-Call, every constituent of `obs` is
-> `settled` — hence an input `I` (a constant or external datum, settled by origin), a gate
+> `settled` — hence an input `I` (a constant or judgment-settled external ingress datum), a gate
 > outcome `dⱼ`, or a pure settled-function of these. Progress+preservation (§15.6) preserves
 > the invariant under `→`. Non-interference modulo delimited release (Sabelfeld–Myers;
 > Sabelfeld–Sands). A wired result event adds no declassifier: its payload carries
-> settled-by-origin joined with the request payload's trust (§6b), so it reaches `obs` only as
+> boundary judgment trust joined with the request payload's trust (§6b), so it reaches `obs` only as
 > `settled` (a settled perform request) or through a gate (a tainted emit-wired request); an
 > effector is invoked only inside a wired `perform` or `emit` (§6b), and the consequential
 > path is covered by exactly the `perform` rule. ∎ *(The two-run bisimulation is the mechanization obligation — §15.7,
@@ -2584,6 +2686,11 @@ appends its opening event, invokes the seam, journals the result (§16.5), and a
 - **Provider (`think`).** A judgment `Credence<E> c = d <- p` or a typed reply `T x = d <- p`
   renders the prompt `p` and compiles the destination schema: for a `Credence<E>` slot, the forced
   categorical choice over `E`'s variants; for a typed reply, `T`'s JSON Schema (§8). The connector
+  receives the rendered prompt only after the runtime applies the manifest's provider-prompt
+  ingress policy to the prompt's ingress provenance: `warn` records an audit diagnostic for
+  `external_unscreened` ingress, `deny` aborts before invoking the provider, and `off` accepts
+  silently (§17). This policy has no effect on `perform` sink admission.
+  The connector
   receives `{ prompt, schema }` and must return schema-conforming output by constrained decoding
   (mandatory; no fuzzy fallback). A logprob-exposing connector returns the committed value plus the
   per-variant score/logprob vector; a text-only connector returns only the value and is served by the
@@ -2603,22 +2710,34 @@ appends its opening event, invokes the seam, journals the result (§16.5), and a
   MCP `tools/call` with the marshalled args, appends the `ToolStarted`/`ToolResolved` pair (the
   replay journal, §6b, §7), and lands the configured `result_event` row when one is wired (§6b).
   Args and results marshal between Agape values and MCP JSON by the action's/event's declared
-  fields and the result event's declared fields. A result-event payload carries settled-by-origin
-  joined with the request payload's trust; a `perform`'s arguments must be settled (§6b, §13). A
-  standing sensor (`[events.NAME]` with no triggering emit) appends its events as they arrive,
-  like `prompt` (§5b, §6b).
+  fields and the result event's declared fields. A result-event payload carries judgment trust
+  joined with the request payload's trust; a `perform`'s arguments must be settled (§6b, §13).
+  Separately, result-event and standing-sensor payloads carry ingress provenance
+  `external_unscreened` unless the manifest-configured screen for that ingress accepts and records
+  `external_screened`. A standing sensor (`[events.NAME]` with no triggering emit) appends its
+  events as they arrive, like `prompt` (§5b, §6b).
+
+- **Ingress screening.** Prompt arrivals, standing-sensor events, and result-event payloads may be
+  bound in the manifest to an ingress screen (§17). The screen is not source syntax and is not a
+  way to grant action authority. The runtime records the original boundary payload, screen identity,
+  verdict, normalized delivered payload, and resulting ingress provenance. Accepted values are
+  delivered as `external_screened`; unscreened accepted values remain `external_unscreened`;
+  rejected values do not enter ordinary program data.
 
 ### 16.5 Record and replay
 
 A run is a **recording**: every oracle result (§16.4) is journaled to the ledger as the operation's
 closing event, carrying the result payload — and, for the provider, the per-variant scores (§15.5.1).
-Nondeterministic *inputs* are journaled too: external `prompt` arrivals, and a wall-clock `expires`
-lifetime's firing (§6); a logical-tick lifetime is already deterministic.
+Nondeterministic *inputs* are journaled too: external `prompt` arrivals, standing-sensor arrivals,
+world result-event payloads, ingress provenance labels, screening verdicts/normalizations, and a
+wall-clock `expires` lifetime's firing (§6); a logical-tick lifetime is already deterministic.
 
 - **Replay.** Given a recording, the runtime re-executes the program but **serves each oracle call
   from the journal instead of invoking the seam**: the *i*-th call of a given kind, in issue order
   (§16.1), is answered by the *i*-th recorded result of that kind. Replay invokes nothing external — a
-  wired effector is replayed as its recorded result, never re-run against the world.
+  wired effector is replayed as its recorded result, never re-run against the world. Ingress screens
+  are likewise not re-run during recorded replay; their recorded verdict and delivered payload are
+  served from the journal.
 - **What must be reproducible.** Replay never re-calls cognition completions, identity decisions, or
   wired endpoints (above), and it likewise never re-calls the **memory-internalization oracles** — decomposition,
   summarization, and embedding (§16.7). Each such call is either journaled (a non-deterministic provider
@@ -2936,6 +3055,17 @@ sampling_fallback = true
 fallback_samples = 10
 fallback_temperature = 0.7
 
+[security]
+tainted_ingress_to_provider = "warn"  # warn | deny | off; default is warn when omitted
+
+[security.ingress.prompts.question]
+driver = "builtin"
+policy = "prompt_input_baseline"
+
+[security.ingress.events.SearchResult]
+driver = "builtin"
+policy = "web_result_baseline"
+
 [prompts.question]
 driver = "studio"
 
@@ -2985,6 +3115,9 @@ Required stable tables:
 | `[tools.NAME]` | the endpoint catalog — a driver/transport for a world endpoint (§6b) | a wiring references it |
 | `[actions.NAME]` | wires a declared action's `perform` to a catalog endpoint (`tool = …`), with an optional `result_event` | the deployment wires that action |
 | `[events.NAME]` | wires a declared event as a standing sensor (`tool = …`) or an emit-trigger (`tool = …` + `result_event`) | the deployment wires that event |
+| `[security]` | ingress-to-cognition policy (`tainted_ingress_to_provider = "warn"|"deny"|"off"`) | optional; default is `warn` |
+| `[security.ingress.prompts.NAME]` | manifest-level ingress screening for a prompt source | optional; that prompt binding is screened |
+| `[security.ingress.events.NAME]` | manifest-level ingress screening for a standing sensor or result-event payload | optional; that event binding is screened |
 | `[memory]` | private-memory storage, indexing, and archival policy | runtime has private memory |
 
 Resolution rules:
@@ -3000,6 +3133,11 @@ Resolution rules:
   A violation is a `ConfigError` before execution. A foreground-bound `perform` (§6b) whose
   action has no configured `result_event` is a `ConfigError`. An unwired declared action or
   event is pure — never an error (§6b).
+- Screening is manifest-only. A `[security.ingress.prompts.NAME]` table screens the inbound
+  payload for `prompt NAME`; a `[security.ingress.events.NAME]` table screens the inbound payload
+  for a standing sensor `event NAME`, an action `result_event = "NAME"`, or an emit-trigger
+  `result_event = "NAME"`. These tables do not create source syntax, do not change declared types,
+  and do not grant or deny action authority.
 - Source owns type and authority. An action's or event's fields come from the `.ag` declaration,
   never the manifest; the manifest chooses only the endpoint, driver, transport, and wiring. If a
   driver cannot satisfy the wired shape, configuration fails.
@@ -3033,6 +3171,26 @@ Prompt bindings:
   drivers may be used by runtimes that support them.
 - The manifest does not restate the prompt type; the source declaration `prompt T NAME;` is
   authoritative. The driver must coerce or reject incoming payloads against `T`.
+- Without a matching `[security.ingress.prompts.NAME]` table, delivered prompt values carry ingress
+  provenance `external_unscreened`. With a matching table, the runtime records the screen input,
+  verdict, output, and resulting provenance; accepted values are delivered as `external_screened`,
+  and rejected values are not delivered as ordinary prompt data.
+
+Ingress security:
+
+- `[security].tainted_ingress_to_provider` governs only `external_unscreened` ingress flowing into
+  provider/cognition prompts (`<-`). The default is `warn`: a conformant checker/runtime emits an
+  audit diagnostic but allows the provider call. `deny` rejects the `(source, manifest)` pair when
+  statically visible and aborts before provider invocation if encountered dynamically. `off` accepts
+  silently. This is not an action-sink policy.
+- There is no manifest option for `tainted_to_action`, `ingress_to_action`, or any other
+  allow/warn/deny relaxation at `perform`. Consequential actions remain governed by the fixed
+  settled-only judgment-trust rule, grants, margin floor, and task-scope enablement (§13).
+- `[security.ingress.prompts.NAME]` and `[security.ingress.events.NAME]` tables configure ingress
+  screening backends. Their drivers and policies are implementation-defined, but a conformant
+  runtime must make screening replayable by recording the screener identity, input bytes or hash
+  plus recoverable payload reference, verdict, normalized output, and resulting ingress provenance.
+  Screening is a deployment boundary operation, not `.ag` source syntax.
 
 Identity bindings:
 
@@ -3060,7 +3218,7 @@ The `[tools.*]` endpoint catalog (referenced by `[actions.*]`/`[events.*]` wirin
   journaling, and replay behavior.
 - A conformant runtime may support additional drivers, but every invocation is still governed by
   the `perform NAME` grant (on the perform path), typed marshalling, `ToolStarted`/`ToolResolved`
-  journaling, and replay from the recorded result (§6b, §16.4, §16.5).
+  journaling, optional result screening, and replay from the recorded result (§6b, §16.4, §16.5).
 
 Memory bindings:
 
@@ -3076,14 +3234,16 @@ Memory bindings:
 
 Decision rules are not in the manifest. A gate's threshold, margin, floor, conformal alpha, and
 readiness are written inline in source (`decide c by confidence θ margin δ floor m`, §13). The
-manifest binds dependencies and runtime storage/transport only; it is never a hidden policy layer.
+manifest binds dependencies, runtime storage/transport, and ingress-boundary security policy; it is
+never a hidden decision policy layer.
 Swapping a dependency backend changes no source, but it does change the `(source, manifest)` program
 being run (§17.3).
 
 ### 17.2 Scopes and precedence (lowest → highest)
 
-For **connector and dependency config** (provider backend/model, `exposes_logprobs`, the identity
-bindings, the `[tools.*]` catalog and its wiring): 1. spec defaults; 2. global user config (`~/.agape/config.toml`); 3. project
+For **connector, dependency, and ingress-security config** (provider backend/model,
+`exposes_logprobs`, the identity bindings, the `[tools.*]` catalog and its wiring,
+`[security]`, and `[security.ingress.prompts/events.*]`): 1. spec defaults; 2. global user config (`~/.agape/config.toml`); 3. project
 manifest (`agape.toml`) — higher wins. **Decision rules are not on this ladder at all**: a gate's
 threshold, margin, and floor are inline on the gate (§13), so a threshold is never a hidden global —
 there is nothing in the manifest for a gate to override. Secrets (API keys, signing keys, MCP
@@ -3093,7 +3253,9 @@ credentials) come from the environment or OS keychain, never the manifest.
 
 The Stability theorem is stated for a fixed provider, and the committed manifest fixes it.
 A run is identified by `(I, manifest, recording)`. Changing the manifest changes the
-program's meaning, visible in version control.
+program's meaning, visible in version control; this includes changing the provider ingress policy
+or any ingress-screening binding. Recorded replay uses the recorded screening verdicts and
+delivered payloads rather than re-running screens.
 
 ### 17.4 Reproducibility in practice — two kinds of uncertainty, three knobs
 

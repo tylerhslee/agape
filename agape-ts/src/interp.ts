@@ -5,8 +5,8 @@
 import { createHash } from "node:crypto";
 import type * as A from "./ast.js";
 import {
-  Ledger, MockProvider, render, settledText,
-  type Provider, type StructuredSchema, type Value, type Committed, type Variant, type Trust,
+  Ledger, MockProvider, ingressJoin, ingressOf, render, settledText,
+  type Provider, type StructuredSchema, type Value, type Committed, type Variant, type Trust, type IngressProvenance,
 } from "./runtime.js";
 import { check, linkModules, type ModuleInput, type Resolution } from "./check.js";
 import type { Manifest, ToolBindingConfig } from "./config.js";
@@ -104,7 +104,7 @@ function scoreSummary(scores: Record<Variant, number>) {
 }
 
 function valueSummary(v: Value): Record<string, unknown> {
-  const base: Record<string, unknown> = { kind: v.kind, trust: v.trust, rendered: render(v) };
+  const base: Record<string, unknown> = { kind: v.kind, trust: v.trust, ingress: ingressOf(v), rendered: render(v) };
   if (v.kind === "text") return { ...base, value: v.v };
   if (v.kind === "int" || v.kind === "float" || v.kind === "bool") return { ...base, value: v.v };
   if (v.kind === "null") return { ...base, value: null };
@@ -203,6 +203,16 @@ function localAttestation(kind: string, payload: Record<string, unknown>, suppli
 export interface RunResult {
   ledger: Ledger;
   stdout: string[];
+  warnings: RuntimeWarning[];
+}
+
+export interface RuntimeWarning {
+  kind: "tainted_ingress_to_provider";
+  message: string;
+  prompt: string;
+  ingress: "external_unscreened";
+  agent?: string;
+  subject?: string;
 }
 
 export interface PromptInput {
@@ -296,6 +306,7 @@ export function createSession(program: A.Program, opts: RunOptions = {}): Runtim
 class Interpreter {
   private ledger: Ledger;
   private stdout: string[] = [];
+  private warnings: RuntimeWarning[] = [];
   private started = false;
   private enums = new Map<string, string[]>();
   private structs = new Map<string, A.Field[]>();
@@ -469,7 +480,7 @@ class Interpreter {
   }
 
   snapshot(): RunResult {
-    return { ledger: this.ledger, stdout: this.stdout };
+    return { ledger: this.ledger, stdout: this.stdout, warnings: this.warnings };
   }
 
   // §19.2: qualify a bare event/action/struct/agent name against the CURRENT agent's home module — a bare
@@ -621,7 +632,9 @@ class Interpreter {
         const wiring = this.eventWiring(etype);
         if (wiring) {
           const requestTrust = trustJoin(args);
-          const reply = wiring.tool !== undefined ? await this.invokeWired(String(wiring.tool), args, scope) : undefined;
+          const reply = wiring.tool !== undefined
+            ? await this.invokeWired(String(wiring.tool), args, scope, typeof wiring.result_event === "string" ? wiring.result_event : undefined)
+            : undefined;
           if (typeof wiring.result_event === "string") {
             await this.landResultEvent(wiring.result_event, reply, requestTrust, subj, scope);
           }
@@ -856,12 +869,13 @@ class Interpreter {
   private async deliverPrompt(input: PromptInput): Promise<void> {
     const decl = this.prompts.get(input.name);
     if (!decl) throw typeError(`prompt input for undeclared prompt '${input.name}'`);
-    const value = this.valueFromPromptInput(input.value, decl.type, new Scope());
+    const ingress = this.ingressForPrompt(input.name);
+    const value = this.valueFromPromptInput(input.value, decl.type, new Scope(), ingress);
     const summary = valueSummary(value);
     const attestation = localAttestation("prompt", { prompt: input.name, input: summary }, input.attestation);
     const fields = new Map<string, Value>([
       ["value", value],
-      ["text", { kind: "text", v: render(value), trust: "settled" }],
+      ["text", { kind: "text", v: render(value), trust: "settled", ingress: ingressOf(value) }],
       ["attester", settledText(String(attestation.attester))],
       ["payload_hash", settledText(String(attestation.payload_hash))],
       ["signature", settledText(String(attestation.signature))],
@@ -898,7 +912,7 @@ class Interpreter {
           }
           if (aboutName !== evSubject) continue;
         }
-        if (sub.when.binder) hscope.set(sub.when.binder, { kind: "struct", typeName: evEtype, fields, trust: "graded" });
+        if (sub.when.binder) hscope.set(sub.when.binder, { kind: "struct", typeName: evEtype, fields, trust: "graded", ingress: ingressJoin([...fields.values()]) });
         if (sub.when.guard) {
           const g = await this.evalExpr(sub.when.guard, hscope);
           if (!(g.kind === "bool" && g.v)) continue;
@@ -978,7 +992,9 @@ class Interpreter {
     // ToolStarted/ToolResolved pair) and lands the configured result event, if any.
     const wiring = this.actionWiring(name);
     if (wiring) {
-      const reply = wiring.tool !== undefined ? await this.invokeWired(String(wiring.tool), argValues, scope) : undefined;
+      const reply = wiring.tool !== undefined
+        ? await this.invokeWired(String(wiring.tool), argValues, scope, typeof wiring.result_event === "string" ? wiring.result_event : undefined)
+        : undefined;
       if (typeof wiring.result_event === "string") {
         await this.landResultEvent(wiring.result_event, reply, "settled", agent?.name ?? name, scope);
       }
@@ -1021,7 +1037,7 @@ class Interpreter {
       throw configError(`a result-bound perform of '${name}' requires an [actions.${name}] wiring with a result_event — there is nothing to bind (§6b, §17.1)`);
     }
     this.ledger.append(name, agent?.name ?? "<top>", payload, agent?.name);
-    const reply = wiring.tool !== undefined ? await this.invokeWired(String(wiring.tool), argValues, scope) : undefined;
+    const reply = wiring.tool !== undefined ? await this.invokeWired(String(wiring.tool), argValues, scope, wiring.result_event) : undefined;
     return this.landResultEvent(wiring.result_event, reply, "settled", agent?.name ?? name, scope);
   }
 
@@ -1035,16 +1051,52 @@ class Interpreter {
     return this.manifest?.events?.[name] ?? this.manifest?.events?.[bare];
   }
 
+  private ingressPolicy(): "warn" | "deny" | "off" {
+    const policy = this.manifest?.security?.tainted_ingress_to_provider;
+    return policy === "deny" || policy === "off" ? policy : "warn";
+  }
+
+  private ingressEntry(kind: "prompts" | "events", name: string): unknown {
+    const bare = name.includes(".") ? name.split(".").pop()! : name;
+    const group = this.manifest?.security?.ingress?.[kind];
+    return group?.[name] ?? group?.[bare];
+  }
+
+  private ingressForPrompt(name: string): IngressProvenance {
+    return this.ingressEntry("prompts", name) ? "external_screened" : "external_unscreened";
+  }
+
+  private ingressForEvent(name: string): IngressProvenance {
+    return this.ingressEntry("events", name) ? "external_screened" : "external_unscreened";
+  }
+
+  private checkProviderIngress(promptValue: Value, prompt: string, scope: Scope, subject: string): void {
+    if (ingressOf(promptValue) !== "external_unscreened") return;
+    const policy = this.ingressPolicy();
+    if (policy === "off") return;
+    const message = `provider prompt '${subject}' renders external unscreened ingress; configure [security.ingress.prompts.NAME] or [security.ingress.events.NAME] screening, or change [security] tainted_ingress_to_provider`;
+    if (policy === "deny") throw taintViolation(message);
+    this.warnings.push({
+      kind: "tainted_ingress_to_provider",
+      message,
+      prompt,
+      ingress: "external_unscreened",
+      agent: scope.currentAgent()?.name,
+      subject,
+    });
+  }
+
   // Invoke a [tools.*] catalog effector (§6b/§16.4): append the correlated ToolStarted/ToolResolved
   // pair — the seam's REPLAY JOURNAL (§16.5), beneath the named domain rows — and return the reply.
-  private async invokeWired(catalogKey: string, args: Value[], scope: Scope): Promise<Value> {
+  private async invokeWired(catalogKey: string, args: Value[], scope: Scope, resultEvent?: string): Promise<Value> {
     const agent = scope.currentAgent();
     const binding = this.catalogBinding(catalogKey);
     const payload = this.toolPayload(catalogKey, args);
     const startedPayload = { binding: this.bindingSummary(binding), args: args.map(valueSummary), payload };
+    const resultIngress = resultEvent ? this.ingressForEvent(resultEvent) : "external_unscreened";
     this.ledger.append("ToolStarted", catalogKey, startedPayload, agent?.name);
     return this.inResolutionOrder(
-      this.effectorResult(catalogKey, args, binding, payload),
+      this.effectorResult(catalogKey, args, binding, payload).then((resolved) => this.withIngress(resolved, resultIngress)),
       (resolved) => {
         this.ledger.append("ToolResolved", catalogKey, { ...startedPayload, result: valueSummary(resolved) }, agent?.name);
       },
@@ -1052,14 +1104,16 @@ class Interpreter {
   }
 
   // Land a configured result event (§6b): the effector's reply becomes the event's typed payload.
-  // Trust = settled by origin (external data) ⊔ the REQUEST payload's trust — the perform path is
-  // settled; an emit-triggered read joins the emitted payload's trust (no laundering). Returns the
+  // Judgment trust follows the request payload: the perform path is already settled; an
+  // emit-triggered read joins the emitted payload's trust (no laundering). Ingress provenance is
+  // tracked separately for prompt/provider screening. Returns the
   // value a foreground binding receives (single-field event → the field; else a struct of the fields).
   private async landResultEvent(eventName: string, reply: Value | undefined, requestTrust: Trust, subj: string, scope: Scope): Promise<Value> {
     const decl = this.events.get(eventName);
     if (!decl) throw configError(`wiring names result_event '${eventName}', which is not a declared event (§6b, §17.1)`);
     const agent = scope.currentAgent();
     const fields = new Map<string, Value>();
+    const resultIngress = this.ingressForEvent(eventName);
     decl.fields.forEach((f, i) => {
       let v: Value;
       if (decl.fields.length === 1 && reply && reply.kind === "text" && f.type.kind === "scalar" && f.type.name === "text") {
@@ -1069,12 +1123,12 @@ class Interpreter {
       } else {
         v = this.mockFieldValue(f.type, `${eventName}|${f.name}|${i}|${reply ? render(reply) : ""}`);
       }
-      fields.set(f.name, this.withTrust(v, requestTrust === "settled" ? "settled" : requestTrust));
+      fields.set(f.name, this.withIngress(this.withTrust(v, requestTrust === "settled" ? "settled" : requestTrust), resultIngress));
     });
-    this.ledger.append(eventName, subj, Object.fromEntries([...fields].map(([k, v]) => [k, render(v)])), agent?.name);
+    this.ledger.append(eventName, subj, Object.fromEntries([...fields].map(([k, v]) => [k, valueSummary(v)])), agent?.name);
     await this.fireSubscriptions(eventName, subj, fields);
     if (decl.fields.length === 1) return fields.get(decl.fields[0]!.name)!;
-    return { kind: "struct", typeName: eventName, fields, trust: requestTrust };
+    return { kind: "struct", typeName: eventName, fields, trust: requestTrust, ingress: ingressJoin([...fields.values()]) };
   }
 
   // a deterministic mock value for a result-event field (a pure function of its seed → replay-stable).
@@ -1256,6 +1310,7 @@ class Interpreter {
         trust: "settled",
         binding: bindName,
         source: cred,
+        ingress: ingressOf(cred),
       };
       return { value, committed };
     }
@@ -1267,7 +1322,7 @@ class Interpreter {
     // sink through the endorse wrapper. So the runtime independently refuses to settle a subject that still
     // carries un-endorsed cognition (raw/graded) UNLESS the decision was demonstrably ABOUT that subject —
     // the subject IS the exact Credence the decision collapsed, OR it fed that credence's prompt (its
-    // dependency scope). A settled-by-origin subject (constant, read-tool-over-settled inputs, a prior
+    // dependency scope). A judgment-settled subject (constant, external ingress, a prior
     // Endorsement) always passes; any other raw/graded subject cannot be laundered by a decision about
     // something else, so we fail closed rather than infer authority (mirrors the static §13 scope check).
     if (subject.trust !== "settled" && !this.decisionIsAbout(dec, subject)) {
@@ -1305,6 +1360,7 @@ class Interpreter {
     const value: Value = {
       kind: "endorsement", subject, enumName: dec.enumName, committed,
       basis: dec.basis, margin: dec.margin, committedNarrowed: true, trust: "settled", binding: bindName, decisionId: dec.decisionId,
+      ingress: ingressOf(subject),
     };
     return { value, committed };
   }
@@ -1431,7 +1487,7 @@ class Interpreter {
           if (p.kind === "text") { out += p.text; }
           else { const v = await this.evalExpr(p.expr, scope); out += render(v); parts.push(v); }
         }
-        return { kind: "text", v: out, trust: trustJoin(parts) };
+        return { kind: "text", v: out, trust: trustJoin(parts), ingress: ingressJoin(parts) };
       }
       case "self": {
         const a = scope.currentAgent();
@@ -1465,7 +1521,7 @@ class Interpreter {
           fields.set(f.name, v);
           parts.push(v);
         }
-        return { kind: "struct", typeName: e.typeName, fields, trust: trustJoin(parts) };
+        return { kind: "struct", typeName: e.typeName, fields, trust: trustJoin(parts), ingress: ingressJoin(parts) };
       }
       case "decide": case "endorse": return (await this.evalGate(e, scope, undefined, bindName)).value;
       case "member": return this.evalMember(e, scope);
@@ -1478,12 +1534,12 @@ class Interpreter {
           const el = arr.items[idx.kind === "int" ? idx.v : 0];
           if (el) return { ...el, trust: el.trust ?? trust } as Value;
         }
-        return { kind: "null", trust };
+        return { kind: "null", trust, ingress: ingressOf(arr) };
       }
       case "binary": return this.evalBinary(e, scope);
       case "unary": {
         const o = await this.evalExpr(e.operand, scope);
-        if (e.op === "!" && o.kind === "bool") return { kind: "bool", v: !o.v, trust: o.trust };
+        if (e.op === "!" && o.kind === "bool") return { kind: "bool", v: !o.v, trust: o.trust, ingress: ingressOf(o) };
         if (e.op === "-" && (o.kind === "int" || o.kind === "float")) return { ...o, v: -o.v };
         throw new RuntimeError(`bad unary ${e.op}`);
       }
@@ -1509,7 +1565,7 @@ class Interpreter {
       case "arraylit": {
         const items: Value[] = [];
         for (const it of e.items) items.push(await this.evalExpr(it, scope));
-        return { kind: "array", items, trust: trustJoin(items) };
+        return { kind: "array", items, trust: trustJoin(items), ingress: ingressJoin(items) };
       }
       case "pipe": return this.evalPipe(e, scope);
       case "agg": return this.evalAgg(e, scope);
@@ -1535,7 +1591,7 @@ class Interpreter {
           }
         }
         const fields = new Map<string, Value>([["objective", obj], ["acceptance", acc]]);
-        return { kind: "struct", typeName: "TaskSpec", fields, trust: trustJoin([obj, acc]), taskScope: e.scope.length ? [...e.scope] : undefined };
+        return { kind: "struct", typeName: "TaskSpec", fields, trust: trustJoin([obj, acc]), ingress: ingressJoin([obj, acc]), taskScope: e.scope.length ? [...e.scope] : undefined };
       }
     }
   }
@@ -1547,7 +1603,7 @@ class Interpreter {
     if (src.kind !== "array") throw new RuntimeError("`|>` requires a collection on the left");
     if (e.fn.kind !== "ident") throw new RuntimeError("`|>` requires a named function on the right");
     const results = await Promise.all(src.items.map((el) => this.callFn(e.fn as A.IdentExpr, [el], scope)));
-    return { kind: "array", items: results, trust: trustJoin(results) };
+    return { kind: "array", items: results, trust: trustJoin(results), ingress: ingressJoin(results) };
   }
 
   // Call a user-declared function by name, binding the argument values positionally to its parameters,
@@ -1603,7 +1659,7 @@ class Interpreter {
       const fold = e.op === "all"
         ? vals.every((v) => (v as any).v)
         : vals.some((v) => (v as any).v);
-      return { kind: "bool", v: fold, trust: trustJoin(vals) };
+      return { kind: "bool", v: fold, trust: trustJoin(vals), ingress: ingressJoin(vals) };
     }
     // the operand list aligned 1:1 with the fused credences (an array element's operand is the array expr,
     // which is not an ident, so it contributes no dependence name — i.e. an independent unit).
@@ -1726,6 +1782,7 @@ class Interpreter {
       scores: { true: clamped, false: 1 - clamped },
       trust: "graded",
       derivedFrom: creds,
+      ingress: ingressJoin(creds),
     };
   }
 
@@ -2025,6 +2082,7 @@ class Interpreter {
       return { kind: "text", v: "", trust: "raw" }; // an undelivered orphan reply
     }
     this.ledger.append("Delivered", subj, { to: destName }, scope.currentAgent()?.name);
+    this.checkProviderIngress(msgVal, prompt, scope, subj);
     // §5/§8 provider faults: `empty` = an unrecoverable seam failure → the agent crashes (contained); a
     // `schema_violation` = a structured typed reply that fails its schema → a clean, catchable TypeMismatch.
     const fault = (this.provider as { fault?: string }).fault;
@@ -2039,7 +2097,8 @@ class Interpreter {
       const { scores } = await this.inResolutionOrder(
         this.provider.judge(prompt, expected.enumName, variants),
         ({ scores: resolvedScores }) => {
-          const resolvedValue: Value = { kind: "credence", enumName: expected.enumName, scores: resolvedScores, trust: "graded", derivedFrom: this.promptSources(e.message, scope) };
+          const sources = this.promptSources(e.message, scope);
+          const resolvedValue: Value = { kind: "credence", enumName: expected.enumName, scores: resolvedScores, trust: "graded", derivedFrom: sources, ingress: ingressJoin(sources) };
           this.ledger.append("Resolved", subj, {
             kind: "credence",
             prompt,
@@ -2050,7 +2109,8 @@ class Interpreter {
           }, scope.currentAgent()?.name);
         },
       );
-      const value: Value = { kind: "credence", enumName: expected.enumName, scores, trust: "graded", derivedFrom: this.promptSources(e.message, scope) };
+      const sources = this.promptSources(e.message, scope);
+      const value: Value = { kind: "credence", enumName: expected.enumName, scores, trust: "graded", derivedFrom: sources, ingress: ingressJoin(sources) };
       // §13 dependency scope: record which in-scope values fed this credence's prompt, so a later
       // `endorse subject by (decide c)` can confirm the decision is ABOUT the subject (see evalGate).
       return value;
@@ -2215,11 +2275,13 @@ class Interpreter {
     const region = agent?.mems.get(e.mem.name);
     if (!region) throw typeError(`'${e.mem.name} ->': not a mem handle`);
     if (region.forgotten) throw typeError(`'${e.mem.name} ->': the handle was forgotten and is no longer recallable`);
-    const query = render(await this.evalExpr(e.query, scope));
+    const queryValue = await this.evalExpr(e.query, scope);
+    const query = render(queryValue);
     const candidates = region.writes.map(valueSummary);
     if (expected?.kind === "credence") {
       const variants = this.variantsOf(expected.enumName);
       if (!variants) throw new RuntimeError(`unknown enum '${expected.enumName}'`);
+      this.checkProviderIngress(queryValue, query, scope, agent?.name ?? "<top>");
       const { scores } = await this.inResolutionOrder(
         this.provider.judge(query, expected.enumName, variants),
         ({ scores: resolvedScores }) => {
@@ -2233,7 +2295,8 @@ class Interpreter {
           }, agent?.name);
         },
       );
-      return { kind: "credence", enumName: expected.enumName, scores, trust: "graded", derivedFrom: this.promptSources(e.query, scope) };
+      const sources = this.promptSources(e.query, scope);
+      return { kind: "credence", enumName: expected.enumName, scores, trust: "graded", derivedFrom: sources, ingress: ingressJoin(sources) };
     }
     // raw recall text — never settled (a recalled value must be re-decided + endorsed before a sink).
     const recalled = region.writes.length ? render(region.writes[region.writes.length - 1]!) : "";
@@ -2361,24 +2424,25 @@ class Interpreter {
     const r = await this.evalExpr(e.right, scope, this.enumHint(l));
     const num = (v: Value) => (v.kind === "int" || v.kind === "float" ? v.v : NaN);
     switch (e.op) {
-      case "==": return { kind: "bool", v: this.eq(l, r), trust: "settled" };
-      case "!=": return { kind: "bool", v: !this.eq(l, r), trust: "settled" };
-      case "<": return { kind: "bool", v: num(l) < num(r), trust: "settled" };
-      case ">": return { kind: "bool", v: num(l) > num(r), trust: "settled" };
-      case "<=": return { kind: "bool", v: num(l) <= num(r), trust: "settled" };
-      case ">=": return { kind: "bool", v: num(l) >= num(r), trust: "settled" };
+      case "==": return { kind: "bool", v: this.eq(l, r), trust: "settled", ingress: ingressJoin([l, r]) };
+      case "!=": return { kind: "bool", v: !this.eq(l, r), trust: "settled", ingress: ingressJoin([l, r]) };
+      case "<": return { kind: "bool", v: num(l) < num(r), trust: "settled", ingress: ingressJoin([l, r]) };
+      case ">": return { kind: "bool", v: num(l) > num(r), trust: "settled", ingress: ingressJoin([l, r]) };
+      case "<=": return { kind: "bool", v: num(l) <= num(r), trust: "settled", ingress: ingressJoin([l, r]) };
+      case ">=": return { kind: "bool", v: num(l) >= num(r), trust: "settled", ingress: ingressJoin([l, r]) };
       // value-producing ops join operand trust (contagious-upward, §15.3.1): `raw + "x"` stays raw —
       // string concat / arithmetic must NOT launder a cognition-provenance value to settled.
       case "+": {
         const t = trustJoin([l, r]);
-        if (l.kind === "text" || r.kind === "text") return { kind: "text", v: render(l) + render(r), trust: t };
-        return { kind: "float", v: num(l) + num(r), trust: t };
+        const ingress = ingressJoin([l, r]);
+        if (l.kind === "text" || r.kind === "text") return { kind: "text", v: render(l) + render(r), trust: t, ingress };
+        return { kind: "float", v: num(l) + num(r), trust: t, ingress };
       }
-      case "-": return { kind: "float", v: num(l) - num(r), trust: trustJoin([l, r]) };
-      case "*": return { kind: "float", v: num(l) * num(r), trust: trustJoin([l, r]) };
-      case "/": return { kind: "float", v: num(l) / num(r), trust: trustJoin([l, r]) };
-      case "&&": return { kind: "bool", v: (l as any).v && (r as any).v, trust: "settled" };
-      case "||": return { kind: "bool", v: (l as any).v || (r as any).v, trust: "settled" };
+      case "-": return { kind: "float", v: num(l) - num(r), trust: trustJoin([l, r]), ingress: ingressJoin([l, r]) };
+      case "*": return { kind: "float", v: num(l) * num(r), trust: trustJoin([l, r]), ingress: ingressJoin([l, r]) };
+      case "/": return { kind: "float", v: num(l) / num(r), trust: trustJoin([l, r]), ingress: ingressJoin([l, r]) };
+      case "&&": return { kind: "bool", v: (l as any).v && (r as any).v, trust: "settled", ingress: ingressJoin([l, r]) };
+      case "||": return { kind: "bool", v: (l as any).v || (r as any).v, trust: "settled", ingress: ingressJoin([l, r]) };
     }
     throw new RuntimeError(`bad binary ${e.op}`);
   }
@@ -2457,8 +2521,8 @@ class Interpreter {
     return this.structs.has(q) || this.enums.has(q) ? q : name;
   }
 
-  private valueFromPromptInput(raw: unknown, t: A.TypeRef, scope: Scope): Value {
-    return this.withTrust(this.valueFromStructured(this.coercePromptInput(raw, t, scope), t, scope), "settled");
+  private valueFromPromptInput(raw: unknown, t: A.TypeRef, scope: Scope, ingress: IngressProvenance): Value {
+    return this.withIngress(this.withTrust(this.valueFromStructured(this.coercePromptInput(raw, t, scope), t, scope), "settled"), ingress);
   }
 
   private coercePromptInput(raw: unknown, t: A.TypeRef, scope: Scope): unknown {
@@ -2514,6 +2578,17 @@ class Interpreter {
     return { ...v, trust } as Value;
   }
 
+  private withIngress(v: Value, ingress: IngressProvenance): Value {
+    if (v.kind === "struct") {
+      const fields = new Map([...v.fields].map(([k, val]) => [k, this.withIngress(val, ingress)]));
+      return { ...v, fields, ingress };
+    }
+    if (v.kind === "array") return { ...v, items: v.items.map((item) => this.withIngress(item, ingress)), ingress };
+    if (v.kind === "credence" || v.kind === "decision") return { ...v, ingress };
+    if (v.kind === "endorsement") return { ...v, subject: this.withIngress(v.subject, ingress), ingress };
+    return { ...v, ingress } as Value;
+  }
+
   private valueFromStructured(raw: unknown, t: A.TypeRef, scope: Scope): Value {
     if (t.kind === "event") return this.valueFromStructured(raw, t.inner, scope);
     if (t.kind === "scalar") {
@@ -2538,7 +2613,7 @@ class Interpreter {
     if (t.kind === "array") {
       if (!Array.isArray(raw)) throw new RuntimeError("structured reply is not an array");
       const items = raw.map((x) => this.valueFromStructured(x, t.inner, scope));
-      return { kind: "array", items, trust: trustJoin(items) };
+      return { kind: "array", items, trust: trustJoin(items), ingress: ingressJoin(items) };
     }
     if (t.kind === "named") {
       const name = this.resolveTypeName(t.name, scope);
@@ -2558,7 +2633,7 @@ class Interpreter {
         if (!Object.prototype.hasOwnProperty.call(obj, f.name)) throw new RuntimeError(`structured reply missing field '${f.name}'`);
         out.set(f.name, this.valueFromStructured(obj[f.name], f.type, scope));
       }
-      return { kind: "struct", typeName: name, fields: out, trust: trustJoin([...out.values()]) };
+      return { kind: "struct", typeName: name, fields: out, trust: trustJoin([...out.values()]), ingress: ingressJoin([...out.values()]) };
     }
     throw new RuntimeError("type does not have a structured reply schema");
   }
@@ -2577,7 +2652,7 @@ class Interpreter {
 }
 
 // trust join over the lattice settled ⊑ graded ⊑ raw — the result is as raw as its least-settled input
-// (contagious upward, §15.3.1). With no inputs the result is settled (settled by origin).
+// (contagious upward, §15.3.1). With no inputs the result is settled because no input carried cognition.
 function trustJoin(vs: { trust: Trust }[]): Trust {
   let t: Trust = "settled";
   for (const v of vs) {
