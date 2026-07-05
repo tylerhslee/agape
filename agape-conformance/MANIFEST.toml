@@ -764,6 +764,15 @@ spec = "§6c, §16.6 (mandatory expiry converts a lost task-send into a signal: 
 note = "Worker is never awakened, so the 1-tick lifetime elapses undelivered"
 
 [[test]]
+id = "del_fanout_shared_worker_concurrent_ok"
+section = "06c_delegation"
+path = "tests/06c_delegation/del_fanout_shared_worker_concurrent_ok.ag"
+expect = "accept"
+order = ["Spawned(worker)", "TaskCompleted(r)", "TaskCompleted(r)", "TaskCompleted(r)", "Done"]
+replay = "chain_head_equal"
+spec = "§6c + §12 — fan-out delegation composes with `|>`: a delegating function mapped over a finite collection to a SHARED worker runs its foreground tasks concurrently (paths overlap, §12), all complete, and the ledger replays identically (§0.2 determinism is serialized EFFECTS, not serialized execution — no shared mutable state to race over)"
+
+[[test]]
 id = "del_foreground_complete_ok"
 section = "06c_delegation"
 path = "tests/06c_delegation/del_foreground_complete_ok.ag"
