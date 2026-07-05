@@ -326,6 +326,7 @@ export type Expr =
   | SelfExpr
   | IdentExpr
   | CallExpr
+  | SpawnExpr
   | MemberExpr
   | IndexExpr
   | BinaryExpr
@@ -472,6 +473,9 @@ export interface NullLit extends Node { kind: "null"; }
 export interface SelfExpr extends Node { kind: "self"; }
 export interface IdentExpr extends Node { kind: "ident"; name: string; }
 export interface CallExpr extends Node { kind: "call"; callee: Expr; args: Expr[]; }
+// §6/§15.4: the expression form of spawn — `Verifier v = spawn Verifier;` — mints a FRESH instance
+// per evaluation (a distinct, deterministically-named agent), for a dynamic collection of workers.
+export interface SpawnExpr extends Node { kind: "spawnexpr"; agentType: string; args: Expr[]; }
 export interface MemberExpr extends Node { kind: "member"; obj: Expr; field: string; }
 export interface IndexExpr extends Node { kind: "index"; obj: Expr; index: Expr; } // `a[i]` element access (§10)
 export interface BinaryExpr extends Node { kind: "binary"; op: string; left: Expr; right: Expr; }

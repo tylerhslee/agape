@@ -1231,9 +1231,12 @@ class Checker {
           // statically known (a spawned/aliased instance) and does NOT implement the interface — otherwise
           // conservative (an unknown source is admitted, so an accept binding is never false-rejected).
           this.checkInterfaceBinding(s.type, s.init, scope);
-          // propagate a known concrete agent type through a simple alias `var m = n` (n an agent binding),
-          // so a later `Iface x = m;` still sees m's underlying implementor.
-          const srcType = s.init.kind === "ident" ? scope.getAgentType(s.init.name) : undefined;
+          // propagate a known concrete agent type through a simple alias `var m = n` (n an agent binding)
+          // or a `spawn` expression `Verifier v = spawn Verifier;`, so a later `v <- task` / `reach` /
+          // interface-binding check sees v's underlying agent type.
+          const srcType = s.init.kind === "ident" ? scope.getAgentType(s.init.name)
+            : s.init.kind === "spawnexpr" ? s.init.agentType
+            : undefined;
           if (srcType) scope.setAgentType(s.name, srcType);
         }
         scope.set(s.name, declClass(s.type));
@@ -1638,6 +1641,14 @@ class Checker {
       case "string": case "fstring": return "text";
       case "null": return "null";
       case "self": return "agent";
+      case "spawnexpr": {
+        // §19.5: a `spawn` of an interface is a TypeError, same as the statement form.
+        if (this.d.interfaces.has(e.agentType)) {
+          throw typeError(`'${e.agentType}' is an interface, which is not instantiable — a 'spawn' of an interface is a TypeError (§19.5)`);
+        }
+        for (const a of e.args) this.infer(a, scope);
+        return "unknown"; // agent-typed; coarse class left lenient (as the spawn statement does)
+      }
       case "ident": {
         const v = scope.get(e.name);
         if (v) return v;

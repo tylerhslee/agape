@@ -71,7 +71,16 @@ class Scope {
   // dependent clusters (Fréchet bound) vs independent units (log-odds) correctly at runtime. Each keeps
   // its relation so only `dependent` groups form clusters.
   depGroups: { relation: "independent" | "dependent"; names: string[] }[] = [];
+  // §12/§15.4: the fan-out position of this execution — the chain of `|>` element indices leading here.
+  // A `spawn` EXPRESSION derives a deterministic instance name from (call-site, this path) instead of
+  // execution order, so a dynamic fan-out `xs |> f` that spawns inside `f` replays byte-identically.
+  fanoutPath?: number[];
   constructor(public parent?: Scope, public agent?: AgentInstance) {}
+  getFanoutPath(): number[] {
+    if (this.fanoutPath) return this.fanoutPath;
+    if (this.parent) return this.parent.getFanoutPath();
+    return [];
+  }
   get(name: string): Value | undefined {
     if (this.vars.has(name)) return this.vars.get(name);
     if (this.parent) return this.parent.get(name);
@@ -540,11 +549,12 @@ class Interpreter {
         this.ledger.append("RetryExhausted", this.agentSubject(scope), undefined, scope.currentAgent()?.name);
         return;
       }
-      case "awake": return this.execAwake(s.name);
+      case "awake": return this.execAwake(this.instanceNameOf(s.name, scope));
       case "sleep": {
-        const inst = this.requireInstance(s.name);
+        const iname = this.instanceNameOf(s.name, scope);
+        const inst = this.requireInstance(iname);
         inst.awake = false;
-        this.ledger.append("AgentAsleep", s.name, undefined, s.name);
+        this.ledger.append("AgentAsleep", iname, undefined, iname);
         await this.runHook(inst, "sleep");
         return;
       }
@@ -553,7 +563,7 @@ class Interpreter {
         // TaskCompleted record carrying the result. Legal only inside a task handler.
         const inst = scope.currentAgent();
         const t = this.activeTaskALS.getStore();
-        if (!t) throw typeError("`complete` is legal only inside a task handler (§6c)");
+        if (!t || !inst) throw typeError("`complete` is legal only inside a task handler (§6c)");
         const v = await this.evalExpr(s.value, scope);
         if (taskTerminal(t)) {
           // §6c/§15.4.2: after a tombstone (cancel/expiry) the first terminal won — refuse and discard.
@@ -571,7 +581,7 @@ class Interpreter {
         // §6c: terminal failure — TaskFailed(reason); the transport chain rests at its Delivered prefix.
         const inst = scope.currentAgent();
         const t = this.activeTaskALS.getStore();
-        if (!t) throw typeError("`fail` is legal only inside a task handler (§6c)");
+        if (!t || !inst) throw typeError("`fail` is legal only inside a task handler (§6c)");
         const v = await this.evalExpr(s.reason, scope);
         if (v.kind !== "text") throw typeError("`fail` requires a text reason (§6c)");
         if (taskTerminal(t)) {
@@ -606,7 +616,7 @@ class Interpreter {
         if (s.name === "TaskProgress") {
           const inst = scope.currentAgent();
           const t = this.activeTaskALS.getStore();
-          if (!t) throw typeError("TaskProgress is emittable only inside a task handler — it correlates to the active task (§6c)");
+          if (!t || !inst) throw typeError("TaskProgress is emittable only inside a task handler — it correlates to the active task (§6c)");
           const note = s.args[0] ? await this.evalExpr(s.args[0], scope) : settledText("");
           this.ledger.append("TaskProgress", t.corr, { note: render(note) }, inst.name);
           await this.fireSubscriptions("TaskProgress", t.corr, new Map([["note", note]]));
@@ -727,27 +737,54 @@ class Interpreter {
   }
 
   private async execSpawn(s: A.SpawnStmt, scope: Scope): Promise<void> {
-    // §19.2: the spawned type may be QUALIFIED (`spawn m.Worker w`) or a bare name resolved within the
+    // the STATEMENT form: identity IS the declared name (a named singleton/service, addressable by name).
+    await this.spawnInstance(s.agentType, s.name, s.args, scope);
+  }
+
+  // per call-site sequence for `spawn` EXPRESSIONS outside a fan-out (deterministic in sequential eval).
+  private spawnSeq = new Map<string, number>();
+
+  // §6/§15.4 the `spawn` EXPRESSION: `Verifier v = spawn Verifier;` mints a FRESH instance and returns it
+  // as an agentref value. The name is derived from (call-site, fan-out path) — NOT execution order — so a
+  // dynamic `xs |> f` that spawns inside `f` produces the same names on every replay. `@`/`#` cannot occur
+  // in a source identifier, so a generated name never collides with a `spawn Type name` singleton.
+  private async evalSpawnExpr(e: A.SpawnExpr, scope: Scope): Promise<Value> {
+    const agentType = this.qualifyInModule(e.agentType, scope);
+    const site = `${e.pos.line}:${e.pos.col}`;
+    const path = scope.getFanoutPath();
+    let token: string;
+    if (path.length) token = path.join(".");
+    else { const n = this.spawnSeq.get(site) ?? 0; this.spawnSeq.set(site, n + 1); token = `s${n}`; }
+    const name = `${agentType}@${site}#${token}`;
+    await this.spawnInstance(e.agentType, name, e.args, scope);
+    return { kind: "agentref", name, agentType, trust: "settled" };
+  }
+
+  // §15.4.2 E-Spawn: allocate + construct an instance under `name`, then append Spawned. Shared by the
+  // statement form (name = the declared identifier) and the expression form (name = a generated id).
+  private async spawnInstance(agentTypeRaw: string, name: string, argExprs: A.Expr[], scope: Scope): Promise<AgentInstance> {
+    // §19.2: the spawned type may be QUALIFIED (`spawn m.Worker`) or a bare name resolved within the
     // spawning agent's home module. The instance records that home module so ITS body's bare event/action
     // names resolve within it (`m.Worker`'s `emit Glitch` → `m.Glitch`).
-    const agentType = this.qualifyInModule(s.agentType, scope);
+    const agentType = this.qualifyInModule(agentTypeRaw, scope);
     const decl = this.agents.get(agentType);
     if (!decl) throw new RuntimeError(`unknown agent type '${agentType}'`);
     const homeModule = this.agentModuleOf.get(agentType);
-    const inst: AgentInstance = { name: s.name, agentType, decl, awake: false, fields: new Map(), mems: new Map(), module: homeModule };
+    const inst: AgentInstance = { name, agentType, decl, awake: false, fields: new Map(), mems: new Map(), module: homeModule };
     // E-Spawn (§15.4.2): bind constructor arguments positionally to the agent's declared params, evaluated
     // in the SPAWNING scope (the args are the caller's expressions). These become instance fields visible to
     // the ctor/hooks/handlers; an agent-typed param binding is authority-checked by `reach` at each send (§13).
     for (let i = 0; i < decl.params.length; i++) {
       const p = decl.params[i]!;
-      const arg = s.args[i];
+      const arg = argExprs[i];
       inst.fields.set(p.name, arg ? await this.evalExpr(arg, scope) : this.zeroOf(p.type));
     }
-    this.instances.set(s.name, inst);
+    this.instances.set(name, inst);
     // the constructor body runs FIRST, then the Spawned event is appended.
     const ctorScope = new Scope(undefined, inst);
     for (const st of this.ctorOf(inst)) await this.execStmt(st, ctorScope);
-    this.ledger.append("Spawned", s.name, { value: valueSummary({ kind: "agentref", name: s.name, agentType, trust: "settled" }) }, s.name);
+    this.ledger.append("Spawned", name, { value: valueSummary({ kind: "agentref", name, agentType, trust: "settled" }) }, name);
+    return inst;
   }
 
   // the constructor statements of an instance, with an `extend`ed parent's ctor running first (§5).
@@ -976,7 +1013,7 @@ class Interpreter {
     // executed while this agent runs an ASSIGNED task requires the active task to be ENDORSED and to name
     // this action in its `scope`. The static grant is the upper bound — this check only ever disables.
     const active = this.activeTaskALS.getStore();
-    if (active) {
+    if (active && agent) {
       const bare = name.includes(".") ? name.split(".").pop()! : name;
       if (!active.endorsed || !(active.scope.includes(name) || active.scope.includes(bare))) {
         this.ledger.append("TaskScopeViolation", agent.name, { action: name, task: active.corr }, agent.name);
@@ -1017,7 +1054,7 @@ class Interpreter {
     if (!granted) throw authorityViolation(`agent lacks 'perform ${name}'`);
     // §6c task-scope enablement applies to expression performs too.
     const active = this.activeTaskALS.getStore();
-    if (active) {
+    if (active && agent) {
       const bare = name.includes(".") ? name.split(".").pop()! : name;
       if (!active.endorsed || !(active.scope.includes(name) || active.scope.includes(bare))) {
         this.ledger.append("TaskScopeViolation", agent.name, { action: name, task: active.corr }, agent.name);
@@ -1572,6 +1609,7 @@ class Interpreter {
         return { kind: "array", items, trust: trustJoin(items), ingress: ingressJoin(items) };
       }
       case "pipe": return this.evalPipe(e, scope);
+      case "spawnexpr": return this.evalSpawnExpr(e, scope);
       case "agg": return this.evalAgg(e, scope);
       case "quorum": return this.evalQuorum(e, scope);
       case "performexpr": return this.evalPerformExpr(e, scope);
@@ -1606,7 +1644,8 @@ class Interpreter {
     const src = await this.evalExpr(e.source, scope);
     if (src.kind !== "array") throw new RuntimeError("`|>` requires a collection on the left");
     if (e.fn.kind !== "ident") throw new RuntimeError("`|>` requires a named function on the right");
-    const results = await Promise.all(src.items.map((el) => this.callFn(e.fn as A.IdentExpr, [el], scope)));
+    // pass each element's INDEX so a `spawn` inside the mapped fn gets a deterministic per-path name.
+    const results = await Promise.all(src.items.map((el, i) => this.callFn(e.fn as A.IdentExpr, [el], scope, i)));
     return { kind: "array", items: results, trust: trustJoin(results), ingress: ingressJoin(results) };
   }
 
@@ -1614,13 +1653,18 @@ class Interpreter {
   // executing its body, and returning the `return`ed value. Used by `|>` (one element bound to the first
   // parameter, §12) and by a direct call `f(a, …)` (§15.2). Generics are monomorphized/erased before this
   // point (§19.5), so no type-parameter environment is needed — the body runs on the concrete values.
-  private async callFn(fnRef: A.IdentExpr, args: Value[], scope: Scope): Promise<Value> {
+  private async callFn(fnRef: A.IdentExpr, args: Value[], scope: Scope, pathIndex?: number): Promise<Value> {
     const fn = this.fns.get(fnRef.name);
     if (!fn) throw new RuntimeError(`unknown function '${fnRef.name}'`);
     // Functions are not closures over caller locals, but when an agent calls a function the function
     // executes in that agent context. This lets async `coll |> fn` fan-out preserve `self`, grants,
     // and private agent fields for each mapped path.
     const local = new Scope(undefined, scope.currentAgent());
+    // extend the caller's fan-out path with this element's index (nested `|>` compose), so a `spawn`
+    // expression in the body names its instance by position, not by execution timing (§12/§15.4).
+    const base = scope.getFanoutPath();
+    if (pathIndex !== undefined) local.fanoutPath = [...base, pathIndex];
+    else if (base.length) local.fanoutPath = base;
     fn.params.forEach((p, i) => { if (i < args.length) local.set(p.name, args[i]!); });
     let ret: Value = { kind: "null", trust: "settled" };
     for (const st of fn.body) {
@@ -2646,6 +2690,14 @@ class Interpreter {
     const inst = this.instances.get(name);
     if (!inst) throw new RuntimeError(`unknown agent instance '${name}'`);
     return inst;
+  }
+
+  // §15.4: resolve a lifecycle target (`awake x` / `sleep x`) to a concrete instance name. `x` may be a
+  // static instance name (the statement-form `spawn Type x`) OR a variable holding an agentref (the
+  // expression form `Type x = spawn Type`); the latter names a generated instance, so resolve the value.
+  private instanceNameOf(name: string, scope: Scope): string {
+    const v = scope.get(name);
+    return v && v.kind === "agentref" ? v.name : name;
   }
   private agentSubject(scope: Scope): string {
     return scope.currentAgent()?.name ?? "<top>";

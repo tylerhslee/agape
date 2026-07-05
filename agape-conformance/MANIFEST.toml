@@ -773,6 +773,15 @@ replay = "chain_head_equal"
 spec = "§6c + §12 — fan-out delegation composes with `|>`: a delegating function mapped over a finite collection to a SHARED worker runs its foreground tasks concurrently (paths overlap, §12), all complete, and the ledger replays identically (§0.2 determinism is serialized EFFECTS, not serialized execution — no shared mutable state to race over)"
 
 [[test]]
+id = "del_fanout_spawn_expr_distinct_workers_ok"
+section = "06c_delegation"
+path = "tests/06c_delegation/del_fanout_spawn_expr_distinct_workers_ok.ag"
+expect = "accept"
+order = ["TaskCompleted(r)", "TaskCompleted(r)", "TaskCompleted(r)", "Done"]
+replay = "chain_head_equal"
+spec = "§6c + §12 + §15.4 — the `spawn` EXPRESSION (`Worker w = spawn Worker;`) mints a FRESH distinct worker per fan-out element, so `xs |> f` builds a dynamic collection of workers; each verifies one delegated task, and instance names are derived from (call-site, element index), not execution order, so the ledger replays byte-identically"
+
+[[test]]
 id = "del_foreground_complete_ok"
 section = "06c_delegation"
 path = "tests/06c_delegation/del_foreground_complete_ok.ag"

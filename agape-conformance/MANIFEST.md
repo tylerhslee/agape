@@ -1,6 +1,6 @@
 # Agape v1.0.0-alpha.2026.7.3.0 — Conformance Test Index
 
-**206 tests** — accept: 127, reject: 79
+**207 tests** — accept: 128, reject: 79
 
 A conformant implementation must satisfy every `accept`/`reject` test (rejects with the declared error class; accepts matching any asserted spine).
 
@@ -138,6 +138,7 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 | `del_expires_unsettled_reject` | reject | TaintViolation | §6, §6c (`expires` requires a SETTLED numeric expression; a cognition-derived lifetime is rejected) |
 | `del_expiry_faults_foreground` | accept | — | §6c, §16.6 (mandatory expiry converts a lost task-send into a signal: the Expired tombstone faults the awaiting foreground invocation) |
 | `del_fanout_shared_worker_concurrent_ok` | accept | — | §6c + §12 — fan-out delegation composes with `|>`: a delegating function mapped over a finite collection to a SHARED worker runs its foreground tasks concurrently (paths overlap, §12), all complete, and the ledger replays identically (§0.2 determinism is serialized EFFECTS, not serialized execution — no shared mutable state to race over) |
+| `del_fanout_spawn_expr_distinct_workers_ok` | accept | — | §6c + §12 + §15.4 — the `spawn` EXPRESSION (`Worker w = spawn Worker;`) mints a FRESH distinct worker per fan-out element, so `xs |> f` builds a dynamic collection of workers; each verifies one delegated task, and instance names are derived from (call-site, element index), not execution order, so the ledger replays byte-identically |
 | `del_foreground_complete_ok` | accept | — | §6c (a foreground task-send: the worker's `complete` produces the transport Resolved plus TaskCompleted, and the delegator's continuation resumes with the result) |
 | `del_foreground_failure_faults` | accept | — | §6c, §16.6 (a foreground task terminal other than TaskCompleted faults the delegator's awaiting invocation via the contained-crash path; `on crash` recovers with state intact) |
 | `del_missing_expires_reject` | reject | TypeError | §6c (`expires` is mandatory on every delegation — every task is terminal by construction) |

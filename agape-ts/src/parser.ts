@@ -42,6 +42,7 @@ function assertCore(p: A.Program): void {
       case "member": walkExpr(e.obj); break;
       case "index": walkExpr(e.obj); walkExpr(e.index); break;
       case "call": walkExpr(e.callee); e.args.forEach(walkExpr); break;
+      case "spawnexpr": e.args.forEach(walkExpr); break;
       case "binary": walkExpr(e.left); walkExpr(e.right); break;
       case "unary": walkExpr(e.operand); break;
       case "send": walkExpr(e.dest); walkExpr(e.message); break;
@@ -1306,6 +1307,14 @@ class Parser {
       case "abstained": this.next(); return { kind: "ident", name: "abstained", pos: t.pos };
       case "null": this.next(); return { kind: "null", pos: t.pos };
       case "self": this.next(); return { kind: "self", pos: t.pos };
+      case "spawn": {
+        // the EXPRESSION form: `spawn Type (args)?` with no instance name — mints a fresh instance
+        // per evaluation (the statement form `spawn Type name;` keeps its own parse path). §6/§15.4.
+        this.next();
+        const agentType = this.qname();
+        const args = this.at("(") ? this.parseArgs() : [];
+        return { kind: "spawnexpr", agentType, args, pos: t.pos };
+      }
       case "ident": {
         this.next();
         // a QUALIFIED struct-literal head `geo.Shape { … }` / `facade.internal.Shape { … }` (§19.2): if a
