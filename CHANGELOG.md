@@ -6,12 +6,37 @@ All notable changes to Agape are recorded here. The format follows
 suite, and the studio move in lockstep — a release is the whole bundle at one
 version.
 
-## [1.0.0-alpha.2026.7.3.1] — 2026-07-04
+## [1.0.0-alpha.2026.7.5.0] — 2026-07-05
 
-External ingress is screened before it can steer a provider prompt (§6b anti-injection,
-extends T3). SPEC, conformance suite, and `agape-ts` move together.
+Concurrent subagent delegation, done right: `|>` fan-out to workers now runs their tasks in
+parallel (a runtime fix), and a new `spawn` expression makes a *dynamic* collection of distinct
+workers expressible. Plus the external-ingress screening from the prior line. SPEC, conformance
+suite (207 tests), and `agape-ts` move together.
 
-### Language — gate external ingress to provider prompts
+### Language — the `spawn` expression: dynamic, distinct workers (§6/§15.4)
+
+- **A second spawn form.** `Verifier v = spawn Verifier;` mints a **fresh** instance per
+  evaluation, bound to a value — beside the existing `spawn Verifier v;`, which stays a **named
+  singleton** (identity = the declared name, addressable by name). The expression form lets a
+  delegating function be fanned out with `|>` over a runtime-sized collection and give **each path
+  its own distinct worker** — which the static-name statement form cannot express.
+- **Deterministic identity.** A spawned instance's name is derived from `(call-site, fan-out
+  element index)`, never execution order, so `xs |> f` that spawns inside `f` replays
+  byte-identically (§0.2). `awake`/`sleep` resolve an agent-ref variable, so `awake w` works for
+  an expression-spawned worker.
+
+### Runtime — concurrent task delivery (§6c, fixes T3/§0.2 for `|>`-of-delegation)
+
+- **One worker can run many overlapping tasks.** The active assigned task was tracked in a slot
+  keyed by agent *name* (nested-only, save/restore); concurrent handlers on one agent clobbered
+  it, so `complete`/`fail` resolved the wrong task and it expired. It is now scoped to the async
+  execution (`AsyncLocalStorage`), so `plan.claims |> (delegate to a shared worker)` completes
+  every task concurrently. Determinism is unchanged — it comes from serialized ledger effects,
+  not serialized execution — so the fan-out replays identically.
+- New `06c_delegation` conformance cases pin both patterns (shared worker; distinct workers via
+  the `spawn` expression), each asserting all-complete **and** replay-equivalence.
+
+### Language — gate external ingress to provider prompts (§6b anti-injection, extends T3)
 
 - **Un-screened external data may not drive cognition.** A value that entered the process
   from outside — a prompt-ingress payload (§5b) or a wired result-event payload (§6b) — is
