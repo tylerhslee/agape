@@ -3,6 +3,7 @@
 // the mock provider resolves on a microtask, so the same async path is exercised in tests and live.
 
 import { createHash } from "node:crypto";
+import { AsyncLocalStorage } from "node:async_hooks";
 import type * as A from "./ast.js";
 import {
   Ledger, MockProvider, ingressJoin, ingressOf, render, settledText,
@@ -325,7 +326,11 @@ class Interpreter {
   // ACTIVE task per worker instance (set for the duration of its task handler).
   private tasks = new Map<string, TaskState>();
   private pendingDeliveries: TaskState[] = [];
-  private activeTasks = new Map<string, TaskState>();
+  // The active assigned task, scoped to the async EXECUTION rather than the agent name. A per-name
+  // slot only supports NESTED delivery (save/restore); AsyncLocalStorage lets one agent run many
+  // CONCURRENT task handlers (e.g. `claims |> delegate-to-worker`) without their active tasks
+  // clobbering each other — `complete`/`fail`/scope-checks read the task of the current async path.
+  private activeTaskALS = new AsyncLocalStorage<TaskState>();
   private drainingTasks = false;
   private dispatchDepth = 0; // reentrancy guard: a handler's appends cascade, but bounded (events are finite).
   // §3: the set of declared `principal NAME;` names, so evalGate can recognize the suite's `decide c by p`
@@ -547,7 +552,7 @@ class Interpreter {
         // §6c: resolve the active assigned task programmatically — the transport Resolved plus a
         // TaskCompleted record carrying the result. Legal only inside a task handler.
         const inst = scope.currentAgent();
-        const t = inst && this.activeTasks.get(inst.name);
+        const t = this.activeTaskALS.getStore();
         if (!t) throw typeError("`complete` is legal only inside a task handler (§6c)");
         const v = await this.evalExpr(s.value, scope);
         if (taskTerminal(t)) {
@@ -565,7 +570,7 @@ class Interpreter {
       case "fail": {
         // §6c: terminal failure — TaskFailed(reason); the transport chain rests at its Delivered prefix.
         const inst = scope.currentAgent();
-        const t = inst && this.activeTasks.get(inst.name);
+        const t = this.activeTaskALS.getStore();
         if (!t) throw typeError("`fail` is legal only inside a task handler (§6c)");
         const v = await this.evalExpr(s.reason, scope);
         if (v.kind !== "text") throw typeError("`fail` requires a text reason (§6c)");
@@ -600,7 +605,7 @@ class Interpreter {
         // correlated to the ACTIVE task (its subject is the task correlation, not the agent).
         if (s.name === "TaskProgress") {
           const inst = scope.currentAgent();
-          const t = inst && this.activeTasks.get(inst.name);
+          const t = this.activeTaskALS.getStore();
           if (!t) throw typeError("TaskProgress is emittable only inside a task handler — it correlates to the active task (§6c)");
           const note = s.args[0] ? await this.evalExpr(s.args[0], scope) : settledText("");
           this.ledger.append("TaskProgress", t.corr, { note: render(note) }, inst.name);
@@ -844,12 +849,14 @@ class Interpreter {
     await this.fireSubscriptions("Delivered", t.corr, new Map());
     const hook = inst.decl.hooks.find((h) => h.event === "assigned");
     if (!hook) return; // no completing handler is not an error — expiry backstops it (§6c)
-    const prev = this.activeTasks.get(inst.name);
-    this.activeTasks.set(inst.name, t);
     const hscope = new Scope(undefined, inst);
+    // run the handler inside this task's async context; nested delegation nests the context, and
+    // concurrent deliveries to the same agent each keep their own active task (no clobbering).
     try {
-      this.registerBlockWhens(hook.body, hscope, inst);
-      for (const st of hook.body) await this.execStmt(st, hscope);
+      await this.activeTaskALS.run(t, async () => {
+        this.registerBlockWhens(hook.body, hscope, inst);
+        for (const st of hook.body) await this.execStmt(st, hscope);
+      });
     } catch (err) {
       if (err instanceof TaskDoneSignal) {
         // the handler completed/failed the task — normal termination
@@ -860,9 +867,6 @@ class Interpreter {
       } else {
         throw err;
       }
-    } finally {
-      if (prev) this.activeTasks.set(inst.name, prev);
-      else this.activeTasks.delete(inst.name);
     }
   }
 
@@ -971,7 +975,7 @@ class Interpreter {
     // §6c/§13 task-scope enablement (the second runtime sink check, beside the margin floor): a perform
     // executed while this agent runs an ASSIGNED task requires the active task to be ENDORSED and to name
     // this action in its `scope`. The static grant is the upper bound — this check only ever disables.
-    const active = agent && this.activeTasks.get(agent.name);
+    const active = this.activeTaskALS.getStore();
     if (active) {
       const bare = name.includes(".") ? name.split(".").pop()! : name;
       if (!active.endorsed || !(active.scope.includes(name) || active.scope.includes(bare))) {
@@ -1012,7 +1016,7 @@ class Interpreter {
     const granted = grants === "all" || (Array.isArray(grants) && grants.some((g) => g.cap === "perform" && (g.name === name || this.qualifyInModule(g.name, scope) === name)));
     if (!granted) throw authorityViolation(`agent lacks 'perform ${name}'`);
     // §6c task-scope enablement applies to expression performs too.
-    const active = agent && this.activeTasks.get(agent.name);
+    const active = this.activeTaskALS.getStore();
     if (active) {
       const bare = name.includes(".") ? name.split(".").pop()! : name;
       if (!active.endorsed || !(active.scope.includes(name) || active.scope.includes(bare))) {
