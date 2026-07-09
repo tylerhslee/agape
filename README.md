@@ -211,10 +211,13 @@ model = "gpt-4o-mini"
 driver = "mock"
 
 [memory]
-blob_store = "archive"
-background_reindex = true
-forget_policy = "cascade"
-archive_retention = "forever"
+driver = "markdown"
+path = ".agape/memory"
+entrypoint = "MEMORY.md"
+top_k = 10
+index_lines = 200
+index_bytes = 25600
+archive_on_forget = true
 ```
 
 The built-in `mock` tool driver is used for demos and replay-stable tests.

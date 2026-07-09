@@ -60,6 +60,16 @@ model = "claude-haiku-4-5"
 
 [runtime]
 samples = 5
+
+[memory]
+# Project-local, editable markdown memory. Keep runtime state out of the Agape installation.
+driver = "markdown"
+path = ".agape/memory"
+entrypoint = "MEMORY.md"
+top_k = 10
+index_lines = 200
+index_bytes = 25600
+archive_on_forget = true
 TOML
 cat > "$STAGE/README.md" <<MD
 # Agape ${VERSION}

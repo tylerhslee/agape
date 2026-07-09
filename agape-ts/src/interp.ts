@@ -10,6 +10,7 @@ import {
 } from "./runtime.js";
 import { check, linkModules, type ModuleInput, type Resolution } from "./check.js";
 import type { Manifest, ToolBindingConfig } from "./config.js";
+import { LocalMemoryDriver, type MemoryDriver, type MemoryReceipt, type MemoryScope } from "./memory.js";
 import { parse } from "./parser.js";
 import { typeError, taintViolation, authorityViolation, configError } from "./errors.js";
 
@@ -237,6 +238,7 @@ type RunOptions = {
   principalAttestations?: PrincipalAttestation[];
   onConsult?: (req: ConsultRequest) => Promise<PrincipalAttestation | undefined>;
   toolHandlers?: Record<string, ToolHandler>;
+  memory?: MemoryDriver;
   strictConfig?: boolean;
   timingOriginMs?: number;
 };
@@ -263,6 +265,7 @@ export function createSession(program: A.Program, opts: RunOptions = {}): Runtim
     opts.manifest,
     opts.toolHandlers ?? {},
     opts.timingOriginMs,
+    opts.memory ?? new LocalMemoryDriver(),
   );
 }
 
@@ -318,6 +321,7 @@ class Interpreter {
     private manifest?: Manifest,
     private toolHandlers: Record<string, ToolHandler> = {},
     timingOriginMs?: number,
+    private memory: MemoryDriver = new LocalMemoryDriver(),
   ) {
     this.ledger = new Ledger(timingOriginMs);
     // §3: register the declared principal names so a `decide c by p` (the parser's {policy} rule form)
@@ -573,22 +577,33 @@ class Interpreter {
     const agent = scope.currentAgent();
     if (!agent) throw new RuntimeError("`mem` declared outside an agent");
     const region: MemRegion = { writes: [], forgotten: false };
+    const memScope = this.memoryScope(agent, s.name);
+    await this.memory.declare?.(memScope);
+    agent.mems.set(s.name, region);
+    scope.set(s.name, { kind: "memref", name: s.name, trust: "settled" });
     if (s.init) {
       const v = await this.evalExpr(s.init, scope);
       region.writes.push(v);
       // E-Store (§15.4.2): the declare-with-init form is a store too — it internalizes and traces.
-      this.ledger.append("Internalized", s.name, this.memoryInternalizedPayload(s.name, v), agent.name);
+      const base = this.memoryInternalizedPayload(s.name, v);
+      const receipt = await this.memory.internalize({
+        scope: memScope,
+        value: v,
+        memory: String(base.memory ?? ""),
+        summary: valueSummary(v),
+        metadata: { source: "memdecl", subject: s.name },
+      });
+      this.ledger.append("Internalized", s.name, this.memoryInternalizedPayload(s.name, v, receipt), agent.name);
     }
-    agent.mems.set(s.name, region);
-    scope.set(s.name, { kind: "memref", name: s.name, trust: "settled" });
   }
 
   // forget ::= "forget" Ident ";" — an audit-preserving tombstone; the region becomes unrecallable (§10).
-  private execForget(s: A.ForgetStmt, scope: Scope): void {
+  private async execForget(s: A.ForgetStmt, scope: Scope): Promise<void> {
     const agent = scope.currentAgent();
     const region = agent?.mems.get(s.name);
     if (!region) throw typeError(`'forget ${s.name}': not a mem handle`);
-    const payload = this.memoryForgottenPayload(s.name, region);
+    const receipt = await this.memory.forget({ scope: this.memoryScope(agent!, s.name) });
+    const payload = this.memoryForgottenPayload(s.name, region, receipt);
     region.writes = [];
     region.forgotten = true;
     this.ledger.append("Forgotten", s.name, payload, agent?.name);
@@ -1507,12 +1522,44 @@ class Interpreter {
     return `blob:sha256:${sha256(parts)}`;
   }
 
-  private memoryInternalizedPayload(mem: string, value: Value): Record<string, unknown> {
+  private memoryScope(agent: AgentInstance, mem: string): MemoryScope {
+    const project = this.manifest?.project?.name;
+    return {
+      agent: agent.name,
+      mem,
+      project: typeof project === "string" ? project : undefined,
+    };
+  }
+
+  private memoryDriverRefs(receipt?: MemoryReceipt): Record<string, unknown> {
+    if (!receipt) return {};
+    return {
+      ...(receipt.eventId ? { driver_event: receipt.eventId } : {}),
+      ...(receipt.ids?.length ? { driver_ids: receipt.ids } : {}),
+    };
+  }
+
+  private memoryInternalizedPayload(mem: string, value: Value, receipt?: MemoryReceipt): Record<string, unknown> {
     const summary = valueSummary(value);
+    const refs = {
+      input: this.blobRef({ mem, view: "input", value: summary }),
+      facts_delta: this.blobRef({ mem, view: "facts_delta", value: summary }),
+      graph_delta: this.blobRef({ mem, view: "graph_delta", value: summary }),
+      vector_delta: this.blobRef({ mem, view: "vector_delta", value: summary }),
+      ...this.memoryDriverRefs(receipt),
+      ...(receipt?.refs ?? {}),
+    };
+    const policy = {
+      indexing: "incremental",
+      background_reindex: "runtime-managed",
+      graph_forget: "cascade",
+      archive: "runtime-configured",
+      ...(receipt?.policy ?? {}),
+    };
     return {
       memory: `I stored ${this.valueMemoryLabel(value)} in private memory '${mem}'. ${this.lessonFromValue(value)}`,
       value: summary,
-      effects: {
+      effects: receipt?.effects ?? {
         facts: { upserted: 1, tombstoned: 0, deleted: 0 },
         graph: {
           nodes_upserted: 1,
@@ -1525,22 +1572,13 @@ class Interpreter {
         vectors: { chunks_upserted: 1, chunks_deleted: 0, embeddings_deleted: 0 },
         blobs: { archived: 1, redacted: 0, deleted: 0 },
       },
-      refs: {
-        input: this.blobRef({ mem, view: "input", value: summary }),
-        facts_delta: this.blobRef({ mem, view: "facts_delta", value: summary }),
-        graph_delta: this.blobRef({ mem, view: "graph_delta", value: summary }),
-        vector_delta: this.blobRef({ mem, view: "vector_delta", value: summary }),
-      },
-      policy: {
-        indexing: "incremental",
-        background_reindex: "runtime-managed",
-        graph_forget: "cascade",
-        archive: "runtime-configured",
-      },
+      refs,
+      policy,
+      ...(receipt?.status ? { driver_status: receipt.status } : {}),
     };
   }
 
-  private receivedReplyInternalizedPayload(prompt: string, value: Value, sourceEvent: number): Record<string, unknown> {
+  private receivedReplyInternalizedPayload(prompt: string, value: Value, sourceEvent: number, receipt?: MemoryReceipt): Record<string, unknown> {
     return {
       memory: this.receivedReplyMemory(prompt, value),
       prompt,
@@ -1548,12 +1586,29 @@ class Interpreter {
       source_event: sourceEvent,
       derived_from: ["prompt", "provider reply"],
       trust: value.trust,
+      ...(receipt ? { refs: this.memoryDriverRefs(receipt) } : {}),
+      ...(receipt?.status ? { driver_status: receipt.status } : {}),
     };
   }
 
   private receivedReplyMemory(prompt: string, value: Value): string {
     const asked = this.compactMemoryText(prompt);
     return `I was asked ${JSON.stringify(asked)}. I received ${this.valueMemoryLabel(value)} from the provider. ${this.lessonFromValue(value)}`;
+  }
+
+  private async internalizeReceivedReply(subj: string, prompt: string, value: Value, sourceEvent: number, agent?: AgentInstance): Promise<void> {
+    let receipt: MemoryReceipt | undefined;
+    const base = this.receivedReplyInternalizedPayload(prompt, value, sourceEvent);
+    if (agent) {
+      receipt = await this.memory.internalize({
+        scope: this.memoryScope(agent, "__agent__"),
+        value,
+        memory: String(base.memory ?? ""),
+        summary: valueSummary(value),
+        metadata: { source: "provider_reply", subject: subj, source_event: sourceEvent },
+      });
+    }
+    this.ledger.append("Internalized", subj, this.receivedReplyInternalizedPayload(prompt, value, sourceEvent, receipt), agent?.name);
   }
 
   private valueMemoryLabel(value: Value): string {
@@ -1630,11 +1685,11 @@ class Interpreter {
     return compact.length > max ? `${compact.slice(0, Math.max(0, max - 3))}...` : compact;
   }
 
-  private memoryForgottenPayload(mem: string, region: MemRegion): Record<string, unknown> {
+  private memoryForgottenPayload(mem: string, region: MemRegion, receipt?: MemoryReceipt): Record<string, unknown> {
     const n = region.writes.length;
     return {
       mode: "cascade",
-      effects: {
+      effects: receipt?.effects ?? {
         facts: { upserted: 0, tombstoned: n, deleted: 0 },
         graph: {
           nodes_upserted: 0,
@@ -1649,12 +1704,16 @@ class Interpreter {
       },
       refs: {
         forget_delta: this.blobRef({ mem, op: "forget", count: n }),
+        ...this.memoryDriverRefs(receipt),
+        ...(receipt?.refs ?? {}),
       },
       policy: {
         graph_forget: "cascade",
         redaction: "separate-operation",
         archive: "runtime-configured",
+        ...(receipt?.policy ?? {}),
       },
+      ...(receipt?.status ? { driver_status: receipt.status } : {}),
     };
   }
 
@@ -1698,7 +1757,15 @@ class Interpreter {
       if (region.forgotten) throw typeError(`'${dest.name} <-': the handle was forgotten and is no longer writable`);
       region.writes.push(v);
       // E-Store (§15.4.2): a mem write mutates the live private-memory views and appends an audit receipt.
-      const payload = this.memoryInternalizedPayload(dest.name, v);
+      const base = this.memoryInternalizedPayload(dest.name, v);
+      const receipt = await this.memory.internalize({
+        scope: this.memoryScope(agent!, dest.name),
+        value: v,
+        memory: String(base.memory ?? ""),
+        summary: valueSummary(v),
+        metadata: { source: "store", subject: dest.name },
+      });
+      const payload = this.memoryInternalizedPayload(dest.name, v, receipt);
       const ev = this.ledger.append("Internalized", dest.name, payload, agent?.name);
       return this.ledgerEntryValue(ev, "Internalized", {
         mem: settledText(dest.name),
@@ -1779,7 +1846,7 @@ class Interpreter {
         : this.provider.reply(`${prompt}\n\nReturn only JSON matching this schema:\n${JSON.stringify(schema)}`).then((reply) => JSON.parse(reply)))
         .then((raw) => ({ raw }), (error) => ({ error }));
       let value: Value = { kind: "null", trust: "raw" };
-      await this.inResolutionOrder(rawWork, ({ raw, error }) => {
+      await this.inResolutionOrder(rawWork, async ({ raw, error }) => {
         if (error) {
           this.ledger.append("TypeMismatch", subj, {
             schema,
@@ -1799,7 +1866,7 @@ class Interpreter {
           }, scope.currentAgent()?.name);
           // §16.7: a received typed reply is internalized into the agent's private memory — the mandatory
           // memory envelope (consult+internalize is unconditional; no opt-in/opt-out config knob).
-          this.ledger.append("Internalized", subj, this.receivedReplyInternalizedPayload(prompt, value, resolved.tick), scope.currentAgent()?.name);
+          await this.internalizeReceivedReply(subj, prompt, value, resolved.tick, scope.currentAgent());
         } catch (err) {
           this.ledger.append("TypeMismatch", subj, {
             schema,
@@ -1812,14 +1879,14 @@ class Interpreter {
       return value;
     }
     let value: Value = { kind: "null", trust: "raw" };
-    await this.inResolutionOrder(this.provider.reply(prompt), (reply) => {
+    await this.inResolutionOrder(this.provider.reply(prompt), async (reply) => {
       value = { kind: "text", v: reply, trust: "raw" };
       const resolved = this.ledger.append("Resolved", subj, { kind: "reply", prompt, reply: valueSummary(value) }, scope.currentAgent()?.name);
       // §16.7: a received typed reply is internalized into the agent's private memory — the mandatory memory
       // envelope (consult+internalize is unconditional; there is no opt-in/opt-out config knob). A typed
       // binding slot (`text r = d <- …`) internalizes; a bare unbound send (`d <- …;`) records only its
       // lifecycle. (Credence-slot judgments take the judge path above, not this reply path.)
-      if (expected !== undefined) this.ledger.append("Internalized", subj, this.receivedReplyInternalizedPayload(prompt, value, resolved.tick), scope.currentAgent()?.name);
+      if (expected !== undefined) await this.internalizeReceivedReply(subj, prompt, value, resolved.tick, scope.currentAgent());
     });
     return value;
   }
@@ -1855,7 +1922,11 @@ class Interpreter {
     if (!region) throw typeError(`'${e.mem.name} ->': not a mem handle`);
     if (region.forgotten) throw typeError(`'${e.mem.name} ->': the handle was forgotten and is no longer recallable`);
     const query = render(await this.evalExpr(e.query, scope));
-    const candidates = region.writes.map(valueSummary);
+    const consulted = await this.memory.consult({ scope: this.memoryScope(agent!, e.mem.name), query });
+    const overlayCandidates = region.writes.map(valueSummary);
+    const candidates = [...consulted.candidates, ...overlayCandidates];
+    const recalled = consulted.recalled || (region.writes.length ? render(region.writes[region.writes.length - 1]!) : "");
+    const hits = Math.max(consulted.hits.length, region.writes.length);
     if (expected?.kind === "credence") {
       const variants = this.variantsOf(expected.enumName);
       if (!variants) throw new RuntimeError(`unknown enum '${expected.enumName}'`);
@@ -1864,8 +1935,9 @@ class Interpreter {
         ({ scores: resolvedScores }) => {
           this.ledger.append("MemoryConsulted", agent?.name ?? "<top>", {
             query,
-            hits: region.writes.length,
+            hits,
             candidates,
+            recalled,
             kind: "credence",
             enum: expected.enumName,
             ...scoreSummary(resolvedScores),
@@ -1875,10 +1947,9 @@ class Interpreter {
       return { kind: "credence", enumName: expected.enumName, scores, trust: "graded", derivedFrom: this.promptSources(e.query, scope) };
     }
     // raw recall text — never settled (a recalled value must be re-decided + endorsed before a sink).
-    const recalled = region.writes.length ? render(region.writes[region.writes.length - 1]!) : "";
     this.ledger.append("MemoryConsulted", agent?.name ?? "<top>", {
       query,
-      hits: region.writes.length,
+      hits,
       candidates,
       recalled,
     }, agent?.name);

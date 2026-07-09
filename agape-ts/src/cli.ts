@@ -5,7 +5,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { parse } from "./parser.js";
 import { run } from "./interp.js";
-import { createProvider, loadManifest } from "./config.js";
+import { createMemoryDriver, createProvider, loadManifest } from "./config.js";
 import { show, type LedgerEvent } from "./runtime.js";
 
 // Load API keys from a `.env` (searched upward from cwd) without clobbering existing env vars.
@@ -88,9 +88,11 @@ async function main(argv: string[]): Promise<number> {
   const source = readFileSync(file, "utf8");
   const manifest = loadManifest(manifestPath, backendOverride);
   const provider = createProvider(manifest);
+  const memoryRoot = manifestPath ? dirname(resolve(manifestPath)) : process.cwd();
+  const memory = createMemoryDriver(manifest, { cwd: memoryRoot });
 
   const program = parse(source);
-  const { ledger, stdout } = await run(program, { provider, manifest });
+  const { ledger, stdout } = await run(program, { provider, manifest, memory });
 
   const modelNote = manifest.provider.model ? ` / ${manifest.provider.model}` : "";
   console.log(`# agape-ts — ran ${file}  (provider: ${manifest.provider.backend}${modelNote})\n`);

@@ -21,3 +21,11 @@ __pycache__/
 *.swo
 .commitmsg
 KERNEL.md
+
+# Local markdown memory substrate
+.agape/memory/
+**/.agape/memory/
+
+# Local environment files
+.env
+**/.env

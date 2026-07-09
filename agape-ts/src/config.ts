@@ -7,6 +7,8 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { MockProvider, type Provider, type StructuredSchema, type Variant } from "./runtime.js";
+import { LocalMemoryDriver, type MemoryDriver } from "./memory.js";
+import { MarkdownMemoryDriver } from "./memory_markdown.js";
 
 export interface ProviderConfig {
   backend: "mock" | "anthropic" | "openai" | "gemini" | string;
@@ -24,6 +26,18 @@ export interface BindingConfig {
   [key: string]: ManifestValue | undefined;
 }
 export interface ToolBindingConfig extends BindingConfig {}
+export interface MemoryConfig {
+  driver?: "markdown" | "local" | "mock" | string;
+  path?: string;
+  root?: string;
+  directory?: string;
+  entrypoint?: string;
+  top_k?: number;
+  index_lines?: number;
+  index_bytes?: number;
+  archive_on_forget?: boolean;
+  [key: string]: ManifestValue | undefined;
+}
 export interface Manifest {
   provider: ProviderConfig;
   project?: Record<string, ManifestValue>;
@@ -34,7 +48,7 @@ export interface Manifest {
   identity?: Record<string, BindingConfig>;
   prompts?: Record<string, BindingConfig>;
   tools?: Record<string, ToolBindingConfig>;
-  memory?: Record<string, ManifestValue>;
+  memory?: MemoryConfig;
   runtime?: Record<string, ManifestValue>;
   // §17.2 — decision policy lives in SOURCE, never the manifest; any `policy.*` key here is a ConfigError.
   policy?: Record<string, ManifestValue>;
@@ -98,6 +112,20 @@ export function createProvider(m: Manifest): Provider {
     case "openai": return new OpenAIProvider(p);
     case "gemini": return new GeminiProvider(p);
     default: throw new Error(`unknown provider backend '${p.backend}' (manifest [provider] backend=…)`);
+  }
+}
+
+export function createMemoryDriver(m: Manifest, deps: { cwd?: string } = {}): MemoryDriver {
+  const cfg = m.memory ?? {};
+  const driver = typeof cfg.driver === "string" ? cfg.driver : "markdown";
+  switch (driver) {
+    case "markdown":
+      return new MarkdownMemoryDriver(cfg, deps);
+    case "local":
+    case "mock":
+      return new LocalMemoryDriver();
+    default:
+      throw new Error(`unknown memory driver '${driver}' (manifest [memory] driver=…)`);
   }
 }
 

@@ -270,6 +270,7 @@ fn cmd_init(args: &[String]) {
     write_new(&root.join("main.ag"), &MAIN_AG);
     write_new(&root.join("agape.toml"), &agape_toml(&proj));
     write_new(&root.join("README.md"), &readme(&proj));
+    write_new(&root.join(".gitignore"), PROJECT_GITIGNORE);
 
     println!("✓ scaffolded an Agape project in {label}\n");
     println!("  next:");
@@ -791,6 +792,14 @@ spawn Responder responder;
 awake responder;
 "#;
 
+const PROJECT_GITIGNORE: &str = r#"# Local provider credentials
+.env
+
+# Local Agape runtime output
+.agape/memory/
+.agape/build.json
+"#;
+
 fn agape_toml(name: &str) -> String {
     format!(
         "[project]\n\
@@ -806,10 +815,19 @@ fn agape_toml(name: &str) -> String {
          # Sampling-fallback draws per graded judgment (§16.8); raise for finer\n\
          # probabilities at higher cost.\n\
          samples = 5\n\
-         # temperature = 0.7\n"
+         # temperature = 0.7\n\n\
+         [memory]\n\
+         # Project-local, editable markdown memory. Agape stores files under this\n\
+         # project root, never in the Agape installation checkout.\n\
+         driver = \"markdown\"\n\
+         path = \".agape/memory\"\n\
+         entrypoint = \"MEMORY.md\"\n\
+         top_k = 10\n\
+         index_lines = 200\n\
+         index_bytes = 25600\n\
+         archive_on_forget = true\n"
     )
 }
-
 fn readme(name: &str) -> String {
     format!(
         "# {name}\n\n\

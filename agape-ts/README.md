@@ -46,7 +46,8 @@ testimony  ->  Credence<Verdict>  ->  Decided Decision<Verdict>  ->  Endorsement
 | errors | `src/errors.ts` | the error taxonomy (`AgapeError { cls }`) the suite asserts on |
 | runtime core | `src/runtime.ts` | values + the trust lattice, the **provider seam**, the ledger |
 | interpreter | `src/interp.ts` | discrete-event runtime (§15.4/§16); the gate; the consequential-action rule |
-| config | `src/config.ts` | binds the provider/identity/tool dependencies to backends (§17) |
+| memory | `src/memory.ts` | pluggable private-memory substrate contract + local driver (§10/§16.7) |
+| config | `src/config.ts` | binds the provider/identity/tool/memory dependencies to backends (§17) |
 | cli | `src/cli.ts` | `run <file.ag>` · `graph <file.ag>` · `studio [--port N]` |
 | graph | `src/graph.ts` | the statically derived orchestration graph — see `GRAPH.md` |
 | studio | `studio/` | the execution-inspection web UI (see below) |
@@ -85,6 +86,29 @@ model   = "claude-…"
 For conformance, the harness injects a deterministic/scripted provider (the mock), so runs are
 replay-stable (same scripted judgment → identical chain-head). Live API calls run through the same
 seam on an async execution path.
+
+## Memory substrates are configurable
+
+Agape source uses the same `mem` surface regardless of storage backend. The interpreter depends on
+the generic `MemoryDriver` interface in `src/memory.ts`; concrete backends are selected by `[memory]`
+in `agape.toml`.
+
+The default vanilla substrate is markdown: a project-local `MEMORY.md` index plus scoped topic files
+under `.agape/memory/scopes/<project>/<agent>/<mem>.md`. This follows the public Claude Code shape:
+plain markdown, user-auditable files, a concise entrypoint, and richer topic files behind it.
+
+```toml
+[memory]
+driver = "markdown"
+path = ".agape/memory"
+entrypoint = "MEMORY.md"
+top_k = 10
+index_lines = 200
+index_bytes = 25600
+archive_on_forget = true
+```
+
+Use `driver = "local"` for ephemeral in-process memory. Agape still owns taint, per-agent isolation, ledger receipts, and sink authority; markdown is only the storage substrate.
 
 ## What's implemented
 

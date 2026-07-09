@@ -17,7 +17,7 @@ import { parse } from "../src/parser.js";
 import { check } from "../src/check.js";
 import { buildGraph } from "../src/graph.js";
 import { createSession, run, type ConsultRequest, type PrincipalAttestation, type PromptInput, type RuntimeSession } from "../src/interp.js";
-import { createProvider, loadManifest } from "../src/config.js";
+import { createMemoryDriver, createProvider, loadManifest } from "../src/config.js";
 import type * as A from "../src/ast.js";
 
 export interface StudioOptions {
@@ -290,10 +290,13 @@ function defaultConfigSource(): string {
 backend = "mock"
 
 [memory]
-blob_store = "archive"
-background_reindex = true
-forget_policy = "cascade"
-archive_retention = "forever"
+driver = "markdown"
+path = ".agape/memory"
+entrypoint = "MEMORY.md"
+top_k = 10
+index_lines = 200
+index_bytes = 25600
+archive_on_forget = true
 `;
 }
 
@@ -455,8 +458,9 @@ async function runProgram(
   // phase 3: check + run (the interpreter runs the static checker first).
   const manifest = loadProjectManifest(opts.dir, providerName);
   const provider = createProvider(manifest);
+  const memory = createMemoryDriver(manifest, { cwd: opts.dir });
   try {
-    const { ledger, stdout } = await run(program, { provider, manifest, promptInputs, principalAttestations, timingOriginMs: startedAt });
+    const { ledger, stdout } = await run(program, { provider, manifest, memory, promptInputs, principalAttestations, timingOriginMs: startedAt });
     const ms = Date.now() - startedAt;
     return {
       status: 200 as const,
@@ -577,6 +581,7 @@ async function startRunSession(
   const map = mapProgram(program);
   const manifest = loadProjectManifest(opts.dir, providerName);
   const provider = createProvider(manifest);
+  const memory = createMemoryDriver(manifest, { cwd: opts.dir });
   try {
     const session: StudioRunSession = {
       id: randomBytes(12).toString("base64url"),
@@ -595,6 +600,7 @@ async function startRunSession(
     session.runtime = createSession(program, {
       provider,
       manifest,
+      memory,
       principalAttestations,
       timingOriginMs: startedAt,
       onConsult: (req) => new Promise<PrincipalAttestation | undefined>((resolveConsult) => {
