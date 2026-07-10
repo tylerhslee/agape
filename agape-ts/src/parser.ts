@@ -17,7 +17,7 @@ export function parse(source: string): A.Program {
 
 // The core kernel is the complete language with NO syntactic sugar and NO library layer. Constructs the
 // full surface once had — the arm block, all/any fusion, the policy declaration, retry, reversible
-// sinks, agent-memory queries (select-from-agent), and the whole library layer (modules,
+// sinks, agent-memory queries, and the whole library layer (modules,
 // imports, visibility, generics, interfaces) — are not part of the core grammar, so accepting one would
 // break lockstep with the stripped SPEC.md. This pass walks the parsed program and rejects each as a
 // ParseError, so agape-ts accepts EXACTLY the core grammar. (Kept from the surface: gates as plain
@@ -35,7 +35,8 @@ function assertCore(p: A.Program): void {
   const walkExpr = (e: A.Expr): void => {
     switch (e.kind) {
       case "agg": return bad("`all`/`any` fusion (use `quorum`)");
-      case "select": if (e.target !== "ledger") bad("a `select … from ledger` is the only query surface in the core kernel"); break;
+      case "pipe": walkExpr(e.source); walkExpr(e.fn); break;
+      case "select": if (e.target !== "ledger") bad("a `select` over anything except `ledger`"); break;
       case "member": walkExpr(e.obj); break;
       case "index": walkExpr(e.obj); walkExpr(e.index); break;
       case "call": walkExpr(e.callee); e.args.forEach(walkExpr); break;
@@ -420,7 +421,7 @@ class Parser {
   }
 
   // a declared name in name-position: an Ident, or a CONTEXTUAL keyword used as a name
-  // (e.g. `select`/`all` are query/contextual words, valid identifiers elsewhere — §2).
+  // (e.g. `find`/`select`/`match`/`all` are query/contextual words, valid identifiers elsewhere — §2).
   private declName(): string {
     const t = this.peek();
     if (t.type === "ident" || CONTEXTUAL.has(t.type)) { this.next(); return t.value; }
@@ -899,7 +900,8 @@ class Parser {
 
   // ---- expressions ----
   private parseExpr(): A.Expr {
-    // `select` is contextual: only a query here when followed by the ledger-query shape.
+    // The top-level ledger query form is its own production (§15.2 expr grammar). `select` is contextual:
+    // only a query here when followed by the query's shape.
     if (this.at("select") && this.startsSelect()) return this.parseSelect();
     return this.parseSend();
   }
@@ -943,8 +945,7 @@ class Parser {
     return left;
   }
 
-
-  // select ::= "select" (Ident ("," Ident)* | "*") "from" Ident "where" "{" cond "}"  (§10)
+  // select ::= "select" (Ident ("," Ident)* | "*") "from" "ledger" "where" "{" cond "}"  (§10)
   //         | "select" Ident "as" Ident "from" "ledger" "where" "{" cond "}"
   private parseSelect(): A.SelectExpr {
     const pos = this.eat("select").pos;
@@ -956,9 +957,9 @@ class Parser {
           this.next();
           const alias = this.eat("ident").value;
           this.eat("from");
-          let target: string;
-          if (this.at("self")) { this.next(); target = "self"; }
-          else target = this.colName();
+          const targetName = this.colName();
+          if (targetName !== "ledger") this.err("expected 'ledger'");
+          const target: "ledger" = "ledger";
           this.eat("where");
           const cond = this.parseQueryCond();
           return { kind: "select", cols: "*", target, eventType, alias, cond, pos };
@@ -976,10 +977,9 @@ class Parser {
       cols = cs;
     }
     this.eat("from");
-    // the target is an agent-instance name, or the keyword `ledger`/`self`.
-    let target: string;
-    if (this.at("self")) { this.next(); target = "self"; }
-    else target = this.colName();
+    const targetName = this.colName();
+    if (targetName !== "ledger") this.err("expected 'ledger'");
+    const target: "ledger" = "ledger";
     this.eat("where");
     const cond = this.parseQueryCond();
     return { kind: "select", cols, target, cond, pos };
@@ -1011,6 +1011,15 @@ class Parser {
     return conds;
   }
 
+  // an operand inside a `find` triple, or a column/target name: an Ident, a contextual keyword,
+  // or a literal rendered to its text.
+  private operandName(): string {
+    const t = this.peek();
+    if (t.type === "ident" || CONTEXTUAL.has(t.type)) { this.next(); return t.value; }
+    if (t.type === "string") { this.next(); return t.value; }
+    if (t.type === "int" || t.type === "float") { this.next(); return t.value; }
+    this.err("expected an operand");
+  }
   private colName(): string {
     const t = this.peek();
     if (t.type === "ident" || CONTEXTUAL.has(t.type)) { this.next(); return t.value; }

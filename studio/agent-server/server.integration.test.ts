@@ -1,9 +1,9 @@
-// Integration tests: boot the real agent-server against a scaffolded project and
-// drive the user journeys over HTTP. Deterministic — uses the mock provider, so no
-// API key and byte-stable spines. Requires a built `agape` binary.
+// Integration tests: boot the real agent-server against a scaffolded TypeScript Agape project and
+// drive the user journeys over HTTP. Deterministic: uses the mock provider, so no API key and
+// byte-stable spines.
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { spawn, execFileSync, type ChildProcess } from "node:child_process";
-import { mkdtempSync, existsSync, mkdirSync } from "node:fs";
+import { spawn, type ChildProcess } from "node:child_process";
+import { mkdtempSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -13,10 +13,17 @@ const AGAPE_ROOT =
   [
     path.resolve(HERE, "..", ".."),
     path.resolve(HERE, "..", "..", "agape"),
-  ].find((p) => existsSync(path.join(p, "agape-rs"))) || path.resolve(HERE, "..", "..");
-const BIN = ["target/release/agape", "target/debug/agape"]
-  .map((p) => path.resolve(AGAPE_ROOT, "agape-rs", p))
-  .find((p) => existsSync(p));
+  ].find((p) => existsSync(path.join(p, "agape-ts"))) || path.resolve(HERE, "..", "..");
+const AGAPE_TS = path.join(AGAPE_ROOT, "agape-ts");
+const AGAPE_TS_CLI = path.join(AGAPE_TS, "src", "cli.ts");
+const TSX_BIN = [
+  path.join(AGAPE_TS, "node_modules", ".bin", process.platform === "win32" ? "tsx.cmd" : "tsx"),
+  path.join(AGAPE_TS, "node_modules", ".bin", "tsx"),
+].find((p) => existsSync(p)) || path.join(AGAPE_TS, "node_modules", ".bin", process.platform === "win32" ? "tsx.cmd" : "tsx");
+const STUDIO_TSX_CLI = [
+  path.join(AGAPE_TS, "node_modules", "tsx", "dist", "cli.mjs"),
+  path.join(HERE, "node_modules", "tsx", "dist", "cli.mjs"),
+].find((p) => existsSync(p)) || path.join(HERE, "node_modules", "tsx", "dist", "cli.mjs");
 
 const PORT = 8910;
 const base = `http://127.0.0.1:${PORT}`;
@@ -24,20 +31,56 @@ const get = (p: string) => fetch(base + p);
 const post = (p: string, body: unknown) =>
   fetch(base + p, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
 
+const MAIN_SOURCE = `
+prompt text question;
+enum Verdict { Accept, Reject }
+action Reply(text answer);
+
+agent FactChecker {
+  on awake { say("fact checker ready"); }
+}
+
+agent Responder grants { perform Reply } {
+  when (Prompt p about question) {
+    text answer = f"verified answer: {p.text}";
+    Credence<Verdict> c = self <- f"is this answer safe to send: {answer}";
+    Decision<Verdict> d = decide c by confidence 0.5;
+    if (d.committed == Accept) {
+      Endorsement<text> e = endorse answer by d;
+      perform Reply(e);
+    }
+  }
+}
+
+spawn FactChecker checker;
+spawn Responder responder;
+awake checker;
+awake responder;
+`;
+
 let srv: ChildProcess;
 let proj: string;
 let launchDir: string;
 
 beforeAll(async () => {
-  if (!BIN) throw new Error("no agape binary — build it first (cargo build --bin agape)");
   proj = path.join(mkdtempSync(path.join(tmpdir(), "agape-it-")), "app");
-  execFileSync(BIN, ["init", proj], { stdio: "ignore" });
   launchDir = path.join(proj, "src", "nested");
   mkdirSync(launchDir, { recursive: true });
+  writeFileSync(path.join(proj, "agape.toml"), `[project]\nname = "Integration Fixture"\nlanguage = "1.0.0-alpha.2026.7.9.0"\n\n[memory]\ndriver = "markdown"\npath = ".agape/memory"\n`, "utf8");
+  writeFileSync(path.join(proj, "main.ag"), MAIN_SOURCE, "utf8");
 
-  srv = spawn("npx", ["tsx", "server.ts"], {
+  srv = spawn(process.execPath, [STUDIO_TSX_CLI, "server.ts"], {
     cwd: HERE,
-    env: { ...process.env, AGENT_PORT: String(PORT), AGAPE_PROJECT: launchDir, AGAPE_BIN: BIN },
+    env: {
+      ...process.env,
+      AGENT_PORT: String(PORT),
+      AGAPE_PROJECT: launchDir,
+      AGENT_COGNITION_PROVIDER: "mock",
+      AGENT_EMBEDDING_PROVIDER: "local",
+      AGAPE_TS_CLI,
+      TSX_BIN,
+      TSX_CLI: STUDIO_TSX_CLI,
+    },
     stdio: "ignore",
   });
   for (let i = 0; i < 60; i++) {
@@ -49,7 +92,7 @@ beforeAll(async () => {
 
 afterAll(() => { srv?.kill(); });
 
-describe("studio backend — user journeys (integration)", () => {
+describe("studio backend - user journeys (integration)", () => {
   it("serves health", async () => {
     expect((await (await get("/agent/health")).json()).ok).toBe(true);
   });
@@ -69,7 +112,7 @@ describe("studio backend — user journeys (integration)", () => {
     const d = await (await post("/agent/respond", {
       item: {
         title: "can you tell me what is in this project so far?",
-        destination: "Build · next best work",
+        destination: "Build - next best work",
         status: "active",
       },
       thread: [{ who: "you", text: "can you tell me what is in this project so far?" }],
@@ -107,12 +150,11 @@ describe("studio backend — user journeys (integration)", () => {
     const d = await (await post("/project/run", { rel: "main.ag", prompts: { question: "hi" } })).json();
     expect(d.ok).toBe(true);
     const types = d.events.map((e: any) => e.etype);
-    expect(types).toContain("Endorsed"); // the gate committed
-    expect(types).toContain("Reply"); // ...and the verified answer was performed
+    expect(types).toContain("Endorsed");
+    expect(types).toContain("Reply");
   });
 
   it("reports a static rejection as ok:false, not a crash", async () => {
-    // `perform` without the grant → AuthorityViolation at check time.
     await post("/project/file", {
       rel: "bad.ag",
       body: 'action A(text m);\nagent X { on awake { perform A("x"); } }\nspawn X x;\nawake x;\n',
@@ -124,8 +166,7 @@ describe("studio backend — user journeys (integration)", () => {
 
   it("refuses a path-traversal file read (security guard, end to end)", async () => {
     const r = await get("/project/file?rel=" + encodeURIComponent("../../../../etc/passwd.ag"));
-    expect(r.ok).toBe(false); // 404/400 — never serves outside the project root
-    // and the server is still alive afterward
+    expect(r.ok).toBe(false);
     expect((await get("/agent/health")).ok).toBe(true);
   });
 });

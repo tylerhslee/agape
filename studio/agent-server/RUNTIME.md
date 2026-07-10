@@ -7,8 +7,8 @@ envelope defined in [SPEC.md](../../SPEC.md) §16.7. On top of it runs a learnin
 read an artifact, summarize it, internalize it, write Agape, run it, learn from
 failures, repeat.
 
-It is a TypeScript implementation of the same runtime contract the Rust runtime
-and Soma/cloud runtime must satisfy. Storage choices may differ, but ledger,
+It is a TypeScript implementation of the runtime contract that local Studio and
+Soma/cloud runtimes must satisfy. Storage choices may differ, but ledger,
 private-memory, provenance, replay, and learning semantics must stay in lockstep.
 
 ## The memory architecture (faithful to SPEC §10, §7)
@@ -41,15 +41,15 @@ spine(tick PK monotonic, etype, subject, payload, corr, agent, ts)
 - **Replay.** State is a fold of the ledger; a query reads the log and appends
   nothing.
 
-## The two seams (swap points for Rust + OpenAI)
+## The two seams (swap points for providers and embeddings)
 
-- **`Cognition`** — `complete()` and `decompose()` (text → facts + triples).
-  `AnthropicCognition` (haiku today). Swap to OpenAI by implementing the same
-  interface.
-- **`Embedder`** — `embed(text) → vector`. `HashingEmbedder` is a dependency-free
-  local default (hashed token TF, L2-normalized; cosine = dot). Swap to a real
-  embedding model (OpenAI / Voyage / a local transformer) by implementing the same
-  interface. The architecture and thresholds don't change.
+- **`Cognition`** - `complete()` and `decompose()` (text -> facts + triples).
+  `AnthropicCognition` and `OpenAICognition` plug in behind the same interface;
+  `MockCognition` remains the offline default.
+- **`Embedder`** - `embed(text) -> vector`. `HashingEmbedder` is a dependency-free
+  local default (hashed token TF, L2-normalized; cosine = dot). When OpenAI is
+  configured, `OpenAIEmbedder` provides live embeddings behind the same interface.
+  The architecture and thresholds do not change.
 
 ## The learning loop
 
@@ -64,7 +64,7 @@ can internalize selected artifacts into their own private memory:
 2. **Retrieve** — for a coding task: `match` (vector) the task against the spec,
    `find/where` related concepts, `select` prior lessons. Assemble grounded context.
 3. **Write** — the LLM writes Agape source for the task, given that context.
-4. **Run** — execute it through the `Runner` (agape-rs: `agape check <file>`).
+4. **Run** - execute it through the `Runner` (`agape-ts check <file>`).
    Exit 0 = accepted; exit 1 = the checker/runtime error.
 5. **Reflect** — on failure, internalize the error + a one-line lesson (more facts /
    triples / embeddings with provenance). On success, record the working pattern.
@@ -75,11 +75,10 @@ competence is literally the fold of its memory.
 
 ## The runner
 
-`Runner` is pluggable. `CargoRunner` shells out to `agape-rs`
-(`cargo run --bin agape -- check <file>`), which is dependency-free and offline.
-If cargo / the binary is unavailable, the loop still ingests, internalizes, and
-writes — it just can't get execution feedback, and says so. Building agape-rs once
-(`cargo build --release -p agape-rs`) makes step 4 real.
+`Runner` is pluggable. `AgapeTsRunner` shells out to the TypeScript Agape CLI
+(`agape-ts check <file>`), which is deterministic and offline with the mock
+provider. If the TypeScript dependencies are unavailable, the loop still ingests,
+internalizes, and writes; it just cannot get execution feedback, and says so.
 
 ## Endpoints (driven by the studio)
 

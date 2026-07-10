@@ -12,7 +12,7 @@ value, map each to a test, and push combinatorial edge cases down to fast tests.
 | **Integration** | Vitest | the real HTTP backend over a scaffolded project | `studio/agent-server/server.integration.test.ts` |
 | **E2E** | Playwright | the real browser against the real app — the marquee flow | `studio/web/e2e/` |
 | **Bundle smoke** | bash | the *shipped artifact* boots & runs | `scripts/studio-smoke.sh` |
-| **Language** | Rust | every gate/seam/runtime rule (102 cases) | `agape-conformance` |
+| **Language** | agape-ts | every gate/seam/runtime rule | `agape-ts/test`, `agape-conformance` |
 
 The studio's surface is **thin on purpose**: most journeys bottom out in `agape
 run` → a ledger, which the **conformance suite already covers exhaustively**. So

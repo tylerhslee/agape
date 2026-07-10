@@ -52,7 +52,7 @@ class Scope {
   // `mem` handles that `forget` has consumed — recall through a forgotten handle is a TypeError (§10).
   forgotten = new Set<string>();
   // PROVENANCE for the §13 dependency-scope check. `tainted` names a binding whose value came from a
-  // memory read (recall `->` or non-ledger `select`) — a subjective, un-endorsed fact (§10). `scopeOf`
+  // memory read (recall `->`, `select`/`find`, or `match`) — a subjective, un-endorsed fact (§10). `scopeOf`
   // names, for a Credence/Decision binding, the set of identifiers in its DEPENDENCY SCOPE: the credence
   // it was produced from plus the identifiers that fed that credence's prompt. The endorsed subject of an
   // `endorse subject by d` must lie in `scopeOf(d)`; a tainted subject outside it is laundering (§13).
@@ -1175,10 +1175,9 @@ class Checker {
   private assertSyncExpr(e: A.Expr): void {
     switch (e.kind) {
       case "send": throw colorViolation("a `sync` function may not `<-` (a send reaches the provider → async)");
-      // the memory substrate is async (§9/§10): a recall or ledger query reaches the async memory substrate, so either one inside a `sync` body forces
-      // async → a ColorViolation, exactly like a `send`.
+      // the memory substrate is async (§9/§10): a recall or ledger query reaches async runtime state.
       case "recall": throw colorViolation("a `sync` function may not recall (`->` reaches the async memory substrate → async)");
-      case "select": throw colorViolation("a `sync` function may not query memory (`select` reaches the async memory substrate → async)");
+      case "select": throw colorViolation("a `sync` function may not query the ledger (`select` reaches async runtime state → async)");
       case "decide": case "endorse": this.assertSyncGate(e); return;
       case "performexpr":
         throw colorViolation(`a \`sync\` function may not \`perform\` (an action is an outbound act → async) (§6b)`);
@@ -1352,7 +1351,7 @@ class Checker {
               `which is settled but NOT committed-narrowed — an un-committed endorsement cannot reach a consequential sink (§13/§15.3.3)`,
             );
           }
-          // (b) a provably-tainted (raw/graded) value: an un-endorsed memory read (recall/non-ledger select),
+          // (b) a provably-tainted (raw/graded) value: an un-endorsed memory read (recall/select),
           // a raw send reply, or anything contagiously derived from one (a tool result over a tainted input).
           // Such a value carries un-endorsed cognition and is ILL-FORMED at a consequential sink — it must be
           // decided AND endorsed first, and only the resulting committed-narrowed `Endorsement` may reach the
@@ -1888,7 +1887,7 @@ class Checker {
   // ---- §13 dependency-scope provenance ----
 
   // Record what a `var NAME = init` binding depends on, for the §13 endorse dependency-scope check:
-  //  - a memory READ (`->` recall, or non-ledger `select`) makes NAME a TAINTED, subjective fact (§10).
+  //  - a memory READ (`->` recall, `select`/`find`, `match`) makes NAME a TAINTED, subjective fact (§10).
   //  - a Credence-producing expr (a send `<-`, or a fusion/aggregation over credences) records NAME's
   //    dependency scope = the free identifiers feeding it (e.g. a `draft` interpolated into the prompt).
   //  - a `decide c by R` records NAME's scope = c's own scope ∪ { c } (the decision inherits the credence's
@@ -1948,7 +1947,7 @@ class Checker {
   }
 
   // Whether the VALUE of an expression carries tainted (un-endorsed, subjective) provenance: a direct
-  // memory read (recall/non-ledger select), a raw send reply (a `<-` before it is bound to a Credence
+  // memory read (recall/select), a raw send reply (a `<-` before it is bound to a Credence
   // slot — see isMemoryRead's note), or anything derived from an already-tainted binding (contagious,
   // §15.3.1). Used for both `var` and `assign`, so `u = t` (t a recall) taints `u` exactly like a `var`.
   private isTaintedExpr(e: A.Expr, scope: Scope): boolean {
@@ -1998,16 +1997,10 @@ class Checker {
     throw typeError("endorse requires a Decision narrowed to a committed variant; an abstained Decision has no endorsement to give (§13)");
   }
 
-  // Whether an expression is a direct memory READ that yields a tainted, subjective fact (§10): a recall
-  // (`mem -> q`) or a ledger/private-memory `select`. A raw `send` reply is also
-  // tainted, but only when it is NOT bound to a Credence slot — that split is handled in trackProvenance,
-  // because it needs the declared slot type; here we cover the always-tainted off-gate memory reads.
+  // Whether an expression is a direct memory READ that yields a tainted, subjective fact (§10). A raw
+  // `send` reply is also tainted, but only when it is NOT bound to a Credence slot — that split is handled
+  // in trackProvenance because it needs the declared slot type.
   private isMemoryRead(e: A.Expr): boolean {
-    // a `select … from ledger` is a LEDGER read carrying RECORDED trust (§10): an Endorsed-origin row reads
-    // back settled, a non-endorsed origin stays graded — determined at RUNTIME, so it is not STATICALLY
-    // tainted (the dynamic sink check enforces the real trust). A `select` from an agent's memory, and
-    // recall, ARE un-endorsed memory-substrate reads and stay tainted.
-    if (e.kind === "select") return e.target !== "ledger";
     return e.kind === "recall";
   }
 

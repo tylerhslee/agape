@@ -21,17 +21,16 @@ providers, review conformance, and decide when human judgment should take over.
 - Exposes a runtime deployment panel for local runtimes today and cloud runtimes
   such as Soma later.
 - Includes review and conformance surfaces for checking language behavior.
-- Treats the local Studio runtime, local Rust runtime, and future Soma/cloud
-  runtime as implementations of the shared runtime contract ([SPEC.md](../SPEC.md) §16–§17).
+- Treats the local TypeScript runtime and future Soma/cloud runtime as implementations of the shared runtime contract ([SPEC.md](../SPEC.md) sections 16-17).
 
 ## How It Relates To Agape
 
 Agape is the language. Studio is the interface for working with Agape projects.
 
-The bundled command:
+The TypeScript source command:
 
 ```sh
-agape studio
+node agape-ts/node_modules/tsx/dist/cli.mjs agape-ts/src/cli.ts studio
 ```
 
 starts Studio from the directory you are currently in. Studio looks for
@@ -53,7 +52,7 @@ Studio is versioned independently from the Agape language and runtime.
 
 That means the same Studio can attach to:
 
-- a local project opened with `agape studio`;
+- a local project opened with `node agape-ts/node_modules/tsx/dist/cli.mjs agape-ts/src/cli.ts studio`;
 - a standalone local Agape checkout during development;
 - a future hosted/cloud runtime such as Soma.
 
@@ -64,10 +63,10 @@ Install or build the Agape CLI, then create or open a project:
 ```sh
 agape init my-app
 cd my-app
-agape studio
+node agape-ts/node_modules/tsx/dist/cli.mjs agape-ts/src/cli.ts studio
 ```
 
-You can also run `agape studio` from a subdirectory inside the project. Studio
+You can also run `node agape-ts/node_modules/tsx/dist/cli.mjs agape-ts/src/cli.ts studio` from a subdirectory inside the project. Studio
 will climb to the nearest `agape.toml` and use that as the project root.
 
 ## Run This Repository Directly
@@ -96,7 +95,10 @@ Useful environment variables:
 
 ```text
 AGAPE_PROJECT=/path/to/an/agape/project
-AGAPE_BIN=/path/to/agape
+AGAPE_TS_CLI=/path/to/agape/agape-ts/src/cli.ts
+TSX_CLI=/path/to/agape/agape-ts/node_modules/tsx/dist/cli.mjs
+AGENT_COGNITION_PROVIDER=mock      # or anthropic/openai
+AGENT_EMBEDDING_PROVIDER=local     # or openai
 ANTHROPIC_API_KEY=...
 OPENAI_API_KEY=...
 GEMINI_API_KEY=...

@@ -1,14 +1,13 @@
 // ============================================================================
-// backend.ag — Agape Studio's HTTP backend, written in Agape, on the Rust runtime.
+// backend.ag - Agape Studio's future HTTP backend, written in Agape.
 //
 // This is Phase 2 from session.py's docstring made real: "the backend is Agape."
-// The Rust runtime owns the TCP socket (a somatic resource) and exposes it via the
-// `listen` sensor (SPEC §5b); this program is the router. Session machinery — the
+// A conforming Agape runtime owns the TCP socket (a somatic resource) and exposes it via the `listen` sensor; this program is the router. Session machinery — the
 // guest interpreter, spine/world JSON, JSON field extraction — are runtime syscalls
 // (studio_*, json_get, query_int, quote, respond_static): the somatic "syscalls" a
 // userland program calls. An Agape program hosting Agape programs is the OS pattern.
 //
-// Run it with:  agape studio  (sets `port`, the web dir, and the guest provider).
+// Run it with the Studio launcher once the Agape-hosted backend path is active.
 // Every command reaches the guest as Agape source — exactly the invariant the
 // Python app.py preserved, now literally an Agape program.
 // ============================================================================

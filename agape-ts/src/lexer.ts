@@ -42,6 +42,7 @@ const OPERATORS = [
   "{", "}", "(", ")", "[", "]", ";", ",", ".", ":", "=",
   "+", "-", "*", "/", "<", ">", "!",
   // `~` lexes to an Op token but no grammar rule uses it — the PARSER rejects it (a ParseError, not a
+  // LexError): there is no similarity operator in the core grammar.
   "~",
 ];
 

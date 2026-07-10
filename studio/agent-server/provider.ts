@@ -1,10 +1,4 @@
-// The two provider seams the whole runtime hides behind, so "rewrite in Rust + swap
-// to OpenAI" is an implementation change, not a redesign.
-//
-//   Cognition — the LLM (think/decompose). AnthropicCognition (haiku) today.
-//   Embedder  — text → vector. HashingEmbedder is the offline path; OpenAIEmbedder is live.
-
-import Anthropic from "@anthropic-ai/sdk";
+// Provider seams for the Studio runtime. Swapping cognition or embeddings is an\n// implementation change behind these interfaces, not a runtime redesign.\n//\n//   Cognition - the LLM.\n//   Embedder  - text to vector.\n\nimport Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
 import type { ChatMessage } from "./agent.ts";
 
@@ -189,32 +183,27 @@ export class HashingEmbedder implements Embedder {
     return v.map((x) => x / norm);
   }
 }
-
 export class OpenAIEmbedder implements Embedder {
-  readonly dim = Number(process.env.OPENAI_EMBEDDING_DIM || 1536);
   readonly name: string;
+  readonly dim = 1536;
   private client: OpenAI;
 
-  constructor(private readonly model = process.env.OPENAI_EMBEDDING_MODEL || "text-embedding-3-small") {
+  constructor(model = process.env.OPENAI_EMBEDDING_MODEL || "text-embedding-3-small") {
     if (!process.env.OPENAI_API_KEY) throw new Error("OPENAI_API_KEY not set — OpenAI embeddings need a live key.");
-    this.name = `openai:${model}`;
+    this.name = model;
     this.client = new OpenAI();
   }
 
   async embed(text: string): Promise<number[]> {
-    const res = await this.client.embeddings.create({ model: this.model, input: text });
-    const vector = res.data?.[0]?.embedding;
-    if (!vector) throw new Error("OpenAI embeddings returned no vector.");
-    return normalizeVector(vector);
+    const res = await this.client.embeddings.create({ model: this.name, input: text });
+    const v = res.data[0]?.embedding ?? [];
+    let norm = 0;
+    for (const x of v) norm += x * x;
+    norm = Math.sqrt(norm) || 1;
+    return v.map((x) => x / norm);
   }
 }
 
-function normalizeVector(v: number[]): number[] {
-  let norm = 0;
-  for (const x of v) norm += x * x;
-  norm = Math.sqrt(norm) || 1;
-  return v.map((x) => x / norm);
-}
 export function cosine(a: number[], b: number[]): number {
   let dot = 0;
   const n = Math.min(a.length, b.length);

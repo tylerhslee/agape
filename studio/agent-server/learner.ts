@@ -190,7 +190,7 @@ export class Learner {
       "",
       text,
     ].filter(Boolean).join("\n");
-    return await this.mem.internalize(
+    return this.mem.internalize(
       this.agent,
       "Experienced",
       subject,
@@ -219,7 +219,7 @@ export class Learner {
   }
 
   async recall(q: string) {
-    return await this.mem.match(this.agent, q, 0.1, 8);
+    return this.mem.match(this.agent, q, 0.1, 8);
   }
 
   // Full read-only snapshot for the inspector — no cognition, costs nothing.

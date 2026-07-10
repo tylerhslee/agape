@@ -17,8 +17,8 @@ ledger for every run.
 
 Agape is alpha software. The language and runtime are moving quickly, but the
 repository is usable today: the mock provider runs offline, the TypeScript
-runtime powers Agape Studio, and the Rust implementation is the source-installable
-CLI and package target.
+runtime powers Agape Studio, and the TypeScript CLI is the source-installable
+base package target.
 
 ## Quickstart: Try Agape Studio
 
@@ -108,46 +108,34 @@ OpenAI and Gemini expose token logprobs for graded credences when available.
 Anthropic uses the sampling fallback. The program source does not change when
 you switch providers.
 
-## Install The `agape` CLI From Source
+## Install The TypeScript `agape` CLI From Source
 
-Use this path if you want the Rust CLI on your `PATH`.
+Use this path for the vanilla Agape runtime that ships from this repository.
+The base installation is TypeScript-only; project memory and `.env` files live in
+the Agape project, not in the installation folder.
 
 **Prerequisites**
 
-- Rust stable
-- Node.js 20 or newer if you want `agape studio`
+- Node.js 20 or newer
 
 ```sh
 git clone https://github.com/tylerhslee/agape.git agape
-cd agape
-cargo install --path agape-rs
+cd agape/agape-ts
+npm install
+npm test
+npm run typecheck
 ```
 
-Create and run a project:
+Run an example with the deterministic mock provider:
 
 ```sh
-agape init hello-agape
-cd hello-agape
-agape run main.ag --prompt question="is the earth round?"
+node node_modules/tsx/dist/cli.mjs src/cli.ts run examples/hello.ag
 ```
 
-When `agape studio` is run from a source-installed binary outside the repository,
-point it at the Studio app in the checkout:
-
-```sh
-AGAPE_STUDIO_HOME=/absolute/path/to/agape/studio agape studio
-```
-
-Release bundles produced by `scripts/package.sh` include the binary, examples, a
-default manifest, and the packaged Studio app:
-
-```sh
-bash scripts/package.sh
-cd dist/agape-<version>-<target>
-bin/agape run examples/hello.ag
-bin/agape studio
-```
-
+Create an Agape project by adding `agape.toml` and `.ag` files in the project
+root. By default, markdown memory is written under that project root at
+`.agape/memory`, and provider keys can be supplied from the project's `.env` or
+the process environment.
 ## A Small Agape Program
 
 This is the core shape. The model can judge a draft, but only an endorsed value
@@ -262,12 +250,11 @@ reviewed.
 
 ```text
 SPEC.md                    language and runtime specification
-agape-ts/                  TypeScript compiler/runtime used by current Studio
+agape-ts/                  TypeScript compiler/runtime and vanilla CLI
 agape-ts/studio/           local runner and inspector for .ag programs
 agape-ts/examples/         runnable examples for Studio
-agape-rs/                  Rust CLI and reference implementation
 agape-conformance/         black-box conformance suite
-studio/                    packaged Studio app used by the Rust CLI bundle path
+studio/                    packaged Studio app and agent server
 design/                    showcase programs and design notes
 scripts/package.sh         release bundle builder
 ```
@@ -282,15 +269,6 @@ npm install
 npm test
 npm run typecheck
 npm run studio
-```
-
-Rust implementation:
-
-```sh
-cd agape-rs
-cargo build --all-targets
-cargo test
-cargo run --bin conformance
 ```
 
 Packaged Studio app:

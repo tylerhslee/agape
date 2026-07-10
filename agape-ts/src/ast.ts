@@ -314,6 +314,7 @@ export type Expr =
   | SendExpr
   | RecallExpr
   | SelectExpr
+
   | StructLit
   | FStringExpr
   | StringLit
@@ -374,10 +375,23 @@ export interface RecallExpr extends Node {
 export interface SelectExpr extends Node {
   kind: "select";
   cols: string[] | "*";
-  target: string; // an agent instance name, or `ledger`/`self`
+  target: "ledger";
   eventType?: string; // new ledger-row form: `select Held as h from ledger ...`
   alias?: string;
   cond: QueryCond[];
+}
+
+export interface StructLit extends Node {
+  kind: "structlit";
+  typeName?: string;
+  typeArgs?: TypeRef[]; // `Box<int> { value: 7 }` — parsed for the non-generic check, erased past it (§19.5)
+  fields: { name: string; value: Expr }[];
+}
+export interface QueryCond {
+  field: string;
+  op: string; // ==, !=, <, >, <=, >=  (a `:` desugars to ==)
+  value: Expr;
+  connective?: "&&" | "||"; // the connective JOINING this cond to the previous one
 }
 
 export type GateExpr = DecideExpr | EndorseExpr;

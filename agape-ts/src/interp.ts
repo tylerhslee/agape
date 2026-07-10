@@ -11,7 +11,7 @@ import {
 } from "./runtime.js";
 import { check, linkModules, type ModuleInput, type Resolution } from "./check.js";
 import { createMemoryDriver, type Manifest, type ToolBindingConfig } from "./config.js";
-import { type MemoryDriver, type MemoryReceipt, type MemoryScope } from "./memory.js";
+import type { MemoryDriver, MemoryReceipt, MemoryScope } from "./memory.js";
 import { parse } from "./parser.js";
 import { typeError, taintViolation, authorityViolation, configError } from "./errors.js";
 import { createToolHandlers, type ToolHandler } from "./tool_adapters.js";
@@ -267,6 +267,7 @@ export interface ConsultRequest {
   agent?: string;
 }
 
+
 type RunOptions = {
   provider?: Provider;
   modules?: ModuleInput[];
@@ -294,9 +295,9 @@ export async function run(
 
 export function createSession(program: A.Program, opts: RunOptions = {}): RuntimeSession {
   const manifest: Manifest = opts.manifest ?? { provider: { backend: "mock" } };
+  check(program, opts.modules, manifest, opts.strictConfig); // static pass first (TypeError/ModuleError/ConfigError/…)
   const memory = opts.memory ?? createMemoryDriver(manifest, { cwd: opts.memoryRoot ?? process.cwd() });
   const toolHandlers = { ...createToolHandlers(manifest), ...(opts.toolHandlers ?? {}) };
-  check(program, opts.modules, manifest, opts.strictConfig); // static pass first (TypeError/ModuleError/ConfigError/…)
   return new Interpreter(
     program,
     opts.provider ?? new MockProvider(),
@@ -374,8 +375,8 @@ class Interpreter {
     private onConsult?: (req: ConsultRequest) => Promise<PrincipalAttestation | undefined>,
     private manifest?: Manifest,
     private toolHandlers: Record<string, ToolHandler> = {},
-    timingOriginMs?: number,
-    private memory: MemoryDriver,
+    timingOriginMs: number | undefined = undefined,
+    private memory: MemoryDriver = createMemoryDriver(manifest ?? { provider: { backend: "mock" } }),
   ) {
     this.ledger = new Ledger(timingOriginMs);
     // §3: register the declared principal names so a `decide c by p` (the parser's {policy} rule form)
@@ -1576,7 +1577,7 @@ class Interpreter {
       case "decide": case "endorse": return (await this.evalGate(e, scope, undefined, bindName)).value;
       case "member": return this.evalMember(e, scope);
       case "index": {
-        // `a[i]` element access (§10): the element inherits the array's trust (a query hit is graded).
+        // `a[i]` element access (§10): the element inherits the array's trust (a match/query hit is graded).
         const arr = await this.evalExpr(e.obj, scope);
         const idx = await this.evalExpr(e.index, scope);
         const trust = arr.trust ?? "raw";
@@ -1855,8 +1856,9 @@ class Interpreter {
   }
 
   // Effector invocation is an adapter boundary (§6b/§16.4). `mock` is built in for demos/replay-stable
-  // tests (a deterministic pure function of the payload). HTTP/webhook and MCP-over-HTTP drivers are
-  // packaged adapters; host toolHandlers may still override or provide local stdio integrations.
+  // tests (a deterministic pure function of the payload); every other driver is supplied by the embedding
+  // runtime via `toolHandlers`, keyed by the [tools.*] catalog key — MCP is one supported transport, not
+  // a semantic requirement of the language.
   private async effectorResult(catalogKey: string, args: Value[], binding: ToolBindingConfig, payload: string): Promise<Value> {
     const driver = binding.driver ?? "mock";
     if (driver === "mock") return { kind: "text", v: `tool:${catalogKey}(${payload})`, trust: "settled" };
@@ -2432,19 +2434,17 @@ class Interpreter {
   // lands a `QueryResult(subject)` event (the subject is the query target: the agent, or `ledger`).
   private async evalQuery(e: A.SelectExpr, scope: Scope, asStatement: boolean): Promise<Value> {
     const agent = scope.currentAgent();
-    const isLedger = e.target === "ledger";
-    const target = e.target === "self" ? (agent?.name ?? "self") : e.target;
     if (asStatement) {
-      this.ledger.append("QueryResult", target, undefined, agent?.name);
+      this.ledger.append("QueryResult", e.target, undefined, agent?.name);
     }
-    // The result trust is the join of the matched rows' RECORDED (provenance) trust (§10). A non-ledger
-    // select over private memory defaults to `graded` (most facts trace to internalized, un-endorsed
+    // The result trust is the join of the matched rows' RECORDED (provenance) trust (§10). A `from F`/graph
+    // read over private memory defaults to `graded` (most facts trace to internalized, un-endorsed
     // cognition). A `from ledger` read is deterministic and carries recorded trust: an `Endorsed`-origin
     // row reads back `settled` (the ledger is the proof it was endorsed), every other origin (`Spawned`,
     // `Sent`, `Internalized`, `MemoryConsulted`, …) reads back `graded`, so a blanket `settled` cannot
     // launder a tainted row. With no matching rows the default is `graded` — never `settled` — withholding
     // by default (§13/§14): a `settled` result would require an actual endorsed-origin row.
-    const trust: Trust = isLedger ? this.ledgerReadTrust(e as A.SelectExpr) : "graded";
+    const trust: Trust = this.ledgerReadTrust(e);
     return { kind: "array", items: [], trust };
   }
 

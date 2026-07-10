@@ -1,10 +1,21 @@
-import http from "node:http";
-import { describe, it, expect } from "vitest";
+import { createServer } from "node:http";
+import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, it, expect, afterAll } from "vitest";
 import { parse } from "../src/parser.js";
-import { run } from "../src/interp.js";
+import { run as runtimeRun } from "../src/interp.js";
 import { MockProvider, type StructuredSchema } from "../src/runtime.js";
 import { parseManifestDirective } from "../src/config.js";
+const TEST_MEMORY_ROOT = mkdtempSync(join(tmpdir(), "agape-kernel-suite-"));
+afterAll(async () => {
+  await rm(TEST_MEMORY_ROOT, { recursive: true, force: true });
+});
 
+function run(program: Parameters<typeof runtimeRun>[0], opts: Parameters<typeof runtimeRun>[1] = {}) {
+  return runtimeRun(program, { memoryRoot: TEST_MEMORY_ROOT, ...opts });
+}
 const HELLO = `
 enum Verdict { Publish, Revise }
 action Announce(text body);
@@ -195,23 +206,28 @@ describe("structured provider replies", () => {
   });
 
   it("stores memory through <- and returns an Internalized ledger receipt", async () => {
-    const prog = `
-      agent A {
-        on awake {
-          mem notes;
-          LedgerEntry<Internalized> receipt = notes <- "durable note";
-          say(receipt._meta.etype);
-          say(receipt.refs.input);
+    const dir = await mkdtemp(join(tmpdir(), "agape-kernel-memory-"));
+    try {
+      const prog = `
+        agent A {
+          on awake {
+            mem notes;
+            LedgerEntry<Internalized> receipt = notes <- "durable note";
+            say(receipt._meta.etype);
+            say(receipt.refs.input);
+          }
         }
-      }
-      spawn A a; awake a;
-    `;
-    const r = await run(parse(prog), {});
-    expect(r.stdout[0]).toBe("Internalized");
-    expect(r.stdout[1]).toMatch(/^blob:sha256:/);
-    const internalized = r.ledger.events.find((e) => e.etype === "Internalized" && e.subject === "notes");
-    expect((internalized?.payload as any)?.effects?.facts?.upserted).toBe(1);
-    expect((internalized?.payload as any)?.policy?.background_reindex).toBe("runtime-managed");
+        spawn A a; awake a;
+      `;
+      const r = await run(parse(prog), { memoryRoot: dir });
+      expect(r.stdout[0]).toBe("Internalized");
+      expect(r.stdout[1]).toMatch(/^blob:sha256:/);
+      const internalized = r.ledger.events.find((e) => e.etype === "Internalized" && e.subject === "notes");
+      expect((internalized?.payload as any)?.effects?.facts?.upserted).toBe(1);
+      expect((internalized?.payload as any)?.policy?.background_reindex).toBe("runtime-managed");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });
 
@@ -517,21 +533,21 @@ describe("manifest dependency bindings", () => {
     expect((resolved?.payload as any)?.result).toMatchObject({ kind: "text", value: "northwind receipt" });
   });
   it("routes a wired perform through the built-in HTTP tool adapter", async () => {
-    const seen: unknown[] = [];
-    const server = http.createServer((req, res) => {
+    const requests: unknown[] = [];
+    const server = createServer((req, res) => {
       let body = "";
       req.setEncoding("utf8");
       req.on("data", (chunk) => { body += chunk; });
       req.on("end", () => {
-        seen.push(JSON.parse(body));
-        res.writeHead(200, { "content-type": "application/json" });
-        res.end(JSON.stringify({ result: "northwind live receipt" }));
+        requests.push(JSON.parse(body));
+        res.setHeader("content-type", "application/json");
+        res.end(JSON.stringify({ result: "http receipt" }));
       });
     });
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     try {
       const address = server.address();
-      if (!address || typeof address === "string") throw new Error("HTTP test server did not bind to a port");
+      if (!address || typeof address === "string") throw new Error("expected an ephemeral TCP address");
       const prog = `
         action Search(text q);
         event SearchEvidence(text hits);
@@ -552,10 +568,11 @@ describe("manifest dependency bindings", () => {
         },
       });
 
-      expect(r.stdout).toEqual(["northwind live receipt"]);
-      expect(seen[0]).toMatchObject({ tool: "search", payload: "search|northwind", rendered_args: ["northwind"] });
+      expect(r.stdout).toEqual(["http receipt"]);
+      expect(requests[0]).toMatchObject({ tool: "search", args: ["northwind"] });
       const resolved = r.ledger.events.find((e) => e.etype === "ToolResolved");
       expect((resolved?.payload as any)?.binding).toMatchObject({ driver: "http" });
+      expect((resolved?.payload as any)?.result).toMatchObject({ kind: "text", value: "http receipt" });
     } finally {
       await new Promise<void>((resolve, reject) => server.close((err) => err ? reject(err) : resolve()));
     }
