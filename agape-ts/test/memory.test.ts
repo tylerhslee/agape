@@ -129,13 +129,6 @@ describe("markdown memory adapter", () => {
     expect((memory as MemoryRuntimeDriver).substrate).toBeInstanceOf(MarkdownMemoryDriver);
   });
 
-  it("can expose the raw configured substrate when the runtime is disabled", () => {
-    const memory = createMemoryDriver({
-      provider: { backend: "mock" },
-      memory: { driver: "markdown", runtime: false },
-    });
-    expect(memory).toBeInstanceOf(MarkdownMemoryDriver);
-  });
   it("resolves relative markdown paths against the configured project root", async () => {
     const dir = await mkdtemp(join(tmpdir(), "agape-md-project-"));
     try {

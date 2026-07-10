@@ -37,7 +37,6 @@ export interface MemoryConfig {
   index_lines?: number;
   index_bytes?: number;
   archive_on_forget?: boolean;
-  runtime?: boolean;
   auto_memory?: boolean;
   classify?: boolean;
   dedupe?: boolean;
@@ -138,7 +137,7 @@ export function createMemoryDriver(m: Manifest, deps: { cwd?: string } = {}): Me
     default:
       throw new Error(`unknown memory driver '${driver}' (manifest [memory] driver=...)`);
   }
-  return cfg.runtime === false ? substrate : new MemoryRuntimeDriver(substrate, cfg);
+  return new MemoryRuntimeDriver(substrate, cfg);
 }
 
 // ---- a small TOML reader for the manifest subset the runtime needs ----

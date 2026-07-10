@@ -65,7 +65,6 @@ samples = 5
 # Project-local, editable markdown memory. The built-in runtime adds classification,
 # dedupe/consolidation, automatic memory judgment, and recall ranking.
 driver = "markdown"
-runtime = true
 auto_memory = true
 classify = true
 dedupe = true

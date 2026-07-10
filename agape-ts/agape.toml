@@ -25,7 +25,6 @@ fallback_temperature = 0.7
 [memory]
 # Default vanilla system: plain markdown substrate plus Agape's built-in memory runtime.
 driver = "markdown"
-runtime = true
 auto_memory = true
 classify = true
 dedupe = true

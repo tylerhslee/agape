@@ -821,7 +821,6 @@ fn agape_toml(name: &str) -> String {
          # project root, never in the Agape installation checkout. The default\n\
          # runtime wraps markdown with classification, dedupe, and recall ranking.\n\
          driver = \"markdown\"\n\
-         runtime = true\n\
          auto_memory = true\n\
          classify = true\n\
          dedupe = true\n\
