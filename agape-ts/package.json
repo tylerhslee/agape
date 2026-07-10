@@ -2,8 +2,8 @@
   "name": "agape-ts",
   "private": true,
   "type": "module",
-  "version": "1.0.0-alpha.2026.7.9.0",
-  "description": "A TypeScript compiler + runtime for the Agape core kernel (SPEC.md v1.0.0-alpha.2026.7.9.0). Embedded in Agape Studio.",
+  "version": "1.0.0-alpha.2026.7.10.0",
+  "description": "A TypeScript compiler + runtime for the Agape core kernel (SPEC.md v1.0.0-alpha.2026.7.10.0). Embedded in Agape Studio.",
   "bin": {
     "agape-ts": "src/cli.ts"
   },

@@ -6,6 +6,22 @@ All notable changes to Agape are recorded here. The format follows
 suite, and the studio move in lockstep — a release is the whole bundle at one
 version.
 
+## [1.0.0-alpha.2026.7.10.0] - 2026-07-10
+
+Beta-readiness alpha on top of the TypeScript markdown-memory runtime release.
+
+### Added
+
+- Core Agape testkit for asserting ledger events, decisions, endorsements, memory writes, tool calls, prompt inputs, and golden traces.
+- Certification tests for the typed gate chain, project-root markdown memory, and built-in HTTP tool bindings.
+- Dogfood smoke runner for `league-analyzer`, `agape-fact-checker`, and `agape-soma`.
+- `BETA.md` compatibility contract covering `agape.toml`, markdown memory layout, tool bindings, runtime receipts, Studio/project behavior, and Soma deployment.
+
+### Verified
+
+- TypeScript runtime typecheck and unit suite.
+- Soma v0.3.0 `agape-app` deployment contract for persistent project-root markdown memory shared by app and Studio.
+
 ## [1.0.0-alpha.2026.7.5.0] — 2026-07-05
 
 Concurrent subagent delegation, done right: `|>` fan-out to workers now runs their tasks in

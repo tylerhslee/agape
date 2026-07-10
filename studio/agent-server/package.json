@@ -2,7 +2,7 @@
   "name": "agape-studio-agent-server",
   "private": true,
   "type": "module",
-  "version": "1.0.0-alpha.2026.7.9.0",
+  "version": "1.0.0-alpha.2026.7.10.0",
   "description": "Somatic simulation of Agape Studio's agentic operators via live provider APIs — placeholder for the Agape + MCP backend.",
   "scripts": {
     "dev": "tsx server.ts",
