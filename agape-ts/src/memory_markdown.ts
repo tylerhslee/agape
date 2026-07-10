@@ -278,7 +278,8 @@ function splitMarkdownChunks(markdown: string, file: string, startOrder: number)
   const out: MarkdownChunk[] = [];
   for (const section of sections) {
     const id = extractMemoryId(section);
-    const memory = stripHtmlComments(section).trim();
+    const entryMetadata = extractEntryMetadata(section);
+    const memory = stripJsonFences(stripHtmlComments(section)).trim();
     const body = stripFirstHeading(memory).trim();
     if (!body) continue;
     if (isBoilerplate(body)) continue;
@@ -288,7 +289,7 @@ function splitMarkdownChunks(markdown: string, file: string, startOrder: number)
       memory,
       score: 0,
       order: startOrder + out.length,
-      metadata: { markdown_file: file },
+      metadata: { markdown_file: file, ...entryMetadata },
     });
   }
   return out;
@@ -312,6 +313,26 @@ function splitSections(markdown: string): string[] {
 function extractMemoryId(section: string): string | undefined {
   const match = section.match(/agape-memory-id:\s*([A-Za-z0-9:._-]+)/);
   return match?.[1];
+}
+
+function extractEntryMetadata(section: string): Record<string, unknown> {
+  const match = section.match(/```json\s*([\s\S]*?)```/);
+  if (!match?.[1]) return {};
+  try {
+    const parsed: unknown = JSON.parse(match[1]);
+    if (!isRecord(parsed) || !isRecord(parsed.metadata)) return {};
+    return { ...parsed.metadata };
+  } catch {
+    return {};
+  }
+}
+
+function stripJsonFences(markdown: string): string {
+  return markdown.replace(/```json[\s\S]*?```/g, "").trim();
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 function stripFirstHeading(section: string): string {

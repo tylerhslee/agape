@@ -211,14 +211,30 @@ model = "gpt-4o-mini"
 driver = "mock"
 
 [memory]
+# Markdown is the editable substrate; the default Agape memory runtime wraps it
+# with classification, dedupe/consolidation, auto-memory judgment, and recall ranking.
 driver = "markdown"
+runtime = true
+auto_memory = true
+classify = true
+dedupe = true
+dedupe_threshold = 0.9
+recall_pool = 40
 path = ".agape/memory"
 entrypoint = "MEMORY.md"
 top_k = 10
 index_lines = 200
 index_bytes = 25600
 archive_on_forget = true
+# domain_terms = ["league", "roster", "scoring"]
 ```
+
+By default, `[memory] driver = "markdown"` selects the storage substrate and
+Agape wraps it with the built-in memory runtime. The runtime keeps markdown as
+the canonical editable source while handling low-signal auto-memory filtering,
+preference/fact/procedure classification, duplicate suppression, and recall
+re-ranking. Hosts can disable the wrapper with `runtime = false` or replace the
+substrate without changing Agape source.
 
 The built-in `mock` tool driver is used for demos and replay-stable tests.
 Non-mock tool drivers are supplied by the embedding runtime. MCP is one possible

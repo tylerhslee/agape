@@ -818,8 +818,15 @@ fn agape_toml(name: &str) -> String {
          # temperature = 0.7\n\n\
          [memory]\n\
          # Project-local, editable markdown memory. Agape stores files under this\n\
-         # project root, never in the Agape installation checkout.\n\
+         # project root, never in the Agape installation checkout. The default\n\
+         # runtime wraps markdown with classification, dedupe, and recall ranking.\n\
          driver = \"markdown\"\n\
+         runtime = true\n\
+         auto_memory = true\n\
+         classify = true\n\
+         dedupe = true\n\
+         dedupe_threshold = 0.9\n\
+         recall_pool = 40\n\
          path = \".agape/memory\"\n\
          entrypoint = \"MEMORY.md\"\n\
          top_k = 10\n\

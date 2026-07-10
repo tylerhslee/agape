@@ -9,6 +9,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { MockProvider, type Provider, type StructuredSchema, type Variant } from "./runtime.js";
 import { LocalMemoryDriver, type MemoryDriver } from "./memory.js";
 import { MarkdownMemoryDriver } from "./memory_markdown.js";
+import { MemoryRuntimeDriver } from "./memory_runtime.js";
 
 export interface ProviderConfig {
   backend: "mock" | "anthropic" | "openai" | "gemini" | string;
@@ -36,6 +37,13 @@ export interface MemoryConfig {
   index_lines?: number;
   index_bytes?: number;
   archive_on_forget?: boolean;
+  runtime?: boolean;
+  auto_memory?: boolean;
+  classify?: boolean;
+  dedupe?: boolean;
+  dedupe_threshold?: number;
+  recall_pool?: number;
+  domain_terms?: string[];
   [key: string]: ManifestValue | undefined;
 }
 export interface Manifest {
@@ -118,15 +126,19 @@ export function createProvider(m: Manifest): Provider {
 export function createMemoryDriver(m: Manifest, deps: { cwd?: string } = {}): MemoryDriver {
   const cfg = m.memory ?? {};
   const driver = typeof cfg.driver === "string" ? cfg.driver : "markdown";
+  let substrate: MemoryDriver;
   switch (driver) {
     case "markdown":
-      return new MarkdownMemoryDriver(cfg, deps);
+      substrate = new MarkdownMemoryDriver(cfg, deps);
+      break;
     case "local":
     case "mock":
-      return new LocalMemoryDriver();
+      substrate = new LocalMemoryDriver();
+      break;
     default:
-      throw new Error(`unknown memory driver '${driver}' (manifest [memory] driver=…)`);
+      throw new Error(`unknown memory driver '${driver}' (manifest [memory] driver=...)`);
   }
+  return cfg.runtime === false ? substrate : new MemoryRuntimeDriver(substrate, cfg);
 }
 
 // ---- a small TOML reader for the manifest subset the runtime needs ----

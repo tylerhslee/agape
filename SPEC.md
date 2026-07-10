@@ -1,4 +1,4 @@
-# Agape Language Specification (v1.0.0-alpha.2026.7.2.2)
+# Agape Language Specification (v1.0.0-alpha.2026.7.10.0)
 
 > Agape is a programming language for multi-agent systems. This document is the
 > authoritative reference. The prose (§0–§14) defines the language for a reader; the formal
@@ -2296,10 +2296,13 @@ lifetime's firing (§6); a logical-tick lifetime is already deterministic.
 
 ### 16.7 The memory runtime
 
-Each agent instance owns one private memory unit whose substrate maintains three views (§10): a **fact
-table** (relational, exact/selective facts), a **relationship graph** (SPO triples over a typed
-predicate set, concept/entity relations), and a **vector store** (embeddings, similarity recall). No
-store is shared — there is no cross-agent mutable state (§0.2).
+Each agent instance owns one private memory unit. The runtime presents substrate-independent
+logical views over that unit: exact facts, relationship hints, semantic/chunk recall, and the
+canonical stored cells. A substrate may physically be markdown, a relational store, a graph store, a
+vector store, or a combination. Derived indexes are materialized views over the canonical cells: they
+may be rebuilt, budget-limited, or absent in a vanilla runtime, but their absence cannot change
+isolation, taint, ledger receipts, or authority. No store is shared - there is no cross-agent mutable
+state (Section 0.2).
 
 - **Per-agent isolation.** Memory is namespaced per *instance*, not per *template*: no agent may read
   or mutate another agent's memory except through an explicit, ledgered Agape interaction (a send, §6).
@@ -2310,9 +2313,9 @@ store is shared — there is no cross-agent mutable state (§0.2).
 
   ```text
   agent_instance_id    // the owning instance (§16.1a) — the isolation key
-  view                 // facts | relationships | semantics
-  key_or_subject       // the fact key / node / item
-  value_or_edge        // the stored value or SPO edge
+  view                 // canonical | facts | relationships | semantics
+  key_or_subject       // the cell id / fact key / node / item
+  value_or_edge        // the stored value, extracted fact, SPO edge, or semantic chunk
   origin_tick          // backpointer to the producing ledger event (§7, §10)
   taint                // graded | raw — recall is always tainted (§10, §13)
   basis_head           // the ledger prefix the value was derived from (§7)
@@ -2332,7 +2335,7 @@ store is shared — there is no cross-agent mutable state (§0.2).
   1. Receive the stimulus.
   2. Append (or identify) the ledger event representing that stimulus.
   3. Build a memory query from the stimulus, current task, agent role, and ledger head.
-  4. Consult the instance's private facts, graph, and vector memory.
+  4. Consult the instance's canonical cells and any available fact, relationship, or semantic indexes.
   5. Append MemoryConsulted with counts, query metadata, and result provenance (§9).
   6. Build the cognition/tool/action context from source instruction (§5), project context,
      and the memory packet.
@@ -2342,15 +2345,16 @@ store is shared — there is no cross-agent mutable state (§0.2).
   ```
 
   The **memory packet** supplied to cognition includes, within budget: whole-artifact summaries
-  relevant to the task (§16.7b); precise chunk/vector hits with their origin ticks; graph
-  relationships for entities in the task; prior lessons, failures, and working patterns (§16.7c);
+  relevant to the task (§16.7b); precise chunk or semantic hits with their origin ticks; relationship
+  hints for entities in the task; prior lessons, failures, and working patterns (§16.7c);
   recent related run/check/test outcomes; and, when applicable, the explicit fact that memory was
   empty. **An empty lookup is a meaningful recorded result, not an omitted step** — step 5 records
   that memory was consulted and returned no applicable context.
 
-  Internalization (step 9) decomposes a value into typed facts, SPO triples, and embeddings via a
-  provider call — non-deterministic but shape-fixed (§10), and journaled (or deterministically
-  derived, §16.5), so replay reproduces it without re-invoking the provider. **Memory cannot launder
+  Internalization (step 9) records the canonical cell and may decompose it into typed facts,
+  relationship hints, semantic chunks, embeddings, or substrate-native records. Any provider-assisted
+  decomposition is non-deterministic but shape-fixed (Section 10), and journaled (or deterministically
+  derived, Section 16.5), so replay reproduces it without re-invoking the provider. **Memory cannot launder
   trust:** a recalled value is subjective and stays tainted (§10, §13); it must be re-gated before a
   consequential sink. And **memory cannot rewrite behavior:** instructions, grants, and dependency
   bindings are source/config artifacts (§5, §13, §17) — memory may *guide* a turn but never silently
@@ -2554,7 +2558,7 @@ The manifest binds those dependency names to concrete backends:
 name = "fact-checker"
 entry = "main.ag"
 version = "0.1.0"
-spec = "1.0.0-alpha.2026.7.2.2"
+spec = "1.0.0-alpha.2026.7.10.0"
 
 [provider]
 backend = "openai"

@@ -15,6 +15,7 @@ import {
 } from "../src/memory.js";
 import { createMemoryDriver } from "../src/config.js";
 import { MarkdownMemoryDriver } from "../src/memory_markdown.js";
+import { MemoryRuntimeDriver } from "../src/memory_runtime.js";
 
 class RecordingMemory implements MemoryDriver {
   declared: MemoryScope[] = [];
@@ -122,8 +123,18 @@ describe("markdown memory adapter", () => {
     }
   });
 
-  it("is the default configured memory substrate", () => {
-    expect(createMemoryDriver({ provider: { backend: "mock" } })).toBeInstanceOf(MarkdownMemoryDriver);
+  it("wraps the default configured markdown substrate with the Agape memory runtime", () => {
+    const memory = createMemoryDriver({ provider: { backend: "mock" } });
+    expect(memory).toBeInstanceOf(MemoryRuntimeDriver);
+    expect((memory as MemoryRuntimeDriver).substrate).toBeInstanceOf(MarkdownMemoryDriver);
+  });
+
+  it("can expose the raw configured substrate when the runtime is disabled", () => {
+    const memory = createMemoryDriver({
+      provider: { backend: "mock" },
+      memory: { driver: "markdown", runtime: false },
+    });
+    expect(memory).toBeInstanceOf(MarkdownMemoryDriver);
   });
   it("resolves relative markdown paths against the configured project root", async () => {
     const dir = await mkdtemp(join(tmpdir(), "agape-md-project-"));
@@ -141,6 +152,54 @@ describe("markdown memory adapter", () => {
       });
 
       await expect(readFile(join(dir, ".agape", "memory", "MEMORY.md"), "utf8")).resolves.toContain("demo/a/notes");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("default memory runtime", () => {
+  it("classifies useful memories and suppresses obvious duplicate writes", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "agape-runtime-memory-"));
+    try {
+      const runtime = new MemoryRuntimeDriver(new MarkdownMemoryDriver({ path: dir, top_k: 10 }));
+      const scope = { project: "league", agent: "advisor", mem: "notes" };
+      const write: MemoryWriteRequest = {
+        scope,
+        value: { kind: "text", v: "User prefers conservative waiver advice in close roster calls.", trust: "settled" },
+        memory: "User prefers conservative waiver advice in close roster calls.",
+        summary: { kind: "text", rendered: "User prefers conservative waiver advice in close roster calls." },
+        metadata: { source: "store" },
+      };
+
+      const first = await runtime.internalize(write);
+      const second = await runtime.internalize(write);
+      const consulted = await runtime.consult({ scope, query: "waiver advice risk preference", topK: 1 });
+
+      expect(first.status).toBe("APPENDED");
+      expect(second.status).toBe("DEDUPED");
+      expect(consulted.hits[0]?.metadata).toMatchObject({ memory_kind: "preference" });
+      expect(consulted.recalled).toContain("conservative waiver advice");
+      expect(consulted.recalled).not.toContain("```json");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("skips low-signal automatic provider-reply memories", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "agape-runtime-memory-"));
+    try {
+      const runtime = new MemoryRuntimeDriver(new MarkdownMemoryDriver({ path: dir }));
+      const receipt = await runtime.internalize({
+        scope: { project: "demo", agent: "a", mem: "__agent__" },
+        value: { kind: "text", v: "ok", trust: "raw" },
+        memory: "ok",
+        summary: { kind: "text", rendered: "ok" },
+        metadata: { source: "provider_reply" },
+      });
+
+      expect(receipt.status).toBe("SKIPPED");
+      expect(receipt.effects).toMatchObject({ facts: { upserted: 0 } });
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

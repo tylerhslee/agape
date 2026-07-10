@@ -23,14 +23,22 @@ fallback_samples    = 10
 fallback_temperature = 0.7
 
 [memory]
-# Default vanilla substrate: plain markdown, compatible with the CLAUDE.md / MEMORY.md habit.
+# Default vanilla system: plain markdown substrate plus Agape's built-in memory runtime.
 driver = "markdown"
+runtime = true
+auto_memory = true
+classify = true
+dedupe = true
+dedupe_threshold = 0.9
+recall_pool = 40
 path = ".agape/memory"
 entrypoint = "MEMORY.md"
 top_k = 10
 index_lines = 200
 index_bytes = 25600
 archive_on_forget = true
+# Optional domain-aware recall hints for app hosts, e.g. ["league", "roster", "scoring"].
+# domain_terms = []
 
 # Ephemeral in-process memory for tests or throwaway runs:
 # driver = "local"

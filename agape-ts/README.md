@@ -1,7 +1,7 @@
 # agape-ts — a TypeScript compiler + runtime for Agape
 
 A from-scratch implementation of the Agape **core kernel** (per `../SPEC.md`,
-v1.0.0-alpha.2026.7.2.2), written in TypeScript so it can live inside Agape Studio. It lexes,
+v1.0.0-alpha.2026.7.10.0), written in TypeScript so it can live inside Agape Studio. It lexes,
 parses, statically checks, and runs the complete core language, with the trusted kernel
 (`decide` → `Decided` → committed `endorse` → granted sink → ledger) enforced both statically and at runtime.
 
@@ -99,16 +99,25 @@ plain markdown, user-auditable files, a concise entrypoint, and richer topic fil
 
 ```toml
 [memory]
+# Markdown is the editable substrate; the default Agape memory runtime wraps it
+# with classification, dedupe/consolidation, auto-memory judgment, and recall ranking.
 driver = "markdown"
+runtime = true
+auto_memory = true
+classify = true
+dedupe = true
+dedupe_threshold = 0.9
+recall_pool = 40
 path = ".agape/memory"
 entrypoint = "MEMORY.md"
 top_k = 10
 index_lines = 200
 index_bytes = 25600
 archive_on_forget = true
+# domain_terms = ["league", "roster", "scoring"]
 ```
 
-Use `driver = "local"` for ephemeral in-process memory. Agape still owns taint, per-agent isolation, ledger receipts, and sink authority; markdown is only the storage substrate.
+Use `driver = "local"` for ephemeral in-process memory. By default, Agape wraps the selected substrate with the memory runtime in `src/memory_runtime.ts`, which handles automatic low-signal filtering, preference/fact/procedure separation, duplicate suppression, and recall re-ranking. Set `runtime = false` to expose the raw substrate. Agape still owns taint, per-agent isolation, ledger receipts, and sink authority; markdown is only the canonical storage substrate.
 
 ## What's implemented
 
