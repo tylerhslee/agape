@@ -257,6 +257,8 @@ agape-conformance/         black-box conformance suite
 studio/                    packaged Studio app and agent server
 design/                    showcase programs and design notes
 scripts/package.sh         release bundle builder
+scripts/dogfood-smoke.mjs  dogfood and Soma beta smoke runner
+BETA.md                    beta compatibility and certification gates
 ```
 
 ## Development
@@ -267,6 +269,7 @@ TypeScript runtime and Studio runner:
 cd agape-ts
 npm install
 npm test
+npm run test:cert
 npm run typecheck
 npm run studio
 ```
@@ -283,6 +286,7 @@ cd ../agent-server && npm install && npm test
 - [`SPEC.md`](SPEC.md) - authoritative language and runtime reference
 - [`KERNEL.md`](KERNEL.md) - trusted-kernel notes
 - [`DISTRIBUTION.md`](DISTRIBUTION.md) - packaging and runtime distribution plan
+- [`BETA.md`](BETA.md) - beta compatibility promise, certification gates, dogfood, and Soma deployment contract
 - [`agape-ts/README.md`](agape-ts/README.md) - TypeScript implementation details
 - [`studio/README.md`](studio/README.md) - packaged Studio architecture
 

@@ -12,6 +12,8 @@
     "hello": "tsx src/cli.ts run examples/hello.ag",
     "studio": "tsx src/cli.ts studio",
     "test": "vitest run",
+    "test:cert": "vitest run test/certification.test.ts",
+    "test:core": "vitest run test/kernel.test.ts test/memory.test.ts test/certification.test.ts",
     "typecheck": "tsc --noEmit",
     "version:check": "node ../scripts/check-version.mjs"
   },
