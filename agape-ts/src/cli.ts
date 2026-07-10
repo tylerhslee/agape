@@ -92,13 +92,18 @@ async function main(argv: string[]): Promise<number> {
   const memory = createMemoryDriver(manifest, { cwd: memoryRoot });
 
   const program = parse(source);
-  const { ledger, stdout } = await run(program, { provider, manifest, memory });
+  const { ledger, stdout, warnings } = await run(program, { provider, manifest, memory });
 
   const modelNote = manifest.provider.model ? ` / ${manifest.provider.model}` : "";
   console.log(`# agape-ts — ran ${file}  (provider: ${manifest.provider.backend}${modelNote})\n`);
   if (stdout.length) {
     console.log("say:");
     for (const line of stdout) console.log(`  ${line}`);
+    console.log();
+  }
+  if (warnings.length) {
+    console.log("warnings:");
+    for (const w of warnings) console.log(`  ${w.kind}: ${w.message}`);
     console.log();
   }
   console.log("ledger:");

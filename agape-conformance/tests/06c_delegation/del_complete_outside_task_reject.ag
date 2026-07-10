@@ -1,0 +1,10 @@
+//! id:        del_complete_outside_task_reject
+//! section:   06c_delegation
+//! expect:    reject
+//! error:     TypeError
+//! spec:      §6c, §15.3.3 (`complete`/`fail` are legal only inside a task handler)
+//! ---
+agent A {
+  on awake { complete 42; }
+}
+spawn A a; awake a;

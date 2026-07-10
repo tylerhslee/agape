@@ -12,7 +12,8 @@ It does NOT write or modify any `.ag` file; it only reads them and writes the tw
 MANIFEST.* files. It also validates the headers (see check()).
 
 Header keys: id, section, expect (accept|reject|blocked), error (iff reject),
-spine|contains|absent|order (matchers; `; `-separated), schema (compiler schema assertions;
+spine|contains|absent|order (ledger matchers; `; `-separated),
+warning|absent_warning (runtime warning matchers; `; `-separated), schema (compiler schema assertions;
 `; `-separated), question (iff blocked), spec, note.
 Run directives (the §17.5 harness contract): provider (empty|schema_violation|credence(...)),
 principal (grant|deny — the identity-dependency ruling for `decide c by p`), manifest
@@ -33,6 +34,7 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 TESTS_DIR = os.path.join(ROOT, "tests")
 
 MATCHER_KEYS = ("ledger", "spine", "contains", "absent", "order")
+WARNING_KEYS = ("warning", "absent_warning")
 SCHEMA_KEYS = ("schema",)
 DIRECTIVE_LIST_KEYS = ("manifest", "modules", "packages")   # `;`-separated; configure the run / list companion modules/packages
 EXPECTS = {"accept", "reject", "blocked"}
@@ -61,7 +63,7 @@ def parse_ag(path):
                 continue
             key, _, val = content.partition(":")
             key, val = key.strip(), val.strip()
-            if key in MATCHER_KEYS or key in SCHEMA_KEYS or key in DIRECTIVE_LIST_KEYS:
+            if key in MATCHER_KEYS or key in WARNING_KEYS or key in SCHEMA_KEYS or key in DIRECTIVE_LIST_KEYS:
                 fields[key] = [x.strip() for x in val.split(";") if x.strip()]
             else:
                 fields[key] = val
@@ -133,6 +135,10 @@ def render_toml(tests):
         if t["expect"] == "reject":
             L.append(f'error = "{t["error"]}"')
         for k in MATCHER_KEYS:
+            if t.get(k):
+                arr = ", ".join(f'"{toml_escape(x)}"' for x in t[k])
+                L.append(f"{k} = [{arr}]")
+        for k in WARNING_KEYS:
             if t.get(k):
                 arr = ", ".join(f'"{toml_escape(x)}"' for x in t[k])
                 L.append(f"{k} = [{arr}]")

@@ -97,6 +97,7 @@ function typeLabel(t: A.TypeRef): string {
     case "credence": return `Credence<${t.enumName}>`;
     case "decision": return `Decision<${t.enumName}>`;
     case "endorsement": return `Endorsement<${typeLabel(t.inner)}>`;
+    case "task": return `Task<${typeLabel(t.inner)}>`;
     case "named": return t.typeArgs?.length ? `${t.name}<${t.typeArgs.map(typeLabel).join(", ")}>` : t.name;
     case "mem": return "mem";
   }
@@ -110,7 +111,6 @@ function mapProgram(p: A.Program): ProgramMap {
       case "action": m.actions.push(d.name); break;
       case "event": m.events.push(d.name); break;
       case "enum": m.enums[d.name] = d.variants; break;
-      case "tool": m.tools.push({ name: d.name, effect: d.effect }); break;
       case "principal": m.principals.push(d.name); break;
       case "prompt": m.prompts.push({ name: d.name, type: typeLabel(d.type) }); break;
       default: break;

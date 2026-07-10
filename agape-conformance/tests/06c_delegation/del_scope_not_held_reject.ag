@@ -1,0 +1,21 @@
+//! id:        del_scope_not_held_reject
+//! section:   06c_delegation
+//! expect:    reject
+//! error:     AuthorityViolation
+//! spec:      §6c, §15.3.3 W-Scope-Attenuate (a task scope can only ATTENUATE the delegator's authority — each scoped action must be held by the delegator itself)
+//! ---
+action Deploy(text artifact);
+agent Worker grants { perform Deploy } {
+  on assigned { complete 1; }
+}
+agent Lead grants { reach Worker } {
+  on awake {
+    spawn Worker w; awake w;
+    TaskSpec draft = task {
+      objective "ship it";
+      acceptance "an int";
+      scope { perform Deploy }
+    };
+  }
+}
+spawn Lead lead; awake lead;

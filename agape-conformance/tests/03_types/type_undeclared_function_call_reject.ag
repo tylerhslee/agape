@@ -1,0 +1,10 @@
+//! id:        type_undeclared_function_call_reject
+//! section:   03_types
+//! expect:    reject
+//! error:     TypeError
+//! spec:      §4, §8 (a bare call to an undeclared name is a TypeError — functions, like events, are not self-declaring)
+//! ---
+agent R {
+  on awake { text hits = search("q"); }
+}
+spawn R r; awake r;

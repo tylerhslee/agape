@@ -1,0 +1,13 @@
+//! id:        world_replay_chain_head
+//! section:   06b_world
+//! expect:    accept
+//! contains:  pair(Tool@t1)
+//! replay:    chain_head_equal
+//! manifest:  tools.t1.driver=mock; actions.Pay.tool=t1
+//! spec:      §6b, §16.5 (recorded replay of a wired perform regenerates the same chain-head: the seam's journal pair re-serves the endpoint result and nothing is re-invoked)
+//! ---
+action Pay(int amount);
+agent A grants { perform Pay } {
+  on awake { perform Pay(5); }
+}
+spawn A a; awake a;

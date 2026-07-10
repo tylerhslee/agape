@@ -1,0 +1,12 @@
+//! id:        cfg_wiring_missing_catalog_key_reject
+//! section:   16_config
+//! expect:    reject
+//! error:     ConfigError
+//! manifest:  actions.Search.tool=search
+//! spec:      §6b, §17.1 (an [actions.NAME] wiring must reference an existing [tools.*] catalog entry; a missing catalog key is ALWAYS a ConfigError, not a late runtime lookup)
+//! ---
+action Search(text q);
+agent A grants { perform Search } {
+  on awake { perform Search("agape"); }
+}
+spawn A a; awake a;

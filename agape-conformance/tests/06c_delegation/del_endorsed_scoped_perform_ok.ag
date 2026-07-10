@@ -1,0 +1,31 @@
+//! id:        del_endorsed_scoped_perform_ok
+//! section:   06c_delegation
+//! expect:    accept
+//! order:     Endorsed; Delivered(r); Deploy; TaskCompleted(r)
+//! spec:      §6c, §13 (the canonical scoped flow: draft task → decide → endorse in the committed branch → send Endorsement<TaskSpec> → the worker's statically-granted perform is task-enabled)
+//! ---
+enum Go { Approve, Reject }
+action Deploy(text artifact);
+agent Worker grants { perform Deploy } {
+  on assigned {
+    perform Deploy("artifact-v2");
+    complete 1;
+  }
+}
+agent Lead grants { reach Worker, perform Deploy } {
+  on awake {
+    spawn Worker w; awake w;
+    TaskSpec draft = task {
+      objective "ship exactly one artifact";
+      acceptance "an int";
+      scope { perform Deploy }
+    };
+    Credence<Go> c = self <- "is this deploy safe to hand off?";
+    Decision<Go> d = decide c by confidence 0.9;
+    if (d.committed == Approve) {
+      Endorsement<TaskSpec> approved = endorse draft by d;
+      int r = w <- approved expires 10;
+    }
+  }
+}
+spawn Lead lead; awake lead;

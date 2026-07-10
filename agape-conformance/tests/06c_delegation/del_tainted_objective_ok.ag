@@ -1,0 +1,20 @@
+//! id:        del_tainted_objective_ok
+//! section:   06c_delegation
+//! expect:    accept
+//! contains:  TaskCompleted(r)
+//! spec:      §6c (a generated objective stays tainted but an UNSCOPED task may still be sent — taint matters at sinks, and a plain task grants nothing)
+//! ---
+agent Worker {
+  on assigned { complete 1; }
+}
+agent Lead grants { reach Worker } {
+  on awake {
+    spawn Worker w; awake w;
+    text obj = self <- "phrase the research objective";
+    int r = w <- task {
+      objective obj;
+      acceptance "an int";
+    } expires 10;
+  }
+}
+spawn Lead lead; awake lead;

@@ -1,0 +1,22 @@
+//! id:        del_cancel_tombstone
+//! section:   06c_delegation
+//! expect:    accept
+//! contains:  TaskCancelled(h)
+//! absent:    Delivered(h); TaskCompleted(h); Expired(h)
+//! spec:      §6c (cancel appends the authoritative TaskCancelled tombstone; the first terminal wins — a cancelled task neither delivers nor expires)
+//! note:      Worker is never awakened; cancel lands before any delivery could occur
+//! ---
+agent Worker {
+  on assigned { complete 1; }
+}
+agent Lead grants { reach Worker } {
+  on awake {
+    spawn Worker w;
+    Task<int> h = w <- task {
+      objective "produce the number";
+      acceptance "an int";
+    } expires 10;
+    cancel h;
+  }
+}
+spawn Lead lead; awake lead;

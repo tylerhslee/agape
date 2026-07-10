@@ -1,0 +1,17 @@
+//! id:        world_result_event_ingress_to_provider_warn
+//! section:   06b_world
+//! expect:    accept
+//! warning:   tainted_ingress_to_provider
+//! manifest:  tools.t1.driver=mock; actions.Search.tool=t1; actions.Search.result_event=SearchResult
+//! spec:      §6b, §17 (default provider-prompt ingress policy warns when unscreened result-event ingress is interpolated into cognition)
+//! ---
+event SearchResult(text body);
+action Search(text q);
+agent A grants { perform Search } {
+  on awake {
+    text evidence = perform Search("agape") expires 5;
+    text summary = self <- f"summarize external evidence: {evidence}";
+    say(summary);
+  }
+}
+spawn A a; awake a;

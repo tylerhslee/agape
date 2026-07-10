@@ -1,0 +1,40 @@
+//! id:        del_fanout_shared_worker_concurrent_ok
+//! section:   06c_delegation
+//! expect:    accept
+//! order:     Spawned(worker); TaskCompleted(r); TaskCompleted(r); TaskCompleted(r); Done
+//! replay:    chain_head_equal
+//! spec:      §6c + §12 — fan-out delegation composes with `|>`: a delegating function mapped over a finite collection to a SHARED worker runs its foreground tasks concurrently (paths overlap, §12), all complete, and the ledger replays identically (§0.2 determinism is serialized EFFECTS, not serialized execution — no shared mutable state to race over)
+//! ---
+event Done(int n);
+
+// the shared worker: one instance verifies every delegated item concurrently. The `self <-`
+// cognition is an async suspension point INSIDE the task handler — this is what makes the fan-out
+// genuinely concurrent (and what a name-keyed active-task slot would clobber across overlapping tasks).
+agent Worker {
+  on assigned {
+    text note = self <- "acknowledge the assigned item";
+    complete 1;
+  }
+}
+
+// a delegating function: each mapped path submits its own foreground task to the shared worker.
+int verifyOne(int item) {
+  int r = worker <- task {
+    objective  "verify one item";
+    acceptance "an int";
+  } expires 10;
+  return r;
+}
+
+agent Lead grants { reach Worker } {
+  spawn Worker worker;
+  awake worker;
+
+  on awake {
+    int[] items = [1, 2, 3];
+    int[] results = items |> verifyOne;   // three concurrent delegations to `worker`
+    emit Done(3);
+  }
+}
+
+spawn Lead lead; awake lead;

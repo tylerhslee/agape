@@ -1,0 +1,32 @@
+//! id:        del_endorsed_completion_settled_ok
+//! section:   06c_delegation
+//! expect:    accept
+//! order:     Endorsed; TaskCompleted(body); Publish
+//! spec:      §6c (a worker that completes with an Endorsement<T> hands over a settled, ledger-backed subject — the delegator may sink it directly)
+//! ---
+enum Quality { Good, Bad }
+action Publish(text body);
+agent Worker {
+  on assigned {
+    text draft = self <- "write the copy";
+    Credence<Quality> q = self <- f"is the copy good: {draft}";
+    Decision<Quality> d = decide q by confidence 0.9;
+    if (d.committed == Good) {
+      Endorsement<text> e = endorse draft by d;
+      complete e;
+    } else {
+      fail "copy not good enough";
+    }
+  }
+}
+agent Lead grants { reach Worker, perform Publish } {
+  on awake {
+    spawn Worker w; awake w;
+    Endorsement<text> body = w <- task {
+      objective "write the launch copy";
+      acceptance "one endorsed paragraph";
+    } expires 10;
+    perform Publish(body);
+  }
+}
+spawn Lead lead; awake lead;

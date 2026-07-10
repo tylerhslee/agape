@@ -1,0 +1,15 @@
+//! id:        agent_prompt_screened_ingress_to_provider_ok
+//! section:   05_agents
+//! expect:    accept
+//! absent_warning: tainted_ingress_to_provider
+//! manifest:  security.tainted_ingress_to_provider=deny; prompts.question.driver=stdin; security.ingress.prompts.question.driver=mock-screen
+//! spec:      §5b, §17 (a manifest-screened prompt ingress value is external_screened, so it may feed cognition without warning even under deny mode)
+//! ---
+prompt text question;
+agent A {
+  when (Prompt p about question) {
+    text draft = self <- f"answer using the screened user request: {p.text}";
+    say(draft);
+  }
+}
+spawn A a; awake a;

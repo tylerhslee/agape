@@ -1,0 +1,13 @@
+//! id:        world_wired_perform_invokes_ok
+//! section:   06b_world
+//! expect:    accept
+//! contains:  pair(Tool@t1)
+//! order:     Ping; ToolStarted(t1); ToolResolved(t1)
+//! manifest:  tools.t1.driver=mock; actions.Ping.tool=t1
+//! spec:      §6b (an [actions.NAME] wiring makes perform invoke the catalog endpoint: the action's own domain row, then the seam's ToolStarted/ToolResolved journal pair correlated by catalog name)
+//! ---
+action Ping(text msg);
+agent A grants { perform Ping } {
+  on awake { perform Ping("hello"); }
+}
+spawn A a; awake a;

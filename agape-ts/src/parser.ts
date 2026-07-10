@@ -29,7 +29,7 @@ function assertCore(p: A.Program): void {
     if (t.kind === "named" && t.typeArgs && t.typeArgs.length && t.name !== "LedgerEntry") {
       bad("a generic type instantiation");
     }
-    if (t.kind === "event" || t.kind === "array") walkType(t.inner);
+    if (t.kind === "event" || t.kind === "array" || t.kind === "task") walkType(t.inner);
     if (t.kind === "named" && t.typeArgs) t.typeArgs.forEach(walkType);
   };
   const walkExpr = (e: A.Expr): void => {
@@ -42,6 +42,7 @@ function assertCore(p: A.Program): void {
       case "member": walkExpr(e.obj); break;
       case "index": walkExpr(e.obj); walkExpr(e.index); break;
       case "call": walkExpr(e.callee); e.args.forEach(walkExpr); break;
+      case "spawnexpr": e.args.forEach(walkExpr); break;
       case "binary": walkExpr(e.left); walkExpr(e.right); break;
       case "unary": walkExpr(e.operand); break;
       case "send": walkExpr(e.dest); walkExpr(e.message); break;
@@ -51,6 +52,8 @@ function assertCore(p: A.Program): void {
       case "quorum": walkExpr(e.source); break;
       case "structlit": if (e.typeArgs && e.typeArgs.length) bad("a generic struct literal"); e.fields.forEach((f) => walkExpr(f.value)); break;
       case "arraylit": e.items.forEach(walkExpr); break;
+      case "tasklit": if (e.objective) walkExpr(e.objective); if (e.acceptance) walkExpr(e.acceptance); break; // core (§6c)
+      case "performexpr": e.args.forEach(walkExpr); if (e.expires) walkExpr(e.expires); break; // core (§6b)
       case "fstring": e.parts.forEach((pt) => { if (pt.kind === "expr") walkExpr(pt.expr); }); break;
       default: break;
     }
@@ -59,6 +62,9 @@ function assertCore(p: A.Program): void {
     switch (s.kind) {
       case "dispatch": return bad("a gate arm block (branch on `.committed` with `if`)");
       case "retry": return bad("`retry` (the core has no unbounded or bounded loop)");
+      case "complete": walkExpr(s.value); break;  // core (§6c)
+      case "fail": walkExpr(s.reason); break;     // core (§6c)
+      case "cancel": walkExpr(s.handle); break;   // core (§6c)
       case "var": walkType(s.type); if (s.init) walkExpr(s.init); break;
       case "assign": walkExpr(s.target); walkExpr(s.value); break;
       case "spawn": s.args.forEach(walkExpr); break;
@@ -79,7 +85,6 @@ function assertCore(p: A.Program): void {
       case "struct": if (d.typarams && d.typarams.length) bad("a generic `struct`"); d.fields.forEach((f) => walkType(f.type)); break;
       case "fn": if (d.typarams && d.typarams.length) bad("a generic `fn`"); d.params.forEach((f) => walkType(f.type)); d.body.forEach(walkStmt); break;
       case "action": if (d.reversible) bad("a `reversible` action"); d.fields.forEach((f) => walkType(f.type)); break;
-      case "tool": if (d.reversible) bad("a `reversible` tool"); d.params.forEach((f) => walkType(f.type)); walkType(d.ret); break;
       case "event": d.fields.forEach((f) => walkType(f.type)); break;
       case "prompt": walkType(d.type); break;
       case "agent":
@@ -204,14 +209,8 @@ class Parser {
     // so only treat it as a decl head when a number literal immediately follows (an ordinary `conformal`
     // used as a name elsewhere is left alone). A `by conformal α` rule is parsed inside parseRule, not here.
     if (this.atIdent("conformal") && (this.peek(1).type === "int" || this.peek(1).type === "float")) return true;
-    // tool decl: `read|write tool …`, optionally prefixed by `reversible` (§15.2).
-    if (t === "read" || t === "write") return true;
-    // a bare `tool …` (no effect class) is still a tool decl — but an ILL-FORMED one: the class
-    // is mandatory (§6b/§15.2), so parseTool() raises a ParseError rather than silently defaulting.
-    if (t === "tool") return true;
     if (t === "reversible") {
-      const n = this.peek(1).type;
-      return n === "action" || n === "read" || n === "write" || n === "tool";
+      return this.peek(1).type === "action";
     }
     // function decl: `sync RET NAME(…)` or a bare top-level `RET NAME(…)` (async is default, §15.2).
     if (t === "sync") return true;
@@ -278,13 +277,6 @@ class Parser {
       return { kind: "struct", name, fields, typarams, pub, pos };
     }
     if (this.at("interface")) return this.parseInterface(pub);
-    // `reversible` may prefix either an `action` or a `tool` (§15.2).
-    if (this.at("reversible")) {
-      if (this.peek(1).type === "tool" || this.peek(1).type === "read" || this.peek(1).type === "write") {
-        return this.withPub(this.parseTool(), pub);
-      }
-    }
-    if (this.at("read") || this.at("write") || this.at("tool")) return this.withPub(this.parseTool(), pub);
     if (this.at("action")) {
       this.eat("action");
       const name = this.eat("ident").value;
@@ -415,26 +407,6 @@ class Parser {
     }
     this.eat("}");
     return { kind: "interface", name, members, pub, pos };
-  }
-
-  // tool ::= "reversible"? ("read"|"write") "tool" type Ident params config? ";"  (§15.2)
-  private parseTool(): A.ToolDecl {
-    const pos = this.peek().pos;
-    let reversible = false;
-    if (this.at("reversible")) { reversible = true; this.next(); }
-    // the effect class is MANDATORY — a bare `tool` (no read/write) is a ParseError (§6b).
-    if (!this.at("read") && !this.at("write")) {
-      this.err("a tool must declare its effect class — `read tool …` or `write tool …`");
-    }
-    const effect = this.at("read") ? "read" : "write";
-    this.next();
-    this.eat("tool");
-    const ret = this.parseType();
-    const name = this.eat("ident").value;
-    const params = this.parseFieldList();
-    if (this.at("{")) this.skipBraces(); // optional `config { … }` binding block (§17) — ignored in v0
-    this.eat(";");
-    return { kind: "tool", effect, reversible, ret, name, params, pos };
   }
 
   // fn ::= "sync"? type Ident typarams? params block  (async is the default, §15.2)
@@ -596,11 +568,14 @@ class Parser {
 
   private parseOnHook(): A.OnHook {
     const pos = this.eat("on").pos;
-    let event: "awake" | "sleep" | "crash";
+    let event: A.OnHook["event"];
     if (this.at("awake")) event = "awake";
     else if (this.at("sleep")) event = "sleep";
     else if (this.at("crash")) event = "crash";
-    else this.err("expected awake/sleep/crash");
+    // the two task hooks (§6c): `assigned`/`cancelled` are contextual idents, not keywords.
+    else if (this.atIdent("assigned")) event = "assigned";
+    else if (this.atIdent("cancelled")) event = "cancelled";
+    else this.err("expected awake/sleep/crash/assigned/cancelled");
     this.next();
     const body = this.parseBlock();
     return { kind: "on", event, body, pos };
@@ -685,6 +660,14 @@ class Parser {
         this.eat(">");
         return { kind: "endorsement", inner };
       }
+      if (name === "Task") {
+        // Task<T> — a background-task handle (§6c).
+        this.next();
+        this.eat("<");
+        const inner = this.parseType();
+        this.eat(">");
+        return { kind: "task", inner };
+      }
       this.next();
       // a QUALIFIED type name `geometry.Shape` / `facade.internal.Shape` (§19.2): greedily consume
       // `('.' Ident)*` into a dotted name BEFORE the optional `<typeargs>`, so a cross-module type reads
@@ -747,6 +730,27 @@ class Parser {
         const name = this.eat("ident").value;
         this.eat(";");
         return { kind: "forget", name, pos: t.pos };
+      }
+      case "complete": {
+        // complete ::= "complete" expr ";"  (§6c) — resolve the active assigned task programmatically.
+        this.next();
+        const value = this.parseExpr();
+        this.eat(";");
+        return { kind: "complete", value, pos: t.pos };
+      }
+      case "fail": {
+        // fail ::= "fail" expr ";"  (§6c) — fail the active assigned task with a text reason.
+        this.next();
+        const reason = this.parseExpr();
+        this.eat(";");
+        return { kind: "fail", reason, pos: t.pos };
+      }
+      case "cancel": {
+        // cancel ::= "cancel" postfix ";"  (§6c) — delegator-side cooperative cancellation.
+        this.next();
+        const handle = this.parsePostfix();
+        this.eat(";");
+        return { kind: "cancel", handle, pos: t.pos };
       }
       case "independent":
       case "dependent": {
@@ -926,10 +930,11 @@ class Parser {
     if (this.at("<-")) {
       const pos = this.next().pos;
       const message = this.parsePipe();
-      let expires: number | undefined;
+      // `expires EXPR` (§6): any settled numeric expression, not only a literal.
+      let expires: A.Expr | undefined;
       if (this.atIdent("expires")) {
         this.next();
-        expires = this.number();
+        expires = this.parseGateOrBinary();
       }
       return { kind: "send", dest: left, message, expires, pos };
     }
@@ -1302,6 +1307,14 @@ class Parser {
       case "abstained": this.next(); return { kind: "ident", name: "abstained", pos: t.pos };
       case "null": this.next(); return { kind: "null", pos: t.pos };
       case "self": this.next(); return { kind: "self", pos: t.pos };
+      case "spawn": {
+        // the EXPRESSION form: `spawn Type (args)?` with no instance name — mints a fresh instance
+        // per evaluation (the statement form `spawn Type name;` keeps its own parse path). §6/§15.4.
+        this.next();
+        const agentType = this.qname();
+        const args = this.at("(") ? this.parseArgs() : [];
+        return { kind: "spawnexpr", agentType, args, pos: t.pos };
+      }
       case "ident": {
         this.next();
         // a QUALIFIED struct-literal head `geo.Shape { … }` / `facade.internal.Shape { … }` (§19.2): if a
@@ -1331,6 +1344,20 @@ class Parser {
       case "{": return this.parseStructLit(undefined, t.pos); // a bare struct literal `{ f: e, … }`
       case "(": { this.next(); const e = this.parseExpr(); this.eat(")"); return e; }
       case "[": return this.parseArrayLit(t.pos); // an array literal `[e, …]` (§15.2 primary)
+      case "task": return this.parseTaskLit(t.pos); // a TaskSpec-building task literal (§6c)
+      case "perform": {
+        // §6b foreground perform binding — an EXPRESSION-position perform (`T r = perform A(…) expires N`).
+        // Statement-position performs never reach here (parseStmt handles them first).
+        this.next();
+        const name = this.qname();
+        const args = this.at("(") ? this.parseArgs() : [];
+        let expires: A.Expr | undefined;
+        if (this.atIdent("expires")) {
+          this.next();
+          expires = this.parseGateOrBinary();
+        }
+        return { kind: "performexpr", name, args, expires, pos: t.pos };
+      }
     }
     // `all`/`any`/`quorum` are contextual (§2): a fusion reducer only when immediately followed by `(`;
     // otherwise the word is an ordinary identifier in name-position.
@@ -1401,6 +1428,42 @@ class Parser {
     }
     this.eat("}");
     return { kind: "structlit", typeName, typeArgs, fields, pos };
+  }
+
+  // tasklit ::= "task" "{" taskclause* "}"  (§6c) — builds a TaskSpec. Clauses are contextual:
+  //   "objective" expr ";" | "acceptance" expr ";" | "scope" "{" "perform" Ident ("," "perform" Ident)* "}" ";"?
+  // Missing objective/acceptance is recorded here and rejected as a TypeError by the checker/runtime.
+  private parseTaskLit(pos: { line: number; col: number }): A.TaskLit {
+    this.eat("task");
+    this.eat("{");
+    let objective: A.Expr | undefined;
+    let acceptance: A.Expr | undefined;
+    const scope: string[] = [];
+    while (!this.at("}") && !this.at("eof")) {
+      if (this.atIdent("objective")) {
+        this.next();
+        objective = this.parseExpr();
+        this.eat(";");
+      } else if (this.atIdent("acceptance")) {
+        this.next();
+        acceptance = this.parseExpr();
+        this.eat(";");
+      } else if (this.atIdent("scope")) {
+        this.next();
+        this.eat("{");
+        while (!this.at("}") && !this.at("eof")) {
+          this.eat("perform");
+          scope.push(this.eat("ident").value);
+          if (this.at(",")) this.next();
+        }
+        this.eat("}");
+        if (this.at(";")) this.next();
+      } else {
+        this.err("expected a task clause (`objective`, `acceptance`, or `scope { perform … }`)");
+      }
+    }
+    this.eat("}");
+    return { kind: "tasklit", objective, acceptance, scope, pos };
   }
 
   // arraylit ::= "[" (expr ("," expr)*)? "]"  (§15.2 primary) — consumed by |>/all/any/quorum.

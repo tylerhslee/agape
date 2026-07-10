@@ -1,0 +1,18 @@
+//! id:        world_emit_wired_result_taint_join_reject
+//! section:   06b_world
+//! expect:    reject
+//! error:     TaintViolation
+//! manifest:  tools.t1.driver=mock; events.Q.tool=t1; events.Q.result_event=Answer
+//! spec:      §6b, §13 (no laundering: a result_event payload carries the JOIN of the triggering emit's payload trust — a raw query taints its own results, which then cannot drive a consequential perform un-gated)
+//! ---
+event Q(text query);
+event Answer(text body);
+action Notify(text m);
+agent A grants { perform Notify } {
+  when (Answer x) { perform Notify(x.body); }
+  on awake {
+    text q = self <- "what should we look up?";
+    emit Q(q);
+  }
+}
+spawn A a; awake a;

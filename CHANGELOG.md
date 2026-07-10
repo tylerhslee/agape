@@ -6,6 +6,105 @@ All notable changes to Agape are recorded here. The format follows
 suite, and the studio move in lockstep — a release is the whole bundle at one
 version.
 
+## [1.0.0-alpha.2026.7.5.0] — 2026-07-05
+
+Concurrent subagent delegation, done right: `|>` fan-out to workers now runs their tasks in
+parallel (a runtime fix), and a new `spawn` expression makes a *dynamic* collection of distinct
+workers expressible. Plus the external-ingress screening from the prior line. SPEC, conformance
+suite (207 tests), and `agape-ts` move together.
+
+### Language — the `spawn` expression: dynamic, distinct workers (§6/§15.4)
+
+- **A second spawn form.** `Verifier v = spawn Verifier;` mints a **fresh** instance per
+  evaluation, bound to a value — beside the existing `spawn Verifier v;`, which stays a **named
+  singleton** (identity = the declared name, addressable by name). The expression form lets a
+  delegating function be fanned out with `|>` over a runtime-sized collection and give **each path
+  its own distinct worker** — which the static-name statement form cannot express.
+- **Deterministic identity.** A spawned instance's name is derived from `(call-site, fan-out
+  element index)`, never execution order, so `xs |> f` that spawns inside `f` replays
+  byte-identically (§0.2). `awake`/`sleep` resolve an agent-ref variable, so `awake w` works for
+  an expression-spawned worker.
+
+### Runtime — concurrent task delivery (§6c, fixes T3/§0.2 for `|>`-of-delegation)
+
+- **One worker can run many overlapping tasks.** The active assigned task was tracked in a slot
+  keyed by agent *name* (nested-only, save/restore); concurrent handlers on one agent clobbered
+  it, so `complete`/`fail` resolved the wrong task and it expired. It is now scoped to the async
+  execution (`AsyncLocalStorage`), so `plan.claims |> (delegate to a shared worker)` completes
+  every task concurrently. Determinism is unchanged — it comes from serialized ledger effects,
+  not serialized execution — so the fan-out replays identically.
+- New `06c_delegation` conformance cases pin both patterns (shared worker; distinct workers via
+  the `spawn` expression), each asserting all-complete **and** replay-equivalence.
+
+### Language — gate external ingress to provider prompts (§6b anti-injection, extends T3)
+
+- **Un-screened external data may not drive cognition.** A value that entered the process
+  from outside — a prompt-ingress payload (§5b) or a wired result-event payload (§6b) — is
+  *ingress-tainted*; interpolating it into a `self <- …` provider prompt is gated. Flowing it
+  in un-screened is a **deny** (or **warn**, per policy); a screened/endorsed value flows
+  cleanly. This closes the reflection where an attacker-controlled observation could rewrite
+  the agent's own instructions.
+- **Runtime + checker.** `agape-ts` (`check.ts`, `interp.ts`, `config.ts`, `runtime.ts`) enforce
+  the ingress→provider path; the manifest carries the screening policy. New conformance cases:
+  `agent_prompt_ingress_to_provider_{deny,warn}`, `agent_prompt_screened_ingress_to_provider_ok`,
+  `world_result_event_{ingress_to_provider_warn,screened_ingress_to_provider_ok}`.
+
+## [1.0.0-alpha.2026.7.3.0] — 2026-07-03
+
+Subagent delegation (§6c) and the wired world interface (§6b). Designs in
+`design/delegation-and-actions.md` and `design/world-interface.md`; SPEC, conformance
+suite (200 tests), and `agape-ts` move together.
+
+### Language — the world interface: `tool` leaves the language (§6b)
+
+- **Source speaks only `event` (inbound) and `action` (outbound).** The `tool`, `read`,
+  `write` keywords, the `uses` binding, and the `use` grant class are removed; grants are
+  exactly `perform` + `reach`. "Tool" survives only as the manifest's `[tools.*]` endpoint
+  catalog; `[actions.NAME]`/`[events.NAME]` wire declared names to catalog entries
+  (optionally naming the `result_event` a reply lands as). Unwired = pure record/performative.
+- **Read vs write moves to which verb you wire.** An emit-wired event is the loose
+  observation channel (emit is not a sink; the result event's payload JOINS the request's
+  trust — no laundering). A perform is the gated channel: **settled args only, uniformly**
+  — no un-endorsed cognition ever leaves the process (anti-exfiltration; T3 extends to
+  observation requests). Every `perform` is async.
+- **Foreground perform binding.** `text hits = perform Search("prior art") expires 5;` —
+  the §6c delegation discipline applied to the world: mandatory expires, reply typed from
+  the manifest-named result event, `ToolStarted`/`ToolResolved` demoted to the seam's
+  replay journal beneath the named domain rows.
+
+
+### Language — delegation is a send with a governed payload and a programmatic reply (§6c)
+
+- **The task literal.** `T r = worker <- task { objective o; acceptance a; } expires ttl;`
+  builds a `TaskSpec` and sends it. `objective`/`acceptance` are required `text`; `expires`
+  is **mandatory** (every task is terminal by construction); trust is the join of the fields —
+  delegation never launders trust.
+- **Two bindings, no keyword.** Result-bound = foreground (the continuation waits; a failed/
+  expired/cancelled task faults the awaiting invocation via the contained-crash path).
+  `Task<T>`-bound = background (a settled handle for `when (… about h)` and `cancel h;`).
+  Bare statement-form delegation is a compile error.
+- **Worker verbs and hooks.** `complete r;` / `fail reason;` resolve the assigned task
+  programmatically (task handlers only); `on assigned` / `on cancelled` are `when` sugar.
+  The active task composes into provider context after `instruction` blocks, **as data**.
+- **Cooperative cancel.** `cancel h;` appends the authoritative `TaskCancelled` tombstone; a
+  late `complete`/`fail` is refused (`CompletionRefused`), mirroring `DeliveryRefused`.
+- **Lean ledger.** `TaskSubmitted`/`TaskAssigned`/`TaskExpired` are subscription **aliases**
+  over `Sent`/`Delivered`/`Expired` (no rows); real events are `TaskCompleted`, `TaskFailed`,
+  `TaskCancelled`, `TaskProgress`; unified task status is a ledger projection.
+- **Authority = static grant ∧ endorsed-task enablement.** A scoped task
+  (`scope { perform X }`) must be sent as `Endorsement<TaskSpec>` and can only attenuate the
+  delegator's own authority; the sink check (`TaskScopeViolation`) sits beside the margin
+  floor. §14's never-widened invariant and T1 are unchanged.
+
+### Language — the single door (§6b, superseded within this release by the world interface above)
+
+- **Write tools are declared, not callable.** A direct write-tool call is a `TypeError`;
+  `action NAME(fields) uses TOOL;` binds a performative to at most one write tool and
+  `perform` becomes the only source syntax that executes one. `use` grants naming a write
+  tool are illegal. Unbound actions remain legal (pure ledgered performatives). Source binds
+  action→tool; config still binds tool→endpoint.
+- `expires` now takes any settled numeric expression (was: numeric literal).
+
 ## [1.0.0-alpha.2026.6.30.0] — 2026-06-30
 
 A spec-led release that finalizes the decision-gate model and folds the runtime

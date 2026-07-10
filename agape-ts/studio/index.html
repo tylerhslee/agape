@@ -358,6 +358,19 @@
      lights the witnessed path in color. */
   .graphWrap { overflow: auto; -webkit-overflow-scrolling: touch; }
   .graphWrap svg { display: block; width: 100%; height: auto; margin: 0 auto; }
+  .graphTools { display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-bottom: 10px; }
+  .segmented { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--panel2); }
+  .segmented button {
+    border: 0; border-radius: 0; background: transparent; color: var(--dim);
+    padding: 5px 10px; font: 11px var(--mono);
+  }
+  .segmented button + button { border-left: 1px solid var(--line); }
+  .segmented button.active { background: rgba(124,108,246,.18); color: var(--text); }
+  pre.graphJson {
+    max-height: min(66vh, 760px); overflow: auto; margin: 0; padding: 12px;
+    border: 1px solid var(--line); border-radius: 8px; background: #0d111a;
+    color: #c3ccdf; font: 11.5px/1.5 var(--mono); white-space: pre;
+  }
   .gcluster > rect { fill: rgba(255,255,255,.02); stroke: #2b3347; }
   .gcluster > text { fill: var(--dim); font: 600 12px var(--mono); }
   .gnode { cursor: pointer; }
@@ -528,6 +541,7 @@ let state = {
   configSource: "", configExists: false, configEditing: false, configDirty: false, configValues: {}, configName: "agape.toml",
   editing: false, dirty: false, sessionId: null, listening: false, awaitingAttest: false,
   pollTimer: null, collapsed: {},
+  graphView: "visual", graphEvents: [], graphMap: null,
   spec: null, specSearch: "",
 };
 
@@ -916,6 +930,15 @@ document.addEventListener("click", (e) => {
   state.collapsed[id] = !state.collapsed[id];
   applyPanelState(card);
   persist(); // panel states survive a refresh
+});
+
+document.addEventListener("click", (e) => {
+  if (!(e.target instanceof Element)) return;
+  const button = e.target.closest("[data-graph-view]");
+  if (!button) return;
+  const mode = button.dataset.graphView === "json" ? "json" : "visual";
+  state.graphView = mode;
+  drawGraph(state.graphEvents || [], state.graphMap || state.map);
 });
 
 function inputId(prefix, name) {
@@ -1937,7 +1960,7 @@ function renderRunDetails(r) {
 // The static graph is the proof shape; a run's ledger events light up the witnessed path.
 
 const EDGE_COLORS = {
-  event: "#86efac", prompt: "#34d399", send: "#7dd3fc", flow: "#c4b5fd", escalate: "#fbbf24",
+  event: "#86efac", prompt: "#34d399", send: "#7dd3fc", call: "#93c5fd", flow: "#c4b5fd", escalate: "#fbbf24",
   sink: "#fde047", tool: "#fdba74", store: "#5eead4", recall: "#5eead4", query: "#5eead4", spawn: "#5b6478",
 };
 
@@ -2074,7 +2097,18 @@ function gtext(x, y, cls, s, max) {
   return `<text x="${x}" y="${y}" class="${cls}">${esc(label)}</text>`;
 }
 
+function updateGraphViewButtons() {
+  for (const b of document.querySelectorAll("[data-graph-view]")) {
+    const active = b.dataset.graphView === state.graphView;
+    b.classList.toggle("active", active);
+    b.setAttribute("aria-pressed", String(active));
+  }
+}
+
 function drawGraph(events, map) {
+  state.graphEvents = events || [];
+  state.graphMap = map || null;
+  updateGraphViewButtons();
   const host = $("graphWrap");
   if (!host) return;
   const legend = $("graphLegend");
@@ -2086,6 +2120,14 @@ function drawGraph(events, map) {
       ? `<div class="empty">the parser rejects this program, so there is no topology to draw<br><br><span class="mono" style="color:var(--red)">${esc(state.graphError.cls || "ParseError")}: ${esc(state.graphError.message || "")}</span></div>`
       : `<div class="empty">no graph — the program declares no topology</div>`;
     if (legend) legend.innerHTML = "";
+    return;
+  }
+  if (state.graphView === "json") {
+    host.innerHTML = `<pre class="graphJson">${esc(JSON.stringify(g, null, 2))}</pre>`;
+    const checkNote = state.graphCheck
+      ? `<span style="color:var(--red)">⚠ static check rejects this program — ${esc(state.graphCheck.cls)}: this topology never runs</span>`
+      : "";
+    if (legend) legend.innerHTML = `<span>${g.nodes.length} nodes</span><span>${g.edges.length} edges</span>` + checkNote;
     return;
   }
   const { units, unitOf } = graphUnits(g);
@@ -2100,7 +2142,7 @@ function drawGraph(events, map) {
   const unitH = (u) => u.members.length ? HEADH + 8 + u.members.reduce((a, m) => a + rowH(m) + MGAP, 0) + 2 : (u.head.kind === "gate" ? 76 : 40);
   const rows = new Map();
   for (const u of units) { const r = rank.get(u.id); if (!rows.has(r)) rows.set(r, []); rows.get(r).push(u); }
-  const KIND_ORDER = { top: 0, prompt: 1, agent: 2, gate: 3, sink: 4, emit: 5, tool: 6, event: 7, handler: 8, principal: 9, ledger: 10, mem: 11 };
+  const KIND_ORDER = { top: 0, prompt: 1, agent: 2, fn: 3, gate: 4, sink: 5, emit: 6, tool: 7, event: 8, handler: 9, principal: 10, ledger: 11, mem: 12 };
   const sortedRanks = [...rows.keys()].sort((a, b) => a - b);
   const rankIndex = new Map(sortedRanks.map((r, i) => [r, i]));
   const hasUp = g.edges.some((e) => {
@@ -2422,7 +2464,11 @@ function jumpToLine(line) {
 
 function graphPanelHtml() {
   return panel("graph", "Orchestration graph — derived, not drawn",
-    `<div class="graphWrap" id="graphWrap"></div><div class="graphLegend" id="graphLegend"></div>`);
+    `<div class="graphTools"><div class="segmented" role="group" aria-label="Graph view">
+      <button type="button" data-graph-view="visual" aria-pressed="true">Visual</button>
+      <button type="button" data-graph-view="json" aria-pressed="false">JSON</button>
+    </div></div>
+    <div class="graphWrap" id="graphWrap"></div><div class="graphLegend" id="graphLegend"></div>`);
 }
 
 function render(r) {

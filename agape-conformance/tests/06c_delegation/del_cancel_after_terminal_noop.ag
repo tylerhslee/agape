@@ -1,0 +1,21 @@
+//! id:        del_cancel_after_terminal_noop
+//! section:   06c_delegation
+//! expect:    accept
+//! contains:  TaskCompleted(h)
+//! absent:    TaskCancelled(h)
+//! spec:      §6c, §16.3a (the first terminal wins: cancel of an already-terminal task appends nothing)
+//! ---
+agent Worker {
+  on assigned { complete 1; }
+}
+agent Lead grants { reach Worker } {
+  on awake {
+    spawn Worker w; awake w;
+    Task<int> h = w <- task {
+      objective "produce the number";
+      acceptance "an int";
+    } expires 10;
+    when (TaskCompleted c about h) { cancel h; }
+  }
+}
+spawn Lead lead; awake lead;

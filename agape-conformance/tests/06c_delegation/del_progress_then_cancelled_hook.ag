@@ -1,0 +1,23 @@
+//! id:        del_progress_then_cancelled_hook
+//! section:   06c_delegation
+//! expect:    accept
+//! order:     Sent(h); Delivered(h); TaskProgress(h); TaskCancelled(h); CancelAck
+//! absent:    TaskCompleted(h)
+//! spec:      §6c (TaskProgress is the repeatable worker event; cancel mid-task is cooperative — the worker's `on cancelled` hook fires, nothing is preempted)
+//! ---
+event CancelAck(text ok);
+agent Worker {
+  on assigned { emit TaskProgress("working"); }
+  on cancelled { emit CancelAck("stopped"); }
+}
+agent Lead grants { reach Worker } {
+  on awake {
+    spawn Worker w; awake w;
+    Task<int> h = w <- task {
+      objective "long haul";
+      acceptance "an int";
+    } expires 10;
+    when (TaskProgress p about h) { cancel h; }
+  }
+}
+spawn Lead lead; awake lead;

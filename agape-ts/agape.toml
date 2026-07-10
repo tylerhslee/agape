@@ -22,6 +22,22 @@ sampling_fallback   = true
 fallback_samples    = 10
 fallback_temperature = 0.7
 
+# §6b the world interface: the endpoint CATALOG ([tools.*] — the only place "tool" exists)
+# and the wiring of declared actions/events to catalog entries. Shared by every example
+# under this root; an entry wiring a name a program does not declare is simply unused.
+[tools.web_search]
+driver = "mock"
+
+[tools.ship]
+driver = "mock"
+
+[actions.Search]
+tool = "web_search"
+result_event = "SearchEvidence"
+
+[actions.Deploy]
+tool = "ship"
+
 [memory]
 # Default vanilla system: plain markdown substrate plus Agape's built-in memory runtime.
 driver = "markdown"

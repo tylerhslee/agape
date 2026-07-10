@@ -1,0 +1,24 @@
+//! id:        del_result_raw_to_sink_reject
+//! section:   06c_delegation
+//! expect:    reject
+//! error:     TaintViolation
+//! spec:      §6c, §13 (a delegated result is RAW by default — delegation never launders trust; it cannot drive a consequential sink un-gated)
+//! ---
+action Publish(text body);
+agent Worker {
+  on assigned {
+    text draft = self <- "write the copy";
+    complete draft;
+  }
+}
+agent Lead grants { reach Worker, perform Publish } {
+  on awake {
+    spawn Worker w; awake w;
+    text body = w <- task {
+      objective "write the launch copy";
+      acceptance "one paragraph of text";
+    } expires 10;
+    perform Publish(body);
+  }
+}
+spawn Lead lead; awake lead;

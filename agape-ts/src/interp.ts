@@ -3,10 +3,11 @@
 // the mock provider resolves on a microtask, so the same async path is exercised in tests and live.
 
 import { createHash } from "node:crypto";
+import { AsyncLocalStorage } from "node:async_hooks";
 import type * as A from "./ast.js";
 import {
-  Ledger, MockProvider, render, settledText,
-  type Provider, type StructuredSchema, type Value, type Committed, type Variant, type Trust,
+  Ledger, MockProvider, ingressJoin, ingressOf, render, settledText,
+  type Provider, type StructuredSchema, type Value, type Committed, type Variant, type Trust, type IngressProvenance,
 } from "./runtime.js";
 import { check, linkModules, type ModuleInput, type Resolution } from "./check.js";
 import type { Manifest, ToolBindingConfig } from "./config.js";
@@ -18,6 +19,31 @@ export class RuntimeError extends Error {}
 // §5: an unrecoverable seam failure (the provider returns nothing) crashes the agent — CONTAINED, not a
 // death: AgentCrashed is recorded, the on-crash hook runs, and the instance's state survives.
 class CrashError extends Error {}
+// §6c: `complete`/`fail` terminate the enclosing task handler (control flow, not a fault).
+class TaskDoneSignal extends Error {}
+
+// §6c task-send state, correlated by the delegator-side binding name (the corr subject).
+interface TaskState {
+  corr: string;
+  dest: string;
+  delegator?: string;
+  scope: string[];      // the action names an ENDORSED task enables on the worker (§6c, §13)
+  endorsed: boolean;    // the message was an Endorsement<TaskSpec>
+  foreground: boolean;  // result-bound (waits) vs Task<T> handle-bound (reactive)
+  status: "sent" | "delivered" | "completed" | "failed" | "cancelled" | "expired";
+  delivered: boolean;   // it reached the worker at least once (drives the on-cancelled hook)
+  result?: Value;
+}
+const taskTerminal = (t: TaskState): boolean =>
+  t.status === "completed" || t.status === "failed" || t.status === "cancelled" || t.status === "expired";
+
+// §6c subscription ALIASES: TaskSubmitted/TaskAssigned/TaskExpired are compile-time rewrites onto the
+// transport chain (Sent/Delivered/Expired) filtered by correlation — they are never rows of their own.
+const TASK_ALIASES: Record<string, string> = {
+  TaskSubmitted: "Sent",
+  TaskAssigned: "Delivered",
+  TaskExpired: "Expired",
+};
 
 // A private-memory region: the values written through a `mem` handle, plus a `forgotten` flag — a
 // `forget` tombstones the region (it stays in the map for audit, but is no longer recallable, §10).
@@ -46,7 +72,16 @@ class Scope {
   // dependent clusters (Fréchet bound) vs independent units (log-odds) correctly at runtime. Each keeps
   // its relation so only `dependent` groups form clusters.
   depGroups: { relation: "independent" | "dependent"; names: string[] }[] = [];
+  // §12/§15.4: the fan-out position of this execution — the chain of `|>` element indices leading here.
+  // A `spawn` EXPRESSION derives a deterministic instance name from (call-site, this path) instead of
+  // execution order, so a dynamic fan-out `xs |> f` that spawns inside `f` replays byte-identically.
+  fanoutPath?: number[];
   constructor(public parent?: Scope, public agent?: AgentInstance) {}
+  getFanoutPath(): number[] {
+    if (this.fanoutPath) return this.fanoutPath;
+    if (this.parent) return this.parent.getFanoutPath();
+    return [];
+  }
   get(name: string): Value | undefined {
     if (this.vars.has(name)) return this.vars.get(name);
     if (this.parent) return this.parent.get(name);
@@ -80,7 +115,7 @@ function scoreSummary(scores: Record<Variant, number>) {
 }
 
 function valueSummary(v: Value): Record<string, unknown> {
-  const base: Record<string, unknown> = { kind: v.kind, trust: v.trust, rendered: render(v) };
+  const base: Record<string, unknown> = { kind: v.kind, trust: v.trust, ingress: ingressOf(v), rendered: render(v) };
   if (v.kind === "text") return { ...base, value: v.v };
   if (v.kind === "int" || v.kind === "float" || v.kind === "bool") return { ...base, value: v.v };
   if (v.kind === "null") return { ...base, value: null };
@@ -135,6 +170,7 @@ function typeLabel(t: A.TypeRef): string {
     case "credence": return `Credence<${t.enumName}>`;
     case "decision": return `Decision<${t.enumName}>`;
     case "endorsement": return `Endorsement<${typeLabel(t.inner)}>`;
+    case "task": return `Task<${typeLabel(t.inner)}>`;
     case "named": return t.typeArgs?.length ? `${t.name}<${t.typeArgs.map(typeLabel).join(", ")}>` : t.name;
     case "mem": return "mem";
   }
@@ -178,6 +214,16 @@ function localAttestation(kind: string, payload: Record<string, unknown>, suppli
 export interface RunResult {
   ledger: Ledger;
   stdout: string[];
+  warnings: RuntimeWarning[];
+}
+
+export interface RuntimeWarning {
+  kind: "tainted_ingress_to_provider";
+  message: string;
+  prompt: string;
+  ingress: "external_unscreened";
+  agent?: string;
+  subject?: string;
 }
 
 export interface PromptInput {
@@ -220,9 +266,10 @@ export interface ConsultRequest {
   agent?: string;
 }
 
+// §6b: the host-supplied adapter for a [tools.*] catalog entry with a non-mock driver. `name` is the
+// catalog key; the declaration lives in the manifest, not in source (tools left the language).
 export interface ToolCallContext {
   name: string;
-  declaration: A.ToolDecl;
   binding: ToolBindingConfig;
   args: Value[];
   payload: string;
@@ -272,19 +319,31 @@ export function createSession(program: A.Program, opts: RunOptions = {}): Runtim
 class Interpreter {
   private ledger: Ledger;
   private stdout: string[] = [];
+  private warnings: RuntimeWarning[] = [];
   private started = false;
   private enums = new Map<string, string[]>();
   private structs = new Map<string, A.Field[]>();
   private actions = new Map<string, A.ActionDecl>();
   private events = new Map<string, A.EventDecl>();
   private agents = new Map<string, A.AgentDecl>();
-  private tools = new Map<string, A.ToolDecl>();
   private fns = new Map<string, A.FnDecl>();
   private instances = new Map<string, AgentInstance>();
   // §7/§16.3 event-driven `when` dispatch: an agent's `when` handlers become active SUBSCRIPTIONS when it
   // awakes (in lexical/registration order). Appending a matching event fires them — by subtype (§9), the
   // `about <subj>` filter, and the `if (guard)` predicate — in registration order, before the next statement.
-  private subscriptions: { inst?: AgentInstance; when: A.WhenStmt }[] = []; // inst absent = a top-level `when`
+  // `scope` present = a BLOCK-LOCAL `when` hoisted at its handler-scope entry (§16.3): the handler body
+  // fires with that captured scope as parent, so a task handle bound in the hook is visible to `about h`.
+  private subscriptions: { inst?: AgentInstance; when: A.WhenStmt; scope?: Scope }[] = []; // inst absent = a top-level `when`
+  // §6c task runtime state: every delegation by correlation, the queued background deliveries, and the
+  // ACTIVE task per worker instance (set for the duration of its task handler).
+  private tasks = new Map<string, TaskState>();
+  private pendingDeliveries: TaskState[] = [];
+  // The active assigned task, scoped to the async EXECUTION rather than the agent name. A per-name
+  // slot only supports NESTED delivery (save/restore); AsyncLocalStorage lets one agent run many
+  // CONCURRENT task handlers (e.g. `claims |> delegate-to-worker`) without their active tasks
+  // clobbering each other — `complete`/`fail`/scope-checks read the task of the current async path.
+  private activeTaskALS = new AsyncLocalStorage<TaskState>();
+  private drainingTasks = false;
   private dispatchDepth = 0; // reentrancy guard: a handler's appends cascade, but bounded (events are finite).
   // §3: the set of declared `principal NAME;` names, so evalGate can recognize the suite's `decide c by p`
   // form — the parser records `by p` as a {policy} rule (it cannot tell principal from policy context-free),
@@ -370,7 +429,6 @@ class Interpreter {
       case "action": this.actions.set(name, d); break;
       case "event": this.events.set(name, d); break;
       case "agent": this.agents.set(name, d); break;
-      case "tool": this.tools.set(name, d); break;
       case "fn": this.fns.set(name, d); break;
       default: break;
     }
@@ -386,7 +444,6 @@ class Interpreter {
         case "action": this.actions.set(d.name, d); break;
         case "event": this.events.set(d.name, d); break;
         case "agent": this.agents.set(d.name, d); break;
-        case "tool": this.tools.set(d.name, d); break;
         case "fn": this.fns.set(d.name, d); break; // callable by name (e.g. `coll |> fn`, §12)
         case "instruction": break;
         case "interface": break; // interfaces erase before the dynamic semantics (§19.5) — no runtime machinery
@@ -422,18 +479,26 @@ class Interpreter {
     // lexical order) BEFORE its statements run, so a top-level `when (E e)` fires for events appended
     // by any later statement (an agent's emit included). Prospective only: nothing before this fires it.
     for (const s of this.program.stmts) if (s.kind === "when") this.subscriptions.push({ when: s });
-    for (const s of this.program.stmts) await this.execStmt(s, top);
+    for (const s of this.program.stmts) {
+      await this.execStmt(s, top);
+      await this.drainTasks(); // §16.3a: queued background task deliveries run between invocations
+    }
+    // §6c quiescence: every still-open task is terminal by construction — its mandatory lifetime has
+    // elapsed with no other terminal, so the Expired tombstone lands (first terminal wins).
+    await this.sweepExpiredTasks();
     return this.snapshot();
   }
 
   async sendPrompt(input: PromptInput): Promise<RunResult> {
     await this.start();
     await this.deliverPrompt(input);
+    await this.drainTasks();
+    await this.sweepExpiredTasks();
     return this.snapshot();
   }
 
   snapshot(): RunResult {
-    return { ledger: this.ledger, stdout: this.stdout };
+    return { ledger: this.ledger, stdout: this.stdout, warnings: this.warnings };
   }
 
   // §19.2: qualify a bare event/action/struct/agent name against the CURRENT agent's home module — a bare
@@ -488,15 +553,79 @@ class Interpreter {
         this.ledger.append("RetryExhausted", this.agentSubject(scope), undefined, scope.currentAgent()?.name);
         return;
       }
-      case "awake": return this.execAwake(s.name);
+      case "awake": return this.execAwake(this.instanceNameOf(s.name, scope));
       case "sleep": {
-        const inst = this.requireInstance(s.name);
+        const iname = this.instanceNameOf(s.name, scope);
+        const inst = this.requireInstance(iname);
         inst.awake = false;
-        this.ledger.append("AgentAsleep", s.name, undefined, s.name);
+        this.ledger.append("AgentAsleep", iname, undefined, iname);
         await this.runHook(inst, "sleep");
         return;
       }
+      case "complete": {
+        // §6c: resolve the active assigned task programmatically — the transport Resolved plus a
+        // TaskCompleted record carrying the result. Legal only inside a task handler.
+        const inst = scope.currentAgent();
+        const t = this.activeTaskALS.getStore();
+        if (!t || !inst) throw typeError("`complete` is legal only inside a task handler (§6c)");
+        const v = await this.evalExpr(s.value, scope);
+        if (taskTerminal(t)) {
+          // §6c/§15.4.2: after a tombstone (cancel/expiry) the first terminal won — refuse and discard.
+          this.ledger.append("CompletionRefused", t.corr, undefined, inst.name);
+          throw new TaskDoneSignal();
+        }
+        t.status = "completed";
+        t.result = v;
+        this.ledger.append("Resolved", t.corr, { task: true, result: valueSummary(v) }, inst.name);
+        this.ledger.append("TaskCompleted", t.corr, { result: valueSummary(v) }, inst.name);
+        await this.fireSubscriptions("TaskCompleted", t.corr, new Map([["result", v]]));
+        throw new TaskDoneSignal();
+      }
+      case "fail": {
+        // §6c: terminal failure — TaskFailed(reason); the transport chain rests at its Delivered prefix.
+        const inst = scope.currentAgent();
+        const t = this.activeTaskALS.getStore();
+        if (!t || !inst) throw typeError("`fail` is legal only inside a task handler (§6c)");
+        const v = await this.evalExpr(s.reason, scope);
+        if (v.kind !== "text") throw typeError("`fail` requires a text reason (§6c)");
+        if (taskTerminal(t)) {
+          this.ledger.append("CompletionRefused", t.corr, undefined, inst.name);
+          throw new TaskDoneSignal();
+        }
+        t.status = "failed";
+        this.ledger.append("TaskFailed", t.corr, { reason: v.v }, inst.name);
+        await this.fireSubscriptions("TaskFailed", t.corr, new Map([["reason", v]]));
+        throw new TaskDoneSignal();
+      }
+      case "cancel": {
+        // §6c cooperative cancel: the authoritative tombstone. Cancel of an already-terminal task
+        // appends nothing (first terminal wins). Never preemptive — a running handler is not interrupted;
+        // the worker's `on cancelled` hook fires if the task had reached it.
+        const hv = await this.evalExpr(s.handle, scope);
+        if (hv.kind !== "taskref") throw typeError("`cancel` takes a Task<T> handle (§6c)");
+        const t = this.tasks.get(hv.corr);
+        if (!t || taskTerminal(t)) return;
+        t.status = "cancelled";
+        this.ledger.append("TaskCancelled", t.corr, undefined, scope.currentAgent()?.name);
+        await this.fireSubscriptions("TaskCancelled", t.corr, new Map());
+        if (t.delivered) {
+          const worker = this.instances.get(t.dest);
+          if (worker) await this.runHook(worker, "cancelled");
+        }
+        return;
+      }
       case "emit": {
+        // §6c: TaskProgress is the repeatable worker task event — emittable only inside a task handler,
+        // correlated to the ACTIVE task (its subject is the task correlation, not the agent).
+        if (s.name === "TaskProgress") {
+          const inst = scope.currentAgent();
+          const t = this.activeTaskALS.getStore();
+          if (!t || !inst) throw typeError("TaskProgress is emittable only inside a task handler — it correlates to the active task (§6c)");
+          const note = s.args[0] ? await this.evalExpr(s.args[0], scope) : settledText("");
+          this.ledger.append("TaskProgress", t.corr, { note: render(note) }, inst.name);
+          await this.fireSubscriptions("TaskProgress", t.corr, new Map([["note", note]]));
+          return;
+        }
         // §19.2: the etype is the FULLY-QUALIFIED event name — a bare event in a companion agent's body
         // resolves within its home module (`Glitch` inside `m` → `m.Glitch`), and the ledger keys on it,
         // so `a.Tick` and `b.Tick` are distinct rows.
@@ -516,6 +645,19 @@ class Interpreter {
         }
         // §7/§16.3: the append fires any matching `when` subscriptions before the next statement begins.
         await this.fireSubscriptions(etype, subj, this.eventFields(etype, args));
+        // §6b: a WIRED emit is the loose observation channel — emitting the event invokes the catalog
+        // effector (emit is not a sink, so tainted payloads may flow), and the reply lands as the
+        // configured result event whose payload JOINS the emitted payload's trust (no laundering).
+        const wiring = this.eventWiring(etype);
+        if (wiring) {
+          const requestTrust = trustJoin(args);
+          const reply = wiring.tool !== undefined
+            ? await this.invokeWired(String(wiring.tool), args, scope, typeof wiring.result_event === "string" ? wiring.result_event : undefined)
+            : undefined;
+          if (typeof wiring.result_event === "string") {
+            await this.landResultEvent(wiring.result_event, reply, requestTrust, subj, scope);
+          }
+        }
         return;
       }
       case "perform": return this.execPerform(s, scope);
@@ -610,27 +752,54 @@ class Interpreter {
   }
 
   private async execSpawn(s: A.SpawnStmt, scope: Scope): Promise<void> {
-    // §19.2: the spawned type may be QUALIFIED (`spawn m.Worker w`) or a bare name resolved within the
+    // the STATEMENT form: identity IS the declared name (a named singleton/service, addressable by name).
+    await this.spawnInstance(s.agentType, s.name, s.args, scope);
+  }
+
+  // per call-site sequence for `spawn` EXPRESSIONS outside a fan-out (deterministic in sequential eval).
+  private spawnSeq = new Map<string, number>();
+
+  // §6/§15.4 the `spawn` EXPRESSION: `Verifier v = spawn Verifier;` mints a FRESH instance and returns it
+  // as an agentref value. The name is derived from (call-site, fan-out path) — NOT execution order — so a
+  // dynamic `xs |> f` that spawns inside `f` produces the same names on every replay. `@`/`#` cannot occur
+  // in a source identifier, so a generated name never collides with a `spawn Type name` singleton.
+  private async evalSpawnExpr(e: A.SpawnExpr, scope: Scope): Promise<Value> {
+    const agentType = this.qualifyInModule(e.agentType, scope);
+    const site = `${e.pos.line}:${e.pos.col}`;
+    const path = scope.getFanoutPath();
+    let token: string;
+    if (path.length) token = path.join(".");
+    else { const n = this.spawnSeq.get(site) ?? 0; this.spawnSeq.set(site, n + 1); token = `s${n}`; }
+    const name = `${agentType}@${site}#${token}`;
+    await this.spawnInstance(e.agentType, name, e.args, scope);
+    return { kind: "agentref", name, agentType, trust: "settled" };
+  }
+
+  // §15.4.2 E-Spawn: allocate + construct an instance under `name`, then append Spawned. Shared by the
+  // statement form (name = the declared identifier) and the expression form (name = a generated id).
+  private async spawnInstance(agentTypeRaw: string, name: string, argExprs: A.Expr[], scope: Scope): Promise<AgentInstance> {
+    // §19.2: the spawned type may be QUALIFIED (`spawn m.Worker`) or a bare name resolved within the
     // spawning agent's home module. The instance records that home module so ITS body's bare event/action
     // names resolve within it (`m.Worker`'s `emit Glitch` → `m.Glitch`).
-    const agentType = this.qualifyInModule(s.agentType, scope);
+    const agentType = this.qualifyInModule(agentTypeRaw, scope);
     const decl = this.agents.get(agentType);
     if (!decl) throw new RuntimeError(`unknown agent type '${agentType}'`);
     const homeModule = this.agentModuleOf.get(agentType);
-    const inst: AgentInstance = { name: s.name, agentType, decl, awake: false, fields: new Map(), mems: new Map(), module: homeModule };
+    const inst: AgentInstance = { name, agentType, decl, awake: false, fields: new Map(), mems: new Map(), module: homeModule };
     // E-Spawn (§15.4.2): bind constructor arguments positionally to the agent's declared params, evaluated
     // in the SPAWNING scope (the args are the caller's expressions). These become instance fields visible to
     // the ctor/hooks/handlers; an agent-typed param binding is authority-checked by `reach` at each send (§13).
     for (let i = 0; i < decl.params.length; i++) {
       const p = decl.params[i]!;
-      const arg = s.args[i];
+      const arg = argExprs[i];
       inst.fields.set(p.name, arg ? await this.evalExpr(arg, scope) : this.zeroOf(p.type));
     }
-    this.instances.set(s.name, inst);
+    this.instances.set(name, inst);
     // the constructor body runs FIRST, then the Spawned event is appended.
     const ctorScope = new Scope(undefined, inst);
     for (const st of this.ctorOf(inst)) await this.execStmt(st, ctorScope);
-    this.ledger.append("Spawned", s.name, { value: valueSummary({ kind: "agentref", name: s.name, agentType, trust: "settled" }) }, s.name);
+    this.ledger.append("Spawned", name, { value: valueSummary({ kind: "agentref", name, agentType, trust: "settled" }) }, name);
+    return inst;
   }
 
   // the constructor statements of an instance, with an `extend`ed parent's ctor running first (§5).
@@ -667,22 +836,102 @@ class Interpreter {
     }
   }
 
-  private async runHook(inst: AgentInstance, event: "awake" | "sleep" | "crash"): Promise<void> {
+  private async runHook(inst: AgentInstance, event: A.OnHook["event"]): Promise<void> {
     const hook = inst.decl.hooks.find((h) => h.event === event);
     if (!hook) return;
     const scope = new Scope(undefined, inst);
+    // §16.3: a block's `when` subscriptions are HOISTED at scope entry, with the hook scope captured so
+    // an `about h` filter can see bindings the hook makes (e.g. a Task<T> handle).
+    this.registerBlockWhens(hook.body, scope, inst);
     for (const st of hook.body) await this.execStmt(st, scope);
+  }
+
+  // hoist the `when` statements of a handler block (including nested if/when bodies) as subscriptions
+  // carrying the block scope. Registered once per when-statement object (a re-awake does not duplicate).
+  private registerBlockWhens(stmts: A.Stmt[], scope: Scope, inst?: AgentInstance): void {
+    for (const st of stmts) {
+      if (st.kind === "when") {
+        if (!this.subscriptions.some((s) => s.when === st)) this.subscriptions.push({ inst, when: st, scope });
+        this.registerBlockWhens(st.body, scope, inst);
+      } else if (st.kind === "if") {
+        this.registerBlockWhens(st.then, scope, inst);
+        if (st.else) this.registerBlockWhens(st.else, scope, inst);
+      }
+    }
+  }
+
+  // ---- §6c the task runtime (§16.3a) ----
+
+  // deliver every queued background task, in submission order; a delivery may enqueue more.
+  private async drainTasks(): Promise<void> {
+    if (this.drainingTasks) return;
+    this.drainingTasks = true;
+    try {
+      while (this.pendingDeliveries.length > 0) {
+        const t = this.pendingDeliveries.shift()!;
+        await this.deliverTask(t);
+      }
+    } finally {
+      this.drainingTasks = false;
+    }
+  }
+
+  // the quiescence sweep: any still-open task (sent or delivered) expires — its mandatory lifetime is
+  // the guaranteed terminal (§6c). First terminal wins: a completed/failed/cancelled task is untouched.
+  private async sweepExpiredTasks(): Promise<void> {
+    for (const t of this.tasks.values()) {
+      if (!taskTerminal(t)) {
+        t.status = "expired";
+        this.ledger.append("Expired", t.corr, { to: t.dest, task: true }, t.delegator);
+        await this.fireSubscriptions("Expired", t.corr, new Map());
+      }
+    }
+  }
+
+  // Deliver one task: append the transport Delivered (≡ TaskAssigned), then run the worker's
+  // `on assigned` handler with this task ACTIVE — the programmatic reply (§6c). A handler fault is the
+  // WORKER's contained crash; a `complete`/`fail` ends the handler via TaskDoneSignal.
+  private async deliverTask(t: TaskState): Promise<void> {
+    if (taskTerminal(t)) return; // cancelled (or expired) before delivery — the tombstone won
+    const inst = this.instances.get(t.dest);
+    if (!inst?.awake) return;    // no mailbox: stays a stalled prefix; the expiry sweep will tombstone it
+    t.status = "delivered";
+    t.delivered = true;
+    this.ledger.append("Delivered", t.corr, { to: t.dest, task: true }, t.delegator);
+    await this.fireSubscriptions("Delivered", t.corr, new Map());
+    const hook = inst.decl.hooks.find((h) => h.event === "assigned");
+    if (!hook) return; // no completing handler is not an error — expiry backstops it (§6c)
+    const hscope = new Scope(undefined, inst);
+    // run the handler inside this task's async context; nested delegation nests the context, and
+    // concurrent deliveries to the same agent each keep their own active task (no clobbering).
+    try {
+      await this.activeTaskALS.run(t, async () => {
+        this.registerBlockWhens(hook.body, hscope, inst);
+        for (const st of hook.body) await this.execStmt(st, hscope);
+      });
+    } catch (err) {
+      if (err instanceof TaskDoneSignal) {
+        // the handler completed/failed the task — normal termination
+      } else if (err instanceof CrashError) {
+        // §16.6: the fault is contained to the WORKER's invocation; the task stays open (expiry backstops).
+        this.ledger.append("AgentCrashed", inst.name, undefined, inst.name);
+        await this.runHook(inst, "crash");
+      } else {
+        throw err;
+      }
+    }
   }
 
   private async deliverPrompt(input: PromptInput): Promise<void> {
     const decl = this.prompts.get(input.name);
     if (!decl) throw typeError(`prompt input for undeclared prompt '${input.name}'`);
-    const value = this.valueFromPromptInput(input.value, decl.type, new Scope());
+    const ingress = this.ingressForPrompt(input.name);
+    const value = this.valueFromPromptInput(input.value, decl.type, new Scope(), ingress);
     const summary = valueSummary(value);
     const attestation = localAttestation("prompt", { prompt: input.name, input: summary }, input.attestation);
     const fields = new Map<string, Value>([
       ["value", value],
-      ["text", { kind: "text", v: render(value), trust: "settled" }],
+      ["text", { kind: "text", v: render(value), trust: "settled", ingress: ingressOf(value) }],
       ["attester", settledText(String(attestation.attester))],
       ["payload_hash", settledText(String(attestation.payload_hash))],
       ["signature", settledText(String(attestation.signature))],
@@ -702,13 +951,24 @@ class Interpreter {
     this.dispatchDepth++;
     try {
       for (const sub of subs) {
-        if (!this.eventMatches(evEtype, this.qualifyWhenEtype(sub.when.etype, sub.inst))) continue;
-        const hscope = new Scope(undefined, sub.inst);
+        // §6c aliases: `when (TaskSubmitted|TaskAssigned|TaskExpired …)` are rewrites onto the transport
+        // chain (Sent/Delivered/Expired), filtered by the task correlation through the `about` clause.
+        const subEtype = TASK_ALIASES[sub.when.etype] ?? sub.when.etype;
+        if (!this.eventMatches(evEtype, this.qualifyWhenEtype(subEtype, sub.inst))) continue;
+        const hscope = new Scope(sub.scope, sub.inst);
         if (sub.when.about) {
-          const aboutName = await this.eventAboutName(sub.when.about, hscope);
+          // A hoisted subscription's subject expression may not be resolvable yet (§16.3 hoists a block's
+          // `when`s BEFORE its statements run — e.g. `about h` before the handle binds). An unresolvable
+          // subject simply cannot match this event; it resolves for later events once bound.
+          let aboutName: string | undefined;
+          try {
+            aboutName = await this.eventAboutName(sub.when.about, hscope);
+          } catch {
+            continue;
+          }
           if (aboutName !== evSubject) continue;
         }
-        if (sub.when.binder) hscope.set(sub.when.binder, { kind: "struct", typeName: evEtype, fields, trust: "graded" });
+        if (sub.when.binder) hscope.set(sub.when.binder, { kind: "struct", typeName: evEtype, fields, trust: "graded", ingress: ingressJoin([...fields.values()]) });
         if (sub.when.guard) {
           const g = await this.evalExpr(sub.when.guard, hscope);
           if (!(g.kind === "bool" && g.v)) continue;
@@ -734,7 +994,7 @@ class Interpreter {
     return false;
   }
   private isErrorSubtype(etype: string): boolean {
-    if (["Error", "Contradiction", "TypeMismatch", "RetryExhausted", "FailedPrincipalDecision", "MarginFloorViolation", "AgentCrashed"].includes(etype)) return true;
+    if (["Error", "Contradiction", "TypeMismatch", "RetryExhausted", "FailedPrincipalDecision", "MarginFloorViolation", "TaskScopeViolation", "AgentCrashed"].includes(etype)) return true;
     const bare = etype.includes(".") ? etype.split(".").pop()! : etype;
     return (this.events.get(etype) ?? this.events.get(bare))?.errorSuper === true;
   }
@@ -764,12 +1024,181 @@ class Interpreter {
     // never satisfy a FOREIGN qualified action — the authority direction is preserved (default-deny).
     const granted = grants === "all" || (Array.isArray(grants) && grants.some((g) => g.cap === "perform" && (g.name === name || this.qualifyInModule(g.name, scope) === name)));
     if (!granted) throw authorityViolation(`agent lacks 'perform ${name}'`);
+    // §6c/§13 task-scope enablement (the second runtime sink check, beside the margin floor): a perform
+    // executed while this agent runs an ASSIGNED task requires the active task to be ENDORSED and to name
+    // this action in its `scope`. The static grant is the upper bound — this check only ever disables.
+    const active = this.activeTaskALS.getStore();
+    if (active && agent) {
+      const bare = name.includes(".") ? name.split(".").pop()! : name;
+      if (!active.endorsed || !(active.scope.includes(name) || active.scope.includes(bare))) {
+        this.ledger.append("TaskScopeViolation", agent.name, { action: name, task: active.corr }, agent.name);
+        throw new CrashError();
+      }
+    }
+    const argValues: Value[] = [];
     const payload: string[] = [];
     for (const a of s.args) {
       const v = await this.evalExpr(a, scope);
-      payload.push(render(this.sinkValue(v, name)));
+      const sunk = this.sinkValue(v, name);
+      argValues.push(sunk);
+      payload.push(render(sunk));
     }
     this.ledger.append(name, agent?.name ?? "<top>", payload, agent?.name);
+    // §6b the world interface: a WIRED action's perform invokes its catalog effector (the replay-journal
+    // ToolStarted/ToolResolved pair) and lands the configured result event, if any.
+    const wiring = this.actionWiring(name);
+    if (wiring) {
+      const reply = wiring.tool !== undefined
+        ? await this.invokeWired(String(wiring.tool), argValues, scope, typeof wiring.result_event === "string" ? wiring.result_event : undefined)
+        : undefined;
+      if (typeof wiring.result_event === "string") {
+        await this.landResultEvent(wiring.result_event, reply, "settled", agent?.name ?? name, scope);
+      }
+    }
+  }
+
+  // §6b foreground perform binding: `T r = perform A(args) expires N;` — the delegation discipline
+  // applied to the world: mandatory expires, settled args (uniform sink rule), the reply lands as the
+  // configured result event AND binds inline. Requires a result_event wiring (else ConfigError).
+  private async evalPerformExpr(e: A.PerformExpr, scope: Scope): Promise<Value> {
+    const agent = scope.currentAgent();
+    const name = this.qualifyInModule(e.name, scope);
+    if (!this.actions.has(name)) throw typeError(`perform of undeclared action '${name}'`);
+    const grants = agent?.decl.grants;
+    const granted = grants === "all" || (Array.isArray(grants) && grants.some((g) => g.cap === "perform" && (g.name === name || this.qualifyInModule(g.name, scope) === name)));
+    if (!granted) throw authorityViolation(`agent lacks 'perform ${name}'`);
+    // §6c task-scope enablement applies to expression performs too.
+    const active = this.activeTaskALS.getStore();
+    if (active && agent) {
+      const bare = name.includes(".") ? name.split(".").pop()! : name;
+      if (!active.endorsed || !(active.scope.includes(name) || active.scope.includes(bare))) {
+        this.ledger.append("TaskScopeViolation", agent.name, { action: name, task: active.corr }, agent.name);
+        throw new CrashError();
+      }
+    }
+    if (e.expires === undefined) throw typeError("a result-bound `perform` requires `expires` (§6b/§6c)");
+    const life = await this.evalExpr(e.expires, scope);
+    if (life.kind !== "int" && life.kind !== "float") throw typeError("`expires` requires a numeric lifetime (§6)");
+    if (life.trust !== "settled") throw taintViolation("`expires` requires a SETTLED numeric expression (§6, §6b)");
+    const argValues: Value[] = [];
+    const payload: string[] = [];
+    for (const a of e.args) {
+      const v = await this.evalExpr(a, scope);
+      const sunk = this.sinkValue(v, name);
+      argValues.push(sunk);
+      payload.push(render(sunk));
+    }
+    const wiring = this.actionWiring(name);
+    if (typeof wiring?.result_event !== "string") {
+      throw configError(`a result-bound perform of '${name}' requires an [actions.${name}] wiring with a result_event — there is nothing to bind (§6b, §17.1)`);
+    }
+    this.ledger.append(name, agent?.name ?? "<top>", payload, agent?.name);
+    const reply = wiring.tool !== undefined ? await this.invokeWired(String(wiring.tool), argValues, scope, wiring.result_event) : undefined;
+    return this.landResultEvent(wiring.result_event, reply, "settled", agent?.name ?? name, scope);
+  }
+
+  // §6b wiring lookups — [actions.NAME] / [events.NAME] manifest tables (bare name preferred).
+  private actionWiring(name: string) {
+    const bare = name.includes(".") ? name.split(".").pop()! : name;
+    return this.manifest?.actions?.[name] ?? this.manifest?.actions?.[bare];
+  }
+  private eventWiring(name: string) {
+    const bare = name.includes(".") ? name.split(".").pop()! : name;
+    return this.manifest?.events?.[name] ?? this.manifest?.events?.[bare];
+  }
+
+  private ingressPolicy(): "warn" | "deny" | "off" {
+    const policy = this.manifest?.security?.tainted_ingress_to_provider;
+    return policy === "deny" || policy === "off" ? policy : "warn";
+  }
+
+  private ingressEntry(kind: "prompts" | "events", name: string): unknown {
+    const bare = name.includes(".") ? name.split(".").pop()! : name;
+    const group = this.manifest?.security?.ingress?.[kind];
+    return group?.[name] ?? group?.[bare];
+  }
+
+  private ingressForPrompt(name: string): IngressProvenance {
+    return this.ingressEntry("prompts", name) ? "external_screened" : "external_unscreened";
+  }
+
+  private ingressForEvent(name: string): IngressProvenance {
+    return this.ingressEntry("events", name) ? "external_screened" : "external_unscreened";
+  }
+
+  private checkProviderIngress(promptValue: Value, prompt: string, scope: Scope, subject: string): void {
+    if (ingressOf(promptValue) !== "external_unscreened") return;
+    const policy = this.ingressPolicy();
+    if (policy === "off") return;
+    const message = `provider prompt '${subject}' renders external unscreened ingress; configure [security.ingress.prompts.NAME] or [security.ingress.events.NAME] screening, or change [security] tainted_ingress_to_provider`;
+    if (policy === "deny") throw taintViolation(message);
+    this.warnings.push({
+      kind: "tainted_ingress_to_provider",
+      message,
+      prompt,
+      ingress: "external_unscreened",
+      agent: scope.currentAgent()?.name,
+      subject,
+    });
+  }
+
+  // Invoke a [tools.*] catalog effector (§6b/§16.4): append the correlated ToolStarted/ToolResolved
+  // pair — the seam's REPLAY JOURNAL (§16.5), beneath the named domain rows — and return the reply.
+  private async invokeWired(catalogKey: string, args: Value[], scope: Scope, resultEvent?: string): Promise<Value> {
+    const agent = scope.currentAgent();
+    const binding = this.catalogBinding(catalogKey);
+    const payload = this.toolPayload(catalogKey, args);
+    const startedPayload = { binding: this.bindingSummary(binding), args: args.map(valueSummary), payload };
+    const resultIngress = resultEvent ? this.ingressForEvent(resultEvent) : "external_unscreened";
+    this.ledger.append("ToolStarted", catalogKey, startedPayload, agent?.name);
+    return this.inResolutionOrder(
+      this.effectorResult(catalogKey, args, binding, payload).then((resolved) => this.withIngress(resolved, resultIngress)),
+      (resolved) => {
+        this.ledger.append("ToolResolved", catalogKey, { ...startedPayload, result: valueSummary(resolved) }, agent?.name);
+      },
+    );
+  }
+
+  // Land a configured result event (§6b): the effector's reply becomes the event's typed payload.
+  // Judgment trust follows the request payload: the perform path is already settled; an
+  // emit-triggered read joins the emitted payload's trust (no laundering). Ingress provenance is
+  // tracked separately for prompt/provider screening. Returns the
+  // value a foreground binding receives (single-field event → the field; else a struct of the fields).
+  private async landResultEvent(eventName: string, reply: Value | undefined, requestTrust: Trust, subj: string, scope: Scope): Promise<Value> {
+    const decl = this.events.get(eventName);
+    if (!decl) throw configError(`wiring names result_event '${eventName}', which is not a declared event (§6b, §17.1)`);
+    const agent = scope.currentAgent();
+    const fields = new Map<string, Value>();
+    const resultIngress = this.ingressForEvent(eventName);
+    decl.fields.forEach((f, i) => {
+      let v: Value;
+      if (decl.fields.length === 1 && reply && reply.kind === "text" && f.type.kind === "scalar" && f.type.name === "text") {
+        v = reply; // a single text field receives the reply verbatim
+      } else if (reply && reply.kind === "struct" && reply.fields.has(f.name)) {
+        v = reply.fields.get(f.name)!;
+      } else {
+        v = this.mockFieldValue(f.type, `${eventName}|${f.name}|${i}|${reply ? render(reply) : ""}`);
+      }
+      fields.set(f.name, this.withIngress(this.withTrust(v, requestTrust === "settled" ? "settled" : requestTrust), resultIngress));
+    });
+    this.ledger.append(eventName, subj, Object.fromEntries([...fields].map(([k, v]) => [k, valueSummary(v)])), agent?.name);
+    await this.fireSubscriptions(eventName, subj, fields);
+    if (decl.fields.length === 1) return fields.get(decl.fields[0]!.name)!;
+    return { kind: "struct", typeName: eventName, fields, trust: requestTrust, ingress: ingressJoin([...fields.values()]) };
+  }
+
+  // a deterministic mock value for a result-event field (a pure function of its seed → replay-stable).
+  private mockFieldValue(t: A.TypeRef, seed: string): Value {
+    if (t.kind === "scalar") {
+      switch (t.name) {
+        case "int": return { kind: "int", v: hashInt(seed), trust: "settled" };
+        case "float": return { kind: "float", v: hashInt(seed) / 1000, trust: "settled" };
+        case "bool": return { kind: "bool", v: hashInt(seed) % 2 === 0, trust: "settled" };
+        case "text": return { kind: "text", v: `world:${seed}`, trust: "settled" };
+        case "null": return { kind: "null", trust: "settled" };
+      }
+    }
+    return { kind: "text", v: `world:${seed}`, trust: "settled" };
   }
 
   private async inResolutionOrder<T>(work: Promise<T>, apply: (result: T) => void | Promise<void>): Promise<T> {
@@ -831,12 +1260,7 @@ class Interpreter {
   // or a call to a `reversible write tool`? A NON-reversible sink does NOT earn the cold-start commit (it must
   // defer, §20.3); an arm with no sink at all earns nothing (the supervised cold start abstains, §13).
   private armReachesReversibleSink(stmts: A.Stmt[]): boolean {
-    const revWriteTool = (name: string): boolean => {
-      const t = this.tools.get(name) ?? this.tools.get(name.includes(".") ? name.split(".").pop()! : name);
-      return !!t && t.effect === "write" && !!t.reversible;
-    };
     const exprRev = (e: A.Expr): boolean => {
-      if (e.kind === "call" && e.callee.kind === "ident" && revWriteTool(e.callee.name)) return true;
       switch (e.kind) {
         case "call": return exprRev(e.callee) || e.args.some(exprRev);
         case "member": return exprRev(e.obj);
@@ -942,6 +1366,7 @@ class Interpreter {
         trust: "settled",
         binding: bindName,
         source: cred,
+        ingress: ingressOf(cred),
       };
       return { value, committed };
     }
@@ -953,7 +1378,7 @@ class Interpreter {
     // sink through the endorse wrapper. So the runtime independently refuses to settle a subject that still
     // carries un-endorsed cognition (raw/graded) UNLESS the decision was demonstrably ABOUT that subject —
     // the subject IS the exact Credence the decision collapsed, OR it fed that credence's prompt (its
-    // dependency scope). A settled-by-origin subject (constant, read-tool-over-settled inputs, a prior
+    // dependency scope). A judgment-settled subject (constant, external ingress, a prior
     // Endorsement) always passes; any other raw/graded subject cannot be laundered by a decision about
     // something else, so we fail closed rather than infer authority (mirrors the static §13 scope check).
     if (subject.trust !== "settled" && !this.decisionIsAbout(dec, subject)) {
@@ -991,6 +1416,7 @@ class Interpreter {
     const value: Value = {
       kind: "endorsement", subject, enumName: dec.enumName, committed,
       basis: dec.basis, margin: dec.margin, committedNarrowed: true, trust: "settled", binding: bindName, decisionId: dec.decisionId,
+      ingress: ingressOf(subject),
     };
     return { value, committed };
   }
@@ -1117,7 +1543,7 @@ class Interpreter {
           if (p.kind === "text") { out += p.text; }
           else { const v = await this.evalExpr(p.expr, scope); out += render(v); parts.push(v); }
         }
-        return { kind: "text", v: out, trust: trustJoin(parts) };
+        return { kind: "text", v: out, trust: trustJoin(parts), ingress: ingressJoin(parts) };
       }
       case "self": {
         const a = scope.currentAgent();
@@ -1151,7 +1577,7 @@ class Interpreter {
           fields.set(f.name, v);
           parts.push(v);
         }
-        return { kind: "struct", typeName: e.typeName, fields, trust: trustJoin(parts) };
+        return { kind: "struct", typeName: e.typeName, fields, trust: trustJoin(parts), ingress: ingressJoin(parts) };
       }
       case "decide": case "endorse": return (await this.evalGate(e, scope, undefined, bindName)).value;
       case "member": return this.evalMember(e, scope);
@@ -1164,19 +1590,16 @@ class Interpreter {
           const el = arr.items[idx.kind === "int" ? idx.v : 0];
           if (el) return { ...el, trust: el.trust ?? trust } as Value;
         }
-        return { kind: "null", trust };
+        return { kind: "null", trust, ingress: ingressOf(arr) };
       }
       case "binary": return this.evalBinary(e, scope);
       case "unary": {
         const o = await this.evalExpr(e.operand, scope);
-        if (e.op === "!" && o.kind === "bool") return { kind: "bool", v: !o.v, trust: o.trust };
+        if (e.op === "!" && o.kind === "bool") return { kind: "bool", v: !o.v, trust: o.trust, ingress: ingressOf(o) };
         if (e.op === "-" && (o.kind === "int" || o.kind === "float")) return { ...o, v: -o.v };
         throw new RuntimeError(`bad unary ${e.op}`);
       }
       case "call": {
-        if (e.callee.kind === "ident" && this.tools.has(e.callee.name)) {
-          return this.evalToolCall(e.callee.name, e.args, scope);
-        }
         // a call to a user-declared function `f(a, …)` (§15.2). Generic functions are monomorphized and
         // their type arguments erased before this point (§19.5), so the concrete argument values suffice.
         if (e.callee.kind === "ident" && this.fns.has(e.callee.name)) {
@@ -1198,11 +1621,35 @@ class Interpreter {
       case "arraylit": {
         const items: Value[] = [];
         for (const it of e.items) items.push(await this.evalExpr(it, scope));
-        return { kind: "array", items, trust: trustJoin(items) };
+        return { kind: "array", items, trust: trustJoin(items), ingress: ingressJoin(items) };
       }
       case "pipe": return this.evalPipe(e, scope);
+      case "spawnexpr": return this.evalSpawnExpr(e, scope);
       case "agg": return this.evalAgg(e, scope);
       case "quorum": return this.evalQuorum(e, scope);
+      case "performexpr": return this.evalPerformExpr(e, scope);
+      case "tasklit": {
+        // §6c the task literal: builds a TaskSpec. objective/acceptance REQUIRED text; trust is the join
+        // of the fields (delegation never launders trust); a `scope` clause can only ATTENUATE the
+        // delegator's own authority.
+        if (!e.objective || !e.acceptance) throw typeError("a task literal requires BOTH `objective` and `acceptance` (§6c)");
+        const obj = await this.evalExpr(e.objective, scope);
+        if (obj.kind !== "text") throw typeError("task `objective` must be text (§6c)");
+        const acc = await this.evalExpr(e.acceptance, scope);
+        if (acc.kind !== "text") throw typeError("task `acceptance` must be text (§6c)");
+        if (e.scope.length > 0) {
+          const agent = scope.currentAgent();
+          const grants = agent?.decl.grants;
+          for (const a of e.scope) {
+            const held = grants === "all" || (Array.isArray(grants) && grants.some((g) => g.cap === "perform" && g.name === a));
+            if (!held) {
+              throw authorityViolation(`task scope names 'perform ${a}', which the delegator does not hold — a task can only ATTENUATE its delegator's authority, never mint new authority (§6c, §13)`);
+            }
+          }
+        }
+        const fields = new Map<string, Value>([["objective", obj], ["acceptance", acc]]);
+        return { kind: "struct", typeName: "TaskSpec", fields, trust: trustJoin([obj, acc]), ingress: ingressJoin([obj, acc]), taskScope: e.scope.length ? [...e.scope] : undefined };
+      }
     }
   }
 
@@ -1212,21 +1659,27 @@ class Interpreter {
     const src = await this.evalExpr(e.source, scope);
     if (src.kind !== "array") throw new RuntimeError("`|>` requires a collection on the left");
     if (e.fn.kind !== "ident") throw new RuntimeError("`|>` requires a named function on the right");
-    const results = await Promise.all(src.items.map((el) => this.callFn(e.fn as A.IdentExpr, [el], scope)));
-    return { kind: "array", items: results, trust: trustJoin(results) };
+    // pass each element's INDEX so a `spawn` inside the mapped fn gets a deterministic per-path name.
+    const results = await Promise.all(src.items.map((el, i) => this.callFn(e.fn as A.IdentExpr, [el], scope, i)));
+    return { kind: "array", items: results, trust: trustJoin(results), ingress: ingressJoin(results) };
   }
 
   // Call a user-declared function by name, binding the argument values positionally to its parameters,
   // executing its body, and returning the `return`ed value. Used by `|>` (one element bound to the first
   // parameter, §12) and by a direct call `f(a, …)` (§15.2). Generics are monomorphized/erased before this
   // point (§19.5), so no type-parameter environment is needed — the body runs on the concrete values.
-  private async callFn(fnRef: A.IdentExpr, args: Value[], scope: Scope): Promise<Value> {
+  private async callFn(fnRef: A.IdentExpr, args: Value[], scope: Scope, pathIndex?: number): Promise<Value> {
     const fn = this.fns.get(fnRef.name);
     if (!fn) throw new RuntimeError(`unknown function '${fnRef.name}'`);
     // Functions are not closures over caller locals, but when an agent calls a function the function
     // executes in that agent context. This lets async `coll |> fn` fan-out preserve `self`, grants,
     // and private agent fields for each mapped path.
     const local = new Scope(undefined, scope.currentAgent());
+    // extend the caller's fan-out path with this element's index (nested `|>` compose), so a `spawn`
+    // expression in the body names its instance by position, not by execution timing (§12/§15.4).
+    const base = scope.getFanoutPath();
+    if (pathIndex !== undefined) local.fanoutPath = [...base, pathIndex];
+    else if (base.length) local.fanoutPath = base;
     fn.params.forEach((p, i) => { if (i < args.length) local.set(p.name, args[i]!); });
     let ret: Value = { kind: "null", trust: "settled" };
     for (const st of fn.body) {
@@ -1269,7 +1722,7 @@ class Interpreter {
       const fold = e.op === "all"
         ? vals.every((v) => (v as any).v)
         : vals.some((v) => (v as any).v);
-      return { kind: "bool", v: fold, trust: trustJoin(vals) };
+      return { kind: "bool", v: fold, trust: trustJoin(vals), ingress: ingressJoin(vals) };
     }
     // the operand list aligned 1:1 with the fused credences (an array element's operand is the array expr,
     // which is not an ident, so it contributes no dependence name — i.e. an independent unit).
@@ -1392,52 +1845,12 @@ class Interpreter {
       scores: { true: clamped, false: 1 - clamped },
       trust: "graded",
       derivedFrom: creds,
+      ingress: ingressJoin(creds),
     };
   }
 
-  // E-Tool (§15.4.2): a tool call requires `use NAME`; a write tool's inputs are a consequential sink;
-  // a read tool's result carries the join of its inputs' trust; the call records a ToolStarted/ToolResolved
-  // pair, and the result is a deterministic mock (a pure function of name+args) so replay is chain-stable.
-  private async evalToolCall(name: string, argExprs: A.Expr[], scope: Scope): Promise<Value> {
-    const tool = this.tools.get(name)!;
-    const agent = scope.currentAgent();
-
-    // AUTHORITY (W-Auth, default-deny): the call needs a `use NAME` grant. Match the bare grant against the
-    // target both as-written and qualified in the agent's home module (§19.2/§19.4), so a companion agent's
-    // `grants { use Save }` covers its own `m.Save` tool without letting a bare grant reach a foreign tool.
-    const grants = agent?.decl.grants;
-    const granted = grants === "all" || (Array.isArray(grants) && grants.some((g) => g.cap === "use" && (g.name === name || this.qualifyInModule(g.name, scope) === name)));
-    if (!granted) throw authorityViolation(`agent lacks 'use ${name}'`);
-
-    // evaluate the arguments (joining their trust for a read-tool result, per E-Tool t = ⊔ trust(aᵢ)).
-    const args: Value[] = [];
-    for (const a of argExprs) args.push(await this.evalExpr(a, scope));
-
-    // WRITE-TOOL SINK (W-Consequential-static): a write tool is a consequential sink — each input must
-    // be settled and endorsed, exactly like a `perform`.
-    if (tool.effect === "write") {
-      for (const v of args) this.sinkValue(v, name);
-    }
-
-    // LEDGER (E-Tool): the correlated ToolStarted/ToolResolved pair, keyed on the tool name. The manifest
-    // selects the driver; the host supplies non-mock adapters (MCP, HTTP, process, in-process function, skill).
-    const binding = this.toolBinding(name);
-    const payload = this.toolPayload(name, args);
-    const startedPayload = { binding: this.bindingSummary(binding), args: args.map(valueSummary), payload };
-    this.ledger.append("ToolStarted", name, startedPayload, agent?.name);
-    const result = await this.inResolutionOrder(
-      this.toolResult(tool, args, scope, binding, payload),
-      (resolved) => {
-        this.ledger.append("ToolResolved", name, { ...startedPayload, result: valueSummary(resolved) }, agent?.name);
-      },
-    );
-    return result;
-  }
-
-  private toolBinding(name: string): ToolBindingConfig {
-    const tools = this.manifest?.tools;
-    const simple = name.includes(".") ? name.slice(name.lastIndexOf(".") + 1) : name;
-    return tools?.[name] ?? tools?.[simple] ?? { driver: "mock" };
+  private catalogBinding(key: string): ToolBindingConfig {
+    return this.manifest?.tools?.[key] ?? { driver: "mock" };
   }
 
   private bindingSummary(binding: ToolBindingConfig): Record<string, unknown> {
@@ -1447,49 +1860,20 @@ class Interpreter {
       .sort(([a], [b]) => a.localeCompare(b)));
   }
 
-  // Tool invocation is an adapter boundary. `mock` is built in for demos/replay-stable tests; every other
-  // driver is supplied by the embedding runtime via `toolHandlers`, so MCP is one supported transport, not a
-  // semantic requirement of the language.
-  private async toolResult(tool: A.ToolDecl, args: Value[], scope: Scope, binding: ToolBindingConfig, payload: string): Promise<Value> {
+  // Effector invocation is an adapter boundary (§6b/§16.4). `mock` is built in for demos/replay-stable
+  // tests (a deterministic pure function of the payload); every other driver is supplied by the embedding
+  // runtime via `toolHandlers`, keyed by the [tools.*] catalog key — MCP is one supported transport, not
+  // a semantic requirement of the language.
+  private async effectorResult(catalogKey: string, args: Value[], binding: ToolBindingConfig, payload: string): Promise<Value> {
     const driver = binding.driver ?? "mock";
-    if (driver === "mock") return this.mockToolResult(tool, args, payload);
-    const simple = tool.name.includes(".") ? tool.name.slice(tool.name.lastIndexOf(".") + 1) : tool.name;
-    const handler = this.toolHandlers[tool.name] ?? this.toolHandlers[simple];
+    if (driver === "mock") return { kind: "text", v: `tool:${catalogKey}(${payload})`, trust: "settled" };
+    const handler = this.toolHandlers[catalogKey];
     if (!handler) {
-      throw configError(`tool '${tool.name}' is configured with driver '${driver}', but this runtime has no adapter registered for it (§17.1)`);
+      throw configError(`catalog entry [tools.${catalogKey}] is configured with driver '${driver}', but this runtime has no adapter registered for it (§17.1)`);
     }
-    const raw = await handler({ name: tool.name, declaration: tool, binding, args, payload });
-    return this.toolValue(raw, tool.ret, tool.effect === "read" ? trustJoin(args) : "settled", scope);
-  }
-
-  // a deterministic mock tool result, typed by the tool's declared return; its trust is the join of the
-  // inputs' trust (read tool) — a write tool returns settled bool (its inputs were already gated).
-  private mockToolResult(tool: A.ToolDecl, args: Value[], seed?: string): Value {
-    const trust = tool.effect === "read" ? trustJoin(args) : "settled";
-    const ret = tool.ret;
-    seed ??= this.toolPayload(tool.name, args);
-    switch (ret.kind) {
-      case "scalar":
-        switch (ret.name) {
-          case "int": return { kind: "int", v: hashInt(seed), trust };
-          case "float": return { kind: "float", v: hashInt(seed) / 1000, trust };
-          case "bool": return { kind: "bool", v: hashInt(seed) % 2 === 0, trust };
-          case "text": return { kind: "text", v: `tool:${tool.name}(${seed})`, trust };
-          case "null": return { kind: "null", trust };
-        }
-        break;
-    }
-    // any other declared return collapses to a settled-by-origin text observation.
-    return { kind: "text", v: `tool:${tool.name}(${seed})`, trust };
-  }
-
-  private toolValue(raw: unknown, ret: A.TypeRef, trust: Trust, scope: Scope): Value {
-    if (isRuntimeValue(raw)) return this.withTrust(raw, trust);
-    try {
-      return this.withTrust(this.valueFromStructured(raw, ret, scope), trust);
-    } catch (e) {
-      throw configError(`tool adapter returned a value that does not satisfy '${typeLabel(ret)}': ${(e as Error).message}`);
-    }
+    const raw = await handler({ name: catalogKey, binding, args, payload });
+    if (isRuntimeValue(raw)) return raw;
+    return this.jsonValue(raw, "Reply");
   }
 
   // the deterministic correlation payload: a pure function of (name, rendered args), so two runs of the
@@ -1790,7 +2174,12 @@ class Interpreter {
     // check keys on the RESOLVED destination instance's type, not on the syntactic form of the binding.
     this.assertReach(dest, scope);
     const destName = dest.name;
-    const prompt = render(await this.evalExpr(e.message, scope));
+    const msgVal = await this.evalExpr(e.message, scope);
+    // §6c: a send whose message is a TaskSpec (a task literal / draft) or an Endorsement<TaskSpec>
+    // is a DELEGATION — the recipient answers with code (its task handler), not one provider call.
+    const taskInfo = this.taskSpecOf(msgVal);
+    if (taskInfo) return this.evalTaskSend(e, dest, taskInfo, scope, expected, bindName);
+    const prompt = render(msgVal);
     // §6: a typed binding `T s = d <- …` gives the produced send its subject `s`; an unbound send is
     // subjected at the destination.
     const subj = bindName ?? destName;
@@ -1808,6 +2197,7 @@ class Interpreter {
       return { kind: "text", v: "", trust: "raw" }; // an undelivered orphan reply
     }
     this.ledger.append("Delivered", subj, { to: destName }, scope.currentAgent()?.name);
+    this.checkProviderIngress(msgVal, prompt, scope, subj);
     // §5/§8 provider faults: `empty` = an unrecoverable seam failure → the agent crashes (contained); a
     // `schema_violation` = a structured typed reply that fails its schema → a clean, catchable TypeMismatch.
     const fault = (this.provider as { fault?: string }).fault;
@@ -1822,7 +2212,8 @@ class Interpreter {
       const { scores } = await this.inResolutionOrder(
         this.provider.judge(prompt, expected.enumName, variants),
         ({ scores: resolvedScores }) => {
-          const resolvedValue: Value = { kind: "credence", enumName: expected.enumName, scores: resolvedScores, trust: "graded", derivedFrom: this.promptSources(e.message, scope) };
+          const sources = this.promptSources(e.message, scope);
+          const resolvedValue: Value = { kind: "credence", enumName: expected.enumName, scores: resolvedScores, trust: "graded", derivedFrom: sources, ingress: ingressJoin(sources) };
           this.ledger.append("Resolved", subj, {
             kind: "credence",
             prompt,
@@ -1833,7 +2224,8 @@ class Interpreter {
           }, scope.currentAgent()?.name);
         },
       );
-      const value: Value = { kind: "credence", enumName: expected.enumName, scores, trust: "graded", derivedFrom: this.promptSources(e.message, scope) };
+      const sources = this.promptSources(e.message, scope);
+      const value: Value = { kind: "credence", enumName: expected.enumName, scores, trust: "graded", derivedFrom: sources, ingress: ingressJoin(sources) };
       // §13 dependency scope: record which in-scope values fed this credence's prompt, so a later
       // `endorse subject by (decide c)` can confirm the decision is ABOUT the subject (see evalGate).
       return value;
@@ -1891,6 +2283,83 @@ class Interpreter {
     return value;
   }
 
+  // §6c: recognize a delegation message — a TaskSpec struct (a task literal / bound draft) or an
+  // Endorsement<TaskSpec> (the endorsed, possibly scope-carrying form).
+  private taskSpecOf(v: Value): { scope: string[]; endorsed: boolean } | undefined {
+    if (v.kind === "struct" && v.typeName === "TaskSpec") return { scope: v.taskScope ?? [], endorsed: false };
+    if (v.kind === "endorsement" && v.subject.kind === "struct" && v.subject.typeName === "TaskSpec") {
+      return { scope: v.subject.taskScope ?? [], endorsed: true };
+    }
+    return undefined;
+  }
+
+  // §6c the task-send. Foreground (result-bound) delivers inline — the delegator's invocation waits on
+  // the terminal, and any terminal other than TaskCompleted faults it via the contained-crash path
+  // (§16.6). Background (Task<T>-bound) queues the delivery for the next inter-invocation drain
+  // (§16.3a) and returns the settled handle.
+  private async evalTaskSend(
+    e: A.SendExpr,
+    dest: Extract<Value, { kind: "agentref" }>,
+    info: { scope: string[]; endorsed: boolean },
+    scope: Scope,
+    expected?: A.TypeRef,
+    bindName?: string,
+  ): Promise<Value> {
+    const agent = scope.currentAgent();
+    if (!expected) {
+      throw typeError("a delegation must be bound — hold the result (`T r = …`) or a Task<T> handle; bare statement-form delegation is rejected (§6c)");
+    }
+    if (e.expires === undefined) {
+      throw typeError("a delegation requires `expires` — every task is terminal by construction (§6c)");
+    }
+    const life = await this.evalExpr(e.expires, scope);
+    if (life.kind !== "int" && life.kind !== "float") throw typeError("`expires` requires a numeric lifetime (§6)");
+    if (life.trust !== "settled") throw taintViolation("`expires` requires a SETTLED numeric expression — a cognition-derived lifetime is rejected (§6, §6c)");
+    if (info.scope.length > 0 && !info.endorsed) {
+      throw taintViolation("a scoped task grants perform authority and must be ENDORSED — send an Endorsement<TaskSpec> constructed inside a committed branch (§6c, §13)");
+    }
+    const foreground = expected.kind !== "task";
+    const corr = bindName ?? dest.name;
+    const t: TaskState = {
+      corr, dest: dest.name, delegator: agent?.name,
+      scope: info.scope, endorsed: info.endorsed, foreground,
+      status: "sent", delivered: false,
+    };
+    this.tasks.set(corr, t);
+    this.ledger.append("Sent", corr, { to: dest.name, task: true }, agent?.name);
+    await this.fireSubscriptions("Sent", corr, new Map()); // ≡ TaskSubmitted (alias, §6c)
+    if (foreground) {
+      const inst = this.instances.get(dest.name);
+      if (!inst?.awake) {
+        // no mailbox and the delegator is waiting: the mandatory lifetime converts the silence into a
+        // tombstone, and the tombstone faults the awaiting invocation (§6c, §16.6).
+        t.status = "expired";
+        this.ledger.append("Expired", corr, { to: dest.name, task: true }, agent?.name);
+        await this.fireSubscriptions("Expired", corr, new Map());
+        throw new CrashError();
+      }
+      await this.deliverTask(t);
+      if (t.status === "completed") return this.foregroundResult(t.result!);
+      if (!taskTerminal(t)) {
+        // the handler returned without a terminal — the lifetime elapses with nothing to wait for.
+        t.status = "expired";
+        this.ledger.append("Expired", corr, { to: dest.name, task: true }, agent?.name);
+        await this.fireSubscriptions("Expired", corr, new Map());
+      }
+      throw new CrashError(); // failed / cancelled / expired — fault the awaiting invocation (§16.6)
+    }
+    this.pendingDeliveries.push(t);
+    return { kind: "taskref", corr, trust: "settled" };
+  }
+
+  // §6c: a delegated result is RAW by default — it is the worker's cognition until the delegator gates
+  // it. A worker that completes with a gate value (an Endorsement<T> above all) hands it over as-is:
+  // an endorsement is a settled, ledger-backed subject.
+  private foregroundResult(v: Value): Value {
+    if (v.kind === "endorsement" || v.kind === "credence" || v.kind === "decision") return v;
+    return this.withTrust(v, "raw");
+  }
+
   // W-Auth reach (§13): the current agent must hold `reach` for the destination agent's concrete type or
   // an interface that type implements (`reach Iface` covers any implementor, §19.5). Sending to `self` is
   // own-cognition and always permitted. Default-deny: no grant covering the destination ⇒ AuthorityViolation.
@@ -1921,7 +2390,8 @@ class Interpreter {
     const region = agent?.mems.get(e.mem.name);
     if (!region) throw typeError(`'${e.mem.name} ->': not a mem handle`);
     if (region.forgotten) throw typeError(`'${e.mem.name} ->': the handle was forgotten and is no longer recallable`);
-    const query = render(await this.evalExpr(e.query, scope));
+    const queryValue = await this.evalExpr(e.query, scope);
+    const query = render(queryValue);
     const consulted = await this.memory.consult({ scope: this.memoryScope(agent!, e.mem.name), query });
     const overlayCandidates = region.writes.map(valueSummary);
     const candidates = [...consulted.candidates, ...overlayCandidates];
@@ -1930,6 +2400,7 @@ class Interpreter {
     if (expected?.kind === "credence") {
       const variants = this.variantsOf(expected.enumName);
       if (!variants) throw new RuntimeError(`unknown enum '${expected.enumName}'`);
+      this.checkProviderIngress(queryValue, query, scope, agent?.name ?? "<top>");
       const { scores } = await this.inResolutionOrder(
         this.provider.judge(query, expected.enumName, variants),
         ({ scores: resolvedScores }) => {
@@ -1944,7 +2415,8 @@ class Interpreter {
           }, agent?.name);
         },
       );
-      return { kind: "credence", enumName: expected.enumName, scores, trust: "graded", derivedFrom: this.promptSources(e.query, scope) };
+      const sources = this.promptSources(e.query, scope);
+      return { kind: "credence", enumName: expected.enumName, scores, trust: "graded", derivedFrom: sources, ingress: ingressJoin(sources) };
     }
     // raw recall text — never settled (a recalled value must be re-decided + endorsed before a sink).
     this.ledger.append("MemoryConsulted", agent?.name ?? "<top>", {
@@ -2060,6 +2532,7 @@ class Interpreter {
       case "enumval": return { ...v, trust: "settled" };
       case "agentref": return v;
       case "memref": return v;
+      case "taskref": return v;
       case "struct": return { ...v, trust: "settled" };
       case "array": return { ...v, trust: "settled" };
     }
@@ -2070,24 +2543,25 @@ class Interpreter {
     const r = await this.evalExpr(e.right, scope, this.enumHint(l));
     const num = (v: Value) => (v.kind === "int" || v.kind === "float" ? v.v : NaN);
     switch (e.op) {
-      case "==": return { kind: "bool", v: this.eq(l, r), trust: "settled" };
-      case "!=": return { kind: "bool", v: !this.eq(l, r), trust: "settled" };
-      case "<": return { kind: "bool", v: num(l) < num(r), trust: "settled" };
-      case ">": return { kind: "bool", v: num(l) > num(r), trust: "settled" };
-      case "<=": return { kind: "bool", v: num(l) <= num(r), trust: "settled" };
-      case ">=": return { kind: "bool", v: num(l) >= num(r), trust: "settled" };
+      case "==": return { kind: "bool", v: this.eq(l, r), trust: "settled", ingress: ingressJoin([l, r]) };
+      case "!=": return { kind: "bool", v: !this.eq(l, r), trust: "settled", ingress: ingressJoin([l, r]) };
+      case "<": return { kind: "bool", v: num(l) < num(r), trust: "settled", ingress: ingressJoin([l, r]) };
+      case ">": return { kind: "bool", v: num(l) > num(r), trust: "settled", ingress: ingressJoin([l, r]) };
+      case "<=": return { kind: "bool", v: num(l) <= num(r), trust: "settled", ingress: ingressJoin([l, r]) };
+      case ">=": return { kind: "bool", v: num(l) >= num(r), trust: "settled", ingress: ingressJoin([l, r]) };
       // value-producing ops join operand trust (contagious-upward, §15.3.1): `raw + "x"` stays raw —
       // string concat / arithmetic must NOT launder a cognition-provenance value to settled.
       case "+": {
         const t = trustJoin([l, r]);
-        if (l.kind === "text" || r.kind === "text") return { kind: "text", v: render(l) + render(r), trust: t };
-        return { kind: "float", v: num(l) + num(r), trust: t };
+        const ingress = ingressJoin([l, r]);
+        if (l.kind === "text" || r.kind === "text") return { kind: "text", v: render(l) + render(r), trust: t, ingress };
+        return { kind: "float", v: num(l) + num(r), trust: t, ingress };
       }
-      case "-": return { kind: "float", v: num(l) - num(r), trust: trustJoin([l, r]) };
-      case "*": return { kind: "float", v: num(l) * num(r), trust: trustJoin([l, r]) };
-      case "/": return { kind: "float", v: num(l) / num(r), trust: trustJoin([l, r]) };
-      case "&&": return { kind: "bool", v: (l as any).v && (r as any).v, trust: "settled" };
-      case "||": return { kind: "bool", v: (l as any).v || (r as any).v, trust: "settled" };
+      case "-": return { kind: "float", v: num(l) - num(r), trust: trustJoin([l, r]), ingress: ingressJoin([l, r]) };
+      case "*": return { kind: "float", v: num(l) * num(r), trust: trustJoin([l, r]), ingress: ingressJoin([l, r]) };
+      case "/": return { kind: "float", v: num(l) / num(r), trust: trustJoin([l, r]), ingress: ingressJoin([l, r]) };
+      case "&&": return { kind: "bool", v: (l as any).v && (r as any).v, trust: "settled", ingress: ingressJoin([l, r]) };
+      case "||": return { kind: "bool", v: (l as any).v || (r as any).v, trust: "settled", ingress: ingressJoin([l, r]) };
     }
     throw new RuntimeError(`bad binary ${e.op}`);
   }
@@ -2166,8 +2640,8 @@ class Interpreter {
     return this.structs.has(q) || this.enums.has(q) ? q : name;
   }
 
-  private valueFromPromptInput(raw: unknown, t: A.TypeRef, scope: Scope): Value {
-    return this.withTrust(this.valueFromStructured(this.coercePromptInput(raw, t, scope), t, scope), "settled");
+  private valueFromPromptInput(raw: unknown, t: A.TypeRef, scope: Scope, ingress: IngressProvenance): Value {
+    return this.withIngress(this.withTrust(this.valueFromStructured(this.coercePromptInput(raw, t, scope), t, scope), "settled"), ingress);
   }
 
   private coercePromptInput(raw: unknown, t: A.TypeRef, scope: Scope): unknown {
@@ -2223,6 +2697,17 @@ class Interpreter {
     return { ...v, trust } as Value;
   }
 
+  private withIngress(v: Value, ingress: IngressProvenance): Value {
+    if (v.kind === "struct") {
+      const fields = new Map([...v.fields].map(([k, val]) => [k, this.withIngress(val, ingress)]));
+      return { ...v, fields, ingress };
+    }
+    if (v.kind === "array") return { ...v, items: v.items.map((item) => this.withIngress(item, ingress)), ingress };
+    if (v.kind === "credence" || v.kind === "decision") return { ...v, ingress };
+    if (v.kind === "endorsement") return { ...v, subject: this.withIngress(v.subject, ingress), ingress };
+    return { ...v, ingress } as Value;
+  }
+
   private valueFromStructured(raw: unknown, t: A.TypeRef, scope: Scope): Value {
     if (t.kind === "event") return this.valueFromStructured(raw, t.inner, scope);
     if (t.kind === "scalar") {
@@ -2247,7 +2732,7 @@ class Interpreter {
     if (t.kind === "array") {
       if (!Array.isArray(raw)) throw new RuntimeError("structured reply is not an array");
       const items = raw.map((x) => this.valueFromStructured(x, t.inner, scope));
-      return { kind: "array", items, trust: trustJoin(items) };
+      return { kind: "array", items, trust: trustJoin(items), ingress: ingressJoin(items) };
     }
     if (t.kind === "named") {
       const name = this.resolveTypeName(t.name, scope);
@@ -2267,7 +2752,7 @@ class Interpreter {
         if (!Object.prototype.hasOwnProperty.call(obj, f.name)) throw new RuntimeError(`structured reply missing field '${f.name}'`);
         out.set(f.name, this.valueFromStructured(obj[f.name], f.type, scope));
       }
-      return { kind: "struct", typeName: name, fields: out, trust: trustJoin([...out.values()]) };
+      return { kind: "struct", typeName: name, fields: out, trust: trustJoin([...out.values()]), ingress: ingressJoin([...out.values()]) };
     }
     throw new RuntimeError("type does not have a structured reply schema");
   }
@@ -2276,6 +2761,14 @@ class Interpreter {
     const inst = this.instances.get(name);
     if (!inst) throw new RuntimeError(`unknown agent instance '${name}'`);
     return inst;
+  }
+
+  // §15.4: resolve a lifecycle target (`awake x` / `sleep x`) to a concrete instance name. `x` may be a
+  // static instance name (the statement-form `spawn Type x`) OR a variable holding an agentref (the
+  // expression form `Type x = spawn Type`); the latter names a generated instance, so resolve the value.
+  private instanceNameOf(name: string, scope: Scope): string {
+    const v = scope.get(name);
+    return v && v.kind === "agentref" ? v.name : name;
   }
   private agentSubject(scope: Scope): string {
     return scope.currentAgent()?.name ?? "<top>";
@@ -2286,7 +2779,7 @@ class Interpreter {
 }
 
 // trust join over the lattice settled ⊑ graded ⊑ raw — the result is as raw as its least-settled input
-// (contagious upward, §15.3.1). With no inputs the result is settled (settled by origin).
+// (contagious upward, §15.3.1). With no inputs the result is settled because no input carried cognition.
 function trustJoin(vs: { trust: Trust }[]): Trust {
   let t: Trust = "settled";
   for (const v of vs) {

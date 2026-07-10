@@ -35,12 +35,12 @@ the provider to commit to one variant of a closed enum and returns a **graded
 judgment** (`Credence<E>`, §3); `decide` is the only operation that collapses a graded
 judgment into a sealed `Decision<E>`, and `endorse` is the only operation that applies that
 decision to a subject value (§13);
-- **the world is reached only through declared, capability-gated tools** — every
-world-affecting effect (I/O, an API call, a database, heavyweight computation) is a
-**tool**, a declared dependency on a world capability (§6b), enumerated and granted, never
-an ambient call;
-- **authority is governed** — what an agent may do, which cognition-derived values may
-drive consequential actions, and which tools it may use, are bounded at compile time
+- **the world is reached only through wired events and actions** — every
+world-affecting effect (I/O, an API call, a database, heavyweight computation) enters as a
+declared **event** or leaves as a declared **action**, wired in the manifest to an endpoint
+catalog (§6b), enumerated and configured, never an ambient call;
+- **authority is governed** — what an agent may do and which cognition-derived values may
+drive consequential actions are bounded at compile time
 (§13).
 
 Two ideas underlie the language:
@@ -49,14 +49,15 @@ Two ideas underlie the language:
   append-only log. The log is the source of truth; state is a projection of it; replay
    re-derives state by folding it.
 2. **Declared dependencies.** Everything outside the program — the model, an accountable
-  identity, the world — is reached through a **declared dependency**: a name the program
+  identity, the world — is reached through a **declared seam**: a name the program
    declares but does not define, whose value configuration supplies at run time (§17). Cognition
-   is the **provider**; accountability is a `**principal`**; the world is a `**tool`**. Swapping a
+   is the **provider**; accountability is a `**principal`**; the world is wired to declared
+   **events and actions** through the manifest's endpoint catalog (§6b). Swapping a
    dependency's backend changes no Agape source.
 
 These ideas form Agape's **trusted kernel**: `Credence`, sealed `Decision`, subject
 `Endorsement`, `decide`, `endorse`, the taint lattice, default-deny grants, consequential sink checks
-(`perform` and write tools), and ledger record/replay. Everything else in the language is
+(`perform` — the only outbound path, §6b), and ledger record/replay. Everything else in the language is
 ordinary computation over already-settled values, or a reactive primitive over the ledger. No
 feature may introduce a new path from model testimony to world effect.
 
@@ -93,9 +94,10 @@ awake g;
 
 Agape is a domain language for the cognitive/agentic layer; it is not a general-purpose
 language. General-purpose computation — arithmetic-heavy kernels, data structures,
-parsers — is imported as a tool (§6b), never reimplemented in Agape: Agape has no
-imperative substrate of its own. The deterministic work lives in the host and is
-reached, and governed, through the tool dependency. The
+parsers — is imported through the world interface (§6b) — an MCP endpoint in the manifest's
+`[tools.*]` catalog, wired to declared events and actions — never reimplemented in Agape:
+Agape has no imperative substrate of its own. The deterministic work lives in the host and is
+reached, and governed, through that wired seam. The
 primitive Agape provides is **endorsed judgment under uncertainty**: a non-deterministic
 semantic decision, trust-tracked, collapsed by an auditable gate, recorded on an
 append-only ledger.
@@ -119,7 +121,7 @@ A long-running or simulated environment is expressed explicitly, never by making
 language itself a loop. Computation is **total**: the language has no unbounded control
 construct — control is `if`, event-driven reaction (`when`), bounded fan-out over finite
 collections (§12), and function call — so every reaction terminates. The one way a program
-stays live is an open external input source (`prompt`, §5b, or a standing tool sensor) that
+stays live is an open external input source (`prompt`, §5b, or a standing sensor, §6b) that
 keeps it from quiescing. An always-on agent is not one long non-terminating computation; it
 is an unbounded sequence of finite, terminating reactions — one per external event — over a
 single growing ledger, so replay and the reproducibility guarantees (§15.5) hold per event.
@@ -137,15 +139,15 @@ concurrency.
 
 ---
 
-## 1. The three orthogonal axes
+## 1. The four orthogonal axes
 
-Agape tracks three independent properties that are easy to conflate.
+Agape tracks four independent properties that are easy to conflate.
 
 ### Axis A — function color: sync vs async
 
 - Code is **asynchronous by default**. The common case is cognition, which is async.
 - `**sync`** is the marked keyword. A `sync` function may not touch a declared dependency (no `<-`, no
-binding to a `Credence` slot, no tool call, no principal-driven `decide`)
+binding to a `Credence` slot, no `perform`, no principal-driven `decide`)
 and may only call other `sync` functions.
 - `sync` is an affirmative, auditable claim of cognition-freedom and effect-freedom; it
 propagates downward. Marking the safe property makes visible which code provably cannot
@@ -165,10 +167,16 @@ constrained distribution over a closed enum's variants, §3). More structured th
 — the model has been forced to commit to a fixed set of outcomes — but not yet
 committed by a gate. Recalled memory also defaults to **graded** (§10).
 - **settled** — a value carrying no un-endorsed cognition: a sealed `Decision`, an
-`Endorsement` of an exact subject value, a constant, or external data settled by
-origin (a `prompt`, a read-tool result over settled inputs).
+`Endorsement` of an exact subject value, a constant, or external data at an ingress
+boundary (`prompt`, sensor, or wired result-event payload, §5b, §6b).
 
-Trust is contagious upward; only a gate moves a value down toward **settled**. A consequential action may consume only a **settled** value whose settling is recorded on the ledger — a `Decision` for branch control, and a committed `Endorsement` for a subject reaching a sink (§13). External data is settled by origin; only un-endorsed cognition is withheld.
+Trust is contagious upward; only a gate moves cognition down toward **settled**. A
+consequential action may consume only a **settled** value: for cognition-derived
+subjects, the settling is recorded on the ledger as a `Decision` plus committed
+`Endorsement`; constants and external ingress values may be ordinary program data
+because they carry no un-endorsed model cognition (§13). This says nothing about
+whether external bytes are safe, policy-compliant, or non-adversarial; that is tracked
+by the ingress axis below.
 
 ### Axis C — ledger presence: values vs ledger records
 
@@ -184,17 +192,38 @@ Named `event Foo(...)` declarations remain the way to define ledger-record paylo
 `emit`, `when`, and typed ledger queries. A matched event binding exposes its payload
 fields directly (`h.reason`) and reserves `_meta` for event metadata.
 
+### Axis D — ingress provenance: where did external bytes enter?
+
+Ingress provenance records whether a value contains data that entered from outside the
+Agape program. It is separate from judgment trust:
+
+- **internal** — produced inside the program or by trusted kernel operations without
+external payload bytes.
+- **external_unscreened** — carries prompt, standing-sensor, or result-event data that
+has entered from the world and has not passed a manifest-configured ingress screen.
+- **external_screened** — carries external ingress data whose configured screen ran and
+recorded an accepting verdict for the bytes delivered to the program.
+
+Ingress joins upward (`internal ⊑ external_screened ⊑ external_unscreened`) and is
+preserved by ordinary computation. Manifest-level screening may convert a value at an
+ingress boundary from `external_unscreened` to `external_screened`; there is no source
+syntax for screening and no expression-level cast. Unscreened ingress flowing into a
+provider/cognition prompt is governed by the manifest security policy (§17): default
+warn, strict deny, or off. Consequential actions are not governed by an ingress
+allow/warn/deny knob; they remain governed only by the fixed `perform` sink rule over
+judgment trust (§13).
+
 ### The axes are independent
 
-| construct                            | async? | trust of result      | # events | type             |
-| ------------------------------------ | ------ | -------------------- | --------- | ---------------- |
-| `Credence<bool> c = self <- "is …?"` | yes    | `graded`             | lifecycle | `Credence<bool>` |
-| `decide c by r`                      | no     | `settled`            | single    | `Decision<bool>` |
-| `endorse memo by d`                  | no¹    | `settled`            | single    | `Endorsement<text>` |
-| `alice decide c by r`                | yes    | `settled`            | 1 or 2¹   | `Decision<Verdict>` |
-| `Credence<E> c = peer <- "…?"`       | yes    | `graded`             | lifecycle | `Credence<E>`    |
-| `search(q)` (read tool, §6b)         | yes    | `⊔ inputs`           | pair      | `text`           |
-| `double(3)` (pure)                   | no     | `settled`            | no        | `int`            |
+| construct                            | async? | judgment trust       | ingress provenance | # events | type             |
+| ------------------------------------ | ------ | -------------------- | ------------------ | -------- | ---------------- |
+| `Credence<bool> c = self <- "is …?"` | yes    | `graded`             | joins prompt expr  | lifecycle | `Credence<bool>` |
+| `decide c by r`                      | no     | `settled`            | joins inputs       | single    | `Decision<bool>` |
+| `endorse memo by d`                  | no¹    | `settled`            | joins subject      | single    | `Endorsement<text>` |
+| `alice decide c by r`                | yes    | `settled`            | joins inputs       | 1 or 2¹   | `Decision<Verdict>` |
+| `Credence<E> c = peer <- "…?"`       | yes    | `graded`             | joins prompt expr  | lifecycle | `Credence<E>`    |
+| `perform Search(q) expires 5` (wired, §6b) | yes | `settled` (⊔ args) | external unless screened | act+pair+result | `text` |
+| `double(3)` (pure)                   | no     | `settled`            | `internal`         | no        | `int`            |
 
 ¹ `endorse` over an in-hand committed `Decision` is synchronous (record only, no dependency
 reach). A principal-prefixed `decide` is async (it may reach the identity dependency) and always
@@ -210,9 +239,10 @@ prefixed with a `principal`.
 - `endorse subject by d` applies the decision to that exact subject value and yields an
 `Endorsement<T>`, the settled form admissible for consequential use (§13).
 - A `Credence` is produced by binding a send to a `Credence<E>`-typed slot (§3, §8), whatever
-the destination.
+the destination. If the rendered prompt contains `external_unscreened` ingress, the
+manifest's provider-prompt ingress policy applies (§17).
 
-The three axes, one per comment, in a single agent:
+The axes, one per comment, in a single agent:
 
 ```agape
 sync int fee(int cents) { return cents / 10; }   // color S: provably no dependency reach
@@ -249,7 +279,7 @@ values and instances are lowercase.
 - **The two arrows:** `<-` is the one communication/write arrow (send a message, write a
   `mem`, §6, §10); `->` is the memory-recall operator (`mem -> "query"`, §10). `->` is **not**
   a `LexError` — it lexes as an operator, and the checker rejects it on a non-`mem` left-hand
-  side as a `TypeError` (§10). Tools use a prefix return type (`tool T f();`), never an arrow.
+  side as a `TypeError` (§10).
 
 ### Keywords
 
@@ -257,7 +287,7 @@ values and instances are lowercase.
 int float bool text null event action       // scalar types + event/action declarations
 agent extend sync                         // declarations (sync = marked color)
 struct enum                               // user nominal-type declarations
-grants tool read write                    // capability typing (§13); tool decl + effect class (§6b)
+grants                                    // capability typing (§13)
 spawn awake sleep crash self on prompt instruction   // lifecycle (incl. `on crash`) + external input sensor + system prompt (§5)
 principal                                 // accountable identity (§3, §13)
 when if else return                       // control / reactive
@@ -265,6 +295,7 @@ decide endorse perform emit               // gate collapse / subject endorsement
 select from where                         // the ledger query (§10)
 mem forget                                // private-memory handle + seams (§10): `mem m <- v` / `m -> q` / `forget m`
 quorum independent dependent              // graded fusion + dependence declaration (§12)
+task complete fail cancel                 // delegation: the task literal + task verbs (§6c)
 true false abstained                      // bool literals + the abstained-decision sentinel (§3, §13)
 ```
 
@@ -275,18 +306,22 @@ by `quorum` (§12).
 
 **Contextual words** are recognized only in their syntactic position; elsewhere they lex as
 ordinary identifiers, and a declaration may not use one where it would collide with that position:
-`by` (gate rule), `about` (the `when` subject filter, §7), `reach` / `use` (grants), `origin`
-(query projection), `expires` (send-lifetime clause, §6), `confidence` / `margin` / `conformal` /
-`floor` / `readiness` (rule clauses, recognized positionally after `by`, §13). `Error` (a prelude
+`by` (gate rule), `about` (the `when` subject filter, §7), `reach` (grants), `origin`
+(query projection), `expires` (send-lifetime clause, §6; also the `perform`-binding lifetime, §6b),
+`confidence` / `margin` / `conformal` /
+`floor` / `readiness` (rule clauses, recognized positionally after `by`, §13), `objective` /
+`acceptance` / `scope` (task-literal clauses, recognized only inside `task { … }`, §6c). `Error` (a prelude
 identifier) doubles as the only permitted user-event supertype in `event Foo(..) : Error;` (§9).
 
 **Prelude identifiers** (selected; the full set is defined in §9, not the grammar): the types
-`Credence`, `Decision`, `Endorsement`, `Principal`; the enum `Entailment` (`Entails`, `Contradicts`,
-`Neutral`) and `Basis`; the built-in events `Event`, `Error`, `Decided`, `Endorsed`,
-`PrincipalDecision`, `FailedPrincipalDecision`, `Contradiction`, `Spawned`, `AgentAwake`,
+`Credence`, `Decision`, `Endorsement`, `Principal`, `TaskSpec`, `Task`; the enum `Entailment`
+(`Entails`, `Contradicts`, `Neutral`) and `Basis`; the built-in events `Event`, `Error`, `Decided`,
+`Endorsed`, `PrincipalDecision`, `FailedPrincipalDecision`, `Contradiction`, `Spawned`, `AgentAwake`,
 `AgentAsleep`, `AgentCrashed`, `Sent`, `Delivered`, `Resolved`, `Expired`, `DeliveryRefused`,
 `PromptOpened`, `Prompt`, `QueryResult`, `MemoryConsulted`, `Internalized`, `ArtifactObserved`,
-`Forgotten`, `ToolStarted`, `ToolResolved`, `TypeMismatch`, `MarginFloorViolation`;
+`Forgotten`, `ToolStarted`, `ToolResolved`, `TypeMismatch`, `MarginFloorViolation`,
+`TaskCompleted`, `TaskFailed`, `TaskCancelled`, `TaskProgress`, `CompletionRefused` (and the
+subscription aliases `TaskSubmitted`, `TaskAssigned`, `TaskExpired`, §6c);
 the built-in function `say`; and the generic ledger row type `LedgerEntry<E>`. (`Rule` is
 the gate's parameter, not a type — §3.)
 
@@ -348,6 +383,7 @@ type is a declared name with a known payload.
 struct Memo  { amount: int, to: text }            // a record; all fields required
 enum  Ticket { Billing, Bug, Feature }            // a closed variant set
 action Transfer(int cents, text to);               // a performative; fields invoked positionally
+action Wire(int cents, text to);                   // wired to an effector in the manifest, or pure (§6b)
 ```
 
 - `**struct NAME { field: T, … }**` — a record with named, typed fields. All fields are
@@ -357,8 +393,12 @@ every field; a missing field is a `TypeError`.
 - `**enum NAME { A, B, … }**` — a closed set of named variants; `if`/`==` branches on a committed
 variant (§11).
 - `**event NAME(T field, …);**` — a plain record (assertive); anyone may `emit` it, no power
-needed. `**action NAME(T field, …);**` — a performative: `perform NAME(v, …)` is a consequential
-act that needs the `perform NAME` power (§13) and only `settled` values. Event/action/tool/function
+needed. `**action NAME(T field, …);**` — a performative: `perform NAME(v, …)` is a
+consequential act that needs the `perform NAME` power (§13) and only `settled` values. Whether
+performing it also invokes an external effector is a deployment fact: the manifest may **wire**
+the action to an endpoint in the `[tools.*]` catalog (`[actions.NAME]`, §6b, §17.1); several
+actions may share one endpoint (different domain framings). An **unwired** action is a **pure
+ledgered performative** — an act whose effect is the record itself. Event/action/function
 parameters are declared **type-first** (`T name`, like a `var`); a **struct** field is the sole
 exception and is declared **name-first** (`name: T`, mirroring the struct literal `NAME { name: v }`).
 Event/action invocation is positional in declaration order: `emit E(a, b)` / `perform A(a, b)` must supply exactly one
@@ -442,21 +482,24 @@ conformal rule may carry a **`readiness N`** — the minimum labelled cases befo
 A `Rule` is a value — a literal (`confidence 0.9`), a reference (`conformal 0.1`), or one a pipeline
 computed (`self.policy_rule`). A rule-driven `decide` requires a rule basis.
 
-### Declared dependencies — `principal` (and `tool`, `prompt`)
+### Declared dependencies — `principal` (and `prompt`)
 
 Everything the program reaches but does not define is a **declared dependency**: a name declared in
 source, bound to a concrete resource by configuration (§17). It is one construct, fixed by a single
 fact — *it is supplied from outside the program* — from which the rest follows: **declared, not
 constructed** (no literal form — `text → Principal`, etc. are `TypeError`s);
-**config-bound**; **opaque** (the program cannot read a signing key or a tool endpoint's credentials);
+**config-bound**; **opaque** (the program cannot read a signing key or an endpoint's credentials);
 **unforgeable** (only configuration may supply it); and **used only at a governed site**, recorded
-on the ledger. Three flavours differ only in what they supply:
+on the ledger. Two flavours differ only in what they supply:
 
 | declaration        | supplies                       | used at                      |
 | ------------------ | ------------------------------ | ---------------------------- |
 | `prompt T name;`   | an external input source (§5b) | `when (Prompt p about name)` |
-| `tool R name(..);` | a world capability (§6b)       | a tool call                  |
 | `principal name;`  | an accountable identity        | `name decide c by r`         |
+
+The world is deliberately **not** a source-declared dependency: it is reached through declared
+events and actions wired in the manifest to the `[tools.*]` endpoint catalog (§6b, §17.1), under
+the same discipline — config-bound, opaque, unforgeable, ledgered.
 
 ```agape
 principal alice;          // an accountable identity, resolved by config (§17)
@@ -512,7 +555,7 @@ local rule; the judgment is agentic, the collapse is deterministic, and the deci
 given the `Credence` (§15.5). A `sync` function may likewise `emit`, and may `endorse` a subject
 by an in-hand `Decision` (record only, no dependency reach); it may not use a `principal`-prefixed
 `decide` (`p decide c by r` reaches the identity dependency = async)
-and may not make a tool call (§6b).
+and may not `perform` (every `perform` is async, §6b).
 
 ---
 
@@ -528,6 +571,8 @@ agent NAME ( [TYPE PARAM] , ... ) [grants { CAP , ... }] {
     on awake { ... }
     on sleep { ... }
     on crash { ... }     // a contained fault — recover here; state is intact
+    on assigned { ... }  // a delegated task arrived (sugar over `when`, §6c)
+    on cancelled { ... } // the active task was cancelled by its delegator (§6c)
 }
 ```
 
@@ -604,7 +649,12 @@ runtime jotted note, which lands in tainted memory, §10). To change an agent's 
 `on awake` / `on sleep` / `on crash` are hooks tied to the agent's own transitions; `when (X)`
 is a general ledger subscription keyed by an arbitrary subject `X` (§7). `on crash` runs in the
 agent's own context after a contained fault (see Lifecycle), with state preserved, so it can
-compensate for or retry the abandoned work.
+compensate for or retry the abandoned work. The two task hooks are pure sugar over `when`
+(§6c): `on assigned` fires when a delegated task is delivered to this agent (the filtered
+`Delivered` subscription), `on cancelled` when the agent's active task is cancelled by its
+delegator. There is no `on submitted` (the delegator's next statement already follows the
+send) and no worker-side `on completed`/`on failed` — outcomes are observed with ordinary
+`when` subscriptions on the task events (§6c).
 
 ### §5b — `prompt`: the external input boundary
 
@@ -618,11 +668,20 @@ with `when (Prompt p about name)`, where `p` evaluates to the arrived value.
 
 - A `prompt` source makes a program always-on (§0.2): while open it cannot quiesce; when
 it closes (EOF) the program reaches quiescence and ends.
-- Its values are external data, `settled` by origin (§13): they carry no un-endorsed cognition,
-so they may drive an action. Agape gates the model's judgment, not the correctness of input.
-- `prompt` is one of a family of sensors (socket, timer, queue, file watch, and a standing
-tool sensor, §6b), sharing one runtime contract: an external source that appends events
-to the ledger as they arrive, so replay folds the recorded input stream deterministically.
+- Its values are external data at the program boundary. They are **judgment-settled**
+  (§13): they carry no un-endorsed model cognition and may be ordinary program data.
+  Separately, they enter with ingress provenance `external_unscreened` unless the
+  manifest binds the prompt source to a replayed screen that records an accepting verdict,
+  in which case the delivered value is `external_screened` (§17). Agape gates model
+  judgment; it does not by itself mark external input safe.
+- If a prompt value is interpolated into a provider/cognition prompt, the manifest's
+provider-prompt ingress policy applies: default warn, strict deny, or off (§17). That
+policy is only for ingress-to-cognition; it does not add an action-sink relaxation.
+- `prompt` is one of a family of sensors (socket, timer, queue, file watch — a standing
+sensor is an event wired in the manifest, `[events.NAME]`, §6b), sharing one runtime contract:
+an external source that appends events to the ledger as they arrive, including the recorded
+ingress provenance and any screening verdict, so replay folds the recorded input stream
+deterministically.
 
 ---
 
@@ -683,8 +742,9 @@ below `Delivered`. The delivery contract is at-most-once.
 
 ### Expiry — an optional tombstone
 
-A send may carry a lifetime: `dest <- message expires N;`. Expiry adds a second terminal
-branch:
+A send may carry a lifetime: `dest <- message expires N;`, where `N` is any **settled**
+numeric expression (a literal, an `int` variable, arithmetic over them — not a graded or raw
+value). Expiry adds a second terminal branch:
 
 ```
 Sent ─┬─→ Delivered ─→ Resolved
@@ -706,57 +766,277 @@ distinction (Lynch, *Distributed Algorithms*).
 
 ---
 
-## 6b. Tools — the world dependency
+## 6b. The world interface — wired events and actions
 
 Cognition is reached through the provider; accountability through the identity dependency;
-the world is reached through the tool dependency. A **tool** is a declared, typed,
-capability-gated effect — a file read, an HTTP call, a database query, a payment API, or
-heavyweight computation Agape does not express natively. Tools are the controlled-FFI
-surface: Agape does not link arbitrary foreign code. The tool dependency speaks the **Model
-Context Protocol (MCP)** — an enumerated, declared, permissioned tool-call protocol — so a
-program imports the MCP tool ecosystem as capabilities without inventing its own ABI.
-Tools form an enumerated capability surface (cf. eBPF helper functions: a fixed set of
-approved calls, never arbitrary linkage).
+the world is reached through **wired events and actions**. The program speaks only `event`
+(inbound — the world talks *to* the program in events) and `action` (outbound — the program
+acts *on* the world in actions). **"Tool" is a manifest concept**: an endpoint in the
+deployment's `[tools.*]` catalog that events and actions are wired to (§17.1). No `tool`,
+`read`, `write`, `uses`, or `use` exists anywhere in the language. The catalog speaks the
+**Model Context Protocol (MCP)** — an enumerated, declared, permissioned tool-call protocol —
+so a deployment imports the MCP tool ecosystem as wirable endpoints without Agape inventing
+its own ABI. The catalog is the controlled-FFI surface: Agape does not link arbitrary foreign
+code (cf. eBPF helper functions: a fixed set of approved calls, never arbitrary linkage).
 
 ```agape
-read  tool text search(text query);          // observes the world; result carries its inputs' trust
-write tool bool transfer(int amount, text to);  // changes the world: a consequential sink (§13)
+event  SearchResult(text hits);      // inbound:  the world talks TO the program in events
+action Search(text query);           // outbound: the program acts ON the world in actions
+action Deploy(text artifact);
+action Announce(text note);          // unwired action: a pure ledgered performative
 
-agent Researcher grants { use search } {
-    text hits = search("agape language");    // a tool call: needs `use search`
+agent Researcher grants { perform Search } {
+  on awake {
+    text hits = perform Search("prior art") expires 5;   // foreground binding (below)
+    emit Event(f"found: {hits}");
+  }
 }
 ```
 
-- **Declaration.** `read tool RET NAME(params);` or `write tool RET NAME(params);` — every tool
-declares its **effect class**: a `read` tool observes the world, a `write` tool changes it (a
-consequential sink, below). The class is mandatory; omitting it is a `ParseError`. The return type
-leads, like a function signature; use `null` for a tool with no meaningful return. The
-binding to a concrete MCP server/endpoint is configuration (`[tools]` in the manifest,
-§17); no endpoint or secret appears in source, exactly as `<-` names no model. An
-undeclared tool call is a `TypeError`.
-- **Authority.** A tool call requires a `use NAME` capability in the agent's `grants`
-(§13). Default-deny applies: no `grants` ⇒ no tool calls. `use` is subtractive under
-`extend`, like `emit` and `reach`.
-- **Color.** A tool call reaches the tool dependency → async (`A`). A `sync` function may not
-call a tool.
-- **Trust.** A read-tool result carries the join of its inputs' trust: `settled` when its inputs
-are settled (external data, settled by origin), `graded`/`raw` when a `Credence` flowed in. A
-**write** tool is a consequential sink — its inputs must be `settled` and endorsed, exactly
-like a `perform`. Agape gates the model's judgment, not the correctness of external data.
-- **Ledger.** A tool call appends a correlated `ToolStarted(NAME)` / `ToolResolved(NAME)`
-pair (§7). Every world-effect is on the log, so the ledger is a complete, replayable
-account of what the program did to the world, not only what it thought.
-- **Replay.** A tool result is an external observation and is journaled (§15.4.2) like an
-oracle output; replay re-serves it from the recording and never re-invokes the tool. A
-write tool is replayed as its recorded result.
-- **Standing tool sensors.** A tool may be opened as a push sensor (a subscription, a
-socket, a file watch) rather than a pull call, in which case it behaves like `prompt`
-(§5b): it appends events as they arrive and makes the program always-on.
+```toml
+[tools.web_search]                   # the endpoint catalog — the ONLY place "tool" exists
+driver = "mcp"
+tool   = "web.search"
 
-A tool is not a new trust hole; it is the same membrane discipline (capability + trust +
-ledger + replay) applied to the world. This is what lets the host's deterministic work be a
-general-purpose language reached through a governed boundary rather than reimplemented
-inside Agape (§0.1).
+[actions.Search]                     # outbound wiring: perform → effector; reply → event
+tool         = "web_search"
+result_event = "SearchResult"
+
+[actions.Deploy]                     # outbound wiring, fire-and-forget (no result event)
+tool = "infra_deploy"
+
+[events.NewsArrived]                 # inbound wiring: a standing sensor appends events
+tool = "news_feed"
+
+[events.SearchRequested]             # emit-trigger wiring: the LOOSE observation channel
+tool         = "web_search"
+result_event = "SearchResult"
+```
+
+- **Source declares WHAT exists** — typed events and actions (§3). **The manifest declares
+HOW they touch the world** (§17.1): `[tools.*]` is the endpoint catalog; `[actions.NAME]`
+wires a `perform` to an effector, optionally naming the `result_event` its reply lands as;
+`[events.NAME]` wires an event either as a **standing sensor** (arrivals append it — like
+`prompt`, §5b, it keeps the program always-on) or as an **emit-trigger** (emitting it invokes
+the endpoint; the reply lands as `result_event`). No endpoint or secret appears in source,
+exactly as `<-` names no model.
+- **Unwired = pure.** An unwired action is a pure ledgered performative — the act is the
+record (§13); an unwired event is a plain record. Wiring is additive and changes no program
+semantics — only what the deployment does at the seam.
+- **Read vs write moves to which verb you wire.** There is no `read`/`write` effect class;
+the verbs' existing trust semantics carry it. Wire a read to an **`emit`**
+(`[events.SearchRequested]`): `emit` is not a consequential sink, so tainted payloads may
+flow — the loose observation channel (RAG-style, model-suggested queries), now an explicit,
+manifest-visible opt-in. **No laundering:** the `result_event` payload carries the JOIN of
+the triggering emit's payload trust — a raw query taints its own results. Wire a read (or
+any effector) to a **`perform`** (`[actions.Search]`): the uniform consequential-sink rule
+applies (§13) — **settled args only**. Prompt, sensor, and result-event values can satisfy
+this judgment-trust rule because they carry no un-endorsed model cognition, but they still
+carry ingress provenance (`external_unscreened` or `external_screened`). Model-generated
+payloads must be gated first.
+- **Anti-exfiltration.** On the perform path no un-endorsed cognition ever leaves the
+process — T3 non-interference (§15.6) extends to observation requests. A deployment that
+wires **all** its outbound seams to actions has the hard guarantee; each emit-wiring is a
+visible, auditable exception in the manifest. This guarantee is about cognition-derived
+content; ingress provenance is handled by the provider-prompt policy below, not by a
+separate action-sink knob.
+- **Trust and ingress.** A result-event or sensor payload is external data. Its judgment
+trust is **joined** with the request payload's trust: on the perform path a settled
+request yields judgment-settled results; on the emit path a tainted query taints its own
+results. Separately, the result or sensor payload's ingress provenance is
+`external_unscreened` unless the manifest-configured screen for that ingress records an
+accepting verdict, in which case it is `external_screened`. A standing-sensor arrival has
+no request payload and is judgment-settled like `prompt` (§5b), while still carrying
+external ingress provenance.
+- **Authority.** `perform NAME` (grants, §13) governs all outbound acts, wired or not.
+Emitting stays grant-free: an emit-wired observation is deployment-controlled through the
+manifest, not grant-controlled — a documented posture mirroring `prompt`.
+- **Color.** Every `perform` is async (`A`): an act is an act; whether it reaches the world
+is a deployment fact the checker must not depend on. Expressions can never reach the world;
+a `sync` function may not `perform` (§4).
+- **Foreground binding.** A wired action with a `result_event` supports result binding,
+reusing the §6c delegation discipline — the world is just another worker:
+
+  ```agape
+  text hits = perform Search("prior art") expires 5;
+  ```
+
+  `expires` is **mandatory** on the binding form (terminal by construction, §6c); failure or
+  expiry faults the awaiting invocation via the contained-crash path (§5, §16.6). The binding
+  is **typed from the manifest-named result event's payload** (the checker receives the
+  manifest, §17.1): a single-field event binds that field's value directly; a multi-field
+  event binds a struct of its fields; with no manifest in scope the binding types
+  conservatively (`unknown`) and the runtime enforces. Statement-form `perform Search(q);`
+  stays legal, wired or not (reactive consumption via `when (SearchResult r …)`). A
+  foreground binding on an action with no configured `result_event` is a `ConfigError`
+  (§17.1) — there is nothing to bind.
+- **Ledger.** The domain story is named, typed rows: the action's own row (`Search(…)`,
+`Deploy(…)`) and the result/sensor event rows (`SearchResult(…)`) — every wiring is tied to
+a specific event or action, structurally, because there is nothing else for a wiring to
+attach to. `ToolStarted(name)` / `ToolResolved(name)` remain, demoted to the seam's **replay
+journal** (§16.5; incidental trace, §15.5.1): appended for every wired invocation
+(emit- or perform-triggered), correlated by catalog name, beneath the domain rows. Order for
+a wired `perform`: **action row → ToolStarted → ToolResolved → result event row** (when
+configured). For a wired `emit`: **event row → ToolStarted → ToolResolved → result event
+row**. Every world-effect is on the log, so the ledger is a complete, replayable account of
+what the program did to the world, not only what it thought.
+- **Replay.** A wired invocation's result is an external observation and is journaled
+(§15.4.2) like an oracle output, including its ingress provenance and any screening
+verdict; replay re-serves it from the recording and never re-invokes the effector or
+screen (§16.5).
+
+The world interface is not a new trust hole; it is the same membrane discipline (capability +
+trust + ledger + replay) applied to the world. This is what lets the host's deterministic
+work be a general-purpose language reached through a governed boundary rather than
+reimplemented inside Agape (§0.1).
+
+---
+
+## 6c. Delegation — the task-send
+
+Delegation is **not a new communication primitive**: it is a send whose message is a governed
+task payload and whose reply is produced by the recipient's *code* instead of one provider
+invocation. Everything else — lifecycle, expiry, correlation, loss — is the ordinary send
+discipline of §6.
+
+```agape
+struct ResearchResult { summary: text, refs: text }
+
+agent Researcher {
+  on assigned {                                        // a task arrived (sugar, §5)
+    ResearchResult r = self <- "complete the assigned task";
+    complete r;                                        // programmatic resolution
+  }
+  on cancelled { say("stopping"); }                    // cooperative cancellation
+}
+
+agent Lead grants { reach Researcher } {
+  on awake {
+    spawn Researcher worker; awake worker;
+    int ttl = 50;
+
+    // foreground — result-bound; this handler waits on r
+    ResearchResult r = worker <- task {
+      objective "Find relevant sources on conformal prediction";
+      acceptance "Concise findings; every claim carries an evidence ref";
+    } expires ttl;
+
+    // background — handle-bound; outcomes observed reactively
+    Task<ResearchResult> h = worker <- task {
+      objective "Survey related work";
+      acceptance "A one-paragraph map of the field";
+    } expires 200;
+    when (TaskCompleted done about h) { emit Event("survey landed"); }
+    when (TaskFailed oops about h)    { emit Event(f"survey failed: {oops.reason}"); }
+  }
+}
+spawn Lead lead; awake lead;
+```
+
+### The task literal
+
+`task { … }` is an expression building a **`TaskSpec`** (a prelude struct). It may be sent
+inline (`dest <- task { … } expires N`) or bound to a `TaskSpec` variable first — the draft
+form the endorsed flow gates before sending. Its clauses, recognized only inside the literal
+(§2):
+
+- `**objective EXPR;**` and `**acceptance EXPR;**` — both **required**, both `text` (literal or
+variable); an empty task block, a missing clause, or a non-`text` clause is a compile error.
+- `**scope { perform NAME, … }**` — optional; the perform authority this task *enables* on the
+worker (below). Each listed action must be held (`perform NAME`) by the **delegator** — a task
+can only attenuate its delegator's authority, never mint new authority.
+- `**expires N**` — **mandatory** on every delegation (postfix, exactly as §6; `N` is a settled
+numeric expression). Every task is therefore terminal by construction: exactly one of
+*completed / failed / expired / cancelled* is guaranteed to land on the ledger. Expiry is also
+what converts a lost task-send (never `Delivered` — silence, §6) into a signal: the `Expired`
+tombstone is appended by the delegator's runtime. A delegation without `expires` is a compile
+error.
+
+**Trust.** A `TaskSpec`'s trust is the join of its fields (ordinary contagion, §13): a generated
+objective stays `graded`/`raw` — **delegation does not launder trust**. A task that carries a
+`scope` clause is only *enabling* if it is **endorsed**: the message must be an
+`Endorsement<TaskSpec>`, constructible only inside a committed branch (§13). An unendorsed
+scoped task is a compile error at the send.
+
+### Binding — foreground and background
+
+Foreground vs background is **dataflow, not a keyword**:
+
+- `**T r = dest <- task { … } expires N;**` — foreground. The handler's continuation waits on
+`r`. The result of a delegated task is `**raw**` by default — like any send reply, it is the
+worker's cognition until the delegator gates it; a worker that completes with an
+`Endorsement<T>` hands over a settled, ledger-backed subject instead.
+- `**Task<T> h = dest <- task { … } expires N;**` — background. `h` is a settled handle used for
+correlation: `when (TaskCompleted x about h)`, `when (TaskFailed x about h)`, and `cancel h;`.
+- **Bare statement-form delegation is a compile error** — hold the result or the handle; every
+task is addressable.
+
+### The worker side
+
+While an assigned task is active, the worker's provider context composes in a fixed,
+documented order: global `instruction` → agent `instruction` → **the active task's objective
+and acceptance, as data**. A tainted objective is data in context, never an instruction — it
+cannot override instruction guardrails (§5: instructions are settled by source). The worker
+ends its task with one of two verbs, each legal **only inside a task handler**:
+
+- `**complete EXPR;**` — resolves the task-send: appends the transport `Resolved` plus a
+`TaskCompleted` record carrying the result (an event payload, like an `emit` — §7).
+- `**fail EXPR;**` — terminal failure: appends `TaskFailed(reason)` (`reason` is `text`); the
+transport chain simply stops at its `Delivered` prefix (a stalled prefix is not a violation, §6).
+
+`TaskProgress(text note)` may be emitted by the worker inside a task handler
+(`emit TaskProgress("halfway");`) — the one repeatable task event, correlated to the active task.
+
+### Cancellation — cooperative, tombstone-first
+
+`**cancel h;**` (delegator-side) appends `TaskCancelled` immediately — the **authoritative
+tombstone**. The worker's in-flight handler is **not preempted** (handler invocations stay
+atomic); its `on cancelled` hook fires, and a late `complete`/`fail` for a cancelled (or
+expired) task is **refused and recorded** as `CompletionRefused` — exactly the
+`DeliveryRefused` discipline of §6. The same refusal applies after expiry.
+
+### Failure reaches the delegator on two paths
+
+- **Foreground** (result-bound): `TaskFailed` / `TaskExpired` / `TaskCancelled` **fault the
+delegator's awaiting invocation** through the contained-crash path (§5) — the invocation is
+abandoned, `AgentCrashed` is appended, `on crash` runs with state intact. The reason is not
+lost: it is the `TaskFailed(reason)` row, one ledger query away by correlation. (Precedent: a
+task that comes back empty is the same shape as "the provider returns nothing," which already
+faults.)
+- **Background** (handle-bound): outcomes are ordinary `when` subscriptions. The backstop is
+the ledger itself — terminal task events are durable rows, findable later by query even if the
+delegator was asleep when they landed.
+
+### Ledger shape — aliases + four real events
+
+No `TaskUpdated`-style status event exists: `when` is keyed by event **type**, payloads are
+fixed-typed, and the §6 prefix-safety property is structural. Instead:
+
+- **Subscription aliases** (zero new rows): `TaskSubmitted ≡ Sent`, `TaskAssigned ≡ Delivered`,
+`TaskExpired ≡ Expired`, each filtered to task-sends. `when (TaskAssigned about h)` compiles to
+the filtered transport subscription.
+- **Real events** (new payloads, correlated to the task): `TaskCompleted(result)`,
+`TaskFailed(text reason)`, `TaskCancelled`, `TaskProgress(text note)` — plus the refusal record
+`CompletionRefused`.
+- The unified "one status per task" view is a **ledger projection** (a `select … from ledger`
+query folding the chain per correlation; §16), not an event.
+
+### Authority — static grant ∧ endorsed-task enablement
+
+A worker's `perform` executed **while running an assigned task** requires *both*: the static
+`perform NAME` grant (§13 — the upper bound, never widened at runtime) *and* an active task
+that is endorsed and names `NAME` in its `scope`. A perform outside any task needs only the
+static grant. The task check is a **runtime enablement at the sink**, exactly like the margin
+floor (§13); failing it faults the action (`TaskScopeViolation`, §16.6). Delegation therefore
+**attenuates** authority (delegator ∩ worker ∩ task scope) and never widens it — §14's
+invariants and the T1 soundness statement are unchanged.
+
+Re-delegation is governed by the worker's own `reach` grants (default-deny already covers it).
+Fan-out delegation composes with `|>` (§12): map an async delegating function over a finite
+collection of workers, then fuse the results with `quorum` under a declared dependence
+structure. There is no unbounded supervisor loop (§0.2, §11); the idiomatic retry shape is a
+bounded, reactive re-dispatch — a `when (TaskFailed about …)` subscription that submits a
+revised task.
 
 ---
 
@@ -803,14 +1083,14 @@ credence/provenance scope or the binding name receiving the `Decision`. A princi
 `p decide c by r` that escalates first produces a `PrincipalDecision` or
 `FailedPrincipalDecision` at that same scope, then the canonical `Decided` event. An
 `endorse subject by d` is legal only when `d.committed` has been flow-narrowed to a real variant and
-produces an `Endorsed` event whose subject is the exact endorsed value. A tool call's pair is
-subjected at the tool name. A literal operand has an ephemeral address; its event still lands on
+produces an `Endorsed` event whose subject is the exact endorsed value. A wired invocation's
+journal pair is subjected at the catalog name (§6b). A literal operand has an ephemeral address; its event still lands on
 the ledger.
 
 ### Async event discipline
 
-A send (`<-`) appends the three-phase `Sent`/`Delivered`/`Resolved` chain (§6). A tool call appends
-a `ToolStarted`/`ToolResolved` pair correlated by `corr`. A principal-prefixed `p decide c by r` is
+A send (`<-`) appends the three-phase `Sent`/`Delivered`/`Resolved` chain (§6). A wired
+`perform`/`emit` appends a `ToolStarted`/`ToolResolved` pair correlated by `corr` (§6b). A principal-prefixed `p decide c by r` is
 async (it may reach the identity dependency) and always appends the canonical `Decided` event, plus
 a terminal `PrincipalDecision` or `FailedPrincipalDecision` when the rule escalates. Synchronous ops
 such as `==` and arithmetic append no event; rule-only `decide` and committed `endorse` each append
@@ -933,6 +1213,8 @@ type Decision<E>                                           // a gate's ledgered 
 type Endorsement<T>                                        // the SETTLED subject of type T: .subject:T (coerces to T at a sink), exposes T's fields, + .decision_id/.committed/.basis/.margin (§13)
 enum Basis { Threshold, Conformal, Calibrated, Principal } // how a Decision was settled (Decision.basis, §13)
 type Principal                                             // an accountable identity — a declared dependency (§3)
+type TaskSpec                                              // a delegated-task payload built by `task { … }` (§6c); fields: .objective (text), .acceptance (text); trust = join of its fields
+type Task<T>                                               // a settled background-task handle (§6c): correlates `when (… about h)` and `cancel h`
 // Rule is the gate's PARAMETER, not a type: `confidence θ [margin δ] [floor m]` | `conformal [α] [readiness N] [floor m]`  (§3, §13)
 // abstained — the prelude sentinel value of Decision.committed when the gate did not commit (§3, §13)
 
@@ -950,18 +1232,25 @@ type Principal                                             // an accountable ide
 //   Internalized(subj)     a memory write (incidental trace, §15.5.1)
 //   ArtifactObserved(subj) a knowledge-artifact ingest opening (kind/uri/hash, §16.7b)
 //   Forgotten(subj)        a `forget` memory tombstone (§10)
-//   ToolStarted/ToolResolved   the tool pair (§6b)
+//   ToolStarted/ToolResolved   the wired-invocation replay-journal pair (§6b)
 //   Spawned / AgentAwake / AgentAsleep / AgentCrashed   lifecycle (§5)
 //   Sent / Delivered / Resolved                message lifecycle (§6); a send's provider reply is its Resolved
 //   Expired(corr) / DeliveryRefused(corr)      message expiry / refused-late-delivery (§6)
 //   PromptOpened(name) / Prompt(name)          external input sensor (§5b)
+//   TaskCompleted(subj) / TaskFailed(subj)     task terminals: `complete r` / `fail reason` (§6c)
+//   TaskCancelled(corr) / TaskProgress(subj)   delegator cancel tombstone / repeatable worker progress (§6c)
+//   CompletionRefused(corr)                    a late complete/fail after cancel/expiry, refused (§6c)
+//   TaskScopeViolation(subj)                   a perform outside the endorsed task's scope at the sink (§6c, §13)
+//   TaskSubmitted / TaskAssigned / TaskExpired subscription ALIASES for Sent/Delivered/Expired filtered to task-sends (§6c) — no rows of their own
 ```
 
 **Event-type hierarchy.** `Error` is the root; `Contradiction`, `TypeMismatch`,
-`FailedPrincipalDecision`, `MarginFloorViolation`, and `AgentCrashed` extend it. `when` matches by
+`FailedPrincipalDecision`, `MarginFloorViolation`, `TaskScopeViolation`, and `AgentCrashed` extend
+it. `when` matches by
 subtype, so `when (Error e)` catches a `Contradiction`; a contradiction is an `Error`
 subtype, and code that wants only faults matches the specific types. `Expired` and a lost
-send are not errors. A user `event` may extend this root — `event Foo(..) : Error;`
+send are not errors, and neither is `TaskFailed` — a recorded task outcome, not a program
+fault (the delegator-side fault, when foreground, is the `AgentCrashed` it induces, §6c). A user `event` may extend this root — `event Foo(..) : Error;`
 adds a *leaf* under `Error` so `when (Error e)` catches it too; the only permitted supertype is
 the built-in `Error` (no user intermediate supertypes), and `action` may not extend it (only
 `event` may).
@@ -1107,7 +1396,7 @@ recorded-trust reading of that same origin is the ledger query.
 ## 11. Control flow
 
 `if`/`else` is the deterministic branch: the condition is a settled `bool` — a comparison
-(`==`/`!=`/`<`/`>`/`<=`/`>=`), a boolean field, a boolean tool result — and `!` is boolean negation.
+(`==`/`!=`/`<`/`>`/`<=`/`>=`) or a boolean field — and `!` is boolean negation.
 It branches on *facts*, never on cognition: a `Credence<bool>` is not a `bool`, so a bare `Credence`
 in an `if` is a `TypeError`. To branch on a judgment, collapse it first (`Decision<bool> d = decide c
 by r`) and test the committed variant (`if (d.committed == true)`).
@@ -1152,8 +1441,8 @@ Decision<bool> d = decide agreed by confidence 0.9;  // gate the fused quorum on
 - `xs |> f` maps async function `f` over every element of finite collection `xs`, issuing the
   independent paths before joining their returned values in source collection order. Work scales with
   the number of elements times the work per element; span is the longest single element path plus the
-  join, not a serial chain over the collection. A path remains sequential internally: `search` then
-  `judge` inside one mapped function is ordered, while other mapped elements may overlap.
+  join, not a serial chain over the collection. A path remains sequential internally: an
+  observation then a judgment inside one mapped function is ordered, while other mapped elements may overlap.
 - `**independent v…**` — fusion is log-odds addition (Good's weight of evidence; naive-Bayes
 combination): confidence accumulates — several independent confirmations fuse higher than any one.
 - `**dependent v…**` — fusion takes the conservative Fréchet bound (`min` for conjunction, `max` for
@@ -1189,25 +1478,26 @@ boundary (§15.4.2a).
 ## 13. Capabilities and governance
 
 Five properties are bounded by the compiler, not hoped for at runtime: authority, trust,
-color, tool use, and the gate that connects them. The formal rules are §15.3.
+color, outbound wiring, and the gate that connects them. The formal rules are §15.3.
 
 ### Authority (`grants`)
 
 An agent's `grants` clause is its total authority — in Hohfeld's terms, its **powers**: the
-actions it may `perform`, agents it may `reach`, and tools it may `use` (§6b). Acting outside it
+actions it may `perform` and agents it may `reach`. Acting outside it
 is a compile error. Capabilities are subtractive under `extend`. An `**action`** declaration
 (`action Transfer(…);`) is a consequential, performative event type (vs a plain `event`, a
 record) — performing one engages the trust rule below.
 
 ```agape
-grants { perform Transfer, reach Worker, use search } // concrete capabilities
+grants { perform Transfer, reach Worker }             // concrete capabilities
 grants { * }                                          // the explicit unconstrained opt-out
 ```
 
-A grant entry is `perform NAME` (may perform action type `NAME`), `reach NAME` (may send
-into agents of type `NAME`), or `use NAME` (may call tool `NAME`).
+A grant entry is `perform NAME` (may perform action type `NAME` — including invoking its wired
+effector, §6b) or `reach NAME` (may send into agents of type `NAME`). Grants are exactly
+`perform` + `reach`; emitting needs no power (§6b).
 
-**Default is deny.** No `grants` clause ⇒ perform/reach/use nothing (fails closed). The only
+**Default is deny.** No `grants` clause ⇒ perform/reach nothing (fails closed). The only
 escape hatch is the explicit `grants { * }` (unconstrained, lattice top, visible in source
 and ledger). `reach` covers every agent-typed binding (parameter, `spawn` result, any
 variable of agent type), not only parameters.
@@ -1227,11 +1517,36 @@ the subject's own fields plus the decision's `.decision_id`/`.committed`/`.basis
 `Endorsed(subject, decision_id, variant)` ledger record. It is constructible only inside a branch
 that has narrowed `d.committed` to a committed variant (below); an abstained `Decision` has no
 endorsement to give.
-- a constant, a `prompt`, and a read-`tool` called with `settled` inputs → `settled` by
-origin: external data carries no un-endorsed cognition.
+- a constant → `settled` and `internal`.
+- a `prompt`, standing-sensor payload, and wired result-event payload (§5b, §6b) →
+judgment-settled external data: it carries no un-endorsed model cognition, while separately
+carrying ingress provenance (`external_unscreened` unless a manifest-configured screen records
+an accepting verdict and marks it `external_screened`). Result-event judgment trust joins the
+request payload's trust: a settled `perform` request yields judgment-settled results; a tainted
+emit-wired request taints its own results.
 
 Trust is contagious upward (a value is as `raw` as its least-settled input). Only `decide` creates
 a `Decision`; only `endorse` produces a settled `Endorsement` of a subject value. A `Principal` is `settled`.
+
+### Ingress provenance — separate from judgment trust
+
+Ingress provenance is an independent lattice (§1): `internal ⊑ external_screened ⊑
+external_unscreened`. It answers "did these bytes enter from outside, and have they passed
+the configured ingress screen?" rather than "does this value contain un-endorsed model
+cognition?"
+
+Prompt arrivals, standing-sensor events, and world result-events enter as
+`external_unscreened` by default. The manifest may bind those ingress points to a screen; if
+the screen accepts, the delivered value is `external_screened`, and if it rejects the arrival
+is not delivered as ordinary data. Screening is configuration-only and replayed from the
+ledger; Agape source has no `screen` expression, cast, or annotation.
+
+The only policy knob attached to unscreened ingress is the provider-prompt policy (§17):
+when `external_unscreened` data flows into a cognition prompt, the manifest default is to
+warn, strict mode denies, and `off` suppresses the diagnostic. This policy does not govern
+`perform`. Consequential actions have no configurable ingress allow/warn/deny relaxation or
+denial layer; the sink rule below remains the fixed settled-only judgment-trust check plus
+the existing runtime margin and task-scope checks.
 
 ```agape
 enum Approval { Approve, Decline }
@@ -1291,7 +1606,7 @@ if (d.committed == Faithful) {
   Endorsement<text> e = endorse response by d;
   emit NeedsRevision(response);    // emit is not a sink; `perform X(response)` here would be rejected (raw)
 } else {                           // d.committed == abstained
-  perform Escalate("needs-review");// a literal is settled by origin
+  perform Escalate("needs-review");// a literal is settled internal data
 }
 ```
 
@@ -1332,7 +1647,8 @@ color-`S`.
 such as `if (d.committed == V)`; it records `Endorsed { subject_hash, decision_id, variant }` and
 returns `Endorsement<T>`. In the `else`/abstained branch (`d.committed == abstained`) no
 endorsement may be constructed, so the subject cannot reach a sink unless it is independently
-settled by origin.
+judgment-settled (for example, a literal or external ingress value with no un-endorsed model
+cognition).
 
 ### The rule selects the basis; the gate stays uniform
 
@@ -1388,16 +1704,26 @@ prevents future decisions from treating old evidence as current.
 
 ### The consequential-action rule
 
-A consequential sink — a `perform` argument or a write-tool input — may consume a value only if it is
+A consequential sink — a `perform` argument (whether or not the action is wired to an effector,
+§6b; there is no other outbound path) — may consume a value only if it is
 `**settled`**: it carries no un-endorsed cognition. A `Credence` reaches a usable settlement only
 through `decide` then `endorse`; `endorse` is constructible only inside a branch that has narrowed
 the `Decision` to a committed variant (so an `abstained` decision has no endorsement to give and
-statically cannot reach a sink). External data is `settled` by origin and passes freely — only
-un-endorsed cognition is rejected. This static check is joined by one runtime check at the sink: the
+statically cannot reach a sink). External prompt, sensor, and result-event values may satisfy
+this judgment-trust check because they carry no un-endorsed cognition, but their ingress
+provenance is not erased and is not interpreted as action safety. There is deliberately no
+manifest option such as `tainted_to_action = allow|warn|deny`: ingress-tainted external data
+does not add an action-sink policy layer, and it does not relax the settled-only rule for
+model cognition. This static check is joined by two runtime checks at the sink. First, the
 **margin floor** — `margin ≥ m`, with `m` the rule's `floor`. A committed decision whose margin is below `m`
 faults the action (`MarginFloorViolation`, §16.6), the typed trigger for escalation. A gate whose rule
 declares no `floor` performs only the static admission check and raises no `MarginFloorViolation`; to
-impose a runtime floor, give the rule a `floor m`.
+impose a runtime floor, give the rule a `floor m`. Second, the **task-scope enablement** (§6c):
+a `perform` executed while the agent is running an assigned task additionally requires the
+active task to be **endorsed** and to name that action in its `scope` clause; otherwise the
+action faults (`TaskScopeViolation`, §16.6). A perform with no active task needs only the
+static grant. The static grant is always the upper bound — the task check can only *disable*
+a granted power, never widen one (§14).
 
 **Fail-closed by default.** `m` (the margin floor) sets how confident the gate must be; when a
 consequential decision does not clear it, the action faults rather than proceeds — a consequential
@@ -1423,11 +1749,11 @@ Extending the consequential-action rule (§15.3.3):
 
 ### The external dependencies, one discipline
 
-| dependency | supplies        | reached at        | color | trust of result                        |
-| ---------- | --------------- | ----------------- | ----- | -------------------------------------- |
-| provider   | a model         | `self <- p`       | `A`   | `raw` / `graded` (Credence slot)       |
-| identity   | a `principal`   | `p decide c by r` | `A`   | `Decision<E>` with principal provenance |
-| tool       | the world (MCP) | `name(args)`      | `A`   | `⊔` inputs (read) / a sink (write) |
+| dependency | supplies        | reached at        | color | judgment trust of result               | ingress provenance |
+| ---------- | --------------- | ----------------- | ----- | -------------------------------------- | ------------------ |
+| provider   | a model         | `self <- p`       | `A`   | `raw` / `graded` (Credence slot)       | joins prompt expr  |
+| identity   | a `principal`   | `p decide c by r` | `A`   | `Decision<E>` with principal provenance | joins inputs       |
+| world      | the world (MCP) | `perform A(args)` / a wired `emit` / a standing sensor (§6b) | `A`   | `⊔` request payload (settled on the perform path) | external unless screened |
 
 All three are external, non-deterministic, journaled, and swappable by config. A rule-only gate
 needs no external dependency — a conformal gate calibrates from its own recorded decisions on the
@@ -1435,8 +1761,9 @@ ledger. The membrane — capability + trust + ledger + gate — is identical acr
 
 ### Provenance
 
-Authority (including tool use) is bounded at compile time, cognition is endorsed-and-recorded before
-it acts, and every fact's provenance is auditable on an append-only ledger.
+Authority is bounded at compile time, cognition is endorsed-and-recorded before
+it acts, external ingress is labeled separately from judgment trust, and every fact's
+provenance is auditable on an append-only ledger.
 
 ---
 
@@ -1451,8 +1778,10 @@ sealed, ledgered committed-or-abstained form of a `Credence<E>`; `Endorsement<T>
 proof that a committed `Decision<E>` was applied to an exact subject value `T`; `decide` and
 `endorse` are the only source
 operations that discharge judgment trust; the taint lattice is monotone except at those gates;
-`grants` are default-deny and never widened by runtime data; `perform` and write tools are
-consequential sinks; the ledger is the root of replayable state.
+`grants` are default-deny and never widened by runtime data (an endorsed task's `scope` can only
+*disable* a statically granted power at the sink, never add one — attenuation, §6c); `perform`
+is the consequential sink and the only outbound path to the world (§6b); the ledger is the root
+of replayable state.
 
 **Allowed trust transitions** — there are no hidden declassifiers. The only legal path from
 model testimony to world effect is:
@@ -1465,43 +1794,48 @@ The subject `T` may be anything cognition produced — a reply, a generated arti
 the chain is the same. The `Decision<E>` link is always recorded as `Decided`; the
 `Endorsement<T>` link exists only for committed variants.
 
-A helper function, memory recall, ledger query, or tool result may make this path easier to write,
+A helper function, memory recall, ledger query, or wired result event may make this path easier to write,
 but may not add a second path. A `Decision` may guide control flow, but only an `Endorsement`
 (settled subject) can drive a consequential sink, and that endorsement can be constructed only after
-the `Decision` is narrowed to a committed variant. Recall from memory is always tainted; read tools
-join the trust of their inputs; write tools are sinks. If the checker cannot establish a value's type, trust,
-endorsement, tool effect, grant, or replay source at a kernel boundary, the conformant behavior is
+the `Decision` is narrowed to a committed variant. Recall from memory is always tainted; a wired
+result event joins the trust of its request payload; an effector is invoked only behind a wired
+`perform` or `emit` (§6b). If the checker cannot establish a value's type, trust,
+endorsement, wiring, grant, or replay source at a kernel boundary, the conformant behavior is
 to reject rather than infer authority.
 
 **Foundational** — the log is the source of truth; external capability (cognition,
-identity, world/tools) enters only through a declared dependency; no hidden runtime exists
+identity, the world) enters only through a declared seam — a declared dependency or a
+manifest-wired event/action (§6b); no hidden runtime exists
 outside the kernel contract; every surface construct reduces to kernel operations and adds no
 new trust transition.
 
 **Type & effect** — `sync` is the marked color and cannot reach a declared dependency
-(including a tool call), though it may `emit`, rule-decide an in-hand `Credence`, and `endorse` by
+(and cannot `perform`), though it may `emit`, rule-decide an in-hand `Credence`, and `endorse` by
 an in-hand `Decision`;
 typed provider replies are bare values whose send lifecycle is ledgered; a send bound to a
 `Credence<E>` slot yields a graded judgment, never a committed value; `decide c by r` creates
 and records a sealed `Decision<E>`,
 `endorse subject by d` produces and records an `Endorsement<T>` of an exact subject only when `d`
 has been committed-narrowed, and only an `Endorsement` may drive a consequential sink
-(a `perform` arg or a write-tool input); fusion of two or more `Credence`s (including
+(a `perform` arg — the only outbound path, §6b); fusion of two or more `Credence`s (including
 `quorum`) requires a total `independent`/`dependent` declaration over the `Credence[]`;
 a `principal` prefix on `decide` takes a `Principal` (no `text → Principal`); user
-`struct`/`enum`/`event`/`action` types are explicitly declared; a read `tool` requires a
-`use` grant and carries its inputs' trust; authority, trust (three-level), color, and
-tool-use are checked statically and interprocedurally; a violation is a compile error.
+`struct`/`enum`/`event`/`action` types are explicitly declared; a wired result-event payload
+carries judgment trust joined with its request payload's trust and separate ingress provenance
+(§6b); authority, trust (three-level), ingress, and color are checked statically and
+interprocedurally; a violation is a compile error.
 
 **Runtime** — ticks are system-level; structured output uses constrained decoding;
 subscriptions are prospective and hoisted (never retroactive), and history is reached by
 query; multi-handler firing is registration-order; a message trace is a prefix of
-`Sent→Delivered→Resolved`; every memory write carries a provenance backpointer; each agent
+`Sent→Delivered→Resolved`; a task-send additionally lands exactly one terminal task record
+(`TaskCompleted`/`TaskFailed`/`TaskCancelled`/`Expired`, §6c) and a late `complete`/`fail`
+after a tombstone is refused (`CompletionRefused`); every memory write carries a provenance backpointer; each agent
 instance's private memory is isolated and is consulted-then-internalized on every reaction (the
 mandatory envelope, §16.7), and recall cannot launder trust; all three
-dependencies journal their oracle/tool results to the ledger for replay (§15.4.2); replay
+dependencies journal their oracle results to the ledger for replay (§15.4.2); replay
 re-serves recorded dependency results (including memory decomposition/embedding) and never
-re-invokes a write sink; the margin floor `m`
+re-invokes a wired effector; the margin floor `m`
 is enforced at the consequential sink.
 
 The invariants, exercised — default-deny authority, the one legal trust path, human escalation,
@@ -1553,8 +1887,8 @@ reach a declared dependency, such as a principal-prefixed `p decide c by r`; a r
 `decide` and an `endorse` are `S`.
 - `Endorsement<T>` is the first-class recorded proof that a decision was applied to an exact
 subject value; it is the proof object checked at consequential sinks.
-- Authority is a property of the agent context (its `grants`, including `use`).
-- The three external dependencies (provider, identity, tool) are the only sources of dynamic
+- Authority is a property of the agent context (its `grants`).
+- The three external dependencies (provider, identity, world) are the only sources of dynamic
 non-determinism, modeled as oracle relations (§15.4.2).
 
 ## 15.1 Notation
@@ -1563,7 +1897,7 @@ non-determinism, modeled as oracle relations (§15.4.2).
 c ∈ {S,A}   color   (S ⊑ A)        t ∈ {settled,graded,raw}   trust   (settled ⊑ graded ⊑ raw)
 Γ           x ↦ (T, t)             r : Rule   a decision rule (threshold `confidence θ [margin δ] [floor m]` | conformal `α [readiness N] [floor m]`)
 Σ           agent signatures       A              action type names (consequential)
-G           grants set incl. ("perform",A) ("reach",D) ("use",K)
+G           grants set incl. ("perform",A) ("reach",D)
 Endorsement<T>  a ledger-recorded endorsement about subject type T (created only via endorse)
 ```
 
@@ -1574,32 +1908,32 @@ Judgment `**Γ; Σ; A ⊢ e : T ! c · t**`.
 ```
 program    ::= decl*                                          // one flat namespace
 
-decl       ::= typedecl | tool | agent | fn | confdecl | stmt
+decl       ::= typedecl | agent | fn | confdecl | stmt
 typedecl   ::= "struct" Ident "{" field ("," field)* "}"
              | "enum"   Ident "{" Ident ("," Ident)* "}"
              | "event"  Ident "(" field ("," field)* ")" (":" "Error")? ";"   // optional Error supertype (§9)
-             | "action" Ident "(" field ("," field)* ")" ";"                   // performative sink
+             | "action" Ident "(" field ("," field)* ")" ";"   // performative sink; wiring to an effector is manifest config, not source (§6b)
 field      ::= type Ident                                     // "name: T" also accepted (struct fields)
-tool       ::= ("read"|"write") "tool" type Ident params config? ";"          // effect class mandatory (§6b)
 agent      ::= "agent" Ident params grants? "{" abody* "}"
 fn         ::= "sync"? type Ident params block                // async is the default
 confdecl   ::= "conformal" Number ";"                         // file-level default conformal α
 
 grants     ::= "grants" "{" ( "*" | cap ("," cap)* ) "}"
-cap        ::= "perform" Ident | "reach" Ident | "use" Ident
+cap        ::= "perform" Ident | "reach" Ident
 config     ::= "{" directive* "}"                             // colon-free `keyword operand…` directives
 directive  ::= Ident operand*
 operand    ::= Ident | String | Int | Float
 params     ::= "(" (type Ident ("," type Ident)*)? ")"
 abody      ::= extend | on | stmt
 extend     ::= "extend" Ident args ";"
-on         ::= "on" ("awake"|"sleep"|"crash") block
+on         ::= "on" ("awake"|"sleep"|"crash"|"assigned"|"cancelled") block    // task hooks are `when` sugar (§6c)
 
 type       ::= "int"|"float"|"bool"|"text"|"null" | "event" "<" type ">"
              | "array" "<" type ">"                     // collection (query results, fan-out source)
              | "Credence" "<" type ">"                  // graded judgment over enum
              | "Decision" "<" type ">"                  // a gate's committed outcome
              | "Endorsement" "<" type ">"               // a recorded subject endorsement
+             | "Task" "<" type ">"                      // a background-task handle (§6c)
              | Ident                                     // enum/struct/agent/action names, incl. Principal, mem
 
 stmt       ::= vardecl | assign | spawn | prompt | principal | depdecl
@@ -1607,6 +1941,9 @@ stmt       ::= vardecl | assign | spawn | prompt | principal | depdecl
              | "awake" Ident ";" | "sleep" Ident ";"
              | "emit" Ident "(" [expr ("," expr)*] ")" ";"     // plain event; args match fields positionally
              | "perform" Ident "(" [expr ("," expr)*] ")" ";"  // action; args match fields positionally
+             | "complete" expr ";"                      // resolve the active assigned task (§6c; task handler only)
+             | "fail" expr ";"                          // fail the active assigned task with a text reason (§6c)
+             | "cancel" postfix ";"                     // delegator-side task cancel; operand must be Task<T> (§6c)
              | "return" expr? ";"                       // `say(x)` is an ordinary call (`expr ;`)
              | "if" "(" expr ")" block ("else" block)?
              | when
@@ -1630,13 +1967,17 @@ rule       ::= "confidence" Number ("margin" Number)? ("floor" Number)?     // t
              | "conformal" Number? ("readiness" Int)? ("floor" Number)?     // conformal basis; with no α, inherits the file `conformal` default (else 0.05)
              | "(" expr ")"                              // a Rule-valued expression (parenthesized); must be Rule-typed (else TypeError)
 
-expr       ::= expr "<-" expr ("expires" Number)?        // send (agent on left); or STORE into a `mem` (mem on left, §10)
+expr       ::= expr "<-" expr ("expires" expr)?          // send (agent on left); or STORE into a `mem` (mem on left, §10); `expires` operand is a settled numeric expr; MANDATORY when the message is TaskSpec-typed (a tasklit or TaskSpec/Endorsement<TaskSpec>, §6c)
              | expr "->" expr                            // RECALL from a `mem` (always tainted, §10)
              | expr "|>" Ident                           // bounded fan-out: map async fn over a finite collection (§12)
              | gate                                      // a gate as an expression: decide → Decision<E>, endorse → Endorsement<T>
+             | "perform" Ident "(" (expr ("," expr)*)? ")" ("expires" expr)?   // foreground perform BINDING (§6b): an expression ONLY when result-bound, and `expires` is then MANDATORY (checked); the statement form remains in stmt
              | "quorum" "(" Int "," expr ")"             // at least k of a Credence<bool>[] (§12)
              | ledgerquery                               // objective ledger read → LedgerEntry<E>[] / Record[]
              | cmp
+tasklit    ::= "task" "{" taskclause* "}"                // builds a TaskSpec (§6c); objective+acceptance REQUIRED
+taskclause ::= "objective" expr ";" | "acceptance" expr ";"
+             | "scope" "{" "perform" Ident ("," "perform" Ident)* "}"   // enabling scope; delegator must hold each power
 ledgerquery ::= "select" Ident "as" Ident "from" "ledger" "where" "{" cond "}"
               | "select" (Ident ("," Ident)* | "*") "from" "ledger" "where" "{" cond "}"  // recorded-trust read of the log
 cond       ::= cmp (("&&"|"||") cmp)*                    // a boolean filter over fields
@@ -1648,17 +1989,19 @@ postfix    ::= primary ("." Ident | args | "[" expr "]")*    // "." Ident is fie
 primary    ::= Int|Float|String|FString|"true"|"false"|"null"|"abstained"|"self"|Ident
              | "(" expr ")"
              | Ident "{" (Ident ":" expr ("," Ident ":" expr)*)? "}"  // struct literal
+             | tasklit                                    // : TaskSpec — bindable (e.g. a draft to endorse) or sent directly (§6c)
              | "[" (expr ("," expr)*)? "]"               // array literal
 ```
 
 **Types.** `type[]` is the collection suffix. `Credence<E>`, `Decision<E>`,
-`Endorsement<T>`, and `LedgerEntry<E>` are the prelude generic types; there is no
+`Endorsement<T>`, `Task<T>`, and `LedgerEntry<E>` are the prelude generic types; there is no
 surface `event<T>` reply wrapper.
 
 **Collections.** `T[]` is the collection type *produced* by the ledger query (which may bind
 many results) and *consumed* by fan-out (`|>`) and fusion (`quorum`, §12). It is a value to map and reduce over — not
 an imperative data structure. Agape has no general-purpose imperative substrate of its own; heavy or
-world-affecting computation is imported as a tool (§6b) and governed at the tool dependency, never
+world-affecting computation is imported through the world interface (§6b) — wired events and
+actions over the manifest's endpoint catalog — and governed at that seam, never
 reimplemented in the language.
 
 ## 15.3 Static semantics
@@ -1666,23 +2009,36 @@ reimplemented in the language.
 ### 15.3.1 Qualifier lattices
 
 `color: S ⊑ A`. `trust: settled ⊑ graded ⊑ raw`, tracking cognition-provenance: `settled`
-carries no un-endorsed cognition (constants, external data settled by origin, gated
-`Decision`s); `graded` is a `Credence`; `raw` is unstructured model output. `⊔` is the join;
-both contagious upward (a value is as `raw` as its least-settled input) unless a gate settles.
+carries no un-endorsed cognition (constants, judgment-settled external ingress, gated
+`Decision`s); `graded` is a `Credence`; `raw` is unstructured model output. `ingress:
+internal ⊑ external_screened ⊑ external_unscreened`, tracking whether a value carries
+external bytes and whether a manifest screen accepted them. `⊔` is the join; color, trust,
+and ingress are contagious upward unless a kernel gate settles trust or a manifest ingress
+screen marks a boundary value `external_screened`.
 
 ### 15.3.2 Expression rules (selected)
 
 ```
-Γ ⊢ d : Agent   Γ ⊢ p : Text                    // any send invokes cognition at d; raw until bound to a Credence
-──────────────────────────────  (T-Send)        Γ ⊢ (d <- p) : T_reply ! A · raw
+Γ ⊢ d : Agent   Γ ⊢ p : Text · t_p · ι_p        // any send invokes cognition at d; raw until bound to a Credence
+provider_ingress_policy(ι_p, manifest) ≠ deny
+──────────────────────────────  (T-Send)        Γ ⊢ (d <- p) : T_reply ! A · raw · ι_p
 
-Γ ⊢ d : Agent   Γ ⊢ p : Text    E an enum
+Γ ⊢ d : Agent   Γ ⊢ p : Text · t_p · ι_p    E an enum
+provider_ingress_policy(ι_p, manifest) ≠ deny
 ─────────────────────────────────────────────  (T-Credence)
-Γ ⊢ (Credence<E> _ = d <- p) : Credence<E> ! A · graded    // any destination d
+Γ ⊢ (Credence<E> _ = d <- p) : Credence<E> ! A · graded · ι_p    // any destination d
 
-Γ ⊢ aᵢ : Tᵢ · tᵢ    tool R K(T₁..Tₙ) declared `read`      ("use",K) ∈ G ∨ G = {*}
-─────────────────────────────────────────────────────────────────────────  (T-Tool-Read)
-Γ ⊢ K(a₁..aₙ) : R ! A · (⊔tᵢ)        // result carries its inputs' provenance; ILL-FORMED if use not granted
+Γ ⊢ aᵢ : Tᵢ · settled · ιᵢ    action A(T₁..Tₙ) declared    ("perform",A) ∈ G ∨ G = {*}
+result_event(A) = E per the manifest    Γ ⊢ n : Int · settled
+─────────────────────────────────────────────────────────────────────────  (T-Perform-Bound)
+Γ ⊢ (x = perform A(a₁..aₙ) expires n) : T_E ! A · settled · ingress(E)
+// T_E from the configured result event E: a single-field event binds that field's value; a
+// multi-field event binds a struct of its fields; no manifest in scope ⇒ conservative (`unknown`),
+// runtime-enforced. Result judgment trust = boundary-settled ⊔ (⊔ tᵢ) = settled (args are settled);
+// result ingress = external_unscreened unless E's manifest-configured screen accepts and records
+// external_screened.
+// `expires` MANDATORY on the binding form; failure/expiry faults the awaiting invocation (§6c, §16.6).
+// ILL-FORMED if any arg is not settled; a ConfigError at runtime if A has no result_event (§17.1).
 
 Γ ⊢ e : Credence<E> ! c · graded    r : Rule
 ────────────────────────────────────────────  (T-Decide / GATE)
@@ -1692,9 +2048,9 @@ both contagious upward (a value is as `raw` as its least-settled input) unless a
 ────────────────────────────────────────────  (T-Decide-Principal / GATE, async)
 Γ ⊢ p decide e by r : Decision<E> ! A · settled
 
-Γ ⊢ a : T · _    Γ ⊢ d : Decision<E> · settled    a ∈ scope(d)    committed-narrowed(d)
+Γ ⊢ a : T · _ · ι_a    Γ ⊢ d : Decision<E> · settled    a ∈ scope(d)    committed-narrowed(d)
 ────────────────────────────────────────────  (T-Endorse / GATE)
-Γ ⊢ endorse a by d : Endorsement<T> ! S · settled
+Γ ⊢ endorse a by d : Endorsement<T> ! S · settled · ι_a
 
 Γ ⊢ cs : Credence<Bool>[] ! col · graded    dep-declared(cs)
 ──────────────────────────────────────────────────────────────  (T-Fuse)   // quorum
@@ -1705,8 +2061,8 @@ both contagious upward (a value is as `raw` as its least-settled input) unless a
 The GATE rules (`T-Decide`, `T-Decide-Principal`) are the only routes from `Credence` to `Decision`;
 `T-Endorse` is the only route from a `Decision` to a settled `Endorsement` of a subject, and is
 synchronous (the committed `Decision` is in hand). A principal prefix makes `decide` async (it may
-reach the identity dependency). A read-`tool` is async and carries its inputs' provenance (a write
-tool is a consequential sink, §15.3.3); both require a `use` grant. T-Fuse (`quorum`) requires total
+reach the identity dependency). A result-bound `perform` (T-Perform-Bound) is async and settled;
+every `perform` requires its `perform` grant (W-Auth). T-Fuse (`quorum`) requires total
 dependence coverage over the `Credence[]`. Branching on a gate is an ordinary `if` over
 `.committed`; the flow-narrowing that permits subject endorsement is W-Decision (below).
 
@@ -1714,41 +2070,74 @@ dependence coverage over the `Credence[]`. Branching on a gate is an ordinary `i
 
 **Effect signatures (interprocedural).** Each `f` carries `Φ(f) = (c_f, ρ_f, κ_f)`:
 
-- `c_f ∈ {S,A}` — `A` if its body reaches any declared dependency (including a tool call) or calls any
+- `c_f ∈ {S,A}` — `A` if its body reaches any declared dependency (including a `perform`) or calls any
 `A`-colored `g`; else `S`. A `sync`-declared `f` asserts `c_f = S`.
-- `ρ_f` — trust-transparent parameters (trust flows to the result, three-level).
-- `κ_f` — consequentially-consumed parameters (fed into a `perform`/reach/write-tool, or a
-`use` tool whose result is consequentially consumed).
+- `ρ_f` — transparent parameters (judgment trust and ingress flow to the result).
+- `κ_f` — consequentially-consumed parameters (fed into a `perform`/reach).
 
 `Φ` is the least fixpoint over the call graph; a builtin is `(A, ∅, ∅)` unless modeled.
 
 ```
-// COLOR — interprocedural (a tool call forces A):
+// COLOR — interprocedural (a perform forces A):
 c_f = S
 ──────────────────────────────────────  (W-SyncSeamFree)
-⊢ f  ok    // body reaches no declared dependency (no <-, no Credence-slot, no principal-prefixed decide, NO tool call) AND calls only S fns
+⊢ f  ok    // body reaches no declared dependency (no <-, no Credence-slot, no principal-prefixed decide, NO perform) AND calls only S fns
 
-// AUTHORITY — perform / reach / use (DEFAULT-DENY):
+// AUTHORITY — perform / reach (DEFAULT-DENY):
 allowed(C,kind,X) ⟺ G ≠ ⊥ ∧ ((kind,X) ∈ G ∨ G = {*})
 ──────────────────────────────────────────────────────────  (W-Auth)
 in C:  ⊢ perform A(e) ok ⟺ allowed(C,"perform",A)
        ⊢ (x <- p)    ok ⟺ x = self ∨ allowed(C,"reach",typeof(x))
-       ⊢ K(a…)       ok ⟺ allowed(C,"use",K)
-       ⊢ emit E(e)   ok                        // a plain event needs no power
+       ⊢ emit E(e)   ok                        // a plain event needs no power (an emit-trigger wiring is manifest-controlled, §6b)
 
 // AUTHORITY — subtractive extend:
 agent C extends P
 ──────────────────────  (W-Extend)
-grants(C) ⊆ grants(P)        // ⊥ ⊆ G ⊆ {*}; covers perform/reach/use uniformly
+grants(C) ⊆ grants(P)        // ⊥ ⊆ G ⊆ {*}; covers perform/reach uniformly
 
 // THE CONSEQUENTIAL-ACTION RULE (static admission + runtime margin floor):
-sink(s)     Γ ⊢ e : Te · t     ¬( t = settled )
+sink(s)     Γ ⊢ e : Te · t · ι     ¬( t = settled )
 ──────────────────────────────────────────────────────────────  (W-Consequential-static)
 s(…e…)  is ILL-FORMED
-// sink = perform arg / write-tool input. A settled NON-Endorsement (a constant, a `prompt` value,
-// a settled read-tool result) passes freely — external data is settled by origin. An `Endorsement`
-// is settled only because T-Endorse required a committed-narrowed Decision. A graded/raw value is rejected.
+// sink = perform arg — wired or unwired; there is no other outbound path (§6b).
+// A settled NON-Endorsement (a constant, a `prompt` value,
+// a judgment-settled result-event payload) passes the judgment-trust check even when its ingress is
+// external_unscreened. An `Endorsement` is settled only because T-Endorse required a
+// committed-narrowed Decision. A graded/raw value is rejected. There is no manifest allow/warn/deny
+// policy for ingress-tainted data at this sink.
 // At runtime, for an admitted `Endorsement`: margin(e) ≥ m, else the action faults (MarginFloorViolation).
+// At runtime, inside an assigned task: the active task must be endorsed and name the action in
+// its scope, else the action faults (TaskScopeViolation, §6c) — enablement, checked like the floor.
+
+// PROVIDER-PROMPT INGRESS POLICY (manifest-aware; no source syntax):
+Γ ⊢ p : Text · _ · external_unscreened    provider_ingress_policy = deny
+──────────────────────────────────────────────────────────────  (W-ProviderIngress)
+⊢ (d <- p) is ILL-FORMED for this (source, manifest) pair
+// default warn emits a diagnostic and preserves external_unscreened in the rendered prompt's audit
+// metadata; off accepts silently. A configured ingress screen may mark the source value
+// external_screened before it reaches this rule.
+
+// DELEGATION — the task-send (§6c):
+Γ ⊢ d : Agent    Γ ⊢ o : Text · t_o · ι_o    Γ ⊢ a : Text · t_a · ι_a    Γ ⊢ n : Int · settled
+──────────────────────────────────────────────────────────────  (T-Delegate)
+Γ ⊢ (d <- task { objective o; acceptance a; } expires n) : T_result ! A · raw
+        // bound as `T r = …` (foreground) or `Task<T> h = …` (background handle · settled).
+        // ILL-FORMED if: `expires` is absent; the result is unbound (statement form);
+        // objective/acceptance missing or not Text; the task block is empty.
+        // TaskSpec trust = t_o ⊔ t_a and ingress = ι_o ⊔ ι_a (delegation never launders either).
+
+// DELEGATION — scope attenuation (compile time):
+task carries scope { perform A₁ … perform Aₙ } in agent C
+──────────────────────────────────────────────────────────────  (W-Scope-Attenuate)
+∀ i. allowed(C,"perform",Aᵢ)    ∧    the sent message : Endorsement<TaskSpec>
+        // a scoped task can only attenuate its DELEGATOR's authority, and is enabling only
+        // when endorsed (endorse requires a committed-narrowed Decision, T-Endorse).
+        // An unendorsed scoped task at a send is ILL-FORMED.
+
+// DELEGATION — task verbs (worker side):
+`complete e;` / `fail e;` ok ⟺ enclosing handler is a task handler (`on assigned` / the
+        filtered Delivered subscription); `fail` requires e : Text; `complete e` requires
+        e : T_result of the active task. `cancel h;` requires h : Task<T>. Elsewhere: ILL-FORMED.
 
 // DECISION / flow narrowing (subject endorsement is flow-sensitive on `d.committed`):
 Γ ⊢ d : Decision<E> · settled
@@ -1758,21 +2147,21 @@ inside a branch where d.committed is narrowed to a real variant v (an `if (d.com
 inside the else / non-committed branch (d.committed == abstained):
     Γ[d ↦ Decision<E> · settled]                         ⊢ body ok    // no endorsement may be constructed
 
-// CALL — trust transfer and consequential-arg rejection:
-Γ ⊢ aᵢ : _ ! _ · tᵢ        t_result = ⊔ { tᵢ : i ∈ ρ_f }
+// CALL — trust/ingress transfer and consequential-arg rejection:
+Γ ⊢ aᵢ : _ ! _ · tᵢ · ιᵢ        t_result = ⊔ { tᵢ : i ∈ ρ_f }        ι_result = ⊔ { ιᵢ : i ∈ ρ_f }
 ∀ i ∈ κ_f.  tᵢ = settled
 ──────────────────────────────────────────────────────────────  (W-Call)
-Γ ⊢ f(a₁..aₙ) : T ! c_f · t_result     // ILL-FORMED if some i∈κ_f is not settled
+Γ ⊢ f(a₁..aₙ) : T ! c_f · t_result · ι_result     // ILL-FORMED if some i∈κ_f is not settled
 ```
 
 The endorsement half of the consequential rule is static (W-Consequential-static); the
-margin floor is runtime.
+margin floor and the task-scope enablement are runtime.
 
 ## 15.4 Dynamic semantics
 
 ### 15.4.1 Runtime configuration
 
-`⟨ Π | Ψ | Ω | Â | μ | S | k ⟩` — provider `Π`, identity `Ψ`, tool `Ω`, agents `Â`, memory
+`⟨ Π | Ψ | Ω | Â | μ | S | k ⟩` — provider `Π`, identity `Ψ`, world `Ω`, agents `Â`, memory
 `μ`, ledger `S` (append-only, `tick(S)=|S|`), continuation `k`.
 
 ### 15.4.2 The external dependencies as oracles (where stochasticity lives)
@@ -1780,15 +2169,30 @@ margin floor is runtime.
 ```
 think   : Π × Prompt × Schema   ⇝  Value × Π             (provider; NON-deterministic)
 consult : Ψ × Principal × Credence<E> ⇝ (E × Signature) × Ψ  (identity dependency; external, auditable; Signature = the principal's signed ruling)
-invoke  : Ω × Tool × Args       ⇝  Value × Ω              (tool dependency; external, effectful)
+invoke  : Ω × Endpoint × Args   ⇝  Value × Ω              (the world seam — the wired [tools.*] endpoint; external, effectful)
+screen  : Σ × IngressPoint × Value ⇝ (accept|reject, Value) × Σ
+                                                            (optional manifest ingress screen; not source-visible)
 ```
 
-All three oracles' results are journaled to the ledger as produced (the send's `Resolved` /
-`PrincipalDecision` or `FailedPrincipalDecision` / `ToolResolved`). Gate collapses are journaled as
-`Decided`, whether they commit or abstain. Replay never re-invokes an oracle or a tool: it serves
-each from the recording in order — a write tool is replayed as its recorded result, not re-run. The
-ledger is hash-chained, so a faithful replay regenerates an identical chain — chain-head equality is
-the proof of replay-equivalence.
+The three source-visible oracles' results are journaled to the ledger as produced (the send's
+`Resolved` / `PrincipalDecision` or `FailedPrincipalDecision` / `ToolResolved`). A configured
+ingress screen is also replay-bound: its input bytes, verdict, normalized output, and resulting
+ingress provenance (`external_screened` on accept, no ordinary delivery on reject) are recorded at
+the boundary that invoked it. Gate collapses are journaled as `Decided`, whether they commit or
+abstain. Replay never re-invokes an oracle, endpoint, or screen: it serves each from the recording
+in order — a wired effector is replayed as its recorded result, not re-run. The ledger is
+hash-chained, so a faithful replay regenerates an identical chain — chain-head equality is the
+proof of replay-equivalence.
+
+**Task-send dynamics (§6c).** A task-send is an ordinary send whose `Resolved` is produced by
+the recipient's `complete` statement rather than by `think`; `complete e` appends `Resolved`
+then `TaskCompleted(e)` in the same reaction; `fail e` appends `TaskFailed(e)` and the
+transport chain rests at its `Delivered` prefix; `cancel h` appends `TaskCancelled(corr(h))`.
+The first terminal for a correlation wins: after `TaskCancelled` or `Expired`, a `complete`/
+`fail` for that correlation appends `CompletionRefused(corr)` and its payload is discarded.
+A foreground (result-bound) delegation whose terminal is `TaskFailed`/`Expired`/`TaskCancelled`
+faults the awaiting invocation (the contained-crash path, §5 — `AgentCrashed`). All task rows
+are ordinary ledger events: replay folds them deterministically like every other record.
 
 ### 15.4.2a The ledger as an audit log — consensus, forking, forensics
 
@@ -1827,12 +2231,6 @@ ev = Endorsed(subject_hash(subject), decision_id(d), v')
 ⟨…|S| endorse subject by decision ⟩ → append(S, ev), Endorsement{subject, decision_id:decision_id(d), committed:v', …}
 // There is no abstained endorsement; abstinence is represented by the Decision's `Decided` event.
 
-// TOOL CALL (read-only) — tool dependency + record; async pair; result carries inputs' trust:
-("use",K) granted    (Ω, K, eval(a…)) ⇝ (v, Ω')    t = ⊔ trust(aᵢ)
-S' = append(append(S, ToolStarted(K)), ToolResolved(K, v))
-─────────────────────────────────────────────  (E-Tool)
-⟨…|Ω|μ|S| x = K(a…); k⟩ → ⟨…|Ω'|μ[x↦v (trust t)]|S'| k⟩   // a write tool is a consequential sink (W-Consequential-static)
-
 // SPAWN — allocate + bind ctor args + run constructor; mailbox closed; hoist subs:
 Â' = Â[name ↦ { type, params := eval(args), awake:false }] ;  register-hoisted-subs(ctor-body)
 ─────────────────────────────────────────────────────────────  (E-Spawn)
@@ -1848,10 +2246,13 @@ fault in a handler invocation
 ⟨…|Â|S| …fault…; k⟩ → ⟨…|Â| append(S, AgentCrashed(name)); on-crash-hook; resume⟩   // not a death
 
 // SEND — three-phase lifecycle; reply raw until Credence-bound; content not stored (only the lifecycle):
-awake(dest)   (Π, render(p), schema(T)) ⇝ (v, Π')       // responder thinks through Π (the provider) — any dest
+awake(dest)   provider_ingress_policy(ingress(render(p)), manifest) ≠ deny
+(Π, render(p), schema(T)) ⇝ (v, Π')       // responder thinks through Π (the provider) — any dest
 S' = append³(S, Sent(x,@d), Delivered(x,@d), Resolved(x,@d))   // subjects only; v is not logged
 ─────────────────────────────────────────────────────────────  (E-Send)
-⟨Π|…|μ|S| x = (d <- p); k⟩ → ⟨Π'|…|μ[x↦v (trust raw; graded if x : Credence<E>, T-Credence)]|S'| k⟩
+⟨Π|…|μ|S| x = (d <- p); k⟩ → ⟨Π'|…|μ[x↦v (trust raw; graded if x : Credence<E>, T-Credence; ingress ingress(render(p)))]|S'| k⟩
+// default warn records an audit diagnostic for external_unscreened prompt ingress; off is silent.
+// strict deny aborts before `think`, so no provider call is made.
 
 // SEND (lost) — dest not awake at delivery: chain stalls at Sent:
 ¬awake(dest)
@@ -1871,6 +2272,37 @@ Sent(corr) ∈ S   ¬Delivered(corr)   lifetime(corr) elapsed
 // EMIT:
 ─────────────────────────────────────────────────────────────  (E-Emit)
 ⟨…|μ|S| emit E(e₁,…,eₙ); k⟩ → ⟨…|μ| append(S, E(subj, eval(e₁),…,eval(eₙ))) | k⟩
+
+// EMIT (wired) — an emit-trigger wiring invokes its catalog endpoint through Ω (§6b):
+[events.E] wired to K    (Ω, K, eval(e…)) ⇝ (v, Ω')
+result_event(E) = E' ⇒ the result row E'(v) is appended, judgment trust boundary-settled ⊔ trust(eval(e…)),
+                         ingress external_unscreened unless E' screening records external_screened
+─────────────────────────────────────────────────────────────  (E-Emit-Wired)
+⟨…|Ω|S| emit E(e…); k⟩ → ⟨…|Ω'| append(S, E(subj, eval(e…)), ToolStarted(K), ToolResolved(K, v) [, E'(v)]) | k⟩
+// order: event row → ToolStarted → ToolResolved → result event row (§6b). No laundering:
+// a tainted emitted payload taints the result event's judgment trust (the JOIN above); ingress remains
+// external unless screened.
+
+// PERFORM — the consequential act; a wired action invokes its catalog endpoint through Ω (§6b):
+allowed(C,"perform",A)   admitted (W-Consequential-static)   margin ≥ floor   task-scope enabled (§6c)
+[actions.A] wired to K ⇒ (Ω, K, eval(e…)) ⇝ (v, Ω') and the ToolStarted(K)/ToolResolved(K,v) pair is appended
+result_event(A) = E ⇒ the result row E(v) is appended, judgment trust boundary-settled ⊔ trust(eval(e…)) = settled,
+                      ingress external_unscreened unless E screening records external_screened
+─────────────────────────────────────────────────────────────  (E-Perform)
+⟨…|Ω|S| perform A(e…); k⟩ → ⟨…|Ω'| append(S, A(subj, eval(e…)) [, ToolStarted, ToolResolved, E(v)]) | k⟩
+// order: action row → ToolStarted → ToolResolved → result event row (§6b). A result-bound
+// perform (T-Perform-Bound) resumes its awaiting continuation with E's payload when E lands;
+// failure or `expires` faults the awaiting invocation (E-Crash, §6c, §16.6).
+// failing the margin or task-scope runtime check appends MarginFloorViolation / TaskScopeViolation
+// and faults the invocation instead (E-Crash); the action (and any wired effector) does not run.
+
+// DELEGATE — a task-send (§6c, §16.3a): E-Send transport, but Delivered fires the worker's task
+// handler instead of think, and Resolved is produced by that worker's `complete`:
+⟨…|S| complete e; k⟩ → ⟨…| append²(S, Resolved(corr), TaskCompleted(corr, eval(e))) | k⟩  // corr = the active task
+⟨…|S| fail e; k⟩     → ⟨…| append(S, TaskFailed(corr, eval(e))) | k⟩       // transport rests at its Delivered prefix
+⟨…|S| cancel h; k⟩   → ⟨…| append(S, TaskCancelled(corr(h))) | k⟩          // the authoritative tombstone
+tombstoned(corr) ∧ complete/fail for corr  →  append(S, CompletionRefused(corr))   // payload discarded
+foreground(corr) ∧ terminal(corr) ∈ {TaskFailed, Expired, TaskCancelled}  →  fault the awaiting invocation (E-Crash)
 
 // LEDGER QUERY (statement form) — reads the log, lands a QueryResult:
 ─────────────────────────────────────────────────────────────  (E-Query-Stmt)
@@ -1892,9 +2324,10 @@ src(x)=x   src(self)=current agent   src(d<-p)=binding name else @vN   src(compo
 
 For a terminal ledger `S`, the observable outcome `obs(S)` is the subsequence of committed
 events: performed actions, decisions (`Decided`), subject endorsements (`Endorsed`), principal
-decisions (`PrincipalDecision`/`FailedPrincipalDecision`), `Contradiction`s, write-tool results, and top-level
+decisions (`PrincipalDecision`/`FailedPrincipalDecision`), `Contradiction`s, wired-effector results, and top-level
 bindings of bounded type. It excludes the incidental trace: send `Resolved` reply payloads
-(the wording), `say` output, internalized memory text, raw tool-result
+(the wording), `say` output, internalized memory text, the `ToolStarted`/`ToolResolved`
+replay-journal pair (§6b), tainted result-event
 payloads not yet gated, graded `Credence` distributions no gate committed, and raw
 raw typed replies that never reach a committed event.
 
@@ -1936,8 +2369,8 @@ not.
   > is over a bounded judgment — bind the reply to a `Credence<bool>` slot ("is this an
   > approval?") and gate that. `==` is exactly-gated only when both operands are already
   > bounded/committed.
-- **bounded-gated** — a low-margin verdict, or one carrying open `Text` / a raw tool
-result. Reproducible only up to the margin. The lint (§15.7) flags a consequential value
+- **bounded-gated** — a low-margin verdict, or one carrying open `Text` / a tainted
+result-event payload. Reproducible only up to the margin. The lint (§15.7) flags a consequential value
 cleared only this way; the lint is advisory, not part of the hard conformance bar.
 
 **Oracle model (assumption O).** Fix `𝒫`. For a given `(Π, prompt)` the provider's graded
@@ -1954,13 +2387,14 @@ sequence `d`, independent of every un-settled (`raw`/`graded`) value.
 > `graded` judgment into a sealed `Decision`, and `endorse` is the only operation that settles an
 > exact subject value from that decision. Both record their discharge on the ledger. By
 > the consequential rule (W-Consequential-static) and W-Call, every constituent of `obs` is
-> `settled` — hence an input `I` (a constant or external datum, settled by origin), a gate
+> `settled` — hence an input `I` (a constant or judgment-settled external ingress datum), a gate
 > outcome `dⱼ`, or a pure settled-function of these. Progress+preservation (§15.6) preserves
 > the invariant under `→`. Non-interference modulo delimited release (Sabelfeld–Myers;
-> Sabelfeld–Sands). A read-`tool` adds no declassifier: its result carries the join of its
-> inputs' provenance, so it reaches `obs` only as `settled` (clean inputs) or through a gate
-> (cognition in its inputs); a write tool is a consequential sink, covered by the same
-> rule as `perform`. ∎ *(The two-run bisimulation is the mechanization obligation — §15.7,
+> Sabelfeld–Sands). A wired result event adds no declassifier: its payload carries
+> boundary judgment trust joined with the request payload's trust (§6b), so it reaches `obs` only as
+> `settled` (a settled perform request) or through a gate (a tainted emit-wired request); an
+> effector is invoked only inside a wired `perform` or `emit` (§6b), and the consequential
+> path is covered by exactly the `perform` rule. ∎ *(The two-run bisimulation is the mechanization obligation — §15.7,
 > and the first artifact to be built with Agape.)*
 
 **Lemma 2 — Per-gate flip bound.** For a gate with margin `δⱼ`, the probability its
@@ -2045,15 +2479,17 @@ operational semantics.
 
 ## 15.6 Soundness statements
 
-For well-typed `P`: **(T1) Authority safety** — an agent `perform`s, `use`s, and `reach`es
+For well-typed `P`: **(T1) Authority safety** — an agent `perform`s and `reach`es
 only what its `grants` (powers) name; grants are subtractive under `extend`; no runtime value
 extends them. **(T2) Decision and endorsement** — the only operation that settles a `graded`
 judgment is `decide`, which yields a ledgered `Decision` whose `.committed` is a singleton variant
 or `abstained`; the only operation that settles a subject value is `endorse subject by d`, yielding
 an `Endorsement` that records the exact subject and decision id, and only when `d` has been
 committed-narrowed. **(T3) Consequential non-interference** —
-no value carrying un-endorsed cognition reaches a consequential sink (a `perform` argument or a
-write-tool input), and an `Endorsement` can only be constructed from a committed-narrowed
+no value carrying un-endorsed cognition reaches a consequential sink (a `perform` argument —
+the only outbound path, §6b — so on the perform path no un-endorsed cognition leaves the
+process, observation requests included),
+and an `Endorsement` can only be constructed from a committed-narrowed
 `Decision` (so an `abstained` decision cannot reach a sink), with the runtime margin floor
 `margin ≥ m` checked there; equivalently, varying the model's raw judgments
 changes no world-effect except through a gate (Lemma 1, §15.5). **(T4) Reproducibility up to
@@ -2103,14 +2539,14 @@ operational semantics of §15.4 buildable. Where §16 and §15 appear to differ,
 meaning and §16 the mechanism; a conformant runtime satisfies both. Design points not fixed by §0–§15 are settled here by explicit, conformance-visible choices.
 
 The runtime is the implementation of the trusted kernel, not a host framework around it.
-Schedulers, storage engines, cloud services, OS hooks, and tool transports may vary, but they
+Schedulers, storage engines, cloud services, OS hooks, and endpoint transports may vary, but they
 must expose the same kernel boundary: no external dependency is reached except through a
 declared seam, no consequential sink runs except through grants plus endorsement, and no
 future-relevant state escapes the ledger/replay contract.
 
 **One runtime, one system.** An Agape runtime is the sole authority for one running Agape
 system: it owns the append-only ledger, the agent population and lifecycle, the provider,
-identity, tool, and prompt dependencies, and each agent instance's private memory substrate. A
+identity, and prompt dependencies, the wired world seam (§6b), and each agent instance's private memory substrate. A
 runtime shares **no mutable state** with another runtime — separate runtimes are *separate* runtimes
 unless explicitly connected through an external protocol, and when two runtimes communicate their
 messages are ordinary ledgered events at each boundary (§6). The runtime is not "global agent
@@ -2128,7 +2564,7 @@ assigned, monotonic, gap-free (§7).
 - **Top-level evaluation.** The program's top-level statements run in source order (§0.2). A statement
   executes to a value or to a ledger append; an append fires any matching subscriptions (§16.3) before
   the next statement begins.
-- **Asynchrony.** Reaching a declared dependency (a send `<-`, a tool call, a principal-prefixed `p decide c by r`) does not
+- **Asynchrony.** Reaching a declared seam (a send `<-`, a wired `perform`/`emit`, a principal-prefixed `p decide c by r`) does not
   block: the runtime appends the operation's opening event(s) (`Sent`, `ToolStarted`, …), issues the
   oracle call (§16.4), and enqueues a **resolution** on `Q`. The continuation after the call resumes
   when that resolution is dispatched. Many operations may be in flight at once (a query's fan-out over
@@ -2220,15 +2656,41 @@ order**).
 - **Prospective.** A subscription never fires for an event whose tick precedes its registration (§7);
   history is reached only by query (§10).
 
-### 16.4 The seam protocol — provider, identity, tool
+### 16.3a Task-send dispatch (§6c)
 
-The three declared dependencies are reached as oracles (§15.4.2): cognition through the **provider**,
-accountability through the **identity** dependency, the world through the **tool** dependency. Each call
+A task-send routes like any send; what changes is who resolves it and what lands on the ledger.
+
+- **Assignment.** Delivery of a task-send fires the worker's `on assigned` hook — compiled to a
+  `Delivered` subscription filtered to task-sends — instead of a provider invocation. While that
+  handler (and any handler resolving the same task) runs, the worker's provider calls compose the
+  active task's `objective`/`acceptance` into context **after** the instruction blocks, as data
+  (§5, §6c). The runtime tracks the agent's *active task* (its correlation id) for the duration.
+- **Aliases.** `when (TaskSubmitted|TaskAssigned|TaskExpired about h)` are compile-time rewrites
+  to the corresponding `Sent`/`Delivered`/`Expired` subscriptions filtered by the handle's
+  correlation — they are not distinct rows (§6c), so the journal (§16.2) is unchanged by them.
+- **Terminals and refusal.** The first terminal for a correlation wins (`TaskCompleted` via
+  `complete` — which also appends the transport `Resolved` — or `TaskFailed`, `TaskCancelled`,
+  `Expired`). A late `complete`/`fail` after a tombstone appends `CompletionRefused(corr)`; the
+  payload is discarded (§15.4.2).
+- **Foreground fault.** A result-bound delegation whose terminal is not `TaskCompleted` faults
+  the delegator's awaiting invocation through the crash path (§16.6).
+- **Status projection.** "One status per task" is a ledger projection — a `select … from ledger`
+  fold over the correlation — maintained like any projection (§16.7a), never a stored event.
+
+### 16.4 The seam protocol — provider, identity, world
+
+The three external seams are reached as oracles (§15.4.2): cognition through the **provider**,
+accountability through the **identity** dependency, the world through the **wiring seam** (§6b). Each call
 appends its opening event, invokes the seam, journals the result (§16.5), and appends its close.
 
 - **Provider (`think`).** A judgment `Credence<E> c = d <- p` or a typed reply `T x = d <- p`
   renders the prompt `p` and compiles the destination schema: for a `Credence<E>` slot, the forced
   categorical choice over `E`'s variants; for a typed reply, `T`'s JSON Schema (§8). The connector
+  receives the rendered prompt only after the runtime applies the manifest's provider-prompt
+  ingress policy to the prompt's ingress provenance: `warn` records an audit diagnostic for
+  `external_unscreened` ingress, `deny` aborts before invoking the provider, and `off` accepts
+  silently (§17). This policy has no effect on `perform` sink admission.
+  The connector
   receives `{ prompt, schema }` and must return schema-conforming output by constrained decoding
   (mandatory; no fuzzy fallback). A logprob-exposing connector returns the committed value plus the
   per-variant score/logprob vector; a text-only connector returns only the value and is served by the
@@ -2243,25 +2705,41 @@ appends its opening event, invokes the seam, journals the result (§16.5), and a
   records a `FailedPrincipalDecision` (§13). In both cases, and also when the rule commits without
   escalation, the resulting `Decision` is recorded as `Decided`. No key material appears in source
   (§3).
-- **Tool (`invoke`, MCP).** A call `K(a…)` resolves `K` to its MCP binding (`[tools]`, §17) and issues an
-  MCP `tools/call` with the marshalled args, appending the `ToolStarted`/`ToolResolved` pair (§6b, §7).
-  Args and result marshal between Agape values and MCP JSON by `K`'s declared signature. A
-  `read` tool's result carries the join of its inputs' trust; a `write` tool is a consequential sink whose
-  inputs must be settled (§6b, §13).
+- **World (`invoke`, MCP).** A wired `perform A(args)` — or a wired `emit` — resolves its
+  `[actions.NAME]`/`[events.NAME]` wiring to its `[tools.*]` catalog entry (§17.1), issues an
+  MCP `tools/call` with the marshalled args, appends the `ToolStarted`/`ToolResolved` pair (the
+  replay journal, §6b, §7), and lands the configured `result_event` row when one is wired (§6b).
+  Args and results marshal between Agape values and MCP JSON by the action's/event's declared
+  fields and the result event's declared fields. A result-event payload carries judgment trust
+  joined with the request payload's trust; a `perform`'s arguments must be settled (§6b, §13).
+  Separately, result-event and standing-sensor payloads carry ingress provenance
+  `external_unscreened` unless the manifest-configured screen for that ingress accepts and records
+  `external_screened`. A standing sensor (`[events.NAME]` with no triggering emit) appends its
+  events as they arrive, like `prompt` (§5b, §6b).
+
+- **Ingress screening.** Prompt arrivals, standing-sensor events, and result-event payloads may be
+  bound in the manifest to an ingress screen (§17). The screen is not source syntax and is not a
+  way to grant action authority. The runtime records the original boundary payload, screen identity,
+  verdict, normalized delivered payload, and resulting ingress provenance. Accepted values are
+  delivered as `external_screened`; unscreened accepted values remain `external_unscreened`;
+  rejected values do not enter ordinary program data.
 
 ### 16.5 Record and replay
 
 A run is a **recording**: every oracle result (§16.4) is journaled to the ledger as the operation's
 closing event, carrying the result payload — and, for the provider, the per-variant scores (§15.5.1).
-Nondeterministic *inputs* are journaled too: external `prompt` arrivals, and a wall-clock `expires`
-lifetime's firing (§6); a logical-tick lifetime is already deterministic.
+Nondeterministic *inputs* are journaled too: external `prompt` arrivals, standing-sensor arrivals,
+world result-event payloads, ingress provenance labels, screening verdicts/normalizations, and a
+wall-clock `expires` lifetime's firing (§6); a logical-tick lifetime is already deterministic.
 
 - **Replay.** Given a recording, the runtime re-executes the program but **serves each oracle call
   from the journal instead of invoking the seam**: the *i*-th call of a given kind, in issue order
   (§16.1), is answered by the *i*-th recorded result of that kind. Replay invokes nothing external — a
-  `write` tool is replayed as its recorded result, never re-run against the world.
+  wired effector is replayed as its recorded result, never re-run against the world. Ingress screens
+  are likewise not re-run during recorded replay; their recorded verdict and delivered payload are
+  served from the journal.
 - **What must be reproducible.** Replay never re-calls cognition completions, identity decisions, or
-  tools (above), and it likewise never re-calls the **memory-internalization oracles** — decomposition,
+  wired endpoints (above), and it likewise never re-calls the **memory-internalization oracles** — decomposition,
   summarization, and embedding (§16.7). Each such call is either journaled (a non-deterministic provider
   result is recorded like any oracle output) or **deterministically derived from recorded inputs by a
   versioned algorithm** whose version is part of runtime metadata (§17.6). Either way memory is a
@@ -2293,6 +2771,15 @@ lifetime's firing (§6); a logical-tick lifetime is already deterministic.
   faults the invocation (the action does not run). Like `TypeMismatch` it is a catchable `Error`
   (§9): `when (Error e)` / `on crash` may handle it — it is the typed trigger for escalation, not a
   silent skip.
+- **TaskScopeViolation.** When a `perform` executes while the agent is running an assigned task and
+  the active task is not endorsed or does not name the action in its `scope` (§6c, §13), the runtime
+  appends a typed `TaskScopeViolation` and faults the invocation (the action does not run) — the
+  same shape and handling as the margin floor.
+- **Foreground task failure.** A result-bound delegation whose terminal is `TaskFailed`, `Expired`,
+  or `TaskCancelled` faults the delegator's awaiting invocation through the crash path above
+  (`AgentCrashed`; `on crash` recovers with state intact). The failure reason is the correlated
+  `TaskFailed(reason)` row, reached by query — a task that comes back empty is the same fault shape
+  as a provider that returns nothing (§5, §6c).
 
 ### 16.7 The memory runtime
 
@@ -2337,7 +2824,7 @@ state (Section 0.2).
   3. Build a memory query from the stimulus, current task, agent role, and ledger head.
   4. Consult the instance's canonical cells and any available fact, relationship, or semantic indexes.
   5. Append MemoryConsulted with counts, query metadata, and result provenance (§9).
-  6. Build the cognition/tool/action context from source instruction (§5), project context,
+  6. Build the cognition/action context from source instruction (§5), project context,
      and the memory packet.
   7. Execute the reaction.
   8. Append the resulting ledger events.
@@ -2417,7 +2904,7 @@ semantics.
 
 A **knowledge artifact** is any durable input an agent is allowed or instructed to learn from: this
 spec or any project file, a README or design doc, generated code, check/test/run output, a user
-correction or review, a tool result, a prior ledger slice, or a hosted/uploaded file. Internalizing
+correction or review, a result-event payload, a prior ledger slice, or a hosted/uploaded file. Internalizing
 an artifact is the same memory operation as §16.7 step 9, applied to a durable source rather than to
 the immediate experience.
 
@@ -2451,7 +2938,7 @@ the immediate experience.
 Beyond explicit artifacts, every agent-internal experience that can improve future behavior is
 recorded and internalized through the §16.7 envelope: code written, tests written or selected,
 `agape check` results, `agape run` results and their ledger events, unit/integration/conformance
-pass/fail, provider failures, tool failures, user feedback and corrections, and accepted working
+pass/fail, provider failures, wired-endpoint failures, user feedback and corrections, and accepted working
 patterns.
 
 For implementation work, an agent follows the loop:
@@ -2511,7 +2998,7 @@ API but must offer the same operations as calls.
 | `memory.ingest`    | internalize an artifact into one agent's private memory (§16.7b)         |
 | `memory.context`   | return the memory packet for a task *without* running cognition (§16.7)   |
 | `memory.inspect`   | inspect counts, summaries, recent cells, and provenance (§16.7)          |
-| `config.read/write`| manage the **dependency/connector** bindings and memory budgets (provider, tools, identity; §17) — **never** decision rules, which live in source (§13, §17.2) |
+| `config.read/write`| manage the **dependency/connector** bindings and memory budgets (provider, the `[tools.*]` catalog and its wiring, identity; §17) — **never** decision rules, which live in source (§13, §17.2) |
 
 `config.read/write` is deliberately scoped to dependency and connector configuration plus memory
 budgets; it cannot set a gate threshold, margin, floor, or conformal α, because those are source rule
@@ -2529,9 +3016,11 @@ passed ad hoc. The manifest binds declared dependencies and connector/runtime tr
 rules live in source and empirical gate profiles live on the ledger.
 
 Configuration is Agape's ecosystem integration surface. Source declares *what* it depends on
-(`provider`, `principal`, `tool`, `prompt`); configuration binds those names to existing model
-APIs, identity systems, MCP/tool servers, prompt sources, memory policy, and deployment
-endpoints. A feature that needs provider-specific credentials, URLs, transports, or model names
+(`provider`, `principal`, `prompt`) and which events and actions exist (§3, §6b); configuration
+binds those names to existing model
+APIs, identity systems, prompt sources, memory policy, and deployment
+endpoints — and wires events and actions to the MCP/tool endpoint catalog (§6b). A feature that
+needs provider-specific credentials, URLs, transports, or model names
 belongs in configuration, not in `.ag` source.
 
 ### 17.1 The manifest
@@ -2547,11 +3036,13 @@ exists:
 ```agape
 prompt text question;
 principal reviewer;
-read tool text search(text q);
-write tool bool create_ticket(text body);
+event  SearchResult(text hits);
+action Search(text q);
+action CreateTicket(text body);
 ```
 
-The manifest binds those dependency names to concrete backends:
+The manifest binds the dependency names to concrete backends, catalogs the world endpoints,
+and wires the declared events and actions to them (§6b):
 
 ```toml
 [project]
@@ -2568,24 +3059,42 @@ sampling_fallback = true
 fallback_samples = 10
 fallback_temperature = 0.7
 
+[security]
+tainted_ingress_to_provider = "warn"  # warn | deny | off; default is warn when omitted
+
+[security.ingress.prompts.question]
+driver = "builtin"
+policy = "prompt_input_baseline"
+
+[security.ingress.events.SearchResult]
+driver = "builtin"
+policy = "web_result_baseline"
+
 [prompts.question]
 driver = "studio"
 
 [identity.reviewer]
 driver = "studio_local"
 
-[tools.search]
+[tools.web_search]
 driver = "web_search"
 provider = "tavily"
 api_key_env = "TAVILY_API_KEY"
 timeout_ms = 10000
 
-[tools.create_ticket]
+[tools.ticketing]
 driver = "http"
 url = "https://tickets.internal/create"
 method = "POST"
 auth_env = "TICKET_API_TOKEN"
 timeout_ms = 10000
+
+[actions.Search]
+tool         = "web_search"
+result_event = "SearchResult"
+
+[actions.CreateTicket]
+tool = "ticketing"
 
 [memory]
 facts_driver = "sqlite"
@@ -2607,18 +3116,35 @@ Required stable tables:
 | `[provider]` | cognition backend for every `<-` to an agent | program reaches cognition |
 | `[prompts.NAME]` | external input source for `prompt T NAME;` | source declares that prompt |
 | `[identity.NAME]` | principal backend for `principal NAME;` | source declares that principal |
-| `[tools.NAME]` | tool implementation for `read/write tool ... NAME(...)` | source declares that tool |
+| `[tools.NAME]` | the endpoint catalog — a driver/transport for a world endpoint (§6b) | a wiring references it |
+| `[actions.NAME]` | wires a declared action's `perform` to a catalog endpoint (`tool = …`), with an optional `result_event` | the deployment wires that action |
+| `[events.NAME]` | wires a declared event as a standing sensor (`tool = …`) or an emit-trigger (`tool = …` + `result_event`) | the deployment wires that event |
+| `[security]` | ingress-to-cognition policy (`tainted_ingress_to_provider = "warn"|"deny"|"off"`) | optional; default is `warn` |
+| `[security.ingress.prompts.NAME]` | manifest-level ingress screening for a prompt source | optional; that prompt binding is screened |
+| `[security.ingress.events.NAME]` | manifest-level ingress screening for a standing sensor or result-event payload | optional; that event binding is screened |
 | `[memory]` | private-memory storage, indexing, and archival policy | runtime has private memory |
 
 Resolution rules:
 
-- The key `NAME` in `[prompts.NAME]`, `[identity.NAME]`, and `[tools.NAME]` is the source
+- The key `NAME` in `[prompts.NAME]` and `[identity.NAME]` is the source
   declaration's dependency name. A declared dependency with no binding is a `ConfigError` before
   execution. A binding for a name not declared in source is ignored or warned by default; strict mode
   may reject it as a `ConfigError`.
-- Source owns type, effect, and authority. For a tool, `read`/`write`, parameter types, and return
-  type come from the `.ag` declaration, never the manifest. The manifest chooses only the driver and
-  transport. If a driver cannot satisfy the declared shape, configuration fails.
+- `[tools.NAME]` keys are **catalog names**, not source names: tools are not source-declared
+  (§6b), so an unreferenced catalog entry is not an error. An `[actions.NAME]`/`[events.NAME]`
+  wiring entry must name a declared `action`/`event` and reference an existing `[tools.*]`
+  catalog entry in its `tool` field; its optional `result_event` must name a declared `event`.
+  A violation is a `ConfigError` before execution. A foreground-bound `perform` (§6b) whose
+  action has no configured `result_event` is a `ConfigError`. An unwired declared action or
+  event is pure — never an error (§6b).
+- Screening is manifest-only. A `[security.ingress.prompts.NAME]` table screens the inbound
+  payload for `prompt NAME`; a `[security.ingress.events.NAME]` table screens the inbound payload
+  for a standing sensor `event NAME`, an action `result_event = "NAME"`, or an emit-trigger
+  `result_event = "NAME"`. These tables do not create source syntax, do not change declared types,
+  and do not grant or deny action authority.
+- Source owns type and authority. An action's or event's fields come from the `.ag` declaration,
+  never the manifest; the manifest chooses only the endpoint, driver, transport, and wiring. If a
+  driver cannot satisfy the wired shape, configuration fails.
 - Secrets are references, not values. API keys, signing keys, OAuth tokens, and MCP credentials live
   in the environment, OS keychain, or host secret manager. The manifest may name them with fields
   such as `api_key_env`, `auth_env`, or `secret_ref`; it must not contain secret material.
@@ -2649,6 +3175,26 @@ Prompt bindings:
   drivers may be used by runtimes that support them.
 - The manifest does not restate the prompt type; the source declaration `prompt T NAME;` is
   authoritative. The driver must coerce or reject incoming payloads against `T`.
+- Without a matching `[security.ingress.prompts.NAME]` table, delivered prompt values carry ingress
+  provenance `external_unscreened`. With a matching table, the runtime records the screen input,
+  verdict, output, and resulting provenance; accepted values are delivered as `external_screened`,
+  and rejected values are not delivered as ordinary prompt data.
+
+Ingress security:
+
+- `[security].tainted_ingress_to_provider` governs only `external_unscreened` ingress flowing into
+  provider/cognition prompts (`<-`). The default is `warn`: a conformant checker/runtime emits an
+  audit diagnostic but allows the provider call. `deny` rejects the `(source, manifest)` pair when
+  statically visible and aborts before provider invocation if encountered dynamically. `off` accepts
+  silently. This is not an action-sink policy.
+- There is no manifest option for `tainted_to_action`, `ingress_to_action`, or any other
+  allow/warn/deny relaxation at `perform`. Consequential actions remain governed by the fixed
+  settled-only judgment-trust rule, grants, margin floor, and task-scope enablement (§13).
+- `[security.ingress.prompts.NAME]` and `[security.ingress.events.NAME]` tables configure ingress
+  screening backends. Their drivers and policies are implementation-defined, but a conformant
+  runtime must make screening replayable by recording the screener identity, input bytes or hash
+  plus recoverable payload reference, verdict, normalized output, and resulting ingress provenance.
+  Screening is a deployment boundary operation, not `.ag` source syntax.
 
 Identity bindings:
 
@@ -2658,23 +3204,25 @@ Identity bindings:
 - A principal decision must return a variant of the gated enum plus an attestation/signature payload
   recorded in `PrincipalDecision` or `FailedPrincipalDecision` (§13, §16.4).
 
-Tool bindings:
+The `[tools.*]` endpoint catalog (referenced by `[actions.*]`/`[events.*]` wiring, §6b):
 
-- `driver = "mcp"` binds a tool to an MCP server and issues `tools/call`.
-- `driver = "http"` binds a tool to an HTTP endpoint; args marshal by declared parameter names,
-  and the result must validate against the declared return type.
-- `driver = "web_search"` is a standardized read-tool class for search connectors; provider-specific
+- `driver = "mcp"` binds a catalog entry to an MCP server tool and issues `tools/call` — the
+  flagship driver: the catalog is how a deployment imports the MCP tool ecosystem (§6b).
+- `driver = "http"` binds a catalog entry to an HTTP endpoint; args marshal by the wired
+  action's/event's declared field names, and a result must validate against the wired
+  `result_event`'s declared fields.
+- `driver = "web_search"` is a standardized search-connector class; provider-specific
   fields (`provider`, `region`, `max_results`, etc.) live in the same `[tools.NAME]` table.
-- `driver = "host"` binds a tool to an in-process function supplied by the embedding runtime.
+- `driver = "host"` binds a catalog entry to an in-process function supplied by the embedding runtime.
 - `driver = "process"` or `"script"` may spawn a configured local command under the host's sandbox
-  policy; args still marshal by declared parameter names and results validate against the declared
-  return type.
-- `driver = "skill"` may bind a tool to a host-discovered skill/capability. The skill system is
-  outside the core kernel; the Agape contract is still the declared tool signature, authority,
-  effect, journaling, and replay behavior.
+  policy; args still marshal by declared field names and results validate against the wired
+  result event.
+- `driver = "skill"` may bind a catalog entry to a host-discovered skill/capability. The skill system is
+  outside the core kernel; the Agape contract is still the wired action/event shape, authority,
+  journaling, and replay behavior.
 - A conformant runtime may support additional drivers, but every invocation is still governed by
-  `use NAME`, `read`/`write` effect, typed marshalling, `ToolStarted`/`ToolResolved` journaling, and
-  replay from the recorded result (§6b, §16.4, §16.5).
+  the `perform NAME` grant (on the perform path), typed marshalling, `ToolStarted`/`ToolResolved`
+  journaling, optional result screening, and replay from the recorded result (§6b, §16.4, §16.5).
 
 Memory bindings:
 
@@ -2690,14 +3238,16 @@ Memory bindings:
 
 Decision rules are not in the manifest. A gate's threshold, margin, floor, conformal alpha, and
 readiness are written inline in source (`decide c by confidence θ margin δ floor m`, §13). The
-manifest binds dependencies and runtime storage/transport only; it is never a hidden policy layer.
+manifest binds dependencies, runtime storage/transport, and ingress-boundary security policy; it is
+never a hidden decision policy layer.
 Swapping a dependency backend changes no source, but it does change the `(source, manifest)` program
 being run (§17.3).
 
 ### 17.2 Scopes and precedence (lowest → highest)
 
-For **connector and dependency config** (provider backend/model, `exposes_logprobs`, the identity
-and tool bindings): 1. spec defaults; 2. global user config (`~/.agape/config.toml`); 3. project
+For **connector, dependency, and ingress-security config** (provider backend/model,
+`exposes_logprobs`, the identity bindings, the `[tools.*]` catalog and its wiring,
+`[security]`, and `[security.ingress.prompts/events.*]`): 1. spec defaults; 2. global user config (`~/.agape/config.toml`); 3. project
 manifest (`agape.toml`) — higher wins. **Decision rules are not on this ladder at all**: a gate's
 threshold, margin, and floor are inline on the gate (§13), so a threshold is never a hidden global —
 there is nothing in the manifest for a gate to override. Secrets (API keys, signing keys, MCP
@@ -2707,7 +3257,9 @@ credentials) come from the environment or OS keychain, never the manifest.
 
 The Stability theorem is stated for a fixed provider, and the committed manifest fixes it.
 A run is identified by `(I, manifest, recording)`. Changing the manifest changes the
-program's meaning, visible in version control.
+program's meaning, visible in version control; this includes changing the provider ingress policy
+or any ingress-screening binding. Recorded replay uses the recorded screening verdicts and
+delivered payloads rather than re-running screens.
 
 ### 17.4 Reproducibility in practice — two kinds of uncertainty, three knobs
 
@@ -2739,7 +3291,7 @@ sets only **connector/dependency** config for the run (e.g. `exposes_logprobs` t
 sampling fallback, §16.8).
 - **Kernel bypass coverage.** Every surface feature introduced above the kernel (the gate, memory
   store/recall, the ledger query, provider fallback, runtime adapters) must have negative tests
-  proving it cannot bypass taint, endorsement, grants, write-tool gating, or replay. A feature is
+  proving it cannot bypass taint, endorsement, grants, the perform-only outbound path, or replay. A feature is
   conformant only if its accepted forms reduce to kernel operations and its rejected forms fail at the
   correct boundary.
 - **Memory-envelope coverage.** Because the memory runtime (§16.7) is part of the contract, a
@@ -2750,7 +3302,7 @@ sampling fallback, §16.8).
   internalized (§16.7b); (4) idempotent re-ingestion of an unchanged artifact; (5) check/test/run
   *failure* internalization and (6) *success* internalization (§16.7c); (7) user-correction
   internalization and its retrieval precedence over inferred lessons; (8) memory provenance back to
-  ledger origin ticks (§10); (9) replay without re-invoking provider/tool/decomposition oracles
+  ledger origin ticks (§10); (9) replay without re-invoking provider/endpoint/decomposition oracles
   (§16.5); and (10) no memory-to-action trust laundering (§16.7, §13).
 
 ### 17.6 Runtime lockstep and release reporting
@@ -2775,15 +3327,16 @@ is considered implemented** — the runtime contract does not drift ahead of (or
 
 ## 18. Deployment
 
-An Agape runtime may run entirely in userspace: it executes programs, exposes the tool
-dependency as the gated capability surface, enforces the membrane (the capability and gating
+An Agape runtime may run entirely in userspace: it executes programs, exposes the world
+through wired events and actions (§6b) as the gated capability surface, enforces the membrane
+(the capability and gating
 discipline of §13), and writes every consequential action to the ledger for audit and replay.
 No kernel support is required for conformance.
 
 The intended deployment trajectory is stronger than "an app engine that happens to run
 Agape." The trusted kernel can be the infrastructure component itself: a cloud control plane
-whose service calls are Agape write tools, a microservice fabric whose inter-service messages
-are ledgered Agape events, or an OS/runtime boundary where process, storage, network, and tool
+whose service calls are wired Agape actions, a microservice fabric whose inter-service messages
+are ledgered Agape events, or an OS/runtime boundary where process, storage, network, and world
 effects are mediated by Agape grants and gates. In all of these deployments, the substrate is
 conformant only if it preserves the same kernel contract: declared dependencies for external
 power, ledgered decisions plus committed subject endorsements for cognition-derived consequences,

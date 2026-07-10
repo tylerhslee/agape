@@ -1,0 +1,15 @@
+//! id:        world_wired_perform_result_event_ok
+//! section:   06b_world
+//! expect:    accept
+//! order:     Ask; ToolStarted(t1); ToolResolved(t1); Answer; Got
+//! manifest:  tools.t1.driver=mock; actions.Ask.tool=t1; actions.Ask.result_event=Answer
+//! spec:      §6b (a wiring's result_event lands the endpoint's reply as the named event row after the journal pair; a statement-form perform consumes it reactively via `when`)
+//! ---
+event Answer(text body);
+event Got(text m);
+action Ask(text q);
+agent A grants { perform Ask } {
+  when (Answer x) { emit Got(x.body); }
+  on awake { perform Ask("what is agape?"); }
+}
+spawn A a; awake a;

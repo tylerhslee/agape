@@ -2,10 +2,11 @@
 //! section:   07_ledger
 //! expect:    accept
 //! contains:  pair(Tool@search)
-//! spec:      §6b, §7 (a tool call appends a ToolStarted/ToolResolved pair)
+//! manifest:  tools.search.driver=mock; actions.Search.tool=search
+//! spec:      §6b, §7 (a wired perform appends the seam's ToolStarted/ToolResolved journal pair beneath the action's domain row, correlated by catalog name)
 //! ---
-read tool text search(text q);
-agent R grants { use search } {
-  text hits = search("agape");
+action Search(text q);
+agent R grants { perform Search } {
+  on awake { perform Search("agape"); }
 }
 spawn R r; awake r;

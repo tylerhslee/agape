@@ -1,6 +1,6 @@
 # Agape v1.0.0-alpha.2026.7.9.0 — Conformance Test Index
 
-**168 tests** — accept: 104, reject: 64
+**207 tests** — accept: 128, reject: 79
 
 A conformant implementation must satisfy every `accept`/`reject` test (rejects with the declared error class; accepts matching any asserted spine).
 
@@ -10,7 +10,7 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 | id | expect | error | spec |
 |---|---|---|---|
 | `lex_comment_fstring` | accept | — | §2 (line comments; f-string interpolation; INT/FLOAT literals) |
-| `lex_contextual_word_as_identifier` | accept | — | §2 (contextual words `as`/`by`/`reach`/`use`/`origin` lex as identifiers out of position) |
+| `lex_contextual_word_as_identifier` | accept | — | §2 (contextual words `as`/`by`/`reach`/`origin` lex as identifiers out of position) |
 | `lex_reject_fstring_escaped_brace` | reject | ParseError | §2 (f-string braces introduce parsed expressions; escaped literal braces are not part of the grammar) |
 | `lex_reject_keyword_as_identifier` | reject | ParseError | §2 (reserved keywords may not be used as identifiers) |
 | `lex_reject_leading_dot_number` | reject | ParseError | §2 (Float is decimal digits with a point; `.5` is not a numeric literal) |
@@ -54,8 +54,8 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 | `type_struct_extra_field_reject` | reject | TypeError | §3, §8 (struct literals/schema objects are exact; extra fields are rejected) |
 | `type_struct_missing_field_reject` | reject | TypeError | §3 (all struct fields required; no optional-by-omission) |
 | `type_undeclared_emit_reject` | reject | TypeError | §3 (events are not self-declaring; emit of an undeclared type is a TypeError) |
+| `type_undeclared_function_call_reject` | reject | TypeError | §4, §8 (a bare call to an undeclared name is a TypeError — functions, like events, are not self-declaring) |
 | `type_undeclared_perform_reject` | reject | TypeError | §3 (actions are not self-declaring; perform of an undeclared type is a TypeError) |
-| `type_undeclared_tool_call_reject` | reject | TypeError | §6b (an undeclared tool call is a TypeError — tools, like events, are not self-declaring) |
 
 ## 04_functions
 
@@ -68,7 +68,6 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 | `fn_sync_pure_ok` | accept | — | §4 (a sync fn that reaches no declared dependency is well-formed) |
 | `fn_sync_reaches_seam_reject` | reject | ColorViolation | §1 Axis A, §4 (a sync fn may not reach the provider via `<-`) |
 | `fn_sync_store_reject` | reject | ColorViolation | §9, §10 (a mem write reaches the provider-backed memory substrate to internalize, so a sync function may not store) |
-| `fn_sync_tool_call_reject` | reject | ColorViolation | §4, §6b (a tool call reaches the tool dependency → async) |
 | `fn_taint_flows_through_call_reject` | reject | TaintViolation | §15.3.3 (function calls are trust-transparent; taint flowing through a helper still cannot reach a consequential sink) |
 
 ## 05_agents
@@ -82,8 +81,11 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 | `agent_instruction_global_accept` | accept | — | §5 (a top-level `instruction` is the global compile-time system prompt) |
 | `agent_instruction_requires_string_reject` | reject | ParseError | §5 (`instruction` takes a string literal — the system prompt) |
 | `agent_instruction_scoped_accept` | accept | — | §5 (an agent-scoped `instruction` composes after the global block) |
+| `agent_prompt_ingress_to_provider_deny` | reject | TaintViolation | §5b, §17 (deny-mode provider-prompt ingress policy rejects unscreened prompt ingress before it reaches cognition) |
+| `agent_prompt_ingress_to_provider_warn` | accept | — | §5b, §17 (default provider-prompt ingress policy warns when judgment-settled but unscreened prompt ingress is interpolated into cognition) |
 | `agent_prompt_opens_sensor` | accept | — | §5b (a `prompt` declaration opens a standing external input sensor) |
-| `agent_prompt_value_drives_perform_ok` | accept | — | §5b, §13 (a prompt value is external data, settled by origin, and may drive a perform) |
+| `agent_prompt_screened_ingress_to_provider_ok` | accept | — | §5b, §17 (a manifest-screened prompt ingress value is external_screened, so it may feed cognition without warning even under deny mode) |
+| `agent_prompt_value_drives_perform_ok` | accept | — | §5b, §13 (a prompt value is judgment-settled external ingress and may drive a perform) |
 | `agent_reawake_no_reconstruct` | accept | — | §5 (re-awake resumes the agent: no re-bind, no re-construct) |
 | `agent_sleep_runs_hook` | accept | — | §5 (sleep closes the mailbox and runs the on-sleep hook) |
 | `agent_spawn_instantiate_only` | accept | — | §5 (spawn instantiates + constructs only: no mailbox, no awake hook) |
@@ -100,6 +102,61 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 | `comm_send_lost_no_delivery` | accept | — | §6 (a send to a non-awake agent is lost — the chain stalls at Sent, never Delivered; loss is the absence of Delivered, not an event) |
 | `comm_typed_reply` | accept | — | §6 (a typed reply binds the provider answer into a typed value; the send lifecycle is ledgered) |
 
+## 06b_world
+
+| id | expect | error | spec |
+|---|---|---|---|
+| `world_emit_wired_result_taint_join_reject` | reject | TaintViolation | §6b, §13 (no laundering: a result_event payload carries the JOIN of the triggering emit's payload trust — a raw query taints its own results, which then cannot drive a consequential perform un-gated) |
+| `world_emit_wired_tainted_ok` | accept | — | §6b (emit is not a consequential sink, so an emit-trigger wiring is the loose observation channel: a RAW payload may flow out — an explicit, manifest-visible opt-out of the perform path's guarantee) |
+| `world_foreground_binding_no_result_event_reject` | reject | ConfigError | §6b, §17.1 (a foreground binding on an action wired with no result_event is a ConfigError — there is nothing to bind the reply to) |
+| `world_foreground_binding_requires_expires_reject` | reject | TypeError | §6b, §6c (`expires` is mandatory on the result-binding form of perform — terminal by construction, like every delegation) |
+| `world_foreground_perform_binding_ok` | accept | — | §6b, §13 (foreground perform binding: a wired action with a result_event binds its reply like a §6c delegation; a judgment-settled request yields judgment-settled external ingress, which may drive a further perform) |
+| `world_perform_unsettled_reject` | reject | TaintViolation | §6b, §13 (every perform is a consequential sink taking settled args only — anti-exfiltration: un-endorsed cognition never leaves the process on the perform path) |
+| `world_perform_unsettled_unwired_reject` | reject | TaintViolation | §6b, §13 (the settled-only rule for perform args is UNIFORM: it does not depend on whether the deployment wires the action — checker semantics never depend on the manifest) |
+| `world_replay_chain_head` | accept | — | §6b, §16.5 (recorded replay of a wired perform regenerates the same chain-head: the seam's journal pair re-serves the endpoint result and nothing is re-invoked) |
+| `world_result_event_ingress_to_provider_warn` | accept | — | §6b, §17 (default provider-prompt ingress policy warns when unscreened result-event ingress is interpolated into cognition) |
+| `world_result_event_screened_ingress_to_provider_ok` | accept | — | §6b, §17 (a manifest-screened result-event ingress value is external_screened, so it may feed cognition without warning even under deny mode) |
+| `world_sync_perform_reject` | reject | ColorViolation | §4, §6b (every perform is async — whether an act reaches the world is a deployment fact the checker must not depend on; a `sync` function may not perform) |
+| `world_unwired_action_pure_ok` | accept | — | §6b (unwired = pure: an unwired action is a ledgered performative — the act is the record; no seam journal pair appears) |
+| `world_wired_perform_invokes_ok` | accept | — | §6b (an [actions.NAME] wiring makes perform invoke the catalog endpoint: the action's own domain row, then the seam's ToolStarted/ToolResolved journal pair correlated by catalog name) |
+| `world_wired_perform_result_event_ok` | accept | — | §6b (a wiring's result_event lands the endpoint's reply as the named event row after the journal pair; a statement-form perform consumes it reactively via `when`) |
+
+## 06c_delegation
+
+| id | expect | error | spec |
+|---|---|---|---|
+| `del_background_expiry_alias` | accept | — | §6c (TaskExpired is a subscription ALIAS for Expired filtered to task-sends — no row of its own; a background expiry never faults the delegator) |
+| `del_background_when_completed` | accept | — | §6c (a background task-send binds a settled Task<T> handle; the outcome is observed with `when (TaskCompleted … about h)`; delivery may span ticks — §6) |
+| `del_cancel_after_terminal_noop` | accept | — | §6c, §16.3a (the first terminal wins: cancel of an already-terminal task appends nothing) |
+| `del_cancel_non_handle_reject` | reject | TypeError | §6c, §15.3.3 (`cancel` takes a Task<T> handle) |
+| `del_cancel_tombstone` | accept | — | §6c (cancel appends the authoritative TaskCancelled tombstone; the first terminal wins — a cancelled task neither delivers nor expires) |
+| `del_complete_outside_task_reject` | reject | TypeError | §6c, §15.3.3 (`complete`/`fail` are legal only inside a task handler) |
+| `del_empty_task_block_reject` | reject | TypeError | §6c (an empty task block is a compile error — objective and acceptance are required) |
+| `del_endorsed_completion_settled_ok` | accept | — | §6c (a worker that completes with an Endorsement<T> hands over a settled, ledger-backed subject — the delegator may sink it directly) |
+| `del_endorsed_scoped_perform_ok` | accept | — | §6c, §13 (the canonical scoped flow: draft task → decide → endorse in the committed branch → send Endorsement<TaskSpec> → the worker's statically-granted perform is task-enabled) |
+| `del_expires_settled_expr_ok` | accept | — | §6, §6c (`expires` accepts any settled numeric expression, not only a literal) |
+| `del_expires_unsettled_reject` | reject | TaintViolation | §6, §6c (`expires` requires a SETTLED numeric expression; a cognition-derived lifetime is rejected) |
+| `del_expiry_faults_foreground` | accept | — | §6c, §16.6 (mandatory expiry converts a lost task-send into a signal: the Expired tombstone faults the awaiting foreground invocation) |
+| `del_fanout_shared_worker_concurrent_ok` | accept | — | §6c + §12 — fan-out delegation composes with `|>`: a delegating function mapped over a finite collection to a SHARED worker runs its foreground tasks concurrently (paths overlap, §12), all complete, and the ledger replays identically (§0.2 determinism is serialized EFFECTS, not serialized execution — no shared mutable state to race over) |
+| `del_fanout_spawn_expr_distinct_workers_ok` | accept | — | §6c + §12 + §15.4 — the `spawn` EXPRESSION (`Worker w = spawn Worker;`) mints a FRESH distinct worker per fan-out element, so `xs |> f` builds a dynamic collection of workers; each verifies one delegated task, and instance names are derived from (call-site, element index), not execution order, so the ledger replays byte-identically |
+| `del_foreground_complete_ok` | accept | — | §6c (a foreground task-send: the worker's `complete` produces the transport Resolved plus TaskCompleted, and the delegator's continuation resumes with the result) |
+| `del_foreground_failure_faults` | accept | — | §6c, §16.6 (a foreground task terminal other than TaskCompleted faults the delegator's awaiting invocation via the contained-crash path; `on crash` recovers with state intact) |
+| `del_missing_expires_reject` | reject | TypeError | §6c (`expires` is mandatory on every delegation — every task is terminal by construction) |
+| `del_no_assigned_handler_expires` | accept | — | §6c (an assigned task with no completing handler is not an error; the mandatory expiry backstops it with a tombstone) |
+| `del_objective_missing_reject` | reject | TypeError | §6c (a task literal requires BOTH `objective` and `acceptance`) |
+| `del_objective_not_text_reject` | reject | TypeError | §6c (`objective` and `acceptance` must be `text`) |
+| `del_perform_unscoped_task_faults` | accept | — | §6c, §13, §16.6 (a perform inside an assigned task requires the active task to be endorsed AND to name the action in scope; a plain task enables nothing — the action faults with TaskScopeViolation and does not run) |
+| `del_progress_outside_task_reject` | reject | TypeError | §6c (TaskProgress is emittable only inside a task handler — it correlates to the active task) |
+| `del_progress_then_cancelled_hook` | accept | — | §6c (TaskProgress is the repeatable worker event; cancel mid-task is cooperative — the worker's `on cancelled` hook fires, nothing is preempted) |
+| `del_reach_required_reject` | reject | AuthorityViolation | §6c, §13 (delegation is a send: reaching a worker requires the `reach` power, default-deny) |
+| `del_result_raw_to_sink_reject` | reject | TaintViolation | §6c, §13 (a delegated result is RAW by default — delegation never launders trust; it cannot drive a consequential sink un-gated) |
+| `del_scope_not_held_reject` | reject | AuthorityViolation | §6c, §15.3.3 W-Scope-Attenuate (a task scope can only ATTENUATE the delegator's authority — each scoped action must be held by the delegator itself) |
+| `del_scope_unendorsed_send_reject` | reject | TaintViolation | §6c, §15.3.3 W-Scope-Attenuate (a task carrying a `scope` clause is enabling only when endorsed; sending an unendorsed scoped task is rejected) |
+| `del_tainted_objective_ok` | accept | — | §6c (a generated objective stays tainted but an UNSCOPED task may still be sent — taint matters at sinks, and a plain task grants nothing) |
+| `del_taskspec_draft_binding_ok` | accept | — | §6c (a task literal is an expression: a TaskSpec draft may be bound first and sent later; expires stays mandatory at the send) |
+| `del_unbound_statement_reject` | reject | TypeError | §6c (bare statement-form delegation is a compile error — hold the result or the Task<T> handle; every task is addressable) |
+| `del_worker_fail_records` | accept | — | §6c (`fail reason` appends TaskFailed; the transport chain rests at its Delivered prefix — a stalled prefix is not a violation; a background delegator observes it with `when`) |
+
 ## 07_ledger
 
 | id | expect | error | spec |
@@ -108,7 +165,7 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 | `ledger_multi_handler_order` | accept | — | §7 (when several subscriptions match one appended event in one tick, they fire in registration/hoist order — within a scope, lexical order) |
 | `ledger_prospective_only` | accept | — | §7 (subscriptions are prospective; never fire for prior events) |
 | `ledger_query_result_event` | accept | — | §10 (a query STATEMENT lands a QueryResult event on the ledger) |
-| `ledger_tool_pair` | accept | — | §6b, §7 (a tool call appends a ToolStarted/ToolResolved pair) |
+| `ledger_tool_pair` | accept | — | §6b, §7 (a wired perform appends the seam's ToolStarted/ToolResolved journal pair beneath the action's domain row, correlated by catalog name) |
 | `ledger_when_about_filters` | accept | — | §7 (a `when (Type b about subj)` fires only for events about the held subject; the bound event evaluates to its payload) |
 | `ledger_when_guard_ok` | accept | — | §7 (a `when … if (guard)` filters by an ordinary predicate over the bound event's fields) |
 
@@ -191,7 +248,6 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 | `gov_endorsed_perform_ok` | accept | — | §13 (a recorded subject endorsement licenses a consequential perform in its committed branch) |
 | `gov_endorsed_subject_allows_perform` | accept | — | §13 (endorsing the exact subject settles it; the endorsement is sink-admissible inside a committed branch, licensing a perform) |
 | `gov_endorsement_subject_collision_accept` | accept | — | §13 (Endorsement metadata accessors win name collisions; the subject field remains reachable through `.subject`) |
-| `gov_extend_use_subtractive_reject` | reject | AuthorityViolation | §5, §13 (capabilities, incl. `use`, are subtractive under extend) |
 | `gov_grants_star_ok` | accept | — | §13 (grants { * } is the explicit unconstrained opt-out — lattice top) |
 | `gov_margin_floor_abstains` | accept | — | §13 (a rule's `margin δ` requires the top-vs-runner-up lead ≥ δ at decision time; a 0.10 lead below the 0.20 margin records a Decided abstention, so no Endorsed is recorded) |
 | `gov_perform_reach_subtractive_reject` | reject | AuthorityViolation | §5, §13 (grants are subtractive under extend for `perform`/`reach` too — a child may not exceed its parent's authority) |
@@ -201,14 +257,6 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 | `gov_principal_decision_records` | accept | — | §13, §16.4 (a granted `p decide c by r` records PrincipalDecision, then the canonical Decided outcome) |
 | `gov_raw_subject_to_sink_reject` | reject | TaintViolation | §13 (endorse never settles the raw subject variable; only the endorsement binder reaches a sink — performing the raw subject is rejected, in any branch) |
 | `gov_reach_ungranted_reject` | reject | AuthorityViolation | §13 (sending into another agent requires a `reach` grant) |
-| `gov_read_tool_settled_perform_ok` | accept | — | §6b, §13 (a read tool over settled inputs yields a settled result — external data settled by origin — that may drive a perform) |
-| `gov_tool_requires_effect_class_reject` | reject | ParseError | §6b, §15.2 (every tool declares an effect class — `read` or `write`; omitting it is a ParseError) |
-| `gov_tool_result_tainted_perform_reject` | reject | TaintViolation | §6b, §13 (a tool result carries the join of its inputs' trust; a cognition-derived input is un-settled → cannot drive a consequential perform without a gate) |
-| `gov_use_tool_granted_ok` | accept | — | §6b, §13 (a granted `use TOOL` permits the tool call) |
-| `gov_use_tool_ungranted_reject` | reject | AuthorityViolation | §6b, §13 (default-deny: a tool call needs a `use` grant) |
-| `gov_write_tool_replay_chain_head` | accept | — | §16.5 (recorded replay of a write tool regenerates the same chain-head from journaled tool results) |
-| `gov_write_tool_settled_ok` | accept | — | §6b, §13 (a write tool called with settled inputs is permitted) |
-| `gov_write_tool_unsettled_reject` | reject | TaintViolation | §6b, §13 (a write tool is a consequential sink; a cognition-derived input is un-settled → reject) |
 
 ## 15_reproducibility
 
@@ -225,14 +273,15 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 | `cfg_manifest_decision_policy_reject` | reject | ConfigError | §17.1, §17.2 (decision rules live in source, not the manifest; config cannot set gate thresholds) |
 | `cfg_missing_principal_binding_reject` | reject | ConfigError | §17.1 (each principal declaration resolves to an identity binding; an unbound declared dependency is ALWAYS a ConfigError, not a late runtime lookup — no opt-in flag) |
 | `cfg_missing_prompt_binding_reject` | reject | ConfigError | §17.1 (each prompt declaration resolves to a manifest binding; an unbound declared dependency is ALWAYS a ConfigError, not a late runtime lookup — no opt-in flag) |
-| `cfg_missing_tool_binding_reject` | reject | ConfigError | §17.1 (each tool declaration resolves to a configured world capability; an unbound declared dependency is ALWAYS a ConfigError, not a late runtime lookup — no opt-in flag) |
 | `cfg_require_fallback_temperature_reject` | reject | ConfigError | §17 (a text-only provider at temperature 0 requires fallback_temperature for the sampling fallback) |
 | `cfg_sampling_fallback` | accept | — | §16.8, §17 (a text-only provider is served by the sampling fallback: the credence is the empirical frequency of N forced draws; a confident judgment still commits) |
 | `cfg_sampling_fallback_disabled_defers` | accept | — | §13, §17 (without logprobs or the sampling fallback, a conformal gate has no distribution and degrades to deferral/abstain) |
-| `cfg_strict_bindings_ok` | accept | — | §17.1 (declared dependencies pass configuration binding when every dependency has a manifest entry) |
-| `cfg_tool_binding_missing_driver_reject` | reject | ConfigError | §17.1 (a tool binding table must name a driver; connector-specific fields are not enough) |
-| `cfg_tool_host_binding_accept` | accept | — | §17.1 ([tools.NAME] can bind a declared tool to implementation-defined host functions, scripts, processes, or skills) |
-| `cfg_tool_mcp_binding_accept` | accept | — | §17.1 ([tools.NAME] binds a declared tool dependency; MCP is one supported tool transport) |
+| `cfg_strict_bindings_ok` | accept | — | §17.1 (declared dependencies pass configuration binding when every dependency has a manifest entry and every wiring references an existing catalog key and a declared name) |
+| `cfg_tool_binding_missing_driver_reject` | reject | ConfigError | §17.1 (a [tools.*] catalog entry must name a driver; connector-specific fields are not enough) |
+| `cfg_tool_host_binding_accept` | accept | — | §6b, §17.1 (a [tools.*] catalog entry can bind to implementation-defined host functions, scripts, processes, or skills; the wiring is unchanged) |
+| `cfg_tool_mcp_binding_accept` | accept | — | §6b, §17.1 ([tools.*] is the endpoint catalog and MCP is one supported transport; an action wires to a catalog entry by its key) |
+| `cfg_wiring_missing_catalog_key_reject` | reject | ConfigError | §6b, §17.1 (an [actions.NAME] wiring must reference an existing [tools.*] catalog entry; a missing catalog key is ALWAYS a ConfigError, not a late runtime lookup) |
+| `cfg_wiring_undeclared_action_reject` | reject | ConfigError | §6b, §17.1 (an [actions.NAME]/[events.NAME] wiring must name a DECLARED action or event; wiring an undeclared name is a ConfigError) |
 
 ## 22_gate
 

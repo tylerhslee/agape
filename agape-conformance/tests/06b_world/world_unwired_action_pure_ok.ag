@@ -1,0 +1,12 @@
+//! id:        world_unwired_action_pure_ok
+//! section:   06b_world
+//! expect:    accept
+//! contains:  Announce
+//! absent:    ToolStarted; ToolResolved
+//! spec:      §6b (unwired = pure: an unwired action is a ledgered performative — the act is the record; no seam journal pair appears)
+//! ---
+action Announce(text note);
+agent A grants { perform Announce } {
+  on awake { perform Announce("shipping v2"); }
+}
+spawn A a; awake a;

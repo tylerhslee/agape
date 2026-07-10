@@ -1,0 +1,14 @@
+//! id:        world_perform_unsettled_unwired_reject
+//! section:   06b_world
+//! expect:    reject
+//! error:     TaintViolation
+//! spec:      §6b, §13 (the settled-only rule for perform args is UNIFORM: it does not depend on whether the deployment wires the action — checker semantics never depend on the manifest)
+//! ---
+action Ask(text q);
+agent A grants { perform Ask } {
+  on awake {
+    text q = self <- "what should we ask the world?";
+    perform Ask(q);
+  }
+}
+spawn A a; awake a;

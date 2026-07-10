@@ -1,0 +1,20 @@
+//! id:        del_no_assigned_handler_expires
+//! section:   06c_delegation
+//! expect:    accept
+//! order:     Sent(h); Delivered(h); Expired(h)
+//! absent:    TaskCompleted(h); AgentCrashed(lead)
+//! spec:      §6c (an assigned task with no completing handler is not an error; the mandatory expiry backstops it with a tombstone)
+//! ---
+agent Worker {
+  on awake { say("awake but idle"); }
+}
+agent Lead grants { reach Worker } {
+  on awake {
+    spawn Worker w; awake w;
+    Task<int> h = w <- task {
+      objective "produce the number";
+      acceptance "an int";
+    } expires 2;
+  }
+}
+spawn Lead lead; awake lead;

@@ -1,0 +1,33 @@
+//! id:        del_fanout_spawn_expr_distinct_workers_ok
+//! section:   06c_delegation
+//! expect:    accept
+//! order:     TaskCompleted(r); TaskCompleted(r); TaskCompleted(r); Done
+//! replay:    chain_head_equal
+//! spec:      §6c + §12 + §15.4 — the `spawn` EXPRESSION (`Worker w = spawn Worker;`) mints a FRESH distinct worker per fan-out element, so `xs |> f` builds a dynamic collection of workers; each verifies one delegated task, and instance names are derived from (call-site, element index), not execution order, so the ledger replays byte-identically
+//! ---
+event Done(int n);
+
+agent Worker {
+  on assigned { text a = self <- "ack"; complete 1; }
+}
+
+// each mapped path mints its OWN worker via the spawn expression, then delegates one task to it.
+int verifyOne(int item) {
+  Worker w = spawn Worker;
+  awake w;
+  int r = w <- task {
+    objective  "verify one item";
+    acceptance "an int";
+  } expires 10;
+  return r;
+}
+
+agent Lead grants { reach Worker } {
+  on awake {
+    int[] items = [1, 2, 3];
+    int[] rs = items |> verifyOne;   // three DISTINCT workers, count decided at runtime
+    emit Done(3);
+  }
+}
+
+spawn Lead lead; awake lead;

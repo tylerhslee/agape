@@ -1,0 +1,13 @@
+//! id:        del_cancel_non_handle_reject
+//! section:   06c_delegation
+//! expect:    reject
+//! error:     TypeError
+//! spec:      §6c, §15.3.3 (`cancel` takes a Task<T> handle)
+//! ---
+agent A {
+  on awake {
+    int n = 5;
+    cancel n;
+  }
+}
+spawn A a; awake a;

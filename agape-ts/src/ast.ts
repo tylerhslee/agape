@@ -15,6 +15,7 @@ export type TypeRef =
   | { kind: "credence"; enumName: string }
   | { kind: "decision"; enumName: string }
   | { kind: "endorsement"; inner: TypeRef }
+  | { kind: "task"; inner: TypeRef } // Task<T> — a background-task handle (§6c)
   | { kind: "named"; name: string; typeArgs?: TypeRef[] }; // enum/struct/agent/action/Principal/LedgerEntry; typeArgs at a generic-instantiation site (§19.5)
 
 // ---- Program & declarations ----
@@ -40,7 +41,7 @@ export interface ImportDecl extends Node {
   alias?: string; // the rebound prefix, when `import M as X` (whole-module only)
 }
 
-export type Decl = EnumDecl | StructDecl | ActionDecl | EventDecl | AgentDecl | InstructionDecl | ToolDecl | FnDecl | InterfaceDecl | PrincipalDecl | PromptDecl | ConfDecl | PolicyDecl;
+export type Decl = EnumDecl | StructDecl | ActionDecl | EventDecl | AgentDecl | InstructionDecl | FnDecl | InterfaceDecl | PrincipalDecl | PromptDecl | ConfDecl | PolicyDecl;
 
 // `principal NAME config?;` (§3, grammar §15.2 line 1463) — declares an accountable identity, a
 // declared dependency bound to an identity backend by config (§17.1). Opaque, unforgeable,
@@ -112,16 +113,6 @@ export interface InstructionDecl extends Node {
   kind: "instruction";
   text: string;
 }
-// A tool — the world dependency (§6b). The effect class is mandatory.
-export interface ToolDecl extends Node {
-  kind: "tool";
-  effect: "read" | "write";
-  reversible: boolean;
-  ret: TypeRef;
-  name: string;
-  params: Field[];
-  pub?: boolean;
-}
 // A minimal function declaration (§15.2). Only `sync`-color checking is modeled here.
 export interface FnDecl extends Node {
   kind: "fn";
@@ -159,6 +150,9 @@ export interface AgentDecl extends Node {
   ifaces?: string[]; // implemented interfaces (`: Iface, …`) — nominal conformance (§19.5)
   pub?: boolean;
 }
+// §13: grants are exactly the two outbound powers — `perform` (actions) and `reach` (agents).
+// The legacy `use` class still PARSES (so an old program is rejected with a clean TypeError by the
+// checker, not a ParseError) but grants no authority.
 export type Grant =
   | { cap: "perform"; name: string }
   | { cap: "reach"; name: string }
@@ -182,7 +176,27 @@ export type Stmt =
   | ForgetStmt
   | DepDeclStmt
   | RetryStmt
+  | CompleteStmt
+  | FailStmt
+  | CancelStmt
   | ExprStmt;
+
+// §6c task verbs. `complete e;` resolves the active assigned task with a computed value (the
+// programmatic Resolved); `fail e;` records a terminal TaskFailed(reason). Both are legal only
+// inside a task handler. `cancel h;` (delegator-side) appends the authoritative TaskCancelled
+// tombstone for the Task<T> handle `h` — cooperative, never preemptive.
+export interface CompleteStmt extends Node {
+  kind: "complete";
+  value: Expr;
+}
+export interface FailStmt extends Node {
+  kind: "fail";
+  reason: Expr;
+}
+export interface CancelStmt extends Node {
+  kind: "cancel";
+  handle: Expr;
+}
 
 // `{ block } retry(N)` (§11, §15.2) — the ONLY loop, bounded: re-attempt the block up to N times on a fault
 // (an `Error`, e.g. a `TypeMismatch` from a malformed reply); on exhaustion, emit `RetryExhausted` and the
@@ -265,7 +279,7 @@ export interface IfStmt extends Node {
 }
 export interface OnHook extends Node {
   kind: "on";
-  event: "awake" | "sleep" | "crash";
+  event: "awake" | "sleep" | "crash" | "assigned" | "cancelled";
   body: Stmt[];
 }
 export interface WhenStmt extends Node {
@@ -312,6 +326,7 @@ export type Expr =
   | SelfExpr
   | IdentExpr
   | CallExpr
+  | SpawnExpr
   | MemberExpr
   | IndexExpr
   | BinaryExpr
@@ -319,6 +334,8 @@ export type Expr =
   | AggExpr
   | QuorumExpr
   | PipeExpr
+  | TaskLit
+  | PerformExpr
   | ArrayLit;
 
 // `("all"|"any") "(" expr ("," expr)* ")"` — reduce a comma-list of operands OR a single
@@ -422,7 +439,27 @@ export interface SendExpr extends Node {
   kind: "send";
   dest: Expr;
   message: Expr;
-  expires?: number;
+  expires?: Expr; // a SETTLED numeric expression (§6); MANDATORY when the message is a TaskSpec (§6c)
+}
+
+// §6b foreground perform binding: `T r = perform Search(q) expires N;` — an EXPRESSION-position
+// perform, legal only result-bound on an action wired with a `result_event`. Follows the §6c
+// delegation discipline: `expires` mandatory, failure/expiry faults the awaiting invocation.
+export interface PerformExpr extends Node {
+  kind: "performexpr";
+  name: string;
+  args: Expr[];
+  expires?: Expr;
+}
+
+// `task { objective o; acceptance a; scope { perform X } }` — a TaskSpec-building expression (§6c).
+// objective/acceptance are REQUIRED (text); the parser records what it saw and the checker/runtime
+// reject a missing/mistyped clause (a TypeError, not a ParseError). `scope` lists action names.
+export interface TaskLit extends Node {
+  kind: "tasklit";
+  objective?: Expr;
+  acceptance?: Expr;
+  scope: string[];
 }
 export interface FStringExpr extends Node {
   kind: "fstring";
@@ -436,6 +473,9 @@ export interface NullLit extends Node { kind: "null"; }
 export interface SelfExpr extends Node { kind: "self"; }
 export interface IdentExpr extends Node { kind: "ident"; name: string; }
 export interface CallExpr extends Node { kind: "call"; callee: Expr; args: Expr[]; }
+// §6/§15.4: the expression form of spawn — `Verifier v = spawn Verifier;` — mints a FRESH instance
+// per evaluation (a distinct, deterministically-named agent), for a dynamic collection of workers.
+export interface SpawnExpr extends Node { kind: "spawnexpr"; agentType: string; args: Expr[]; }
 export interface MemberExpr extends Node { kind: "member"; obj: Expr; field: string; }
 export interface IndexExpr extends Node { kind: "index"; obj: Expr; index: Expr; } // `a[i]` element access (§10)
 export interface BinaryExpr extends Node { kind: "binary"; op: string; left: Expr; right: Expr; }

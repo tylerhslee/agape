@@ -7,7 +7,7 @@
 import type * as A from "./ast.js";
 import { parse } from "./parser.js";
 import { typeError, exhaustivenessError, colorViolation, authorityViolation, taintViolation, interfaceError, visibilityError, moduleError, configError, gateError } from "./errors.js";
-import { hasConfiguredBinding, type Manifest, type BindingConfig } from "./config.js";
+import { hasConfiguredBinding, type Manifest, type BindingConfig, type WiringConfig } from "./config.js";
 
 // a coarse type class — enough to catch shape mismatches without a full type system.
 // `credarray` narrowly tracks an `array<Credence<…>>` (a credence collection produced by a query or an
@@ -25,7 +25,6 @@ interface Decls {
   // A name absent from this map (or mapped false) is a non-reversible, consequential sink.
   actionReversible: Map<string, boolean>;
   events: Map<string, A.Field[]>;
-  tools: Map<string, A.ToolDecl>;
   agents: Map<string, A.AgentDecl>;
   interfaces: Map<string, A.InterfaceDecl>;
   // user function declarations (§4/§15.2), keyed by name (bare and, for imports, qualified). Used by the
@@ -44,7 +43,9 @@ interface Decls {
 }
 
 // the built-in event roots (§9): a generic `Event`/`Error` may be emitted with any payload, no decl.
-const BUILTIN_EVENTS = new Set(["Event", "Error"]);
+// `TaskProgress` (§6c) is the worker-emittable repeatable task event — statically admissible; the
+// RUNTIME requires an active task handler (emitting it outside one is a TypeError there).
+const BUILTIN_EVENTS = new Set(["Event", "Error", "TaskProgress"]);
 
 class Scope {
   vars = new Map<string, Cls>();
@@ -398,7 +399,7 @@ function collectBareUses(program: A.Program): Set<string> {
   const out = new Set<string>();
   const addType = (t: A.TypeRef): void => {
     if (t.kind === "named" && !t.name.includes(".")) out.add(t.name);
-    if (t.kind === "array" || t.kind === "event" || t.kind === "endorsement") addType(t.inner);
+    if (t.kind === "array" || t.kind === "event" || t.kind === "endorsement" || t.kind === "task") addType(t.inner);
     if (t.kind === "named" && t.typeArgs) for (const a of t.typeArgs) addType(a);
   };
   const addExpr = (e: A.Expr): void => {
@@ -458,7 +459,7 @@ function collectQualifiedRefs(program: A.Program): Set<string> {
   const addName = (n: string): void => { if (n.includes(".")) out.add(n); };
   const addType = (t: A.TypeRef): void => {
     if (t.kind === "named") { addName(t.name); if (t.typeArgs) for (const a of t.typeArgs) addType(a); }
-    if (t.kind === "array" || t.kind === "event" || t.kind === "endorsement") addType(t.inner);
+    if (t.kind === "array" || t.kind === "event" || t.kind === "endorsement" || t.kind === "task") addType(t.inner);
   };
   // Flatten an ident-rooted member chain (`util.secretFn`, `facade.internal.f`) to its dotted name, so a
   // QUALIFIED reference — including a qualified CALLEE `util.secretFn(..)` — is submitted to the §19.4
@@ -537,7 +538,6 @@ function collectQualifiedRefs(program: A.Program): Set<string> {
     } else if (d.kind === "fn") { addType(d.ret); for (const p of d.params) addType(p.type); addStmts(d.body); }
     else if (d.kind === "struct") for (const f of d.fields) addType(f.type);
     else if (d.kind === "action" || d.kind === "event") for (const f of d.fields) addType(f.type);
-    else if (d.kind === "tool") { addType(d.ret); for (const f of d.params) addType(f.type); }
   }
   addStmts(program.stmts);
   return out;
@@ -549,7 +549,7 @@ export function check(program: A.Program, modules?: ModuleInput[], manifest?: Ma
   // section in configured/strict mode, where every declared `principal`/`prompt`/`tool` dependency MUST have a
   // manifest binding; elsewhere a declared dependency is auto-bound to a mock default (the compiler stays
   // general — only the harness maps the config section to strict mode).
-  const requireBinding = (kind: "principal" | "prompt" | "tool", bindings: Record<string, BindingConfig> | undefined, name: string, missingMsg: string): void => {
+  const requireBinding = (kind: "principal" | "prompt", bindings: Record<string, BindingConfig> | undefined, name: string, missingMsg: string): void => {
     const hasEntry = bindings && Object.prototype.hasOwnProperty.call(bindings, name);
     if (strictConfig && !hasEntry) throw configError(missingMsg);
     if (hasEntry && !hasConfiguredBinding(bindings, name)) {
@@ -573,18 +573,14 @@ export function check(program: A.Program, modules?: ModuleInput[], manifest?: Ma
         `prompt '${d.name}' is a declared dependency (§5b) with no configured binding — an unbound declared dependency is a ConfigError (§17.1)`,
       );
     }
-    if (d.kind === "tool") {
-      requireBinding(
-        "tool",
-        manifest?.tools,
-        d.name,
-        `tool '${d.name}' is a declared dependency (§6b) with no configured binding — an unbound declared dependency is a ConfigError (§17.1)`,
-      );
-    }
   }
   if (manifest?.policy && Object.keys(manifest.policy).length > 0) {
     // §17.2: decision policy is a SOURCE construct (`policy NAME { … }`), never a manifest binding.
     throw configError(`the manifest sets a decision policy (${Object.keys(manifest.policy).join(", ")}); a decision policy lives in source, never the manifest (§17.2)`);
+  }
+  const ingressPolicy = manifest?.security?.tainted_ingress_to_provider;
+  if (ingressPolicy !== undefined && !["warn", "deny", "off"].includes(String(ingressPolicy))) {
+    throw configError(`[security] tainted_ingress_to_provider must be "warn", "deny", or "off"`);
   }
   const pc = manifest?.provider;
   if (pc && pc.exposes_logprobs === false && pc.temperature === 0 && pc.fallback_temperature === undefined) {
@@ -601,7 +597,7 @@ export function check(program: A.Program, modules?: ModuleInput[], manifest?: Ma
   const decls: Decls = {
     enums: new Map([["bool", ["true", "false"]], ["Basis", ["Threshold", "Conformal", "Principal"]], ["Entailment", ["Entails", "Contradicts", "Neutral"]]]),
     structs: new Map(),
-    actions: new Map(), actionReversible: new Map(), events: new Map(), tools: new Map(), agents: new Map(),
+    actions: new Map(), actionReversible: new Map(), events: new Map(), agents: new Map(),
     interfaces: new Map(), pub: new Map(), fns: new Map(),
     principals: new Set(), prompts: new Set(),
   };
@@ -610,7 +606,6 @@ export function check(program: A.Program, modules?: ModuleInput[], manifest?: Ma
     else if (d.kind === "struct") decls.structs.set(d.name, d);
     else if (d.kind === "action") { decls.actions.set(d.name, d.fields); decls.actionReversible.set(d.name, d.reversible); }
     else if (d.kind === "event") decls.events.set(d.name, d.fields);
-    else if (d.kind === "tool") decls.tools.set(d.name, d);
     else if (d.kind === "agent") decls.agents.set(d.name, d);
     else if (d.kind === "interface") decls.interfaces.set(d.name, d);
     else if (d.kind === "fn") decls.fns.set(d.name, d);
@@ -631,7 +626,6 @@ export function check(program: A.Program, modules?: ModuleInput[], manifest?: Ma
       else if (d.kind === "struct") decls.structs.set(name, d);
       else if (d.kind === "action") { decls.actions.set(name, d.fields); decls.actionReversible.set(name, d.reversible); }
       else if (d.kind === "event") decls.events.set(name, d.fields);
-      else if (d.kind === "tool") decls.tools.set(name, d);
       else if (d.kind === "agent") decls.agents.set(name, d);
       else if (d.kind === "interface") decls.interfaces.set(name, d);
       else if (d.kind === "fn") decls.fns.set(name, d);
@@ -651,7 +645,31 @@ export function check(program: A.Program, modules?: ModuleInput[], manifest?: Ma
   for (const d of program.decls) {
     if (d.kind === "agent") for (const i of d.ifaces ?? []) implemented.add(i);
   }
-  const c = new Checker(decls, implemented);
+  // §6b/§17.1 wiring validation (STRICT/configured mode only, like dependency binding): a Studio root
+  // manifest is shared by every program under it, so an entry wiring a name THIS program does not
+  // declare is simply unused elsewhere — only the configuration harness runs with full lockstep.
+  const validateWiring = (kind: "actions" | "events", entries: Record<string, WiringConfig> | undefined): void => {
+    if (!strictConfig) return;
+    for (const [name, w] of Object.entries(entries ?? {})) {
+      const declared = kind === "actions" ? decls.actions.has(name) : decls.events.has(name) || BUILTIN_EVENTS.has(name);
+      if (!declared) throw configError(`[${kind}.${name}] wires an undeclared ${kind === "actions" ? "action" : "event"} — wiring must reference a declared name (§6b, §17.1)`);
+      if (w.tool !== undefined) {
+        if (!(manifest?.tools && Object.prototype.hasOwnProperty.call(manifest.tools, String(w.tool)))) {
+          throw configError(`[${kind}.${name}] references catalog entry [tools.${w.tool}], which is not configured (§6b, §17.1)`);
+        }
+        // a referenced catalog entry must name its driver; connector-specific fields are not enough (§17.1).
+        if (!hasConfiguredBinding(manifest.tools, String(w.tool))) {
+          throw configError(`[tools.${w.tool}] (referenced by [${kind}.${name}]) has no required driver field (§17.1)`);
+        }
+      }
+      if (w.result_event !== undefined && !decls.events.has(String(w.result_event))) {
+        throw configError(`[${kind}.${name}] names result_event '${w.result_event}', which is not a declared event (§6b, §17.1)`);
+      }
+    }
+  };
+  validateWiring("actions", manifest?.actions);
+  validateWiring("events", manifest?.events);
+  const c = new Checker(decls, implemented, manifest);
   // static well-formedness of every declared/annotated type: a type argument applied to a non-generic
   // declaration is a TypeError (§19.5). Walk every type surface in the program before body checking.
   c.checkTypeSurfaces(program);
@@ -688,7 +706,7 @@ function conflicts(a: Cls, b: Cls): boolean {
 }
 
 class Checker {
-  constructor(private d: Decls, private implementedIfaces: Set<string> = new Set()) {}
+  constructor(private d: Decls, private implementedIfaces: Set<string> = new Set(), private manifest?: Manifest) {}
 
   // ---- §19.5 generics: a type argument may instantiate only a generic declaration ----
 
@@ -709,7 +727,6 @@ class Checker {
           for (const f of d.fields) this.checkTypeRef(f.type); break;
         case "action": for (const f of d.fields) this.checkTypeRef(f.type); break;
         case "prompt": this.checkTypeRef(d.type); break; // the sensor's element type (§5b)
-        case "tool": this.checkTypeRef(d.ret); for (const f of d.params) this.checkTypeRef(f.type); break;
         case "fn": this.checkTypeRef(d.ret); for (const f of d.params) this.checkTypeRef(f.type); this.walkStmts(d.body); break;
         case "interface":
           for (const m of d.members) if (m.kind === "handler") { this.checkTypeRef(m.event); this.checkTypeRef(m.outcome); }
@@ -790,6 +807,8 @@ class Checker {
       case "quorum": this.walkExpr(e.source); return;
       case "pipe": this.walkExpr(e.source); this.walkExpr(e.fn); return;
       case "arraylit": for (const it of e.items) this.walkExpr(it); return;
+      case "tasklit": if (e.objective) this.walkExpr(e.objective); if (e.acceptance) this.walkExpr(e.acceptance); return;
+      case "performexpr": for (const a of e.args) this.walkExpr(a); if (e.expires) this.walkExpr(e.expires); return;
       default: return;
     }
   }
@@ -810,7 +829,7 @@ class Checker {
       }
       return;
     }
-    if (t.kind === "array" || t.kind === "event" || t.kind === "endorsement") this.checkTypeRef(t.inner);
+    if (t.kind === "array" || t.kind === "event" || t.kind === "endorsement" || t.kind === "task") this.checkTypeRef(t.inner);
   }
 
   // A type argument list `<…>` may instantiate ONLY a generic `struct` (the sole generic type-declaration
@@ -834,6 +853,15 @@ class Checker {
   }
 
   checkAgent(a: A.AgentDecl): void {
+    // §6b/§13: grants are exactly `perform` and `reach`. The legacy `use` class parses (for a clean
+    // diagnostic) but names no power — tools left the language; observation is wired in the manifest.
+    if (Array.isArray(a.grants)) {
+      for (const g of a.grants) {
+        if (g.cap === "use") {
+          throw typeError(`agent '${a.name}': 'use ${g.name}' — the \`use\` grant class no longer exists; grants are \`perform\` and \`reach\` (tools live in the manifest catalog, §6b, §13)`);
+        }
+      }
+    }
     if (a.extends) this.checkSubtractiveGrants(a);
     for (const h of a.hooks) { this.checkBody(h.body, new Scope()); this.checkDeferenceFlow(h.body, new Scope()); }
     for (const w of a.whens) {
@@ -1002,7 +1030,7 @@ class Checker {
         const isPub = this.d.pub.get(t.name);
         return isPub === false; // declared and NOT pub; unknown/built-in (undefined) is exempt
       }
-      case "array": case "event": case "endorsement": return this.namesPrivate(t.inner);
+      case "array": case "event": case "endorsement": case "task": return this.namesPrivate(t.inner);
       default: return false;
     }
   }
@@ -1108,7 +1136,11 @@ class Checker {
       case "say": this.assertSyncExpr(s.arg); return;
       case "return": if (s.value) this.assertSyncExpr(s.value); return;
       case "exprstmt": this.assertSyncExpr(s.expr); return;
-      case "emit": case "perform": for (const a of s.args) this.assertSyncExpr(a); return;
+      case "perform":
+        // §6b: every perform is async — an action is an act on the world, and whether it is wired to an
+        // effector is a deployment fact the checker must not depend on.
+        throw colorViolation(`a \`sync\` function may not \`perform\` (an action is an outbound act → async) (§6b)`);
+      case "emit": for (const a of s.args) this.assertSyncExpr(a); return;
       case "if": this.assertSyncExpr(s.cond); this.assertSyncBody(s.then); if (s.else) this.assertSyncBody(s.else); return;
       case "dispatch": this.assertSyncGate(s.gate); for (const arm of s.arms) this.assertSyncBody(arm.body); if (s.abstain) this.assertSyncBody(s.abstain.body); return;
       // §9/§10: a mem WRITE internalizes through the provider (decompose across the region's views) —
@@ -1150,10 +1182,9 @@ class Checker {
       case "select": case "find": throw colorViolation("a `sync` function may not query memory (`select`/`find` reaches the async memory substrate → async)");
       case "match": throw colorViolation("a `sync` function may not `match` (a vector match reaches the async memory substrate → async)");
       case "decide": case "endorse": this.assertSyncGate(e); return;
+      case "performexpr":
+        throw colorViolation(`a \`sync\` function may not \`perform\` (an action is an outbound act → async) (§6b)`);
       case "call":
-        if (e.callee.kind === "ident" && this.d.tools.has(e.callee.name)) {
-          throw colorViolation(`a \`sync\` function may not call the tool '${e.callee.name}' (a tool call reaches the tool dependency → async)`);
-        }
         // §4: a `sync` fn may only call other `sync` fns. Calling a KNOWN user function that is not marked
         // `sync` (its body may reach a declared dependency — a send, recall, tool call, or principal-decide)
         // forces async → a ColorViolation. Conservative: only a declared user fn that is provably async
@@ -1200,9 +1231,12 @@ class Checker {
           // statically known (a spawned/aliased instance) and does NOT implement the interface — otherwise
           // conservative (an unknown source is admitted, so an accept binding is never false-rejected).
           this.checkInterfaceBinding(s.type, s.init, scope);
-          // propagate a known concrete agent type through a simple alias `var m = n` (n an agent binding),
-          // so a later `Iface x = m;` still sees m's underlying implementor.
-          const srcType = s.init.kind === "ident" ? scope.getAgentType(s.init.name) : undefined;
+          // propagate a known concrete agent type through a simple alias `var m = n` (n an agent binding)
+          // or a `spawn` expression `Verifier v = spawn Verifier;`, so a later `v <- task` / `reach` /
+          // interface-binding check sees v's underlying agent type.
+          const srcType = s.init.kind === "ident" ? scope.getAgentType(s.init.name)
+            : s.init.kind === "spawnexpr" ? s.init.agentType
+            : undefined;
           if (srcType) scope.setAgentType(s.name, srcType);
         }
         scope.set(s.name, declClass(s.type));
@@ -1270,6 +1304,13 @@ class Checker {
         return;
       }
       case "exprstmt": this.infer(s.expr, scope); return;
+      case "complete": this.infer(s.value, scope); return; // task-handler-only: enforced dynamically (§6c)
+      case "fail": {
+        const rc = this.infer(s.reason, scope);
+        if (rc !== "text" && rc !== "unknown") throw typeError(`\`fail\` requires a text reason, not ${rc} (§6c)`);
+        return;
+      }
+      case "cancel": this.infer(s.handle, scope); return; // Task<T> handle check is dynamic (§6c)
       case "spawn": {
         // an interface is a TYPE but is NOT instantiable — `spawn Iface` is a TypeError (§19.5). Fires only
         // when the spawned name is a declared interface; an unknown agent type is left to execSpawn.
@@ -1479,11 +1520,8 @@ class Checker {
   // action, or a write-tool call. Walks nested control flow (if/else, nested dispatch arms + abstain, when).
   private reachesNonReversibleSink(stmts: A.Stmt[], scope: Scope): boolean {
     const sinkExpr = (e: A.Expr): boolean => {
-      // a call to a declared WRITE tool is a consequential sink (§6b/§20.1); a `reversible write tool` is not.
-      if (e.kind === "call" && e.callee.kind === "ident") {
-        const tool = this.d.tools.get(e.callee.name);
-        if (tool && tool.effect === "write" && !tool.reversible) return true;
-      }
+      // a result-bound perform is a consequential sink like any perform (§6b).
+      if (e.kind === "performexpr" && this.d.actionReversible.get(e.name) !== true) return true;
       switch (e.kind) {
         case "call": if (sinkExpr(e.callee)) return true; return e.args.some(sinkExpr);
         case "member": return sinkExpr(e.obj);
@@ -1603,6 +1641,14 @@ class Checker {
       case "string": case "fstring": return "text";
       case "null": return "null";
       case "self": return "agent";
+      case "spawnexpr": {
+        // §19.5: a `spawn` of an interface is a TypeError, same as the statement form.
+        if (this.d.interfaces.has(e.agentType)) {
+          throw typeError(`'${e.agentType}' is an interface, which is not instantiable — a 'spawn' of an interface is a TypeError (§19.5)`);
+        }
+        for (const a of e.args) this.infer(a, scope);
+        return "unknown"; // agent-typed; coarse class left lenient (as the spawn statement does)
+      }
       case "ident": {
         const v = scope.get(e.name);
         if (v) return v;
@@ -1701,19 +1747,43 @@ class Checker {
         return "float";
       }
       case "unary": return e.op === "!" ? "bool" : "float";
+      case "tasklit": {
+        // §6c: objective and acceptance are REQUIRED and must be `text`.
+        if (!e.objective || !e.acceptance) {
+          throw typeError("a task literal requires BOTH `objective` and `acceptance` (§6c)");
+        }
+        const oc = this.infer(e.objective, scope);
+        if (oc !== "text" && oc !== "unknown") throw typeError(`task \`objective\` must be text, not ${oc} (§6c)`);
+        const ac = this.infer(e.acceptance, scope);
+        if (ac !== "text" && ac !== "unknown") throw typeError(`task \`acceptance\` must be text, not ${ac} (§6c)`);
+        return "unknown"; // a TaskSpec value (scope attenuation + endorsement rules are dynamic, §6c)
+      }
       case "call": {
-        // a call to a declared tool has the tool's declared return class (§6b); other calls stay unknown.
         if (e.callee.kind === "ident") {
           const name = e.callee.name;
-          const tool = this.d.tools.get(name);
-          if (tool) return declClass(tool.ret);
-          // §6b/§8: a bare call to a name that is not a declared/imported tool or function is an
-          // unknown-identifier TypeError — tools and functions are
-          // declared dependencies, not self-declaring (e.g. an undeclared `search(…)` or a nonexistent
-          // `sample(…)`). A qualified callee (`m.f(…)`) is a member, not an ident, so it is unaffected.
+          // §4/§8: a bare call to a name that is not a declared/imported function is an
+          // unknown-identifier TypeError — functions are declared, not self-declaring. Expressions can
+          // never reach the world (§6b): observation arrives as events, acts leave as performs.
           if (!this.d.fns.has(name)) {
-            throw typeError(`call to undeclared '${name}' — a tool or function is a declared dependency, not self-declaring (§6b/§8)`);
+            throw typeError(`call to undeclared function '${name}' — functions are declared, not self-declaring; the world is reached only through wired events and actions (§4/§6b/§8)`);
           }
+        }
+        return "unknown";
+      }
+      case "performexpr": {
+        // §6b foreground perform binding: `T r = perform A(args) expires N;` — result-bound only,
+        // `expires` MANDATORY, args under the uniform consequential-sink rule.
+        if (!e.expires) {
+          throw typeError("a result-bound `perform` requires `expires` — the reply is a deadline-bound observation (§6b/§6c)");
+        }
+        this.infer(e.expires, scope);
+        this.checkInvoke("perform", e.name, e.args, this.d.actions, scope);
+        // the binding is typed from the manifest-named result event (single-field event binds the field).
+        const w = this.manifest?.actions?.[e.name];
+        const resultEvent = typeof w?.result_event === "string" ? w.result_event : undefined;
+        if (resultEvent) {
+          const fields = this.d.events.get(resultEvent);
+          if (fields && fields.length === 1) return declClass(fields[0]!.type);
         }
         return "unknown";
       }
@@ -1850,7 +1920,10 @@ class Checker {
     // but a `send` bound to a RAW `text` slot is a raw reply that must be re-decided and endorsed BY A
     // DECISION ABOUT IT (§13). Endorsing it by a decision about something else is laundering, so a raw
     // send-reply binding is tracked as tainted for the endorse dependency-scope check.
-    const rawSendReply = init.kind === "send" && declared !== "credence";
+    // A send bound to an `Endorsement<T>` slot is a delegated task completed WITH an endorsement — a
+    // settled, ledger-backed subject (§6c); it is not a raw reply. The runtime verifies the completed
+    // value really is an endorsement (anything else stays raw at the sink).
+    const rawSendReply = init.kind === "send" && declared !== "credence" && declared !== "endorsement";
     scope.setTaintedTo(name, this.isTaintedExpr(init, scope) || rawSendReply);
     if (init.kind === "endorse") {
       // Model A (§13/§15.3.3): an endorsement is the SETTLED form of its subject. Construction already
@@ -1966,6 +2039,8 @@ class Checker {
         case "quorum": walk(x.source); return;
         case "pipe": walk(x.source); walk(x.fn); return;
         case "arraylit": for (const it of x.items) walk(it); return;
+        case "tasklit": if (x.objective) walk(x.objective); if (x.acceptance) walk(x.acceptance); return;
+        case "performexpr": for (const a of x.args) walk(a); return;
         default: return;
       }
     };

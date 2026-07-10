@@ -1,0 +1,24 @@
+//! id:        del_foreground_failure_faults
+//! section:   06c_delegation
+//! expect:    accept
+//! order:     TaskFailed(r); AgentCrashed(lead); Recovered
+//! absent:    Done
+//! spec:      §6c, §16.6 (a foreground task terminal other than TaskCompleted faults the delegator's awaiting invocation via the contained-crash path; `on crash` recovers with state intact)
+//! ---
+event Done(int got);
+event Recovered(text how);
+agent Worker {
+  on assigned { fail "cannot"; }
+}
+agent Lead grants { reach Worker } {
+  on awake {
+    spawn Worker w; awake w;
+    int r = w <- task {
+      objective "produce the number";
+      acceptance "an int";
+    } expires 10;
+    emit Done(r);
+  }
+  on crash { emit Recovered("compensated"); }
+}
+spawn Lead lead; awake lead;
