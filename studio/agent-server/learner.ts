@@ -67,7 +67,7 @@ export class Learner {
         continue;
       }
       const decomp = await this.cog.decompose(`## ${c.title}\n${text}`);
-      const tick = this.mem.internalize(this.agent, "Internalized", c.title, text, decomp, "P");
+      const tick = await this.mem.internalize(this.agent, "Internalized", c.title, text, decomp, "P");
       this.mem.recordSourceChunk(this.agent, sourceState.source.id, source.kind, source.uri, c.title, chunkHash, tick);
       written++;
     }
@@ -75,8 +75,8 @@ export class Learner {
   }
 
   // Pull grounded context for a task across all three modalities.
-  retrieve(task: string, options: RetrieveOptions = {}) {
-    const hits = this.mem.match(this.agent, task, 0.12, 5);
+  async retrieve(task: string, options: RetrieveOptions = {}) {
+    const hits = await this.mem.match(this.agent, task, 0.12, 5);
     const toks = new Set(task.toLowerCase().match(/[a-z_<>-]+/g) || []);
     const triples = this.mem
       .find(this.agent)
@@ -109,8 +109,8 @@ export class Learner {
     return { context, hits, triples, lessons, summaries, consultTick };
   }
 
-  codingContext(task: string, options: RetrieveOptions = {}) {
-    const retrieved = this.retrieve(task, options);
+  async codingContext(task: string, options: RetrieveOptions = {}) {
+    const retrieved = await this.retrieve(task, options);
     const rules = [
       "Every agent turn must consult private memory; an empty memory packet is still a recorded observation.",
       "For implementation work, write or identify tests first, implement against those tests, run checks, then learn from pass/fail evidence.",
@@ -142,7 +142,7 @@ export class Learner {
 
   async reflect(task: string, code: string, result: RunResult): Promise<string | null> {
     if (result.ok) {
-      this.mem.internalize(
+      await this.mem.internalize(
         this.agent,
         "Worked",
         task,
@@ -159,7 +159,7 @@ export class Learner {
         200
       )
     ).trim();
-    this.mem.internalize(
+    await this.mem.internalize(
       this.agent,
       "Failed",
       task,
@@ -179,7 +179,7 @@ export class Learner {
     return trunc((await this.cog.complete(system, [{ role: "user", content: user }], 700, 0)).trim(), 1800);
   }
 
-  internalizeExperience(kind: string, subject: string, text: string, meta: Record<string, unknown> = {}): number {
+  async internalizeExperience(kind: string, subject: string, text: string, meta: Record<string, unknown> = {}): Promise<number> {
     const status = typeof meta.ok === "boolean" ? (meta.ok ? "passed" : "failed") : "observed";
     const safeSubject = slug(subject);
     const body = [
@@ -190,7 +190,7 @@ export class Learner {
       "",
       text,
     ].filter(Boolean).join("\n");
-    return this.mem.internalize(
+    return await this.mem.internalize(
       this.agent,
       "Experienced",
       subject,
@@ -218,8 +218,8 @@ export class Learner {
     };
   }
 
-  recall(q: string) {
-    return this.mem.match(this.agent, q, 0.1, 8);
+  async recall(q: string) {
+    return await this.mem.match(this.agent, q, 0.1, 8);
   }
 
   // Full read-only snapshot for the inspector — no cognition, costs nothing.
@@ -238,7 +238,7 @@ export class Learner {
 
   // One full pass of the loop.
   async step(task: string) {
-    const { context, hits, triples, lessons } = this.retrieve(task, { recordConsult: true });
+    const { context, hits, triples, lessons } = await this.retrieve(task, { recordConsult: true });
     const code = await this.writeCode(task, context);
     const result = await this.runner.run(code);
     const lesson = await this.reflect(task, code, result);

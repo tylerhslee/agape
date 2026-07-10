@@ -2,7 +2,7 @@
 // to OpenAI" is an implementation change, not a redesign.
 //
 //   Cognition — the LLM (think/decompose). AnthropicCognition (haiku) today.
-//   Embedder  — text → vector. HashingEmbedder (local, dependency-free) today.
+//   Embedder  — text → vector. HashingEmbedder is the offline path; OpenAIEmbedder is live.
 
 import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
@@ -32,7 +32,7 @@ export interface Cognition {
 export interface Embedder {
   readonly dim: number;
   readonly name: string;
-  embed(text: string): number[];
+  embed(text: string): Promise<number[]>;
 }
 
 // ── Deterministic local cognition for offline Studio paths ──────────────────
@@ -173,7 +173,7 @@ export class HashingEmbedder implements Embedder {
     this.dim = dim;
   }
 
-  embed(text: string): number[] {
+  async embed(text: string): Promise<number[]> {
     const v = new Array(this.dim).fill(0);
     for (const tok of tokenize(text)) {
       v[hash(tok) % this.dim] += 1;
@@ -190,6 +190,31 @@ export class HashingEmbedder implements Embedder {
   }
 }
 
+export class OpenAIEmbedder implements Embedder {
+  readonly dim = Number(process.env.OPENAI_EMBEDDING_DIM || 1536);
+  readonly name: string;
+  private client: OpenAI;
+
+  constructor(private readonly model = process.env.OPENAI_EMBEDDING_MODEL || "text-embedding-3-small") {
+    if (!process.env.OPENAI_API_KEY) throw new Error("OPENAI_API_KEY not set — OpenAI embeddings need a live key.");
+    this.name = `openai:${model}`;
+    this.client = new OpenAI();
+  }
+
+  async embed(text: string): Promise<number[]> {
+    const res = await this.client.embeddings.create({ model: this.model, input: text });
+    const vector = res.data?.[0]?.embedding;
+    if (!vector) throw new Error("OpenAI embeddings returned no vector.");
+    return normalizeVector(vector);
+  }
+}
+
+function normalizeVector(v: number[]): number[] {
+  let norm = 0;
+  for (const x of v) norm += x * x;
+  norm = Math.sqrt(norm) || 1;
+  return v.map((x) => x / norm);
+}
 export function cosine(a: number[], b: number[]): number {
   let dot = 0;
   const n = Math.min(a.length, b.length);

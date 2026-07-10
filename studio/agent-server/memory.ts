@@ -5,7 +5,7 @@
 // (`origin_tick`) to the spine event that produced it, and a taint.
 //
 // Pure storage + queries: the LLM (decomposition) is injected, so this module is
-// tested without an API key. The embedder is a sync seam (local by default).
+// tested without an API key. The embedder is an async seam: local by default, live when configured.
 
 import Database from "better-sqlite3";
 import type { Embedder, Fact, Triple } from "./provider.ts";
@@ -123,22 +123,23 @@ export class Memory {
 
   // ── §10 internalization: decompose an event into facts + triples + embedding,
   // each pinned to the originating spine event (provenance), with a taint. ──
-  internalize(
+  async internalize(
     agent: string,
     etype: string,
     subject: string,
     text: string,
     decomp: { facts: Fact[]; triples: Triple[] },
     taint: Taint = "P"
-  ): number {
+  ): Promise<number> {
     const tick = this.append(agent, etype, subject, text);
+    const embedding = await this.embedder.embed(text);
     const insFact = this.db.prepare(`INSERT INTO facts (agent,key,value,origin_tick,taint) VALUES (?,?,?,?,?)`);
     const insTriple = this.db.prepare(`INSERT INTO triples (agent,s,p,o,origin_tick,taint) VALUES (?,?,?,?,?,?)`);
     const insEmb = this.db.prepare(`INSERT INTO embeddings (agent,text,vec,origin_tick) VALUES (?,?,?,?)`);
     const tx = this.db.transaction(() => {
       for (const f of decomp.facts) insFact.run(agent, f.key, f.value, tick, taint);
       for (const t of decomp.triples) insTriple.run(agent, t.s, t.p, t.o, tick, taint);
-      insEmb.run(agent, text, JSON.stringify(this.embedder.embed(text)), tick);
+      insEmb.run(agent, text, JSON.stringify(embedding), tick);
     });
     tx();
     return tick;
@@ -237,8 +238,8 @@ export class Memory {
   }
 
   // ── SEMANTICS: `match { b: q } > θ` — a gate; hits clear θ, are U but off-spine ──
-  match(agent: string, query: string, theta = 0.2, limit = 6): MatchHit[] {
-    const q = this.embedder.embed(query);
+  async match(agent: string, query: string, theta = 0.2, limit = 6): Promise<MatchHit[]> {
+    const q = await this.embedder.embed(query);
     const rows = this.db.prepare(`SELECT text, vec, origin_tick FROM embeddings WHERE agent = ?`).all(agent) as any[];
     return rows
       .map((r) => ({ text: r.text as string, score: cosine(q, JSON.parse(r.vec)), origin_tick: r.origin_tick as number }))

@@ -20,7 +20,6 @@ import {
 export type MemoryKind = "preference" | "fact" | "procedure" | "decision" | "interaction" | "note";
 
 export interface MemoryRuntimeConfig {
-  runtime?: boolean;
   auto_memory?: boolean;
   classify?: boolean;
   dedupe?: boolean;

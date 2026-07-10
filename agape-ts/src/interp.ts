@@ -10,10 +10,11 @@ import {
   type Provider, type StructuredSchema, type Value, type Committed, type Variant, type Trust, type IngressProvenance,
 } from "./runtime.js";
 import { check, linkModules, type ModuleInput, type Resolution } from "./check.js";
-import type { Manifest, ToolBindingConfig } from "./config.js";
-import { LocalMemoryDriver, type MemoryDriver, type MemoryReceipt, type MemoryScope } from "./memory.js";
+import { createMemoryDriver, type Manifest, type ToolBindingConfig } from "./config.js";
+import { type MemoryDriver, type MemoryReceipt, type MemoryScope } from "./memory.js";
 import { parse } from "./parser.js";
 import { typeError, taintViolation, authorityViolation, configError } from "./errors.js";
+import { createToolHandlers, type ToolHandler } from "./tool_adapters.js";
 
 export class RuntimeError extends Error {}
 // §5: an unrecoverable seam failure (the provider returns nothing) crashes the agent — CONTAINED, not a
@@ -266,16 +267,6 @@ export interface ConsultRequest {
   agent?: string;
 }
 
-// §6b: the host-supplied adapter for a [tools.*] catalog entry with a non-mock driver. `name` is the
-// catalog key; the declaration lives in the manifest, not in source (tools left the language).
-export interface ToolCallContext {
-  name: string;
-  binding: ToolBindingConfig;
-  args: Value[];
-  payload: string;
-}
-export type ToolHandler = (call: ToolCallContext) => unknown | Promise<unknown>;
-
 type RunOptions = {
   provider?: Provider;
   modules?: ModuleInput[];
@@ -286,6 +277,7 @@ type RunOptions = {
   onConsult?: (req: ConsultRequest) => Promise<PrincipalAttestation | undefined>;
   toolHandlers?: Record<string, ToolHandler>;
   memory?: MemoryDriver;
+  memoryRoot?: string;
   strictConfig?: boolean;
   timingOriginMs?: number;
 };
@@ -301,7 +293,10 @@ export async function run(
 }
 
 export function createSession(program: A.Program, opts: RunOptions = {}): RuntimeSession {
-  check(program, opts.modules, opts.manifest, opts.strictConfig); // static pass first (TypeError/ModuleError/ConfigError/…)
+  const manifest: Manifest = opts.manifest ?? { provider: { backend: "mock" } };
+  const memory = opts.memory ?? createMemoryDriver(manifest, { cwd: opts.memoryRoot ?? process.cwd() });
+  const toolHandlers = { ...createToolHandlers(manifest), ...(opts.toolHandlers ?? {}) };
+  check(program, opts.modules, manifest, opts.strictConfig); // static pass first (TypeError/ModuleError/ConfigError/…)
   return new Interpreter(
     program,
     opts.provider ?? new MockProvider(),
@@ -309,10 +304,10 @@ export function createSession(program: A.Program, opts: RunOptions = {}): Runtim
     opts.principal,
     opts.principalAttestations ?? [],
     opts.onConsult,
-    opts.manifest,
-    opts.toolHandlers ?? {},
+    manifest,
+    toolHandlers,
     opts.timingOriginMs,
-    opts.memory ?? new LocalMemoryDriver(),
+    memory,
   );
 }
 
@@ -380,7 +375,7 @@ class Interpreter {
     private manifest?: Manifest,
     private toolHandlers: Record<string, ToolHandler> = {},
     timingOriginMs?: number,
-    private memory: MemoryDriver = new LocalMemoryDriver(),
+    private memory: MemoryDriver,
   ) {
     this.ledger = new Ledger(timingOriginMs);
     // §3: register the declared principal names so a `decide c by p` (the parser's {policy} rule form)
@@ -704,7 +699,7 @@ class Interpreter {
         // a bare query STATEMENT lands a `QueryResult(subject)` event (§10); the expression form
         // (bound by a vardecl) lands nothing. So only a top-level query exprstmt records the event.
         const e = s.expr;
-        if (e.kind === "select" || e.kind === "find") {
+        if (e.kind === "select") {
           await this.evalQuery(e, scope, /*asStatement*/ true);
           return;
         }
@@ -1564,8 +1559,7 @@ class Interpreter {
       }
       case "send": return this.evalSend(e, scope, expected, bindName);
       case "recall": return this.evalRecall(e, scope, expected);
-      case "select": case "find": return this.evalQuery(e, scope, /*asStatement*/ false);
-      case "match": return this.evalMatch(e, scope);
+      case "select": return this.evalQuery(e, scope, /*asStatement*/ false);
       case "structlit": {
         // a struct literal is a record value (§3); its trust joins its field values' trust. Field
         // arity/names against the declared struct are checked statically (check.ts); here we only build
@@ -1582,7 +1576,7 @@ class Interpreter {
       case "decide": case "endorse": return (await this.evalGate(e, scope, undefined, bindName)).value;
       case "member": return this.evalMember(e, scope);
       case "index": {
-        // `a[i]` element access (§10): the element inherits the array's trust (a match/query hit is graded).
+        // `a[i]` element access (§10): the element inherits the array's trust (a query hit is graded).
         const arr = await this.evalExpr(e.obj, scope);
         const idx = await this.evalExpr(e.index, scope);
         const trust = arr.trust ?? "raw";
@@ -1861,9 +1855,8 @@ class Interpreter {
   }
 
   // Effector invocation is an adapter boundary (§6b/§16.4). `mock` is built in for demos/replay-stable
-  // tests (a deterministic pure function of the payload); every other driver is supplied by the embedding
-  // runtime via `toolHandlers`, keyed by the [tools.*] catalog key — MCP is one supported transport, not
-  // a semantic requirement of the language.
+  // tests (a deterministic pure function of the payload). HTTP/webhook and MCP-over-HTTP drivers are
+  // packaged adapters; host toolHandlers may still override or provide local stdio integrations.
   private async effectorResult(catalogKey: string, args: Value[], binding: ToolBindingConfig, payload: string): Promise<Value> {
     const driver = binding.driver ?? "mock";
     if (driver === "mock") return { kind: "text", v: `tool:${catalogKey}(${payload})`, trust: "settled" };
@@ -2437,15 +2430,15 @@ class Interpreter {
   // trust is the join over its rows' provenance; with no endorsed-origin row that join is `graded` — never
   // `settled`. The expression form yields the result set and appends nothing; the bare statement form
   // lands a `QueryResult(subject)` event (the subject is the query target: the agent, or `ledger`).
-  private async evalQuery(e: A.SelectExpr | A.FindExpr, scope: Scope, asStatement: boolean): Promise<Value> {
+  private async evalQuery(e: A.SelectExpr, scope: Scope, asStatement: boolean): Promise<Value> {
     const agent = scope.currentAgent();
-    const isLedger = e.kind === "select" && e.target === "ledger";
-    const target = e.kind === "select" ? (e.target === "self" ? (agent?.name ?? "self") : e.target) : (agent?.name ?? "self");
+    const isLedger = e.target === "ledger";
+    const target = e.target === "self" ? (agent?.name ?? "self") : e.target;
     if (asStatement) {
       this.ledger.append("QueryResult", target, undefined, agent?.name);
     }
-    // The result trust is the join of the matched rows' RECORDED (provenance) trust (§10). A `from F`/graph
-    // read over private memory defaults to `graded` (most facts trace to internalized, un-endorsed
+    // The result trust is the join of the matched rows' RECORDED (provenance) trust (§10). A non-ledger
+    // select over private memory defaults to `graded` (most facts trace to internalized, un-endorsed
     // cognition). A `from ledger` read is deterministic and carries recorded trust: an `Endorsed`-origin
     // row reads back `settled` (the ledger is the proof it was endorsed), every other origin (`Spawned`,
     // `Sent`, `Internalized`, `MemoryConsulted`, …) reads back `graded`, so a blanket `settled` cannot
@@ -2475,12 +2468,6 @@ class Interpreter {
     return etype === "Endorsed";
   }
 
-  // E-Match (§10): `match VECTOR > θ` is a GATE — it yields the nearest off-ledger hits above θ. Like a
-  // recall, a hit's trust is `graded` (it must be re-judged + gated before a consequential sink).
-  private async evalMatch(e: A.MatchExpr, scope: Scope): Promise<Value> {
-    await this.evalExpr(e.vector, scope); // evaluate the query vector (a struct/expr)
-    return { kind: "array", items: [], trust: "graded" };
-  }
 
   private async evalMember(e: A.MemberExpr, scope: Scope): Promise<Value> {
     const o = await this.evalExpr(e.obj, scope);

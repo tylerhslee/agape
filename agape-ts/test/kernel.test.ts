@@ -1,3 +1,4 @@
+import http from "node:http";
 import { describe, it, expect } from "vitest";
 import { parse } from "../src/parser.js";
 import { run } from "../src/interp.js";
@@ -514,6 +515,50 @@ describe("manifest dependency bindings", () => {
     const resolved = r.ledger.events.find((e) => e.etype === "ToolResolved");
     expect((resolved?.payload as any)?.binding).toMatchObject({ driver: "host", provider: "fixture" });
     expect((resolved?.payload as any)?.result).toMatchObject({ kind: "text", value: "northwind receipt" });
+  });
+  it("routes a wired perform through the built-in HTTP tool adapter", async () => {
+    const seen: unknown[] = [];
+    const server = http.createServer((req, res) => {
+      let body = "";
+      req.setEncoding("utf8");
+      req.on("data", (chunk) => { body += chunk; });
+      req.on("end", () => {
+        seen.push(JSON.parse(body));
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ result: "northwind live receipt" }));
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string") throw new Error("HTTP test server did not bind to a port");
+      const prog = `
+        action Search(text q);
+        event SearchEvidence(text hits);
+        agent A grants { perform Search } {
+          on awake {
+            text hit = perform Search("northwind") expires 5;
+            say(hit);
+          }
+        }
+        spawn A a; awake a;
+      `;
+
+      const r = await run(parse(prog), {
+        manifest: {
+          provider: { backend: "mock" },
+          tools: { search: { driver: "http", url: `http://127.0.0.1:${address.port}/tool` } },
+          actions: { Search: { tool: "search", result_event: "SearchEvidence" } },
+        },
+      });
+
+      expect(r.stdout).toEqual(["northwind live receipt"]);
+      expect(seen[0]).toMatchObject({ tool: "search", payload: "search|northwind", rendered_args: ["northwind"] });
+      const resolved = r.ledger.events.find((e) => e.etype === "ToolResolved");
+      expect((resolved?.payload as any)?.binding).toMatchObject({ driver: "http" });
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((err) => err ? reject(err) : resolve()));
+    }
   });
 });
 

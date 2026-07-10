@@ -5,6 +5,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { parse } from "./parser.js";
 import { run } from "./interp.js";
+import { check } from "./check.js";
 import { createMemoryDriver, createProvider, loadManifest } from "./config.js";
 import { show, type LedgerEvent } from "./runtime.js";
 
@@ -68,8 +69,9 @@ async function main(argv: string[]): Promise<number> {
     console.log(format === "dot" ? toDot(graph) : JSON.stringify(graph, null, 2));
     return 0;
   }
-  if (cmd !== "run" || rest.length === 0) {
-    console.error("usage: agape-ts run <file.ag> [--manifest agape.toml] [--provider mock|anthropic|openai|gemini]");
+  if ((cmd !== "run" && cmd !== "check") || rest.length === 0) {
+    console.error("usage: agape-ts run <file.ag> [--json] [--prompt name=value] [--manifest agape.toml] [--provider mock|anthropic|openai|gemini]");
+    console.error("       agape-ts check <file.ag> [--json] [--manifest agape.toml] [--provider mock|anthropic|openai|gemini]");
     console.error("       agape-ts graph <file.ag> [--format json|dot]                      # derived orchestration graph");
     console.error("       agape-ts studio [--port 4317] [--share|--live] [--token secret]   # execution-inspection UI over the cwd");
     return 2;
@@ -77,39 +79,91 @@ async function main(argv: string[]): Promise<number> {
   let file = "";
   let manifestPath: string | undefined;
   let backendOverride: string | undefined;
+  let json = false;
+  const promptInputs: { name: string; value: string }[] = [];
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i]!;
     if (a === "--manifest") manifestPath = rest[++i];
-    else if (a === "--provider") backendOverride = rest[++i];
+    else if (a === "--provider" || a === "--backend") backendOverride = rest[++i];
+    else if (a === "--json") json = true;
+    else if (a === "--prompt") {
+      const raw = rest[++i] ?? "";
+      const eq = raw.indexOf("=");
+      if (eq < 0) return emitCliError(new Error("--prompt expects name=value"), json);
+      promptInputs.push({ name: raw.slice(0, eq), value: raw.slice(eq + 1) });
+    } else if (a === "--claude") backendOverride = "anthropic";
+    else if (a === "--samples" || a === "--temperature") i++; // accepted for Studio compatibility; manifest owns runtime policy.
     else file = a;
   }
+  if (!file) return emitCliError(new Error(`usage: agape-ts ${cmd} <file.ag>`), json);
 
   loadEnv();
-  const source = readFileSync(file, "utf8");
-  const manifest = loadManifest(manifestPath, backendOverride);
-  const provider = createProvider(manifest);
   const memoryRoot = manifestPath ? dirname(resolve(manifestPath)) : process.cwd();
-  const memory = createMemoryDriver(manifest, { cwd: memoryRoot });
+  try {
+    const source = readFileSync(file, "utf8");
+    const manifest = loadManifest(manifestPath, backendOverride);
+    const program = parse(source);
 
-  const program = parse(source);
-  const { ledger, stdout, warnings } = await run(program, { provider, manifest, memory });
+    if (cmd === "check") {
+      check(program, undefined, manifest);
+      if (json) console.log(JSON.stringify({ ok: true, file }, null, 2));
+      else console.log("ok");
+      return 0;
+    }
 
-  const modelNote = manifest.provider.model ? ` / ${manifest.provider.model}` : "";
-  console.log(`# agape-ts — ran ${file}  (provider: ${manifest.provider.backend}${modelNote})\n`);
-  if (stdout.length) {
-    console.log("say:");
-    for (const line of stdout) console.log(`  ${line}`);
-    console.log();
+    const provider = createProvider(manifest);
+    const memory = createMemoryDriver(manifest, { cwd: memoryRoot });
+    const result = await run(program, { provider, manifest, memory, memoryRoot, promptInputs });
+
+    if (json) {
+      console.log(JSON.stringify(jsonRunResult(file, manifest, result), null, 2));
+      return 0;
+    }
+
+    const modelNote = manifest.provider.model ? ` / ${manifest.provider.model}` : "";
+    console.log(`# agape-ts — ran ${file}  (provider: ${manifest.provider.backend}${modelNote})\n`);
+    if (result.stdout.length) {
+      console.log("say:");
+      for (const line of result.stdout) console.log(`  ${line}`);
+      console.log();
+    }
+    if (result.warnings.length) {
+      console.log("warnings:");
+      for (const w of result.warnings) console.log(`  ${w.kind}: ${w.message}`);
+      console.log();
+    }
+    console.log("ledger:");
+    for (const e of result.ledger.events) console.log(`  ${fmt(e)}`);
+    console.log(`\nchain-head: ${result.ledger.head()}`);
+    return 0;
+  } catch (e) {
+    return emitCliError(e, json);
   }
-  if (warnings.length) {
-    console.log("warnings:");
-    for (const w of warnings) console.log(`  ${w.kind}: ${w.message}`);
-    console.log();
-  }
-  console.log("ledger:");
-  for (const e of ledger.events) console.log(`  ${fmt(e)}`);
-  console.log(`\nchain-head: ${ledger.head()}`);
-  return 0;
+}
+
+
+function jsonRunResult(file: string, manifest: ReturnType<typeof loadManifest>, result: Awaited<ReturnType<typeof run>>): Record<string, unknown> {
+  const events = result.ledger.events.map((e) => ({
+    ...e,
+    corr: e.etype === "Sent" || e.etype === "Resolved" ? e.subject : undefined,
+  }));
+  return {
+    ok: true,
+    file,
+    provider: manifest.provider,
+    events,
+    stdout: result.stdout,
+    warnings: result.warnings,
+    head: result.ledger.head(),
+  };
+}
+
+function emitCliError(e: unknown, json: boolean): number {
+  const err = e instanceof Error ? e : new Error(String(e));
+  const cls = (e as { cls?: string })?.cls ?? err.name ?? "Error";
+  if (json) console.log(JSON.stringify({ ok: false, class: cls, error: err.message }, null, 2));
+  else console.error(`${cls}: ${err.message}`);
+  return 1;
 }
 
 function fmt(e: LedgerEvent): string {

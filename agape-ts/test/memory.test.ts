@@ -149,6 +149,29 @@ describe("markdown memory adapter", () => {
       await rm(dir, { recursive: true, force: true });
     }
   });
+  it("uses markdown memory by default for raw run() and roots it in memoryRoot", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "agape-md-default-run-"));
+    try {
+      const program = parse(`
+        agent A {
+          on awake {
+            mem notes <- "default markdown memory belongs to the project root";
+          }
+        }
+        spawn A a;
+        awake a;
+      `);
+
+      await run(program, { memoryRoot: dir });
+
+      await expect(readFile(join(dir, ".agape", "memory", "MEMORY.md"), "utf8"))
+        .resolves.toContain("default/a/notes");
+      await expect(readFile(join(dir, ".agape", "memory", "scopes", "default", "a", "notes.md"), "utf8"))
+        .resolves.toContain("default markdown memory belongs to the project root");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("default memory runtime", () => {

@@ -7,7 +7,7 @@ import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
 import { buildMessages, type AgentContext, type Intent } from "./agent.ts";
-import { AnthropicCognition, HashingEmbedder, MockCognition, OpenAICognition, type Cognition } from "./provider.ts";
+import { AnthropicCognition, HashingEmbedder, MockCognition, OpenAICognition, OpenAIEmbedder, type Cognition, type Embedder } from "./provider.ts";
 import { Memory } from "./memory.ts";
 import { makeRunner } from "./runner.ts";
 import { Learner } from "./learner.ts";
@@ -20,10 +20,12 @@ const pExecFile = promisify(execFile);
 const PORT = Number(process.env.AGENT_PORT) || 8799;
 
 type CognitionProvider = "mock" | "anthropic" | "openai";
+type EmbeddingProvider = "local" | "openai";
 type JudgeProvider = "anthropic" | "openai" | "gemini";
 interface ProviderConfig {
   cognitionProvider: CognitionProvider;
   judgeProvider: JudgeProvider;
+  embeddingProvider: EmbeddingProvider;
   samples: number;
   temperature: number;
   openaiTopLogprobs: number;
@@ -75,6 +77,7 @@ if (!process.env.ANTHROPIC_API_KEY && !process.env.OPENAI_API_KEY) {
 let providerConfig: ProviderConfig = {
   cognitionProvider: normalizeCognitionProvider(process.env.AGENT_COGNITION_PROVIDER || process.env.AGENT_PROVIDER || "mock"),
   judgeProvider: normalizeJudgeProvider(process.env.AGENT_JUDGE_PROVIDER || judgeProviderForCognition(process.env.AGENT_COGNITION_PROVIDER || process.env.AGENT_PROVIDER || "mock")),
+  embeddingProvider: normalizeEmbeddingProvider(process.env.AGENT_EMBEDDING_PROVIDER || defaultEmbeddingProvider(normalizeCognitionProvider(process.env.AGENT_COGNITION_PROVIDER || process.env.AGENT_PROVIDER || "mock"))),
   samples: clampInt(process.env.AGENT_JUDGE_SAMPLES, 1, 50, 5),
   temperature: clampFloat(process.env.AGENT_JUDGE_TEMPERATURE, 0, 1, 0),
   openaiTopLogprobs: clampInt(process.env.OPENAI_TOP_LOGPROBS, 1, 20, 5),
@@ -121,7 +124,9 @@ function providerSnapshot() {
       anthropic: !!process.env.ANTHROPIC_API_KEY,
       openai: !!process.env.OPENAI_API_KEY,
       gemini: !!process.env.GEMINI_API_KEY,
+      embeddings: providerConfig.embeddingProvider === "openai" ? !!process.env.OPENAI_API_KEY : true,
     },
+    embeddingModel: providerConfig.embeddingProvider === "openai" ? (process.env.OPENAI_EMBEDDING_MODEL || "text-embedding-3-small") : "hashing-local",
     cognitionModel: providerConfig.cognitionProvider === "openai"
       ? (process.env.OPENAI_AGENT_MODEL || "gpt-4o-mini")
       : (process.env.AGENT_MODEL || "claude-haiku-4-5"),
@@ -152,18 +157,37 @@ function updateProviderConfig(input: Partial<ProviderConfig>) {
   const nextJudgeProvider = input.judgeProvider === undefined
     ? (input.cognitionProvider === undefined ? providerConfig.judgeProvider : judgeProviderForCognition(nextCognitionProvider))
     : normalizeJudgeProvider(input.judgeProvider);
+  const nextEmbeddingProvider = input.embeddingProvider === undefined
+    ? (input.cognitionProvider === undefined ? providerConfig.embeddingProvider : defaultEmbeddingProvider(nextCognitionProvider))
+    : normalizeEmbeddingProvider(input.embeddingProvider);
   const next: ProviderConfig = {
     cognitionProvider: nextCognitionProvider,
     judgeProvider: nextJudgeProvider,
+    embeddingProvider: nextEmbeddingProvider,
     samples: input.samples === undefined ? providerConfig.samples : clampInt(input.samples, 1, 50, providerConfig.samples),
     temperature: input.temperature === undefined ? providerConfig.temperature : clampFloat(input.temperature, 0, 1, providerConfig.temperature),
     openaiTopLogprobs: input.openaiTopLogprobs === undefined ? providerConfig.openaiTopLogprobs : clampInt(input.openaiTopLogprobs, 1, 20, providerConfig.openaiTopLogprobs),
   };
   if (next.cognitionProvider !== providerConfig.cognitionProvider) _cognition = null;
   if (next.judgeProvider !== providerConfig.judgeProvider || next.openaiTopLogprobs !== providerConfig.openaiTopLogprobs) _grader = null;
+  if (next.embeddingProvider !== providerConfig.embeddingProvider || next.cognitionProvider !== providerConfig.cognitionProvider) {
+    sharedMemory?.close();
+    sharedMemory = null;
+    learner = null;
+  }
   providerConfig = next;
 }
 
+
+function defaultEmbeddingProvider(cognitionProvider: CognitionProvider): EmbeddingProvider {
+  return cognitionProvider === "mock" ? "local" : "openai";
+}
+
+function normalizeEmbeddingProvider(value: unknown): EmbeddingProvider {
+  const s = String(value || "").toLowerCase();
+  if (s === "openai" || s === "live") return "openai";
+  return "local";
+}
 function normalizeCognitionProvider(value: unknown): CognitionProvider {
   const s = String(value || "").toLowerCase();
   if (s === "openai") return "openai";
@@ -255,10 +279,17 @@ let learner: Learner | null = null;
 let sharedMemory: Memory | null = null;
 let sharedRunner: ReturnType<typeof makeRunner> | null = null;
 const DEFAULT_AGENT_ID = "Builder-1";
+function createEmbedder(): Embedder {
+  if (providerConfig.embeddingProvider === "local") return new HashingEmbedder();
+  if (!process.env.OPENAI_API_KEY) {
+    throw new Error("OPENAI_API_KEY not set — live Studio memory embeddings require OpenAI embeddings; set AGENT_EMBEDDING_PROVIDER=local only for offline development.");
+  }
+  return new OpenAIEmbedder();
+}
 function getMemory(): Memory {
   if (!sharedMemory) {
     fs.mkdirSync(path.join(HERE, "data"), { recursive: true });
-    sharedMemory = new Memory(new HashingEmbedder(), path.join(HERE, "data", "agape.db"));
+    sharedMemory = new Memory(createEmbedder(), path.join(HERE, "data", "agape.db"));
   }
   return sharedMemory;
 }
@@ -483,9 +514,9 @@ function agentInstanceId(item: any): string {
   return id || DEFAULT_AGENT_ID;
 }
 
-function agentMemoryForTurn(agentId: string, task: string): string {
+async function agentMemoryForTurn(agentId: string, task: string): Promise<string> {
   try {
-    const ctx = getLearner(agentId).codingContext(task, { recordConsult: true });
+    const ctx = await getLearner(agentId).codingContext(task, { recordConsult: true });
     const parts = [
       `Agent: ${ctx.agent}`,
       `Runner: ${ctx.runner}`,
@@ -500,19 +531,19 @@ function agentMemoryForTurn(agentId: string, task: string): string {
   }
 }
 
-function agentContext(item: any, thread: any[], intent: Intent): AgentContext {
+async function agentContext(item: any, thread: any[], intent: Intent): Promise<AgentContext> {
   const task = agentTask(item, thread, intent);
   const agentId = agentInstanceId(item);
   return {
     operation: operationGuidance(intent),
     project: projectContextForAgent(task),
-    memory: agentMemoryForTurn(agentId, task),
+    memory: await agentMemoryForTurn(agentId, task),
   };
 }
 
-function recordAgentExperience(agentId: string, kind: string, subject: string, text: string, meta: Record<string, unknown> = {}): void {
+async function recordAgentExperience(agentId: string, kind: string, subject: string, text: string, meta: Record<string, unknown> = {}): Promise<void> {
   try {
-    getLearner(agentId).internalizeExperience(kind, subject, text, meta);
+    await getLearner(agentId).internalizeExperience(kind, subject, text, meta);
   } catch (e: any) {
     console.warn(`agent-server: memory internalization failed for ${agentId}: ${e?.message || e}`);
   }
@@ -819,11 +850,11 @@ const server = http.createServer(async (req, res) => {
       const safeThread = Array.isArray(thread) ? thread : [];
       const agentId = agentInstanceId(item);
       const turnIntent = routeAgentIntent(intent, item, safeThread);
-      const context = agentContext(item, safeThread, turnIntent);
+      const context = await agentContext(item, safeThread, turnIntent);
       const task = agentTask(item, safeThread, turnIntent);
       const direct = directAgentAnswer(item, safeThread, turnIntent);
       if (direct) {
-        recordAgentExperience(agentId, "agent-turn", task, direct, { source: "project-context", intent: turnIntent });
+        await recordAgentExperience(agentId, "agent-turn", task, direct, { source: "project-context", intent: turnIntent });
         return send(res, 200, { text: direct, intent: turnIntent, source: "project-context" });
       }
       const { system, messages } = buildMessages(item, safeThread, turnIntent, context);
@@ -832,17 +863,17 @@ const server = http.createServer(async (req, res) => {
         if (placeholderProgress(text)) {
           const repaired = fallbackAgentAnswer(item, safeThread, turnIntent, "placeholder progress");
           if (repaired) {
-            recordAgentExperience(agentId, "agent-turn", task, repaired, { source: "repair", intent: turnIntent, reason: "placeholder progress" });
+            await recordAgentExperience(agentId, "agent-turn", task, repaired, { source: "repair", intent: turnIntent, reason: "placeholder progress" });
             return send(res, 200, { text: repaired, intent: turnIntent, source: "repair" });
           }
         }
         const responseText = text || "(the agent had nothing to add)";
-        recordAgentExperience(agentId, "agent-turn", task, responseText, { source: "model", intent: turnIntent });
+        await recordAgentExperience(agentId, "agent-turn", task, responseText, { source: "model", intent: turnIntent });
         return send(res, 200, { text: responseText, intent: turnIntent, source: "model" });
       } catch (e: any) {
         const fallback = fallbackAgentAnswer(item, safeThread, turnIntent, e?.message || "provider unavailable");
         if (fallback) {
-          recordAgentExperience(agentId, "agent-turn", task, fallback, { source: "fallback", intent: turnIntent, error: e?.message || "provider unavailable" });
+          await recordAgentExperience(agentId, "agent-turn", task, fallback, { source: "fallback", intent: turnIntent, error: e?.message || "provider unavailable" });
           return send(res, 200, { text: fallback, intent: turnIntent, source: "fallback" });
         }
         throw e;
@@ -880,7 +911,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "POST" && url === "/learn/context") {
       const { task, agent } = (await readJson(req)) || {};
       if (!task) return send(res, 400, { error: "task is required" });
-      return send(res, 200, getLearner(String(agent || DEFAULT_AGENT_ID)).codingContext(String(task)));
+      return send(res, 200, await getLearner(String(agent || DEFAULT_AGENT_ID)).codingContext(String(task)));
     }
 
     if (req.method === "GET" && url === "/learn/state") {
@@ -894,7 +925,7 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === "GET" && url === "/learn/recall") {
       const q = new URL(req.url || "", "http://x").searchParams.get("q") || "";
-      return send(res, 200, { query: q, hits: getLearner(DEFAULT_AGENT_ID).recall(q) });
+      return send(res, 200, { query: q, hits: await getLearner(DEFAULT_AGENT_ID).recall(q) });
     }
 
     // ── the Review studio ──
@@ -985,7 +1016,7 @@ const server = http.createServer(async (req, res) => {
         openaiTopLogprobs,
       });
       const out = await runProjectFile(String(rel), prompts || {}, !!(live ?? claude), Number(samples) || 0, Number(temperature) || 0);
-      recordAgentExperience(String(agent || DEFAULT_AGENT_ID), "project-run", String(rel), JSON.stringify(out).slice(0, 8000), { ok: !!out.ok, rel: String(rel) });
+      await recordAgentExperience(String(agent || DEFAULT_AGENT_ID), "project-run", String(rel), JSON.stringify(out).slice(0, 8000), { ok: !!out.ok, rel: String(rel) });
       return send(res, 200, out);
     }
 
