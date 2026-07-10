@@ -7,7 +7,7 @@ import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
 import { buildMessages, type AgentContext, type Intent } from "./agent.ts";
-import { AnthropicCognition, HashingEmbedder, MockCognition, OpenAICognition, type Cognition } from "./provider.ts";
+import { AnthropicCognition, HashingEmbedder, MockCognition, OpenAICognition, OpenAIEmbedder, type Cognition, type Embedder } from "./provider.ts";
 import { Memory } from "./memory.ts";
 import { makeRunner } from "./runner.ts";
 import { Learner } from "./learner.ts";
@@ -21,9 +21,11 @@ const PORT = Number(process.env.AGENT_PORT) || 8799;
 
 type CognitionProvider = "mock" | "anthropic" | "openai";
 type JudgeProvider = "anthropic" | "openai" | "gemini";
+type EmbeddingProvider = "local" | "openai";
 interface ProviderConfig {
   cognitionProvider: CognitionProvider;
   judgeProvider: JudgeProvider;
+  embeddingProvider: EmbeddingProvider;
   samples: number;
   temperature: number;
   openaiTopLogprobs: number;
@@ -36,27 +38,26 @@ interface RuntimeConfig {
   version: string;
 }
 
-// Find provider API keys: env first, else walk up from cwd to the repo-root .env.
+// Find provider API keys: env first, else an explicit env file or the attached project's .env.
 function loadProviderEnv(): void {
-  const explicit = [
-    path.resolve(process.cwd(), "..", "..", "agape", ".env"),
-    path.resolve(process.cwd(), "..", "..", ".env"),
-  ];
-  for (const envPath of explicit) {
-    if (!fs.existsSync(envPath)) continue;
-    readEnvFile(envPath);
+  const explicit = process.env.AGAPE_ENV || process.env.AGENT_ENV_FILE;
+  if (explicit && fs.existsSync(explicit)) {
+    readEnvFile(explicit);
     return;
   }
-  let dir = process.cwd();
-  for (let i = 0; i < 10; i++) {
-    const envPath = path.join(dir, ".env");
-    if (fs.existsSync(envPath)) {
-      readEnvFile(envPath);
-      return;
+  if (process.env.AGAPE_PROJECT) {
+    let dir = path.resolve(process.env.AGAPE_PROJECT);
+    if (fs.existsSync(dir) && fs.statSync(dir).isFile()) dir = path.dirname(dir);
+    for (let i = 0; i < 16; i++) {
+      const envPath = path.join(dir, ".env");
+      if (fs.existsSync(envPath)) {
+        readEnvFile(envPath);
+        return;
+      }
+      const parent = path.dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
     }
-    const parent = path.dirname(dir);
-    if (parent === dir) break;
-    dir = parent;
   }
 }
 
@@ -72,9 +73,11 @@ if (!process.env.ANTHROPIC_API_KEY && !process.env.OPENAI_API_KEY) {
   console.warn("agent-server: no ANTHROPIC_API_KEY or OPENAI_API_KEY — deterministic mock + project studio work offline; live-model features need a key.");
 }
 
+const initialCognitionProvider = normalizeCognitionProvider(process.env.AGENT_COGNITION_PROVIDER || process.env.AGENT_PROVIDER || "mock");
 let providerConfig: ProviderConfig = {
-  cognitionProvider: normalizeCognitionProvider(process.env.AGENT_COGNITION_PROVIDER || process.env.AGENT_PROVIDER || "mock"),
-  judgeProvider: normalizeJudgeProvider(process.env.AGENT_JUDGE_PROVIDER || judgeProviderForCognition(process.env.AGENT_COGNITION_PROVIDER || process.env.AGENT_PROVIDER || "mock")),
+  cognitionProvider: initialCognitionProvider,
+  judgeProvider: normalizeJudgeProvider(process.env.AGENT_JUDGE_PROVIDER || judgeProviderForCognition(initialCognitionProvider)),
+  embeddingProvider: normalizeEmbeddingProvider(process.env.AGENT_EMBEDDING_PROVIDER || defaultEmbeddingProvider(initialCognitionProvider)),
   samples: clampInt(process.env.AGENT_JUDGE_SAMPLES, 1, 50, 5),
   temperature: clampFloat(process.env.AGENT_JUDGE_TEMPERATURE, 0, 1, 0),
   openaiTopLogprobs: clampInt(process.env.OPENAI_TOP_LOGPROBS, 1, 20, 5),
@@ -121,10 +124,16 @@ function providerSnapshot() {
       anthropic: !!process.env.ANTHROPIC_API_KEY,
       openai: !!process.env.OPENAI_API_KEY,
       gemini: !!process.env.GEMINI_API_KEY,
+      embeddings: providerConfig.embeddingProvider === "openai" ? !!process.env.OPENAI_API_KEY : true,
     },
-    cognitionModel: providerConfig.cognitionProvider === "openai"
-      ? (process.env.OPENAI_AGENT_MODEL || "gpt-4o-mini")
-      : (process.env.AGENT_MODEL || "claude-haiku-4-5"),
+    cognitionModel: providerConfig.cognitionProvider === "mock"
+      ? "mock-local"
+      : providerConfig.cognitionProvider === "openai"
+        ? (process.env.OPENAI_AGENT_MODEL || "gpt-4o-mini")
+        : (process.env.AGENT_MODEL || "claude-haiku-4-5"),
+    embeddingModel: providerConfig.embeddingProvider === "openai"
+      ? (process.env.OPENAI_EMBEDDING_MODEL || "text-embedding-3-small")
+      : "hashing-local",
     judgeModel: providerConfig.judgeProvider === "openai"
       ? (process.env.OPENAI_JUDGE_MODEL || "gpt-4o-mini")
       : providerConfig.judgeProvider === "gemini"
@@ -152,15 +161,24 @@ function updateProviderConfig(input: Partial<ProviderConfig>) {
   const nextJudgeProvider = input.judgeProvider === undefined
     ? (input.cognitionProvider === undefined ? providerConfig.judgeProvider : judgeProviderForCognition(nextCognitionProvider))
     : normalizeJudgeProvider(input.judgeProvider);
+  const nextEmbeddingProvider = input.embeddingProvider === undefined
+    ? (input.cognitionProvider === undefined ? providerConfig.embeddingProvider : defaultEmbeddingProvider(nextCognitionProvider))
+    : normalizeEmbeddingProvider(input.embeddingProvider);
   const next: ProviderConfig = {
     cognitionProvider: nextCognitionProvider,
     judgeProvider: nextJudgeProvider,
+    embeddingProvider: nextEmbeddingProvider,
     samples: input.samples === undefined ? providerConfig.samples : clampInt(input.samples, 1, 50, providerConfig.samples),
     temperature: input.temperature === undefined ? providerConfig.temperature : clampFloat(input.temperature, 0, 1, providerConfig.temperature),
     openaiTopLogprobs: input.openaiTopLogprobs === undefined ? providerConfig.openaiTopLogprobs : clampInt(input.openaiTopLogprobs, 1, 20, providerConfig.openaiTopLogprobs),
   };
-  if (next.cognitionProvider !== providerConfig.cognitionProvider) _cognition = null;
+  if (next.cognitionProvider !== providerConfig.cognitionProvider) { _cognition = null; learner = null; }
   if (next.judgeProvider !== providerConfig.judgeProvider || next.openaiTopLogprobs !== providerConfig.openaiTopLogprobs) _grader = null;
+  if (next.embeddingProvider !== providerConfig.embeddingProvider) {
+    learner = null;
+    sharedMemory?.close();
+    sharedMemory = null;
+  }
   providerConfig = next;
 }
 
@@ -176,6 +194,15 @@ function normalizeJudgeProvider(value: unknown): JudgeProvider {
   if (s === "openai") return "openai";
   if (s === "gemini") return "gemini";
   return "anthropic";
+}
+function normalizeEmbeddingProvider(value: unknown): EmbeddingProvider {
+  const s = String(value || "").toLowerCase();
+  if (s === "openai") return "openai";
+  return "local";
+}
+
+function defaultEmbeddingProvider(cognitionProvider: CognitionProvider): EmbeddingProvider {
+  return cognitionProvider === "mock" ? "local" : "openai";
 }
 
 function normalizeRuntimeMode(value: unknown): RuntimeMode {
@@ -199,19 +226,33 @@ function clampFloat(value: unknown, min: number, max: number, fallback: number):
 }
 
 // The learning subsystem, lazily started (so /agent/* works even if better-sqlite3
-// hasn't been built). Memory persists to data/agape.db; the runner uses agape-rs.
+// hasn't been built). Memory persists to data/agape.db; the runner uses agape-ts.
 const HERE = process.cwd();
 const AGAPE_ROOT =
   [
     path.resolve(HERE, "..", ".."),
     path.resolve(HERE, "..", "..", "agape"),
-  ].find((p) => fs.existsSync(path.join(p, "agape-rs"))) || path.resolve(HERE, "..", "..");
-const AGAPE_RS = path.join(AGAPE_ROOT, "agape-rs");
+  ].find((p) => fs.existsSync(path.join(p, "agape-ts"))) || path.resolve(HERE, "..", "..");
+const AGAPE_TS = path.join(AGAPE_ROOT, "agape-ts");
+const AGAPE_TS_CLI = process.env.AGAPE_TS_CLI || path.join(AGAPE_TS, "src", "cli.ts");
+const TSX_BIN = process.env.TSX_BIN || firstExisting([
+  path.join(AGAPE_TS, "node_modules", ".bin", process.platform === "win32" ? "tsx.cmd" : "tsx"),
+  path.join(AGAPE_TS, "node_modules", ".bin", "tsx"),
+]);
+const TSX_CLI = process.env.TSX_CLI || firstExisting([
+  path.join(AGAPE_TS, "node_modules", "tsx", "dist", "cli.mjs"),
+  path.join(path.dirname(path.dirname(TSX_BIN)), "tsx", "dist", "cli.mjs"),
+]);
 const SPEC_PATH = path.join(AGAPE_ROOT, "SPEC.md");
+
+function firstExisting(paths: string[]): string {
+  return paths.find((p) => fs.existsSync(p)) || paths[0]!;
+}
 function localRuntimeVersion(): string {
-  const cargo = path.join(AGAPE_RS, "Cargo.toml");
-  if (!fs.existsSync(cargo)) return "unknown";
-  return readTomlString(fs.readFileSync(cargo, "utf8"), "version") || "unknown";
+  const pkg = path.join(AGAPE_TS, "package.json");
+  if (!fs.existsSync(pkg)) return "unknown";
+  try { return JSON.parse(fs.readFileSync(pkg, "utf8")).version || "unknown"; }
+  catch { return "unknown"; }
 }
 
 function readTomlString(body: string, key: string, section?: string): string | null {
@@ -255,15 +296,21 @@ let learner: Learner | null = null;
 let sharedMemory: Memory | null = null;
 let sharedRunner: ReturnType<typeof makeRunner> | null = null;
 const DEFAULT_AGENT_ID = "Builder-1";
+function createEmbedder(): Embedder {
+  if (providerConfig.embeddingProvider === "local") return new HashingEmbedder();
+  if (!process.env.OPENAI_API_KEY) throw new Error("OPENAI_API_KEY not set — OpenAI embeddings need a live key, or set AGENT_EMBEDDING_PROVIDER=local.");
+  return new OpenAIEmbedder();
+}
+
 function getMemory(): Memory {
   if (!sharedMemory) {
     fs.mkdirSync(path.join(HERE, "data"), { recursive: true });
-    sharedMemory = new Memory(new HashingEmbedder(), path.join(HERE, "data", "agape.db"));
+    sharedMemory = new Memory(createEmbedder(), path.join(HERE, "data", "agape.db"));
   }
   return sharedMemory;
 }
 function getRunner() {
-  if (!sharedRunner) sharedRunner = makeRunner(AGAPE_RS);
+  if (!sharedRunner) sharedRunner = makeRunner(AGAPE_ROOT);
   return sharedRunner;
 }
 function getLearner(agentId = DEFAULT_AGENT_ID): Learner {
@@ -293,7 +340,7 @@ function readBody(req: http.IncomingMessage): Promise<string> {
 
 function sendText(res: http.ServerResponse, code: number, body: string): void {
   // Set Content-Length explicitly so Node never falls back to chunked encoding —
-  // the zero-dep Rust client reads a plain body after the header block.
+  // lightweight runtime callers can read a plain body after the header block.
   const buf = Buffer.from(body, "utf-8");
   res.writeHead(code, { "content-type": "text/plain; charset=utf-8", "content-length": buf.length, "access-control-allow-origin": "*" });
   res.end(buf);
@@ -324,16 +371,6 @@ const TESTS_DIR = path.resolve(REPO, "agape-conformance", "tests");
 // ── project: the user's own Agape project, opened via `agape studio` ──────────
 // `AGAPE_PROJECT` is set by the CLI launcher; null ⇒ no project (Review only).
 const PROJECT = process.env.AGAPE_PROJECT ? resolveProjectRoot(process.env.AGAPE_PROJECT) : null;
-// Resolve the `agape` binary across layouts: an explicit override, the packaged
-// bundle (studio/agent-server → ../../bin/agape), or a local release/dev build.
-const AGAPE_BIN =
-  process.env.AGAPE_BIN ||
-  [
-    path.resolve(HERE, "..", "..", "bin", "agape"),
-    path.resolve(AGAPE_RS, "target", "release", "agape"),
-    path.resolve(AGAPE_RS, "target", "debug", "agape"),
-  ].find((p) => fs.existsSync(p)) ||
-  "agape";
 
 // In a packaged bundle the agent-server also serves the built web app (one
 // process, no Vite). `AGAPE_WEB_DIST` points at the static `dist/`.
@@ -483,9 +520,9 @@ function agentInstanceId(item: any): string {
   return id || DEFAULT_AGENT_ID;
 }
 
-function agentMemoryForTurn(agentId: string, task: string): string {
+async function agentMemoryForTurn(agentId: string, task: string): Promise<string> {
   try {
-    const ctx = getLearner(agentId).codingContext(task, { recordConsult: true });
+    const ctx = await getLearner(agentId).codingContext(task, { recordConsult: true });
     const parts = [
       `Agent: ${ctx.agent}`,
       `Runner: ${ctx.runner}`,
@@ -500,19 +537,19 @@ function agentMemoryForTurn(agentId: string, task: string): string {
   }
 }
 
-function agentContext(item: any, thread: any[], intent: Intent): AgentContext {
+async function agentContext(item: any, thread: any[], intent: Intent): Promise<AgentContext> {
   const task = agentTask(item, thread, intent);
   const agentId = agentInstanceId(item);
   return {
     operation: operationGuidance(intent),
     project: projectContextForAgent(task),
-    memory: agentMemoryForTurn(agentId, task),
+    memory: await agentMemoryForTurn(agentId, task),
   };
 }
 
-function recordAgentExperience(agentId: string, kind: string, subject: string, text: string, meta: Record<string, unknown> = {}): void {
+async function recordAgentExperience(agentId: string, kind: string, subject: string, text: string, meta: Record<string, unknown> = {}): Promise<void> {
   try {
-    getLearner(agentId).internalizeExperience(kind, subject, text, meta);
+    await getLearner(agentId).internalizeExperience(kind, subject, text, meta);
   } catch (e: any) {
     console.warn(`agent-server: memory internalization failed for ${agentId}: ${e?.message || e}`);
   }
@@ -676,22 +713,16 @@ function safeProjectPath(rel: string): string | null {
 async function runProjectFile(rel: string, prompts: Record<string, string>, live?: boolean, samples?: number, temperature?: number) {
   const full = safeProjectPath(rel);
   if (!full || !fs.existsSync(full)) return { ok: false, error: `no such file: ${rel}` };
-  const args = ["run", full, "--json"];
+  const args = [AGAPE_TS_CLI, "run", full, "--json"];
   for (const [k, v] of Object.entries(prompts || {})) args.push("--prompt", `${k}=${v}`);
   if (live) {
-    args.push("--claude");
+    if (providerConfig.cognitionProvider !== "mock") args.push("--provider", providerConfig.cognitionProvider);
     if (samples && samples > 0) args.push("--samples", String(samples));
     if (temperature && temperature > 0) args.push("--temperature", String(temperature));
   }
-  const useCargo = !fs.existsSync(AGAPE_BIN);
-  const bin = useCargo ? "cargo" : AGAPE_BIN;
-  const argv = useCargo ? ["run", "--quiet", "--bin", "agape", "--", ...args] : args;
-  // The binary reads absolute paths, so cwd only needs to exist — AGAPE_RS for the
-  // cargo fallback (dev), else the project dir (a bundle has no agape-rs tree).
-  const cwd = useCargo ? AGAPE_RS : (PROJECT || process.cwd());
   try {
     // Live model runs make several API calls (the sampling fallback), so allow longer.
-    const r = await pExecFile(bin, argv, { cwd, timeout: live ? 180_000 : 60_000, maxBuffer: 20_000_000 });
+    const r = await pExecFile(process.execPath, [TSX_CLI, ...args], { cwd: PROJECT || process.cwd(), timeout: live ? 180_000 : 60_000, maxBuffer: 20_000_000 });
     return JSON.parse(r.stdout);
   } catch (e: any) {
     // A static-rejection exits non-zero but still prints the JSON error envelope.
@@ -725,8 +756,8 @@ function parseAg(file: string): { header: Record<string, string>; body: string }
   return { header, body: body.join("\n") };
 }
 
-// Async + single-flight so the cargo run never blocks the event loop (a sync spawn
-// wedges the whole server) and concurrent refreshes share one run.
+// Async + single-flight so the conformance runner never blocks the event loop
+// (a sync spawn wedges the whole server) and concurrent refreshes share one run.
 let conformanceInflight: Promise<{ status: Record<string, string>; buildOk: boolean; summary: string }> | null = null;
 
 function runConformance() {
@@ -734,23 +765,29 @@ function runConformance() {
   conformanceInflight = (async () => {
     let stdout = "", stderr = "";
     try {
-      const r = await pExecFile("cargo", ["run", "--quiet", "--bin", "conformance", "--", "--fails"],
-        { cwd: AGAPE_RS, timeout: 120_000, maxBuffer: 50_000_000 });
+      const r = await pExecFile(process.execPath, [TSX_CLI, path.join(AGAPE_TS, "conformance", "run.mts"), "--verbose"],
+        { cwd: AGAPE_TS, timeout: 120_000, maxBuffer: 50_000_000 });
       stdout = r.stdout; stderr = r.stderr;
     } catch (e: any) {
-      // execFile rejects on a non-zero exit (the runner exits non-zero when tests
-      // fail) — the output we want is still on e.stdout/e.stderr.
       stdout = e?.stdout || ""; stderr = e?.stderr || String(e?.message || e);
     }
     const text = stdout + "\n" + stderr;
     const status: Record<string, string> = {};
     let buildOk = true, summary = "";
-    if (text.includes("error[") || text.includes("could not compile")) buildOk = false;
-    for (const line of text.split("\n")) {
-      const m = line.match(/^\s*✗\s+(\S+)\s+(\S+)\s+(.*)/);
-      if (m) status[m[2]] = m[3].trim();
-      const m2 = line.match(/(\d+)\s+pass\b[^\d]*?(\d+)\s+fail/);
-      if (m2) summary = line.trim();
+    if (text.includes("error TS") || text.includes("could not compile")) buildOk = false;
+    const resultsPath = path.join(AGAPE_TS, "conformance", "results.json");
+    if (fs.existsSync(resultsPath)) {
+      try {
+        const results = JSON.parse(fs.readFileSync(resultsPath, "utf8"));
+        summary = `${results.passed ?? 0} pass / ${results.total ?? 0} total`;
+        for (const row of results.rows || []) if (!row.pass && row.id) status[row.id] = row.reason || "failed";
+      } catch {}
+    }
+    if (!summary) {
+      for (const line of text.split("\n")) {
+        const m = line.match(/^TOTAL\s+(\d+)\s+\/\s+(\d+)/);
+        if (m) summary = `${m[1]} pass / ${m[2]} total`;
+      }
     }
     return { status, buildOk, summary };
   })();
@@ -819,11 +856,11 @@ const server = http.createServer(async (req, res) => {
       const safeThread = Array.isArray(thread) ? thread : [];
       const agentId = agentInstanceId(item);
       const turnIntent = routeAgentIntent(intent, item, safeThread);
-      const context = agentContext(item, safeThread, turnIntent);
+      const context = await agentContext(item, safeThread, turnIntent);
       const task = agentTask(item, safeThread, turnIntent);
       const direct = directAgentAnswer(item, safeThread, turnIntent);
       if (direct) {
-        recordAgentExperience(agentId, "agent-turn", task, direct, { source: "project-context", intent: turnIntent });
+        await recordAgentExperience(agentId, "agent-turn", task, direct, { source: "project-context", intent: turnIntent });
         return send(res, 200, { text: direct, intent: turnIntent, source: "project-context" });
       }
       const { system, messages } = buildMessages(item, safeThread, turnIntent, context);
@@ -832,17 +869,17 @@ const server = http.createServer(async (req, res) => {
         if (placeholderProgress(text)) {
           const repaired = fallbackAgentAnswer(item, safeThread, turnIntent, "placeholder progress");
           if (repaired) {
-            recordAgentExperience(agentId, "agent-turn", task, repaired, { source: "repair", intent: turnIntent, reason: "placeholder progress" });
+            await recordAgentExperience(agentId, "agent-turn", task, repaired, { source: "repair", intent: turnIntent, reason: "placeholder progress" });
             return send(res, 200, { text: repaired, intent: turnIntent, source: "repair" });
           }
         }
         const responseText = text || "(the agent had nothing to add)";
-        recordAgentExperience(agentId, "agent-turn", task, responseText, { source: "model", intent: turnIntent });
+        await recordAgentExperience(agentId, "agent-turn", task, responseText, { source: "model", intent: turnIntent });
         return send(res, 200, { text: responseText, intent: turnIntent, source: "model" });
       } catch (e: any) {
         const fallback = fallbackAgentAnswer(item, safeThread, turnIntent, e?.message || "provider unavailable");
         if (fallback) {
-          recordAgentExperience(agentId, "agent-turn", task, fallback, { source: "fallback", intent: turnIntent, error: e?.message || "provider unavailable" });
+          await recordAgentExperience(agentId, "agent-turn", task, fallback, { source: "fallback", intent: turnIntent, error: e?.message || "provider unavailable" });
           return send(res, 200, { text: fallback, intent: turnIntent, source: "fallback" });
         }
         throw e;
@@ -880,7 +917,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "POST" && url === "/learn/context") {
       const { task, agent } = (await readJson(req)) || {};
       if (!task) return send(res, 400, { error: "task is required" });
-      return send(res, 200, getLearner(String(agent || DEFAULT_AGENT_ID)).codingContext(String(task)));
+      return send(res, 200, await getLearner(String(agent || DEFAULT_AGENT_ID)).codingContext(String(task)));
     }
 
     if (req.method === "GET" && url === "/learn/state") {
@@ -894,7 +931,7 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === "GET" && url === "/learn/recall") {
       const q = new URL(req.url || "", "http://x").searchParams.get("q") || "";
-      return send(res, 200, { query: q, hits: getLearner(DEFAULT_AGENT_ID).recall(q) });
+      return send(res, 200, { query: q, hits: await getLearner(DEFAULT_AGENT_ID).recall(q) });
     }
 
     // ── the Review studio ──
@@ -925,7 +962,7 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, { ok: true, bytes: text.length });
     }
     // ── the live provider seam behind the runtime's `<-` ──
-    // Plain text/line wire format so the zero-dep Rust runtime can call it.
+    // Plain text/line wire format for lightweight runtime callers.
     if (req.method === "POST" && url === "/provider/text") {
       const prompt = await readBody(req);
       const system = "You are an autonomous agent in a multi-agent system. Answer the request directly and concisely — at most one short paragraph. No preamble, no caveats.";
@@ -975,17 +1012,18 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === "POST" && url === "/project/run") {
       const body = (await readJson(req)) || {};
-      const { rel, prompts, claude, live, cognitionProvider, judgeProvider, samples, temperature, openaiTopLogprobs, agent } = body;
+      const { rel, prompts, claude, live, cognitionProvider, judgeProvider, embeddingProvider, samples, temperature, openaiTopLogprobs, agent } = body;
       if (!rel) return send(res, 400, { error: "rel (a project .ag file) is required" });
       updateProviderConfig({
         ...(cognitionProvider === undefined ? {} : { cognitionProvider }),
         ...(judgeProvider === undefined ? {} : { judgeProvider }),
+        ...(embeddingProvider === undefined ? {} : { embeddingProvider }),
         samples,
         temperature,
         openaiTopLogprobs,
       });
       const out = await runProjectFile(String(rel), prompts || {}, !!(live ?? claude), Number(samples) || 0, Number(temperature) || 0);
-      recordAgentExperience(String(agent || DEFAULT_AGENT_ID), "project-run", String(rel), JSON.stringify(out).slice(0, 8000), { ok: !!out.ok, rel: String(rel) });
+      await recordAgentExperience(String(agent || DEFAULT_AGENT_ID), "project-run", String(rel), JSON.stringify(out).slice(0, 8000), { ok: !!out.ok, rel: String(rel) });
       return send(res, 200, out);
     }
 

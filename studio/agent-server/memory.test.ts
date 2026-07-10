@@ -27,8 +27,8 @@ describe("spine (§7)", () => {
 });
 
 describe("internalization + provenance (§10)", () => {
-  it("writes facts, triples, and an embedding all pinned to the originating event", () => {
-    const tick = mem.internalize("builder", "Internalized", "§13 gate", "the endorse gate…", ENDORSE, "P");
+  it("writes facts, triples, and an embedding all pinned to the originating event", async () => {
+    const tick = await mem.internalize("builder", "Internalized", "§13 gate", "the endorse gate…", ENDORSE, "P");
     const facts = mem.select("builder");
     const triples = mem.find("builder");
     expect(facts).toHaveLength(1);
@@ -53,9 +53,9 @@ describe("knowledge artifacts", () => {
     expect(mem.sourceSummaries("builder")[0].summary).toContain("whole-doc");
   });
 
-  it("dedupes chunks per agent without sharing private projections", () => {
+  it("dedupes chunks per agent without sharing private projections", async () => {
     const source = mem.ensureSource("builder", "spec", "SPEC.md", "Spec", "summary", "hash1").source;
-    const tick = mem.internalize("builder", "Internalized", "gate", "endorse gate text", ENDORSE);
+    const tick = await mem.internalize("builder", "Internalized", "gate", "endorse gate text", ENDORSE);
     mem.recordSourceChunk("builder", source.id, "spec", "SPEC.md", "gate", "chunk1", tick);
     mem.recordSourceChunk("builder", source.id, "spec", "SPEC.md", "gate", "chunk1", tick);
     expect(mem.sourceChunk("builder", "spec", "SPEC.md", "chunk1")?.origin_tick).toBe(tick);
@@ -65,8 +65,8 @@ describe("knowledge artifacts", () => {
 });
 
 describe("query surface (§10)", () => {
-  beforeEach(() => {
-    mem.internalize("builder", "Internalized", "gate", "endorse gate text", ENDORSE);
+  beforeEach(async () => {
+    await mem.internalize("builder", "Internalized", "gate", "endorse gate text", ENDORSE);
   });
 
   it("select returns FACTS, filterable", () => {
@@ -82,12 +82,12 @@ describe("query surface (§10)", () => {
     expect(mem.find("builder", { s: "abstain" })).toHaveLength(0);
   });
 
-  it("match is a θ gate over SEMANTICS, ranked by similarity", () => {
-    mem.internalize("builder", "Internalized", "refund", "performing a Refund action within granted authority", {
+  it("match is a θ gate over SEMANTICS, ranked by similarity", async () => {
+    await mem.internalize("builder", "Internalized", "refund", "performing a Refund action within granted authority", {
       facts: [{ key: "refund", value: "a refund is an action" }],
       triples: [],
     });
-    const hits = mem.match("builder", "how does the endorse gate work", 0.0, 5);
+    const hits = await mem.match("builder", "how does the endorse gate work", 0.0, 5);
     expect(hits.length).toBeGreaterThan(0);
     expect(hits[0].text).toContain("endorse"); // the gate chunk outranks the refund chunk
     expect(hits[0].score).toBeGreaterThanOrEqual(hits[hits.length - 1].score);
@@ -107,8 +107,8 @@ describe("inspection reads (free — no cognition)", () => {
     expect(recent[0].tick).toBeGreaterThan(recent[2].tick); // newest first
   });
 
-  it("listEmbeddings returns texts + provenance, without raw vectors", () => {
-    mem.internalize("builder", "Internalized", "gate", "endorse gate text", ENDORSE);
+  it("listEmbeddings returns texts + provenance, without raw vectors", async () => {
+    await mem.internalize("builder", "Internalized", "gate", "endorse gate text", ENDORSE);
     const embs = mem.listEmbeddings("builder", 10);
     expect(embs).toHaveLength(1);
     expect(embs[0].text).toContain("endorse");

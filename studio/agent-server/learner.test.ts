@@ -61,26 +61,26 @@ describe("Learner artifact ingestion", () => {
     expect(second.counts.sources).toBe(1);
     expect(second.counts.chunks).toBe(3);
 
-    const ctx = learner.codingContext("write an agent with a gate");
+    const ctx = await learner.codingContext("write an agent with a gate");
     expect(ctx.context).toContain("Knowledge artifact summaries");
     expect(ctx.context).toContain("Agape agents must gate cognition");
   });
 
-  it("records a memory consult even when memory is empty", () => {
+  it("records a memory consult even when memory is empty", async () => {
     const learner = new Learner(mem, new FakeCognition(), new FakeRunner(), "Builder-1");
-    const ctx = learner.codingContext("new task", { recordConsult: true });
+    const ctx = await learner.codingContext("new task", { recordConsult: true });
     expect(ctx.consultTick).toBeGreaterThan(0);
     expect(mem.event(ctx.consultTick!)?.etype).toBe("MemoryConsulted");
     expect(ctx.context).toBe("");
   });
 
-  it("internalizes experiences into the addressed agent only", () => {
+  it("internalizes experiences into the addressed agent only", async () => {
     const a = new Learner(mem, new FakeCognition(), new FakeRunner(), "Builder-1");
     const b = new Learner(mem, new FakeCognition(), new FakeRunner(), "Builder-2");
-    a.internalizeExperience("project-run", "main.ag", "checker accepted", { ok: true });
+    await a.internalizeExperience("project-run", "main.ag", "checker accepted", { ok: true });
 
     expect(a.state().counts.facts).toBeGreaterThan(0);
     expect(b.state().counts.facts).toBe(0);
-    expect(a.recall("checker accepted")[0]?.text).toContain("checker accepted");
+    expect((await a.recall("checker accepted"))[0]?.text).toContain("checker accepted");
   });
 });

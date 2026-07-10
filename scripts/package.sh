@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Package-and-ship: stage a self-contained Agape bundle (the `agape` binary —
-# compiler + runtime — plus the studio and a runnable example), archive it with a
-# SHA-256 sidecar, and verify by running the *shipped* binary with no repo present.
+# Package-and-ship: stage a self-contained TypeScript Agape bundle (the CLI
+# wrapper, agape-ts runtime, examples, and Studio), archive it with a SHA-256
+# sidecar, and verify by running the shipped wrapper with no repo path.
 #
-#   bash scripts/package.sh              # bundle for the host target
-#   TARGET=x86_64-unknown-linux-gnu ...  # name the artifact for a cross target
-#   SKIP_STUDIO=1 bash scripts/package.sh  # binary-only (skip the Node studio)
+#   bash scripts/package.sh                 # bundle for the host platform
+#   TARGET=node-linux-x64 bash scripts/package.sh
+#   SKIP_STUDIO=1 bash scripts/package.sh   # local iteration only
 #
 # Output: dist/agape-<version>-<target>.tar.gz (+ .sha256)
 set -euo pipefail
@@ -13,10 +13,11 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-# `tr -d` strips any CR — rustc -vV emits CRLF on Windows, which would otherwise
-# corrupt the bundle name and break the verify step.
-VERSION="$(grep -m1 '^version' agape-rs/Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/' | tr -d '\r\n')"
-TARGET="$(printf '%s' "${TARGET:-$(rustc -vV | sed -n 's/host: //p')}" | tr -d '\r\n')"
+command -v node >/dev/null 2>&1 || { echo "package.sh: node is required"; exit 1; }
+command -v npm >/dev/null 2>&1 || { echo "package.sh: npm is required"; exit 1; }
+
+VERSION="$(node -p "require('./agape-ts/package.json').version")"
+TARGET="${TARGET:-node-$(node -p "process.platform + '-' + process.arch")}"
 NAME="agape-${VERSION}-${TARGET}"
 STAGE="$ROOT/dist/$NAME"
 
@@ -24,42 +25,31 @@ echo "==> packaging $NAME"
 rm -rf "$STAGE"
 mkdir -p "$STAGE/bin" "$STAGE/examples"
 
-# 1. the binary: compiler + runtime, one self-contained download
-echo "==> building release binary"
-cargo build --release --manifest-path agape-rs/Cargo.toml --bin agape
-BINEXT=""; [ "${TARGET}" != "${TARGET%windows*}" ] && BINEXT=".exe"
-cp "agape-rs/target/release/agape${BINEXT}" "$STAGE/bin/agape${BINEXT}"
+# 1. TypeScript runtime + CLI dependencies.
+echo "==> staging agape-ts runtime"
+tar --exclude="agape-ts/node_modules" --exclude="agape-ts/.agape" -C "$ROOT" -cf - agape-ts | tar -C "$STAGE" -xf -
+( cd "$STAGE/agape-ts" && npm install --no-audit --no-fund )
 
-# 2. a runnable example, a default manifest, and a bundle README
+cat > "$STAGE/bin/agape" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+DIR="$(cd "$(dirname "$0")/.." && pwd)"
+exec node "$DIR/agape-ts/node_modules/tsx/dist/cli.mjs" "$DIR/agape-ts/src/cli.ts" "$@"
+SH
+chmod +x "$STAGE/bin/agape"
+
+# 2. Examples, default manifest, and bundle README.
 cp SPEC.md "$STAGE/SPEC.md"
-cp agape-rs/examples/*.ag "$STAGE/examples/" 2>/dev/null || true
-cat > "$STAGE/examples/hello.ag" <<'AG'
-// hello.ag — the smallest Agape program: an agent thinks, gates, and records.
-agent Greeter {
-  on awake {
-    Credence<bool> ready = self <- "is this thing on?";
-    endorse (ready by confidence 0.8) {
-      true:  emit Event("hello from agape");
-      false: ;
-    }
-  }
-}
-spawn Greeter g;
-awake g;
-AG
+cp agape-ts/examples/*.ag "$STAGE/examples/" 2>/dev/null || true
 cat > "$STAGE/agape.toml" <<TOML
 [project]
 name = "agape-app"
 entry = "examples/hello.ag"
+language = "$VERSION"
 
 [provider]
-# mock (offline, deterministic) by default; \`agape configure provider claude\`
-# switches to a live model via the studio.
 backend = "mock"
-model = "claude-haiku-4-5"
-
-[runtime]
-samples = 5
+model = "mock-deterministic"
 
 [memory]
 # Project-local, editable markdown memory. The built-in runtime adds classification,
@@ -80,45 +70,45 @@ TOML
 cat > "$STAGE/README.md" <<MD
 # Agape ${VERSION}
 
-The \`agape\` CLI: the language, compiler, runtime, and studio in one bundle.
+The \`agape\` command in this bundle is a thin wrapper around the TypeScript
+Agape runtime in \`agape-ts/\`.
 
-\`\`\`
-bin/agape run examples/hello.ag      # run a program -> its event ledger
-bin/agape check examples/hello.ag    # static guarantees only
-bin/agape init my-app                # scaffold a new project
-bin/agape build                      # check every .ag, emit .agape/build.json
-bin/agape configure provider claude  # switch the cognition seam to a live model
-bin/agape studio                     # open Agape Studio (needs Node)
+\`\`\`sh
+bin/agape run examples/hello.ag
+bin/agape check examples/hello.ag
+bin/agape studio
 \`\`\`
 
-The mock provider ships in-box, so \`run\` works offline with no API key. Real
-cognition is one config step away (\`configure provider claude\` + an
-\`ANTHROPIC_API_KEY\`). Put \`bin/\` on your PATH to call \`agape\` directly.
+The mock provider works offline with no API key. To use live cognition, set a
+provider in your project \`agape.toml\` and put provider keys in the project
+\`.env\` or process environment. Default markdown memory writes to the project
+root under \`.agape/memory\`.
 MD
 
-# 3. the studio — a REQUIRED part of the release; its build must succeed. The
-#    agent-server serves the prebuilt web app (one process, no Vite at runtime). We
-#    ship the agent-server SOURCE and let deps install on first `agape studio`, so
-#    the archive carries no native modules / deep node_modules paths (portable +
-#    Windows-safe). SKIP_STUDIO is for fast LOCAL iteration only — the release never
-#    sets it.
+# 3. Studio is part of the release. The agent server source is staged without
+# node_modules/data so installs stay platform-local.
 if [ "${SKIP_STUDIO:-}" = "1" ]; then
-  echo "==> SKIP_STUDIO=1 — binary-only bundle (local only; releases always include the studio)"
+  echo "==> SKIP_STUDIO=1 - local-only bundle without Studio"
 else
-  command -v npm >/dev/null 2>&1 || { echo "package.sh: npm is required to build the studio"; exit 1; }
-  echo "==> building studio web app"
-  ( cd studio/web && npm install --no-audit --no-fund && npm run build )
+  if [ ! -f studio/web/dist/index.html ] || [ "${FORCE_STUDIO_BUILD:-}" = "1" ]; then
+    echo "==> building studio web app"
+    if [ ! -d studio/web/node_modules ]; then
+      ( cd studio/web && npm install --no-audit --no-fund )
+    fi
+    ( cd studio/web && node "$STAGE/agape-ts/node_modules/vite/bin/vite.js" build )
+  else
+    echo "==> using existing studio web build"
+  fi
   mkdir -p "$STAGE/studio"
   cp -r studio/web/dist "$STAGE/studio/web-dist"
-  cp -r studio/agent-server "$STAGE/studio/agent-server"
-  rm -rf "$STAGE/studio/agent-server/node_modules" "$STAGE/studio/agent-server/data"
+  tar --exclude="studio/agent-server/node_modules" --exclude="studio/agent-server/data" -C "$ROOT" -cf - studio/agent-server | tar -C "$STAGE/studio" --strip-components=1 -xf -
   for f in studio/web-dist/index.html studio/agent-server/server.ts studio/agent-server/package.json; do
-    [ -f "$STAGE/$f" ] || { echo "package.sh: studio staging incomplete — missing $f"; exit 1; }
+    [ -f "$STAGE/$f" ] || { echo "package.sh: studio staging incomplete - missing $f"; exit 1; }
   done
-  echo "==> studio staged (deps install on first \`agape studio\`)"
+  echo "==> studio staged"
 fi
 
-# 4. archive + checksum
+# 4. Archive + checksum.
 echo "==> archiving"
 cd "$ROOT/dist"
 tar -czf "$NAME.tar.gz" "$NAME"
@@ -128,12 +118,13 @@ else
   shasum -a 256 "$NAME.tar.gz" > "$NAME.tar.gz.sha256"
 fi
 
-# 5. verify: extract to a clean dir and run the SHIPPED binary — no repo, no source.
-echo "==> verifying the shipped binary"
+# 5. Verify: extract to a clean dir and run the shipped wrapper.
+echo "==> verifying the shipped TypeScript CLI"
 VERIFY="$(mktemp -d)"
 tar -xzf "$NAME.tar.gz" -C "$VERIFY"
-( cd "$VERIFY/$NAME" && "./bin/agape${BINEXT}" run examples/hello.ag >/dev/null )
+( cd "$VERIFY/$NAME" && "./bin/agape" run examples/hello.ag >/dev/null )
 rm -rf "$VERIFY"
+rm -rf "$ROOT/dist/$NAME"
 
 echo "==> done: dist/$NAME.tar.gz"
 ls -la "$NAME.tar.gz" "$NAME.tar.gz.sha256"

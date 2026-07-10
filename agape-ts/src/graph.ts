@@ -457,7 +457,7 @@ export function buildGraph(program: A.Program, programName = ""): ProgramGraph {
         case "index": visitExpr(e.obj, at); visitExpr(e.index, at); return;
         case "binary": visitExpr(e.left, at); visitExpr(e.right, at); return;
         case "unary": visitExpr(e.operand, at); return;
-        case "find": case "match": case "string": case "int": case "float":
+        case "string": case "int": case "float":
         case "bool": case "null": case "self": case "ident": return;
       }
     };

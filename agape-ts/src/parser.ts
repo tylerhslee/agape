@@ -7,7 +7,7 @@ export class ParseError extends Error {}
 
 // contextual keywords — lexed as keyword tokens but valid as plain names in a declaration
 // name-position (§2: these are matched positionally, not reserved).
-const CONTEXTUAL = new Set(["find", "where", "select", "from", "match", "all", "any", "quorum"]);
+const CONTEXTUAL = new Set(["where", "select", "from", "all", "any", "quorum"]);
 
 export function parse(source: string): A.Program {
   const program = new Parser(lex(source)).parseProgram();
@@ -17,7 +17,7 @@ export function parse(source: string): A.Program {
 
 // The core kernel is the complete language with NO syntactic sugar and NO library layer. Constructs the
 // full surface once had — the arm block, all/any fusion, the policy declaration, retry, reversible
-// sinks, agent-memory queries (find/match/select-from-agent), and the whole library layer (modules,
+// sinks, agent-memory queries, and the whole library layer (modules,
 // imports, visibility, generics, interfaces) — are not part of the core grammar, so accepting one would
 // break lockstep with the stripped SPEC.md. This pass walks the parsed program and rejects each as a
 // ParseError, so agape-ts accepts EXACTLY the core grammar. (Kept from the surface: gates as plain
@@ -36,9 +36,7 @@ function assertCore(p: A.Program): void {
     switch (e.kind) {
       case "agg": return bad("`all`/`any` fusion (use `quorum`)");
       case "pipe": walkExpr(e.source); walkExpr(e.fn); break;
-      case "find": return bad("a `find` graph query");
-      case "match": return bad("a `match` similarity query");
-      case "select": if (e.target !== "ledger") bad("a `select` over agent memory (use recall, or `select … from ledger`)"); break;
+      case "select": if (e.target !== "ledger") bad("a `select` over anything except `ledger`"); break;
       case "member": walkExpr(e.obj); break;
       case "index": walkExpr(e.obj); walkExpr(e.index); break;
       case "call": walkExpr(e.callee); e.args.forEach(walkExpr); break;
@@ -902,26 +900,15 @@ class Parser {
 
   // ---- expressions ----
   private parseExpr(): A.Expr {
-    // top-level query forms (find / select / match) are their own productions (§15.2 expr grammar).
-    // `select`/`find`/`match` are contextual: only a query here when followed by the query's shape.
-    if (this.at("find") && this.startsFind()) return this.parseFind();
+    // The top-level ledger query form is its own production (§15.2 expr grammar). `select` is contextual:
+    // only a query here when followed by the query's shape.
     if (this.at("select") && this.startsSelect()) return this.parseSelect();
-    if (this.at("match") && this.startsMatch()) return this.parseMatch();
     return this.parseSend();
   }
 
-  // `find` opens a query when it is followed by a binder Ident then `,`/`origin`/`where`.
-  private startsFind(): boolean {
-    return this.peek(1).type === "ident";
-  }
   // `select` opens a query when followed by `*`, an Ident-list projection, or `Event as e`.
   private startsSelect(): boolean {
     return this.peek(1).type === "*" || this.peek(1).type === "ident";
-  }
-  // `match` opens a query when followed by an expression then `>` Number.
-  private startsMatch(): boolean {
-    const n = this.peek(1).type;
-    return n === "{" || n === "ident" || n === "string" || n === "self" || n === "(";
   }
 
   private parseSend(): A.Expr {
@@ -958,34 +945,7 @@ class Parser {
     return left;
   }
 
-  // find ::= "find" Ident ("," "origin" "(" Ident ")")? "where" "{" triple+ "}"  (§10)
-  private parseFind(): A.FindExpr {
-    const pos = this.eat("find").pos;
-    const binder = this.eat("ident").value;
-    let origin = false;
-    if (this.at(",")) {
-      this.next();
-      this.eatIdent("origin");
-      this.eat("(");
-      this.eat("ident");
-      this.eat(")");
-      origin = true;
-    }
-    this.eat("where");
-    this.eat("{");
-    const triples: A.Triple[] = [];
-    while (!this.at("}") && !this.at("eof")) {
-      const subject = this.operandName();
-      const predicate = this.operandName();
-      const object = this.operandName();
-      triples.push({ subject, predicate, object });
-      if (this.at(";")) this.next();
-    }
-    this.eat("}");
-    return { kind: "find", binder, origin, triples, pos };
-  }
-
-  // select ::= "select" (Ident ("," Ident)* | "*") "from" Ident "where" "{" cond "}"  (§10)
+  // select ::= "select" (Ident ("," Ident)* | "*") "from" "ledger" "where" "{" cond "}"  (§10)
   //         | "select" Ident "as" Ident "from" "ledger" "where" "{" cond "}"
   private parseSelect(): A.SelectExpr {
     const pos = this.eat("select").pos;
@@ -997,9 +957,9 @@ class Parser {
           this.next();
           const alias = this.eat("ident").value;
           this.eat("from");
-          let target: string;
-          if (this.at("self")) { this.next(); target = "self"; }
-          else target = this.colName();
+          const targetName = this.colName();
+          if (targetName !== "ledger") this.err("expected 'ledger'");
+          const target: "ledger" = "ledger";
           this.eat("where");
           const cond = this.parseQueryCond();
           return { kind: "select", cols: "*", target, eventType, alias, cond, pos };
@@ -1017,23 +977,14 @@ class Parser {
       cols = cs;
     }
     this.eat("from");
-    // the target is an agent-instance name, or the keyword `ledger`/`self`.
-    let target: string;
-    if (this.at("self")) { this.next(); target = "self"; }
-    else target = this.colName();
+    const targetName = this.colName();
+    if (targetName !== "ledger") this.err("expected 'ledger'");
+    const target: "ledger" = "ledger";
     this.eat("where");
     const cond = this.parseQueryCond();
     return { kind: "select", cols, target, cond, pos };
   }
 
-  // match ::= "match" expr ">" Number  (§10) — a gate over a similarity threshold.
-  private parseMatch(): A.MatchExpr {
-    const pos = this.eat("match").pos;
-    const vector = this.parseUnary();
-    this.eat(">");
-    const theta = this.number();
-    return { kind: "match", vector, theta, pos };
-  }
 
   // a where-condition body: `{ field op value (&& | || field op value)* }`. A bare `field: value`
   // is sugar for `field == value` (§10 — the suite uses both the `:` and the explicit-op forms).

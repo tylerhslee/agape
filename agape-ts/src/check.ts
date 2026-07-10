@@ -1175,12 +1175,9 @@ class Checker {
   private assertSyncExpr(e: A.Expr): void {
     switch (e.kind) {
       case "send": throw colorViolation("a `sync` function may not `<-` (a send reaches the provider → async)");
-      // the memory substrate is async (§9/§10): a recall, a facts/graph/ledger query, and a vector match
-      // all reach the provider-backed private-memory substrate, so any of them inside a `sync` body forces
-      // async → a ColorViolation, exactly like a `send`.
+      // the memory substrate is async (§9/§10): a recall or ledger query reaches async runtime state.
       case "recall": throw colorViolation("a `sync` function may not recall (`->` reaches the async memory substrate → async)");
-      case "select": case "find": throw colorViolation("a `sync` function may not query memory (`select`/`find` reaches the async memory substrate → async)");
-      case "match": throw colorViolation("a `sync` function may not `match` (a vector match reaches the async memory substrate → async)");
+      case "select": throw colorViolation("a `sync` function may not query the ledger (`select` reaches async runtime state → async)");
       case "decide": case "endorse": this.assertSyncGate(e); return;
       case "performexpr":
         throw colorViolation(`a \`sync\` function may not \`perform\` (an action is an outbound act → async) (§6b)`);
@@ -1354,7 +1351,7 @@ class Checker {
               `which is settled but NOT committed-narrowed — an un-committed endorsement cannot reach a consequential sink (§13/§15.3.3)`,
             );
           }
-          // (b) a provably-tainted (raw/graded) value: an un-endorsed memory read (recall/select/find/match),
+          // (b) a provably-tainted (raw/graded) value: an un-endorsed memory read (recall/select),
           // a raw send reply, or anything contagiously derived from one (a tool result over a tainted input).
           // Such a value carries un-endorsed cognition and is ILL-FORMED at a consequential sink — it must be
           // decided AND endorsed first, and only the resulting committed-narrowed `Endorsement` may reach the
@@ -1677,13 +1674,12 @@ class Checker {
           }
         }
         // A recall is `raw` `text` by default, but §10 lets it be graded into a `Credence<E>` slot: a
-        // recall/match hit "must be re-judged (fed into a Credence) and gated". The interpreter's
+        // recall hit "must be re-judged (fed into a Credence) and gated". The interpreter's
         // evalRecall already yields a credence when the expected slot is Credence, so the checker mirrors
         // it — binding a recall into a Credence is LEGAL, not `cannot assign text to credence`.
         return expected?.kind === "credence" ? "credence" : "text"; // taint stays dynamic
       }
-      case "select": case "find": return "unknown"; // an array<…> result — taint enforced dynamically
-      case "match": return "unknown"; // array<Hit>
+      case "select": return "unknown"; // an array<…> result — taint enforced dynamically
       case "structlit": {
         for (const f of e.fields) this.infer(f.value, scope);
         // a typed struct literal must supply EXACTLY the declared fields (§3, §8): every declared field
@@ -1951,7 +1947,7 @@ class Checker {
   }
 
   // Whether the VALUE of an expression carries tainted (un-endorsed, subjective) provenance: a direct
-  // memory read (recall/select/find/match), a raw send reply (a `<-` before it is bound to a Credence
+  // memory read (recall/select), a raw send reply (a `<-` before it is bound to a Credence
   // slot — see isMemoryRead's note), or anything derived from an already-tainted binding (contagious,
   // §15.3.1). Used for both `var` and `assign`, so `u = t` (t a recall) taints `u` exactly like a `var`.
   private isTaintedExpr(e: A.Expr, scope: Scope): boolean {
@@ -1973,7 +1969,7 @@ class Checker {
 
   // §13: the endorsed subject must lie in the endorsing decision's dependency scope — "a decision about
   // `other_response` cannot endorse `response`". This is enforced CONSERVATIVELY: it fires ONLY when the
-  // subject is a provably TAINTED memory-provenance binding (a recall/query/match result) that is provably
+  // subject is a provably TAINTED memory-provenance binding (a recall/query result) that is provably
   // OUTSIDE the decision's scope. When the subject is a settled value, the credence itself, in scope, or the
   // scope is unknown, the endorsement is admitted — so no `accept` test is ever false-rejected.
   private checkEndorseScope(e: A.EndorseExpr, scope: Scope): void {
@@ -2001,17 +1997,11 @@ class Checker {
     throw typeError("endorse requires a Decision narrowed to a committed variant; an abstained Decision has no endorsement to give (§13)");
   }
 
-  // Whether an expression is a direct memory READ that yields a tainted, subjective fact (§10): a recall
-  // (`mem -> q`), a relational/graph query (`select`/`find`), or a vector match. A raw `send` reply is also
-  // tainted, but only when it is NOT bound to a Credence slot — that split is handled in trackProvenance,
-  // because it needs the declared slot type; here we cover the always-tainted off-gate memory reads.
+  // Whether an expression is a direct memory READ that yields a tainted, subjective fact (§10). A raw
+  // `send` reply is also tainted, but only when it is NOT bound to a Credence slot — that split is handled
+  // in trackProvenance because it needs the declared slot type.
   private isMemoryRead(e: A.Expr): boolean {
-    // a `select … from ledger` is a LEDGER read carrying RECORDED trust (§10): an Endorsed-origin row reads
-    // back settled, a non-endorsed origin stays graded — determined at RUNTIME, so it is not STATICALLY
-    // tainted (the dynamic sink check enforces the real trust). A `select` from an agent's memory, and
-    // recall/find/match, ARE un-endorsed memory-substrate reads and stay tainted.
-    if (e.kind === "select") return e.target !== "ledger";
-    return e.kind === "recall" || e.kind === "find" || e.kind === "match";
+    return e.kind === "recall";
   }
 
   // The free identifiers referenced anywhere in an expression (best-effort; used for dependency scope).
@@ -2027,7 +2017,6 @@ class Checker {
         case "call": walk(x.callee); for (const a of x.args) walk(a); return;
         case "send": walk(x.dest); walk(x.message); return;
         case "recall": walk(x.mem); walk(x.query); return;
-        case "match": walk(x.vector); return;
         case "decide": walk(x.credence); return;
         case "endorse": walk(x.subject); walk(x.decision); return;
         case "structlit": for (const f of x.fields) walk(f.value); return;

@@ -314,8 +314,7 @@ export type Expr =
   | SendExpr
   | RecallExpr
   | SelectExpr
-  | FindExpr
-  | MatchExpr
+
   | StructLit
   | FStringExpr
   | StringLit
@@ -376,24 +375,12 @@ export interface RecallExpr extends Node {
 export interface SelectExpr extends Node {
   kind: "select";
   cols: string[] | "*";
-  target: string; // an agent instance name, or `ledger`/`self`
+  target: "ledger";
   eventType?: string; // new ledger-row form: `select Held as h from ledger ...`
   alias?: string;
   cond: QueryCond[];
 }
-// `find x [, origin(x)] where { TRIPLE+ }` — a relationship-graph query (§10).
-export interface FindExpr extends Node {
-  kind: "find";
-  binder: string;
-  origin: boolean;
-  triples: Triple[];
-}
-// `match VECTOR > θ` — a vector-store similarity query; a gate (§10).
-export interface MatchExpr extends Node {
-  kind: "match";
-  vector: Expr;
-  theta: number;
-}
+
 export interface StructLit extends Node {
   kind: "structlit";
   typeName?: string;
@@ -405,11 +392,6 @@ export interface QueryCond {
   op: string; // ==, !=, <, >, <=, >=  (a `:` desugars to ==)
   value: Expr;
   connective?: "&&" | "||"; // the connective JOINING this cond to the previous one
-}
-export interface Triple {
-  subject: string;
-  predicate: string;
-  object: string;
 }
 
 export type GateExpr = DecideExpr | EndorseExpr;

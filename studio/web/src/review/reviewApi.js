@@ -1,5 +1,5 @@
 // The Review studio's window into the spec + conformance suite + live results.
-// /review/data runs the agape-rs conformance (a few seconds); spec-edit costs a
+// /review/data runs the agape-ts conformance (a few seconds); spec-edit costs a
 // Claude call; the saves write SPEC.md / a .ag test. Proxied to the agent-server.
 
 async function get(path) {

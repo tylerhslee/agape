@@ -4,15 +4,16 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { parse } from "./parser.js";
-import { run } from "./interp.js";
+import { check } from "./check.js";
+import { run, type PromptInput } from "./interp.js";
 import { createMemoryDriver, createProvider, loadManifest } from "./config.js";
 import { show, type LedgerEvent } from "./runtime.js";
 
 // Load API keys from a `.env` (searched upward from cwd) without clobbering existing env vars.
 // Live provider secrets come from the environment (SPEC.md §17) — never the manifest.
-function loadEnv(): void {
-  let dir = process.cwd();
-  for (let up = 0; up < 6; up++) {
+function loadEnv(start = process.cwd()): void {
+  let dir = resolve(start);
+  for (let up = 0; up < 16; up++) {
     const candidate = resolve(dir, ".env");
     if (existsSync(candidate)) {
       for (const line of readFileSync(candidate, "utf8").split(/\r?\n/)) {
@@ -28,6 +29,23 @@ function loadEnv(): void {
     if (parent === dir) break;
     dir = parent;
   }
+}
+
+function findProjectRootForFile(file: string): string {
+  let dir = dirname(resolve(file));
+  for (let up = 0; up < 16; up++) {
+    if (existsSync(resolve(dir, "agape.toml"))) return dir;
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return dirname(resolve(file));
+}
+
+function manifestForProject(projectRoot: string, explicit?: string): string | undefined {
+  if (explicit) return resolve(explicit);
+  const candidate = resolve(projectRoot, "agape.toml");
+  return existsSync(candidate) ? candidate : undefined;
 }
 
 async function main(argv: string[]): Promise<number> {
@@ -47,6 +65,33 @@ async function main(argv: string[]): Promise<number> {
     const { startStudio } = await import("../studio/server.js");
     await startStudio({ dir: process.cwd(), port, allowLive, token });
     return await new Promise<number>(() => {}); // serve until killed
+  }
+  if (cmd === "check") {
+    let file = "";
+    let manifestPath: string | undefined;
+    let backendOverride: string | undefined;
+    let json = false;
+    for (let i = 0; i < rest.length; i++) {
+      const a = rest[i]!;
+      if (a === "--manifest") manifestPath = rest[++i];
+      else if (a === "--provider") backendOverride = rest[++i];
+      else if (a === "--json") json = true;
+      else file = a;
+    }
+    if (!file) { console.error("usage: agape-ts check <file.ag> [--manifest agape.toml] [--provider mock|anthropic|openai|gemini] [--json]"); return 2; }
+    try {
+      const projectRoot = manifestPath ? dirname(resolve(manifestPath)) : findProjectRootForFile(file);
+      loadEnv(projectRoot);
+      const manifest = loadManifest(manifestForProject(projectRoot, manifestPath), backendOverride);
+      const program = parse(readFileSync(file, "utf8"));
+      check(program, undefined, manifest);
+      if (json) console.log(JSON.stringify({ ok: true, file }));
+      return 0;
+    } catch (e) {
+      if (json) console.log(JSON.stringify({ ok: false, file, class: (e as { cls?: string }).cls ?? (e as Error).name, error: (e as Error).message }));
+      else console.error(`${(e as { cls?: string }).cls ?? (e as Error).name}: ${(e as Error).message}`);
+      return 1;
+    }
   }
   // `graph` — the statically derived orchestration graph (GRAPH.md): parse + check, then emit.
   if (cmd === "graph") {
@@ -69,7 +114,8 @@ async function main(argv: string[]): Promise<number> {
     return 0;
   }
   if (cmd !== "run" || rest.length === 0) {
-    console.error("usage: agape-ts run <file.ag> [--manifest agape.toml] [--provider mock|anthropic|openai|gemini]");
+    console.error("usage: agape-ts run <file.ag> [--manifest agape.toml] [--provider mock|anthropic|openai|gemini] [--json] [--prompt name=value]");
+    console.error("       agape-ts check <file.ag> [--manifest agape.toml] [--provider mock|anthropic|openai|gemini] [--json]");
     console.error("       agape-ts graph <file.ag> [--format json|dot]                      # derived orchestration graph");
     console.error("       agape-ts studio [--port 4317] [--share|--live] [--token secret]   # execution-inspection UI over the cwd");
     return 2;
@@ -77,39 +123,60 @@ async function main(argv: string[]): Promise<number> {
   let file = "";
   let manifestPath: string | undefined;
   let backendOverride: string | undefined;
+  let json = false;
+  const promptInputs: PromptInput[] = [];
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i]!;
     if (a === "--manifest") manifestPath = rest[++i];
     else if (a === "--provider") backendOverride = rest[++i];
+    else if (a === "--json") json = true;
+    else if (a === "--prompt") {
+      const raw = rest[++i] ?? "";
+      const eq = raw.indexOf("=");
+      if (eq < 0) { console.error("--prompt expects name=value"); return 2; }
+      promptInputs.push({ name: raw.slice(0, eq), value: raw.slice(eq + 1) });
+    } else if (a === "--claude") backendOverride = "anthropic";
+    else if (a === "--samples" || a === "--temperature") i++;
     else file = a;
   }
 
-  loadEnv();
-  const source = readFileSync(file, "utf8");
-  const manifest = loadManifest(manifestPath, backendOverride);
-  const provider = createProvider(manifest);
-  const memoryRoot = manifestPath ? dirname(resolve(manifestPath)) : process.cwd();
-  const memory = createMemoryDriver(manifest, { cwd: memoryRoot });
+  try {
+    const projectRoot = manifestPath ? dirname(resolve(manifestPath)) : findProjectRootForFile(file);
+    loadEnv(projectRoot);
+    const source = readFileSync(file, "utf8");
+    const manifest = loadManifest(manifestForProject(projectRoot, manifestPath), backendOverride);
+    const provider = createProvider(manifest);
+    const memory = createMemoryDriver(manifest, { cwd: projectRoot });
 
-  const program = parse(source);
-  const { ledger, stdout, warnings } = await run(program, { provider, manifest, memory });
+    const program = parse(source);
+    const { ledger, stdout, warnings } = await run(program, { provider, manifest, memory, promptInputs });
 
-  const modelNote = manifest.provider.model ? ` / ${manifest.provider.model}` : "";
-  console.log(`# agape-ts — ran ${file}  (provider: ${manifest.provider.backend}${modelNote})\n`);
-  if (stdout.length) {
-    console.log("say:");
-    for (const line of stdout) console.log(`  ${line}`);
-    console.log();
+    if (json) {
+      console.log(JSON.stringify({ ok: true, file, provider: manifest.provider.backend, events: ledger.events, stdout, warnings, head: ledger.head() }));
+      return 0;
+    }
+
+    const modelNote = manifest.provider.model ? ` / ${manifest.provider.model}` : "";
+    console.log(`# agape-ts — ran ${file}  (provider: ${manifest.provider.backend}${modelNote})\n`);
+    if (stdout.length) {
+      console.log("say:");
+      for (const line of stdout) console.log(`  ${line}`);
+      console.log();
+    }
+    if (warnings.length) {
+      console.log("warnings:");
+      for (const w of warnings) console.log(`  ${w.kind}: ${w.message}`);
+      console.log();
+    }
+    console.log("ledger:");
+    for (const e of ledger.events) console.log(`  ${fmt(e)}`);
+    console.log(`\nchain-head: ${ledger.head()}`);
+    return 0;
+  } catch (e) {
+    if (json) console.log(JSON.stringify({ ok: false, file, class: (e as { cls?: string }).cls ?? (e as Error).name, error: (e as Error).message }));
+    else console.error(`${(e as { cls?: string }).cls ?? (e as Error).name}: ${(e as Error).message}`);
+    return 1;
   }
-  if (warnings.length) {
-    console.log("warnings:");
-    for (const w of warnings) console.log(`  ${w.kind}: ${w.message}`);
-    console.log();
-  }
-  console.log("ledger:");
-  for (const e of ledger.events) console.log(`  ${fmt(e)}`);
-  console.log(`\nchain-head: ${ledger.head()}`);
-  return 0;
 }
 
 function fmt(e: LedgerEvent): string {

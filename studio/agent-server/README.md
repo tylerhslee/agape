@@ -5,10 +5,7 @@ gives the studio's operators (the builders you pair with and delegate to) real
 behavior by calling provider APIs, and it implements the shared runtime contract
 in [SPEC.md](../../SPEC.md) §16–§17 for Studio's own control-plane runtime.
 
-It is explicitly the **studio runtime** described in `[../STUDIO.md](../STUDIO.md)`
-§2: a TypeScript service behind a stable seam. The Rust runtime and Soma/cloud
-runtime must implement the same runtime contract; the React frontend should not
-need to care which conforming runtime it is attached to.
+It is explicitly the **studio runtime** described in `[../STUDIO.md](../STUDIO.md)`: a TypeScript service behind a stable seam. Future Soma/cloud runtimes must implement the same runtime contract; the React frontend should not need to care which conforming runtime it is attached to.
 
 ```
 React UI ──/agent/*──▶ agent-server (provider APIs today) ◀── this seam
@@ -46,11 +43,7 @@ npm install
 npm run dev      # tsx server.ts → http://127.0.0.1:8799
 ```
 
-The server finds `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` by walking up from the
-working directory to the repo-root `.env` (or reads them from the environment if
-already set). Studio Settings select Mock, Claude, or OpenAI for cognition. Credence
-calibration follows the selected provider: Claude uses sampling fallback; OpenAI
-uses token logprobs.
+The server reads provider keys from the process environment, an explicit `AGAPE_ENV`/`AGENT_ENV_FILE`, or the attached project's `.env`. Studio Settings select Mock, Claude, or OpenAI for cognition. Credence calibration follows the selected provider: Claude uses sampling fallback; OpenAI uses token logprobs. If OpenAI embeddings are selected, `OPENAI_API_KEY` also powers live embeddings.
 
 The Vite dev server proxies `/agent` → `:8799`, so the frontend always calls
 same-origin `/agent/...`.

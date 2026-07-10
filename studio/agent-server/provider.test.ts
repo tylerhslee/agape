@@ -4,17 +4,17 @@ import { chunkSpec } from "./learner.ts";
 
 describe("HashingEmbedder (the embed seam)", () => {
   const e = new HashingEmbedder();
-  it("is deterministic and L2-normalized", () => {
-    const a = e.embed("the endorse gate collapses a credence");
-    const b = e.embed("the endorse gate collapses a credence");
+  it("is deterministic and L2-normalized", async () => {
+    const a = await e.embed("the endorse gate collapses a credence");
+    const b = await e.embed("the endorse gate collapses a credence");
     expect(a).toEqual(b);
     expect(cosine(a, a)).toBeCloseTo(1, 5);
     expect(a).toHaveLength(e.dim);
   });
-  it("ranks related text above unrelated", () => {
-    const q = e.embed("how does the endorse gate work");
-    const near = cosine(q, e.embed("endorse gate collapses a credence into a decision"));
-    const far = cosine(q, e.embed("the weather in paris is sunny today"));
+  it("ranks related text above unrelated", async () => {
+    const q = await e.embed("how does the endorse gate work");
+    const near = cosine(q, await e.embed("endorse gate collapses a credence into a decision"));
+    const far = cosine(q, await e.embed("the weather in paris is sunny today"));
     expect(near).toBeGreaterThan(far);
   });
 });

@@ -128,6 +128,30 @@ describe("markdown memory adapter", () => {
     expect(memory).toBeInstanceOf(MemoryRuntimeDriver);
     expect((memory as MemoryRuntimeDriver).substrate).toBeInstanceOf(MarkdownMemoryDriver);
   });
+  it("uses project-rooted markdown memory by default for raw run()", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "agape-run-md-memory-"));
+    try {
+      const program = parse(`
+        agent A {
+          on awake {
+            mem notes <- "default markdown write";
+          }
+        }
+        spawn A a;
+        awake a;
+      `);
+
+      await run(program, {
+        memoryRoot: dir,
+        manifest: { provider: { backend: "mock" }, project: { name: "demo" } },
+      });
+
+      await expect(readFile(join(dir, ".agape", "memory", "MEMORY.md"), "utf8")).resolves.toContain("demo/a/notes");
+      await expect(readFile(join(dir, ".agape", "memory", "scopes", "demo", "a", "notes.md"), "utf8")).resolves.toContain("default markdown write");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
 
   it("resolves relative markdown paths against the configured project root", async () => {
     const dir = await mkdtemp(join(tmpdir(), "agape-md-project-"));

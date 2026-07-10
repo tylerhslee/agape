@@ -27,7 +27,7 @@ export const KEYWORDS = new Set([
   "principal", "policy",
   "when", "if", "else", "return", "retry",
   "decide", "endorse", "perform", "emit", "abstain",
-  "find", "where", "select", "from", "match",
+  "where", "select", "from",
   "mem", "forget",
   "task", "complete", "fail", "cancel",
   "all", "any", "quorum", "independent", "dependent",
@@ -42,7 +42,7 @@ const OPERATORS = [
   "{", "}", "(", ")", "[", "]", ";", ",", ".", ":", "=",
   "+", "-", "*", "/", "<", ">", "!",
   // `~` lexes to an Op token but no grammar rule uses it — the PARSER rejects it (a ParseError, not a
-  // LexError): there is no similarity operator; similarity is reached only through `match` (§2/§10).
+  // LexError): there is no similarity operator in the core grammar.
   "~",
 ];
 

@@ -49,7 +49,7 @@ const PREFERENCE_TERMS = new Set([
   "risk", "style", "tone", "wants",
 ]);
 const FACT_TERMS = new Set(["fact", "facts", "has", "is", "league", "roster", "scoring", "setting", "settings"]);
-const PROCEDURE_TERMS = new Set(["build", "cargo", "command", "debug", "npm", "pnpm", "process", "run", "step", "test", "workflow"]);
+const PROCEDURE_TERMS = new Set(["build", "command", "debug", "npm", "pnpm", "process", "run", "step", "test", "workflow"]);
 const DECISION_TERMS = new Set(["chose", "decision", "decided", "outcome", "picked", "recommend", "recommended", "selected"]);
 
 export class MemoryRuntimeDriver implements MemoryDriver {

@@ -1,10 +1,4 @@
-// The two provider seams the whole runtime hides behind, so "rewrite in Rust + swap
-// to OpenAI" is an implementation change, not a redesign.
-//
-//   Cognition — the LLM (think/decompose). AnthropicCognition (haiku) today.
-//   Embedder  — text → vector. HashingEmbedder (local, dependency-free) today.
-
-import Anthropic from "@anthropic-ai/sdk";
+// Provider seams for the Studio runtime. Swapping cognition or embeddings is an\n// implementation change behind these interfaces, not a runtime redesign.\n//\n//   Cognition - the LLM.\n//   Embedder  - text to vector.\n\nimport Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
 import type { ChatMessage } from "./agent.ts";
 
@@ -32,7 +26,7 @@ export interface Cognition {
 export interface Embedder {
   readonly dim: number;
   readonly name: string;
-  embed(text: string): number[];
+  embed(text: string): Promise<number[]>;
 }
 
 // ── Deterministic local cognition for offline Studio paths ──────────────────
@@ -173,7 +167,7 @@ export class HashingEmbedder implements Embedder {
     this.dim = dim;
   }
 
-  embed(text: string): number[] {
+  async embed(text: string): Promise<number[]> {
     const v = new Array(this.dim).fill(0);
     for (const tok of tokenize(text)) {
       v[hash(tok) % this.dim] += 1;
@@ -183,6 +177,26 @@ export class HashingEmbedder implements Embedder {
     for (let i = 1; i < toks.length; i++) {
       v[hash(toks[i - 1] + "_" + toks[i]) % this.dim] += 0.5;
     }
+    let norm = 0;
+    for (const x of v) norm += x * x;
+    norm = Math.sqrt(norm) || 1;
+    return v.map((x) => x / norm);
+  }
+}
+export class OpenAIEmbedder implements Embedder {
+  readonly name: string;
+  readonly dim = 1536;
+  private client: OpenAI;
+
+  constructor(model = process.env.OPENAI_EMBEDDING_MODEL || "text-embedding-3-small") {
+    if (!process.env.OPENAI_API_KEY) throw new Error("OPENAI_API_KEY not set — OpenAI embeddings need a live key.");
+    this.name = model;
+    this.client = new OpenAI();
+  }
+
+  async embed(text: string): Promise<number[]> {
+    const res = await this.client.embeddings.create({ model: this.name, input: text });
+    const v = res.data[0]?.embedding ?? [];
     let norm = 0;
     for (const x of v) norm += x * x;
     norm = Math.sqrt(norm) || 1;
