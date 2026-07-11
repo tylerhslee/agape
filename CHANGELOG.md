@@ -6,36 +6,18 @@ All notable changes to Agape are recorded here. The format follows
 suite, and the studio move in lockstep — a release is the whole bundle at one
 version.
 
-## [1.0.0-alpha.2026.7.11.1] - 2026-07-11
+## [1.0.0-alpha.2026.7.11.3] - 2026-07-11
 
-The memory layer owns memory-text policy. Follow-up to 7.11.0's reflective memory: the
-recollection-rendering that lived in the interpreter moves into the memory runtime, episodes
-arrive structured instead of pre-rendered, and reflection prose keeps facts attributed to the
-right person.
+Studio cost-inspection alpha. Every Studio run now carries an explicit estimated cost surface beside ledger latency and provider metadata.
 
-### Changed
+### Added
 
-- `MemoryWriteRequest` gains a structured `episode` field (`act: "store" | "provider_reply"`,
-  plus the asking prompt for replies). The interpreter passes the episode; it no longer composes
-  memory prose. This replaces 7.11.0's `episode_prompt` metadata side-channel, which is removed.
-- The deterministic recollection templates ("I stored … I learned …") moved from `interp.ts` into
-  the memory runtime as `renderStoreRecollection` / `renderReplyRecollection` /
-  `compactMemoryText` — one owner for memory-text policy, and the `STOP_WORDS` blacklist stops
-  being the only thing standing between the template and recall ranking.
-- Receipts carry the stored text (`receipt.memory`, including what was considered on
-  skipped/deduped writes), and `Internalized` ledger payloads read it back — with reflection on,
-  the ledger records the prose actually stored, not a template describing something else.
-- The reflection prompt attributes facts to the right person: things the user states about
-  themselves are stored as facts about the user ("Tyler's favorite tea is jasmine."), never
-  first-person claims by the agent.
-- Reflect-off behavior is byte-identical (templates moved verbatim; pinned by the certification
-  golden traces).
+- Studio run responses include an estimated-cost object derived from Resolved ledger prompts/replies, with provider call count, estimated input/output tokens, model, and basis text.
+- Studio verdict strips and inspection panels show estimated cost for completed and attestation-paused runs.
 
 ### Verified
 
-- TypeScript runtime typecheck, version check, unit suite (82) + certification suite (3), and
-  packaged `node-linux-x64` archive verification, plus a live provider run against the LeeHaRin
-  dogfood project.
+- TypeScript runtime typecheck, version check, unit suite (84), and packaged node-linux-x64 archive verification.
 
 ## [1.0.0-alpha.2026.7.11.2] - 2026-07-11
 
@@ -69,6 +51,37 @@ Pure-function alpha: the seam-free function marker is now `pure`, not `sync`, so
 - TypeScript runtime typecheck, version check, unit suite (84) + certification suite (3), and
   packaged `node-linux-x64` archive verification.
 - Direct run of `examples/predictive_recursion.ag` on the mock provider: the model settled with error `0.0390625` under the `0.05` threshold.
+
+## [1.0.0-alpha.2026.7.11.1] - 2026-07-11
+
+The memory layer owns memory-text policy. Follow-up to 7.11.0's reflective memory: the
+recollection-rendering that lived in the interpreter moves into the memory runtime, episodes
+arrive structured instead of pre-rendered, and reflection prose keeps facts attributed to the
+right person.
+
+### Changed
+
+- `MemoryWriteRequest` gains a structured `episode` field (`act: "store" | "provider_reply"`,
+  plus the asking prompt for replies). The interpreter passes the episode; it no longer composes
+  memory prose. This replaces 7.11.0's `episode_prompt` metadata side-channel, which is removed.
+- The deterministic recollection templates ("I stored … I learned …") moved from `interp.ts` into
+  the memory runtime as `renderStoreRecollection` / `renderReplyRecollection` /
+  `compactMemoryText` — one owner for memory-text policy, and the `STOP_WORDS` blacklist stops
+  being the only thing standing between the template and recall ranking.
+- Receipts carry the stored text (`receipt.memory`, including what was considered on
+  skipped/deduped writes), and `Internalized` ledger payloads read it back — with reflection on,
+  the ledger records the prose actually stored, not a template describing something else.
+- The reflection prompt attributes facts to the right person: things the user states about
+  themselves are stored as facts about the user ("Tyler's favorite tea is jasmine."), never
+  first-person claims by the agent.
+- Reflect-off behavior is byte-identical (templates moved verbatim; pinned by the certification
+  golden traces).
+
+### Verified
+
+- TypeScript runtime typecheck, version check, unit suite (82) + certification suite (3), and
+  packaged `node-linux-x64` archive verification, plus a live provider run against the LeeHaRin
+  dogfood project.
 
 ## [1.0.0-alpha.2026.7.11.0] - 2026-07-11
 

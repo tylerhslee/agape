@@ -1,6 +1,6 @@
 # agape-ts — conformance status vs the black-box suite
 
-This implementation is run against `../agape-conformance` (Agape **v1.0.0-alpha.2026.7.11.2**, the
+This implementation is run against `../agape-conformance` (Agape **v1.0.0-alpha.2026.7.11.3**, the
 **core kernel** — 164 tests) by `conformance/run.mts`, which feeds each test's program through this
 front end (lex → parse → **check**) + runtime (**run**) and matches the `//!`-header expectation
 (`accept`/`reject` + error class + ledger matchers + §17.5 directives).

@@ -1795,6 +1795,28 @@ function formatMs(v, signed = false) {
   return `${sign}${(n / 1000).toFixed(2)} s`;
 }
 
+function formatCost(cost) {
+  if (!cost) return "cost n/a";
+  if (typeof cost.display === "string" && cost.display) return cost.display;
+  const n = Number(cost.estimated_usd);
+  if (!Number.isFinite(n) || n <= 0) return "$0.0000";
+  if (n < 0.0001) return "<$0.0001";
+  return "$" + n.toFixed(4);
+}
+
+function costPanel(cost) {
+  if (!cost) return "";
+  return panel("cost", "Cost", kvRows([
+    ["estimated", formatCost(cost)],
+    ["provider calls", cost.provider_calls],
+    ["input tokens est", cost.input_tokens_est],
+    ["output tokens est", cost.output_tokens_est],
+    ["model", cost.model],
+    ["basis", cost.basis],
+  ]));
+}
+
+
 function eventLatencySum(events = []) {
   return events.reduce((sum, e) => sum + (msValue(e.latency_ms) ?? 0), 0);
 }
@@ -2494,10 +2516,10 @@ function render(r) {
   // verdict
   if (r.runState === "waiting") {
     out.push(`<div class="verdict wait"><div class="light"></div><b>Paused — awaiting attestation</b>
-      <span class="msg">${ev.length} ledger events so far · Σ event latency ${esc(formatMs(latencySum))} · provider ${esc(r.provider?.backend ?? "")}</span></div>`);
+      <span class="msg">${ev.length} ledger events so far · Σ event latency ${esc(formatMs(latencySum))} · cost ${esc(formatCost(r.cost))} · provider ${esc(r.provider?.backend ?? "")}</span></div>`);
   } else if (r.ok) {
     out.push(`<div class="verdict ok"><div class="light"></div><b>Accepted &amp; executed</b>
-      <span class="msg">${ev.length} ledger events · ${esc(formatMs(r.ms))} total · Σ events ${esc(formatMs(latencySum))} · provider ${esc(r.provider.backend)}</span>
+      <span class="msg">${ev.length} ledger events · ${esc(formatMs(r.ms))} total · Σ events ${esc(formatMs(latencySum))} · cost ${esc(formatCost(r.cost))} · provider ${esc(r.provider.backend)}</span>
       <span class="head">chain-head <b>${esc(r.chainHead)}</b></span></div>`);
   } else {
     out.push(`<div class="verdict bad"><div class="light"></div><b>Rejected</b>
@@ -2523,6 +2545,7 @@ function render(r) {
 
   // the derived orchestration graph, with this run's ledger events lighting the witnessed path.
   out.push(graphPanelHtml());
+  if (r.cost) out.push(costPanel(r.cost));
 
   const detailHtml = renderRunDetails(r);
   if (detailHtml) out.push(panel("run-details", "Run details", `<div class="details">${detailHtml}</div>`));

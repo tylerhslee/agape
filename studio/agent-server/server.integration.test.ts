@@ -66,7 +66,7 @@ beforeAll(async () => {
   proj = path.join(mkdtempSync(path.join(tmpdir(), "agape-it-")), "app");
   launchDir = path.join(proj, "src", "nested");
   mkdirSync(launchDir, { recursive: true });
-  writeFileSync(path.join(proj, "agape.toml"), `[project]\nname = "Integration Fixture"\nlanguage = "1.0.0-alpha.2026.7.11.2"\n\n[memory]\ndriver = "markdown"\npath = ".agape/memory"\n`, "utf8");
+  writeFileSync(path.join(proj, "agape.toml"), `[project]\nname = "Integration Fixture"\nlanguage = "1.0.0-alpha.2026.7.11.3"\n\n[memory]\ndriver = "markdown"\npath = ".agape/memory"\n`, "utf8");
   writeFileSync(path.join(proj, "main.ag"), MAIN_SOURCE, "utf8");
 
   srv = spawn(process.execPath, [STUDIO_TSX_CLI, "server.ts"], {

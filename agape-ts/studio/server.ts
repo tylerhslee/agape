@@ -333,6 +333,77 @@ function eventsWithResponseLatency<T extends { latency_ms?: number; elapsed_ms?:
   return out;
 }
 
+interface StudioCostEstimate {
+  estimated_usd: number;
+  display: string;
+  input_tokens_est: number;
+  output_tokens_est: number;
+  provider_calls: number;
+  model: string;
+  basis: string;
+}
+
+type StudioPrice = { input: number; output: number };
+const STUDIO_PRICE_PER_MTOK: Record<string, StudioPrice> = {
+  "gpt-4o-mini": { input: 0.15, output: 0.60 },
+  "gpt-4.1-mini": { input: 0.40, output: 1.60 },
+  "gpt-4.1": { input: 2.00, output: 8.00 },
+  "gpt-4o": { input: 2.50, output: 10.00 },
+  "claude-haiku-4-5": { input: 0.80, output: 4.00 },
+  "gemini-1.5-flash": { input: 0.075, output: 0.30 },
+  mock: { input: 0, output: 0 },
+};
+
+function studioTokenEstimate(value: unknown): number {
+  const s = typeof value === "string" ? value : JSON.stringify(value ?? "");
+  const trimmed = s.trim();
+  return trimmed ? Math.max(1, Math.ceil(trimmed.length / 4)) : 0;
+}
+
+function studioPriceFor(model: string): StudioPrice {
+  const exact = STUDIO_PRICE_PER_MTOK[model];
+  if (exact) return exact;
+  const key = Object.keys(STUDIO_PRICE_PER_MTOK).find((k) => model.startsWith(k));
+  return key ? STUDIO_PRICE_PER_MTOK[key]! : { input: 0, output: 0 };
+}
+
+function studioCostDisplay(value: number): string {
+  if (value <= 0) return "$0.0000";
+  if (value < 0.0001) return "<$0.0001";
+  return "$" + value.toFixed(4);
+}
+
+function resolvedOutputPayload(payload: any): unknown {
+  if (!payload || typeof payload !== "object") return "";
+  if (payload.kind === "credence") return payload.scores ?? payload.top ?? "";
+  return payload.reply ?? payload.value ?? "";
+}
+
+function estimateStudioCost(provider: { backend?: string; model?: string }, events: Array<Record<string, any>>): StudioCostEstimate {
+  const model = provider.backend === "mock" ? "mock" : (provider.model || "unknown");
+  const calls = events.filter((e) => e.etype === "Resolved");
+  let input = 0;
+  let output = 0;
+  for (const event of calls) {
+    const payload = event.payload || {};
+    input += studioTokenEstimate(payload.prompt || "");
+    output += studioTokenEstimate(resolvedOutputPayload(payload));
+  }
+  const price = studioPriceFor(model);
+  const usd = (input * price.input + output * price.output) / 1_000_000;
+  return {
+    estimated_usd: Number(usd.toFixed(6)),
+    display: studioCostDisplay(usd),
+    input_tokens_est: input,
+    output_tokens_est: output,
+    provider_calls: calls.length,
+    model,
+    basis: provider.backend === "mock"
+      ? "mock provider calls are free; token counts are estimated for shape only"
+      : "estimated from Resolved ledger prompts/replies because exact provider usage is not exposed by the Agape provider seam yet",
+  };
+}
+
 // ---- structured config: the manifest as a data model -------------------------------------------
 //
 // The manifest (agape.toml) stays the single source of truth (§17); the UI is a FORM-EDITOR over
@@ -462,13 +533,16 @@ async function runProgram(
   try {
     const { ledger, stdout } = await run(program, { provider, manifest, memory, promptInputs, principalAttestations, timingOriginMs: startedAt });
     const ms = Date.now() - startedAt;
+    const events = eventsWithResponseLatency(ledger.events, ms);
+    const providerMeta = { backend: manifest.provider.backend, model: manifest.provider.model };
     return {
       status: 200 as const,
       body: {
         ok: true, phase: "run", source, map,
-        provider: { backend: manifest.provider.backend, model: manifest.provider.model },
+        provider: providerMeta,
         sourceOrigin: sourceInfo.origin,
-        events: eventsWithResponseLatency(ledger.events, ms), stdout, chainHead: ledger.head(),
+        events, stdout, chainHead: ledger.head(),
+        cost: estimateStudioCost(providerMeta, events),
         ms,
       },
     };
@@ -526,6 +600,7 @@ async function settle(session: StudioRunSession, ms: number): Promise<void> {
 
 function runBody(session: StudioRunSession, ms = Date.now() - session.startedAt) {
   const { ledger, stdout } = session.runtime.snapshot();
+  const events = eventsWithResponseLatency(ledger.events, ms);
   return {
     ok: session.runState !== "error",
     phase: "run",
@@ -538,9 +613,10 @@ function runBody(session: StudioRunSession, ms = Date.now() - session.startedAt)
     map: session.map,
     provider: session.provider,
     sourceOrigin: session.sourceOrigin,
-    events: eventsWithResponseLatency(ledger.events, ms),
+    events,
     stdout,
     chainHead: ledger.head(),
+    cost: estimateStudioCost(session.provider, events),
     ms,
   };
 }
@@ -674,7 +750,7 @@ export function startStudio(opts: StudioOptions): Promise<{ close: () => void }>
       if (req.method === "GET" && url.pathname === "/api/meta") {
         return json(res, 200, {
           dir: opts.dir,
-          version: "1.0.0-alpha.2026.7.11.2",
+          version: "1.0.0-alpha.2026.7.11.3",
           providers: providerStatuses(opts.allowLive),
           access: { liveEnabled: opts.allowLive, tokenRequired: Boolean(accessToken) },
         });
