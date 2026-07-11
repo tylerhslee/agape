@@ -117,6 +117,9 @@ export function render(v: Value): string {
     case "enumval": return v.variant;
     case "endorsement": return render(v.subject);
     case "taskref": return v.corr; // the correlation subject — what `when (… about h)` filters on (§6c)
+    // arrays render one item per line: interpolated collections (a rolling window, query results)
+    // read as prose in a prompt block, not as debug syntax.
+    case "array": return v.items.map(render).join("\n");
     default: return show(v);
   }
 }

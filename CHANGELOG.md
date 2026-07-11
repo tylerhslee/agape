@@ -6,6 +6,21 @@ All notable changes to Agape are recorded here. The format follows
 suite, and the studio move in lockstep — a release is the whole bundle at one
 version.
 
+## [1.0.0-alpha.2026.7.11.5] - 2026-07-11
+
+Provenance + kernel-clock alpha. Memory cells now record WHO the originating episode came from, and programs can read the kernel's own clock — both direct answers to dogfood findings (test contamination indistinguishable from the real user; assistant time-blindness).
+
+### Added
+
+- **Memory-cell provenance**: the reaction's originating prompt attestation is threaded into every memory internalization made inside that reaction (explicit `mem` stores, declare-with-init stores, provider-reply internalizations, and background task handlers via the delegating reaction). Cells persist `metadata.provenance = { attester, prompt_name }` in the markdown json block; recall candidates and the reranker carry it through. Additive only — reflect-off stored bytes are unchanged; reactions with no originating prompt delivery omit the key. New `MemoryProvenance` interface in `memory.ts`.
+- **Kernel builtins `now()` and `take(xs, n)`** — the only self-declaring calls, shadowed by user functions of the same name. `now()` renders the kernel clock (settled: world-fact from the trusted kernel, not cognition) as "Sat 2026-07-11 01:05 PM"; `AGAPE_FIXED_NOW` pins it for deterministic tests and replays; a `pure` body may not call it (a clock read is a world reach → ColorViolation). `take(xs, n)` keeps the first n elements of an array.
+- **Array `+` concatenation** (trust/ingress join, no laundering) — with `take` this is the rolling-window primitive, so bounded program state needs no numbered bindings.
+- **Array rendering**: interpolated arrays render one item per line (prose in prompt blocks, not debug syntax); `show` is unchanged.
+
+### Verified
+
+- TypeScript runtime typecheck, version check, unit suite (97: 85 prior + 7 provenance + 5 builtins), conformance cert (3).
+
 ## [1.0.0-alpha.2026.7.11.4] - 2026-07-11
 
 Memory-reflection hygiene fix: the reflection instruction no longer contains any example proper name. The previous attribution rule illustrated itself with a literal name ("Tyler uses …"), and small reflection models copy instruction examples into real memories — an agent with an anonymous user could invent that name for them. Dogfooding surfaced this: an isolated LeeHaRin verify run with zero recall hits internalized "Tyler said he was heading to bed".

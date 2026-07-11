@@ -32,6 +32,18 @@ export interface MemoryEpisode {
   prompt?: string;
 }
 
+/**
+ * WHO the originating episode came from: the attestation identity of the
+ * prompt delivery whose reaction produced this write. Carried additively as
+ * metadata.provenance on the stored cell; reactions with no originating
+ * prompt delivery (heartbeat ticks, spawn hooks) omit it rather than invent
+ * an attester.
+ */
+export interface MemoryProvenance {
+  attester: string;
+  prompt_name: string;
+}
+
 export interface MemoryWriteRequest {
   scope: MemoryScope;
   value: Value;

@@ -750,7 +750,7 @@ export function startStudio(opts: StudioOptions): Promise<{ close: () => void }>
       if (req.method === "GET" && url.pathname === "/api/meta") {
         return json(res, 200, {
           dir: opts.dir,
-          version: "1.0.0-alpha.2026.7.11.4",
+          version: "1.0.0-alpha.2026.7.11.5",
           providers: providerStatuses(opts.allowLive),
           access: { liveEnabled: opts.allowLive, tokenRequired: Boolean(accessToken) },
         });

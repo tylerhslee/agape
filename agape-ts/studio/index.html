@@ -169,6 +169,7 @@
   }
   .inputRow textarea { min-height: 76px; resize: vertical; }
   .inputRow textarea:focus, .inputRow input[type="text"]:focus { border-color: var(--accent); }
+  .inputActions { display: flex; justify-content: flex-end; }
 
   /* ---- config form (the manifest as UI; the TOML below stays canonical) ---- */
   .configForm { display: grid; gap: 8px; margin-bottom: 12px; }
@@ -192,6 +193,11 @@
   .s  { color: #c3e88d; }              /* strings */
   .c  { color: #546178; font-style: italic; } /* comments */
   .n  { color: #f78c6c; }              /* numbers */
+  .mdh { color: var(--teal); font-weight: 700; }
+  .mdm { color: var(--accent2); font-weight: 700; }
+  .mdq { color: #9cdcfe; font-style: italic; }
+  .mdl { color: #89ddff; text-decoration: underline; }
+  .mdc { color: #c3e88d; }
 
   /* ---- verdict ---- */
   .verdict { display: flex; align-items: center; gap: 12px; padding: 14px 16px; border-radius: 12px; margin-bottom: 14px; border: 1px solid; }
@@ -584,7 +590,7 @@ function catOf(etype, map) {
   return { name: "event", color: "var(--dim)" };
 }
 
-const KW = new Set("agent enum struct action event tool read write grants perform reach use spawn awake sleep crash on when if else return decide endorse by confidence margin floor conformal readiness emit say mem forget quorum independent dependent principal prompt instruction sync extend self true false null abstained about as select from where expires".split(" "));
+const KW = new Set("agent enum struct action event tool read write grants perform reach use spawn awake sleep crash on when if else return decide endorse by confidence margin floor conformal readiness emit say mem forget quorum independent dependent principal prompt instruction pure sync extend self true false null abstained about as select from where expires task complete fail cancel objective acceptance scope md".split(" "));
 const TYPES = new Set("Credence Decision Endorsement LedgerEntry Principal Entailment Basis int float bool text array".split(" "));
 
 function highlightCodePart(src) {
@@ -626,8 +632,68 @@ function highlightLine(line) {
   return out;
 }
 
+function highlightMarkdownText(raw) {
+  let out = "";
+  for (let i = 0; i < raw.length;) {
+    const start = raw.indexOf("${", i);
+    if (start < 0) {
+      out += highlightMarkdownInline(raw.slice(i));
+      break;
+    }
+    if (start > 0 && raw[start - 1] === "\\") {
+      out += highlightMarkdownInline(raw.slice(i, start - 1)) + esc("${");
+      i = start + 2;
+      continue;
+    }
+    out += highlightMarkdownInline(raw.slice(i, start));
+    const end = raw.indexOf("}", start + 2);
+    if (end < 0) {
+      out += `<span class="k">${esc(raw.slice(start))}</span>`;
+      break;
+    }
+    out += `<span class="k">${esc("${")}</span>${highlightCodePart(raw.slice(start + 2, end))}<span class="k">}</span>`;
+    i = end + 1;
+  }
+  return out;
+}
+
+function highlightMarkdownInline(raw) {
+  return esc(raw)
+    .replace(/`([^`]+)`/g, '<span class="mdc">`$1`</span>')
+    .replace(/\*\*([^*]+)\*\*/g, '<span class="mdh">**$1**</span>')
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<span class="mdl">[$1]($2)</span>');
+}
+
+function highlightMarkdownLine(line) {
+  const heading = line.match(/^(\s{0,3})(#{1,6})(\s+.*)$/);
+  if (heading) return `${esc(heading[1])}<span class="mdm">${esc(heading[2])}</span>${highlightMarkdownText(heading[3])}`;
+  const quote = line.match(/^(\s*>)(.*)$/);
+  if (quote) return `<span class="mdq">${esc(quote[1])}</span>${highlightMarkdownText(quote[2])}`;
+  const list = line.match(/^(\s*)([-+*]|\d+\.)(\s+.*)$/);
+  if (list) return `${esc(list[1])}<span class="mdm">${esc(list[2])}</span>${highlightMarkdownText(list[3])}`;
+  const fence = line.match(/^(\s{0,3}```.*)$/);
+  if (fence) return `<span class="mdc">${esc(line)}</span>`;
+  return highlightMarkdownText(line);
+}
+
 function highlight(src) {
-  return src.split("\n").map(highlightLine).join("\n");
+  let inPromptMarkdown = false;
+  return src.split("\n").map((line) => {
+    if (inPromptMarkdown) {
+      if (/^\s*\}(?=\s*(?:[;),\]}]|$))/.test(line)) {
+        inPromptMarkdown = false;
+        return highlightLine(line);
+      }
+      return highlightMarkdownLine(line);
+    }
+    const m = line.match(/\bprompt\b\s*\{/);
+    if (m) {
+      const open = line.indexOf("{", m.index);
+      inPromptMarkdown = true;
+      return highlightLine(line.slice(0, open + 1)) + highlightMarkdownLine(line.slice(open + 1));
+    }
+    return highlightLine(line);
+  }).join("\n");
 }
 
 // a small TOML highlighter for the config editor/view: comments, [tables], keys, strings,
@@ -901,6 +967,7 @@ function updateRunControls() {
     : hasPromptInputs() ? "Listen ▸" : "Run ▸";
   updateSourceButtons();
   updateConfigButtons();
+  updateInputButtons();
 }
 
 function applyPanelState(card) {
@@ -988,6 +1055,7 @@ function renderInputControls(map) {
     ...prompts.map((p) => `<div class="inputRow">
       <label>${esc(p.name)}<span>${esc(p.type)}</span></label>
       <textarea id="${esc(inputId("prompt", p.name))}" data-prompt="${esc(p.name)}" data-type="${esc(p.type)}" placeholder="${esc(promptPlaceholder(p))}">${esc(defaultPromptValue(p))}</textarea>
+      <div class="inputActions"><button class="mini promptSend" type="button" data-prompt-send="${esc(p.name)}" disabled>Send</button></div>
     </div>`),
     // §13/§16.4: a principal is NOT a pre-run toggle — it is consulted LIVE when a gate escalates,
     // and the ruling is a manual choice of one of the enum's variants (or a decline). The row
@@ -998,7 +1066,9 @@ function renderInputControls(map) {
     </div>`),
   ].join("")}</div>`;
   host.innerHTML = panel("inputs", "Inputs", body, "inputCard");
+  for (const b of host.querySelectorAll("[data-prompt-send]")) b.onclick = () => sendPromptChannel(b.dataset.promptSend);
   applyPanelState(host.querySelector("[data-panel='inputs']"));
+  updateInputButtons();
 }
 
 function renderAttestationControls(p) {
@@ -1030,20 +1100,73 @@ function collectInputs() {
   return { promptInputs };
 }
 
-function validateInputs() {
-  const missing = (state.map?.prompts || []).find((p) => {
-    const el = $(inputId("prompt", p.name));
-    return !String(el?.value ?? "").trim();
-  });
-  if (!missing) return true;
+function clearPromptInput(name) {
+  const el = $(inputId("prompt", name));
+  if (el) el.value = "";
+}
+
+function updateInputButtons() {
+  for (const b of document.querySelectorAll("[data-prompt-send]")) {
+    b.disabled = !state.listening || state.awaitingAttest || !state.sessionId;
+  }
+}
+
+function promptInputByName(name) {
+  const p = (state.map?.prompts || []).find((prompt) => prompt.name === name);
+  if (!p) return null;
+  const el = $(inputId("prompt", p.name));
+  const value = el?.value ?? "";
+  if (String(value).trim()) return { name: p.name, value };
   state.collapsed.inputs = false;
   applyPanelState(document.querySelector("[data-panel='inputs']"));
-  const id = inputId("prompt", missing.name);
-  const el = $(id);
   $("results").innerHTML = `<div class="verdict bad"><div class="light"></div><b>Input needed</b>
-    <span class="msg">Enter a value for prompt ${esc(missing.name)} before running.</span></div>`;
+    <span class="msg">Enter a value for prompt ${esc(p.name)} before sending.</span></div>`;
   el?.focus();
-  return false;
+  return null;
+}
+
+async function sendPromptInput(input) {
+  if (!state.sessionId || !input) return;
+  $("run").disabled = true;
+  updateInputButtons();
+  const buttons = [...document.querySelectorAll("[data-prompt-send]")];
+  for (const b of buttons) b.disabled = true;
+  try {
+    const r = await api("/api/prompt", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sessionId: state.sessionId, promptInputs: [input] }),
+    });
+    clearPromptInput(input.name);
+    handleSessionResponse(r);
+  } catch (e) {
+    $("results").innerHTML = `<div class="verdict bad"><div class="light"></div><b>Request failed</b>
+      <span class="msg">${esc(e.message)} — a live-provider run can take a while; retry if the tunnel timed out.</span></div>`;
+  } finally {
+    $("run").disabled = false;
+    updateRunControls();
+  }
+}
+
+function sendPromptChannel(name) {
+  return sendPromptInput(promptInputByName(name));
+}
+
+function promptSendInput() {
+  const promptInputs = collectInputs().promptInputs;
+  if (promptInputs.length === 1) return promptInputs[0];
+  state.collapsed.inputs = false;
+  applyPanelState(document.querySelector("[data-panel='inputs']"));
+  if (promptInputs.length === 0) {
+    const first = (state.map?.prompts || [])[0];
+    $("results").innerHTML = `<div class="verdict bad"><div class="light"></div><b>Input needed</b>
+      <span class="msg">Enter a value for one prompt channel before sending.</span></div>`;
+    if (first) $(inputId("prompt", first.name))?.focus();
+    return null;
+  }
+  $("results").innerHTML = `<div class="verdict bad"><div class="light"></div><b>One channel at a time</b>
+    <span class="msg">${promptInputs.length} prompt channels have values. Send one channel, then send the next as a separate arrival.</span></div>`;
+  $(inputId("prompt", promptInputs[0].name))?.focus();
+  return null;
 }
 
 // the access token (if this studio is token-gated) rides in from the page URL and onto every API call.
@@ -1577,7 +1700,8 @@ async function attest(decision) {
 $("run").onclick = async () => {
   if (!state.selected) return;
   const useSession = sessionMode();
-  if (hasPromptInputs() && state.listening && !validateInputs()) return;
+  const promptInput = hasPromptInputs() && state.listening ? promptSendInput() : null;
+  if (hasPromptInputs() && state.listening && !promptInput) return;
   $("run").disabled = true;
   $("run").textContent = state.listening ? "Sending…" : useSession ? "Starting…" : "Running…";
   try {
@@ -1590,11 +1714,7 @@ $("run").onclick = async () => {
       handleSessionResponse(r);
       return;
     } else if (useSession && state.listening) {
-      r = await api("/api/prompt", {
-        method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ sessionId: state.sessionId, promptInputs: collectInputs().promptInputs }),
-      });
-      handleSessionResponse(r);
+      await sendPromptInput(promptInput);
       return;
     } else {
       r = await api("/api/run", {

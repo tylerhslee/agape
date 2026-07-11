@@ -1,0 +1,96 @@
+import { afterEach, describe, expect, it } from "vitest";
+import { parse } from "../src/parser.js";
+import { run } from "../src/interp.js";
+import { MockProvider, render } from "../src/runtime.js";
+import { check } from "../src/check.js";
+
+// now() and take(xs, n): the two kernel builtins. now() is the kernel's own
+// clock — settled world-fact, pinned by AGAPE_FIXED_NOW for determinism, and
+// a world reach a `pure` body may not observe. take + array `+` concat form
+// the rolling-window primitive.
+describe("kernel builtins", () => {
+  afterEach(() => {
+    delete process.env.AGAPE_FIXED_NOW;
+  });
+
+  it("now() renders the pinned kernel clock as settled text", async () => {
+    process.env.AGAPE_FIXED_NOW = "2026-07-11T13:05:00";
+    const prog = `
+      prompt text ping;
+      agent A {
+        when (Prompt p about ping) {
+          text stamp = now();
+          say(stamp);
+        }
+      }
+      spawn A a; awake a;
+    `;
+    const res = await run(parse(prog), {
+      provider: new MockProvider(() => ({})),
+      promptInputs: [{ name: "ping", value: "hi" }],
+    });
+    expect(res.stdout.join("\n")).toContain("Sat 2026-07-11 01:05 PM");
+  });
+
+  it("take + array concat keep a bounded rolling window, newest first", async () => {
+    const prog = `
+      prompt text ping;
+      agent A {
+        text[] window;
+        window = [];
+        when (Prompt p about ping) {
+          window = take([p.text] + window, 2);
+          say(window);
+        }
+      }
+      spawn A a; awake a;
+    `;
+    const res = await run(parse(prog), {
+      provider: new MockProvider(() => ({})),
+      promptInputs: [
+        { name: "ping", value: "one" },
+        { name: "ping", value: "two" },
+        { name: "ping", value: "three" },
+      ],
+    });
+    // After three deliveries the window holds the newest two, one per line.
+    expect(res.stdout.at(-1)).toBe("three\ntwo");
+  });
+
+  it("arrays interpolate one item per line in prompt text", () => {
+    expect(
+      render({
+        kind: "array",
+        items: [
+          { kind: "text", v: "User: hi | You: hey", trust: "settled" },
+          { kind: "text", v: "User: bye | You: later", trust: "settled" },
+        ],
+        trust: "settled",
+      }),
+    ).toBe("User: hi | You: hey\nUser: bye | You: later");
+  });
+
+  it("a `pure` function may not read the kernel clock", () => {
+    const prog = `
+      pure text stamp() { return now(); }
+      agent A {}
+      spawn A a; awake a;
+    `;
+    expect(() => check(parse(prog))).toThrow(/pure.*kernel clock|kernel clock.*pure/i);
+  });
+
+  it("calls to undeclared functions other than the builtins still fail closed", async () => {
+    const prog = `
+      prompt text ping;
+      agent A {
+        when (Prompt p about ping) {
+          text x = clock();
+        }
+      }
+      spawn A a; awake a;
+    `;
+    await expect(
+      run(parse(prog), { provider: new MockProvider(() => ({})), promptInputs: [{ name: "ping", value: "hi" }] }),
+    ).rejects.toThrow(/undeclared function 'clock'|general calls/);
+  });
+});

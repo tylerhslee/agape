@@ -12,7 +12,7 @@ import {
 } from "./runtime.js";
 import { check, linkModules, type ModuleInput, type Resolution } from "./check.js";
 import { createMemoryDriver, type Manifest, type ToolBindingConfig } from "./config.js";
-import type { MemoryDriver, MemoryReceipt, MemoryScope } from "./memory.js";
+import type { MemoryDriver, MemoryProvenance, MemoryReceipt, MemoryScope } from "./memory.js";
 import { compactMemoryText, renderReplyRecollection, renderStoreRecollection } from "./memory_runtime.js";
 import { parse } from "./parser.js";
 import { typeError, taintViolation, authorityViolation, configError } from "./errors.js";
@@ -36,6 +36,9 @@ interface TaskState {
   status: "sent" | "delivered" | "completed" | "failed" | "cancelled" | "expired";
   delivered: boolean;   // it reached the worker at least once (drives the on-cancelled hook)
   result?: Value;
+  // The delegating reaction's prompt provenance: a background delivery drains AFTER the
+  // originating async context has ended, so the task carries it and restores it at delivery.
+  provenance?: MemoryProvenance;
 }
 const taskTerminal = (t: TaskState): boolean =>
   t.status === "completed" || t.status === "failed" || t.status === "cancelled" || t.status === "expired";
@@ -218,6 +221,18 @@ function localAttestation(kind: string, payload: Record<string, unknown>, suppli
   };
 }
 
+// The kernel clock, rendered for prompts: weekday, date, 12-hour time in the host's local zone.
+// AGAPE_FIXED_NOW (any Date-parseable string) pins it for deterministic tests and replays.
+function clockText(): string {
+  const fixed = process.env.AGAPE_FIXED_NOW;
+  const d = fixed ? new Date(fixed) : new Date();
+  const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const pad = (x: number) => String(x).padStart(2, "0");
+  const h24 = d.getHours();
+  const h12 = h24 % 12 === 0 ? 12 : h24 % 12;
+  return `${days[d.getDay()]} ${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(h12)}:${pad(d.getMinutes())} ${h24 < 12 ? "AM" : "PM"}`;
+}
+
 export interface RunResult {
   ledger: Ledger;
   stdout: string[];
@@ -348,6 +363,11 @@ class Interpreter {
   // CONCURRENT task handlers (e.g. `claims |> delegate-to-worker`) without their active tasks
   // clobbering each other — `complete`/`fail`/scope-checks read the task of the current async path.
   private activeTaskALS = new AsyncLocalStorage<TaskState>();
+  // WHO the running reaction's episode came from: the originating prompt delivery's attestation
+  // identity, scoped to the async execution like activeTaskALS. Every memory internalize inside
+  // the delivery's cascade records it (metadata.provenance, additive); reactions with no prompt
+  // origin (heartbeat ticks, spawn/awake hooks) leave the store empty and the key absent.
+  private promptProvenanceALS = new AsyncLocalStorage<MemoryProvenance>();
   private drainingTasks = false;
   private dispatchDepth = 0; // reentrancy guard: a handler's appends cascade, but bounded (events are finite).
   // §3: the set of declared `principal NAME;` names, so evalGate can recognize the suite's `decide c by p`
@@ -738,7 +758,7 @@ class Interpreter {
         memory: renderStoreRecollection(s.name, v),
         episode: { act: "store" },
         summary: valueSummary(v),
-        metadata: { source: "memdecl", subject: s.name },
+        metadata: { source: "memdecl", subject: s.name, ...this.memoryProvenance() },
       });
       this.ledger.append("Internalized", s.name, this.memoryInternalizedPayload(s.name, v, receipt), agent.name);
     }
@@ -911,10 +931,12 @@ class Interpreter {
     // run the handler inside this task's async context; nested delegation nests the context, and
     // concurrent deliveries to the same agent each keep their own active task (no clobbering).
     try {
-      await this.activeTaskALS.run(t, async () => {
+      const runHandler = () => this.activeTaskALS.run(t, async () => {
         this.registerBlockWhens(hook.body, hscope, inst);
         for (const st of hook.body) await this.execStmt(st, hscope);
       });
+      // restore the delegating reaction's prompt provenance (captured at the task-send).
+      await (t.provenance ? this.promptProvenanceALS.run(t.provenance, runHandler) : runHandler());
     } catch (err) {
       if (err instanceof TaskDoneSignal) {
         // the handler completed/failed the task — normal termination
@@ -943,7 +965,11 @@ class Interpreter {
       ["signature", settledText(String(attestation.signature))],
     ]);
     this.ledger.append("Prompt", input.name, { input: summary, attestation }, undefined);
-    await this.fireSubscriptions("Prompt", input.name, fields);
+    // The delivery's whole cascade runs under this provenance, so a memory store anywhere in
+    // the reaction records which attested prompt input it traces to (the dogfood contamination
+    // fix: a test-harness attester is distinguishable from the real user at recall time).
+    const provenance: MemoryProvenance = { attester: String(attestation.attester), prompt_name: input.name };
+    await this.promptProvenanceALS.run(provenance, () => this.fireSubscriptions("Prompt", input.name, fields));
   }
 
   // §7/§16.3: fire every armed subscription that MATCHES an appended event, in registration order. Matching is
@@ -1629,6 +1655,24 @@ class Interpreter {
           for (const a of e.args) argv.push(await this.evalExpr(a, scope));
           return this.callFn({ kind: "ident", name: qcall, pos: e.callee.pos }, argv, scope);
         }
+        // §4 kernel builtins — the only self-declaring calls, resolved after user functions so a
+        // declared fn of the same name wins. `now()` reads the kernel's own clock: settled (a
+        // world-fact from the trusted kernel, not cognition), banned inside `pure` (a clock read
+        // is a world reach). `take(xs, n)` keeps the first n elements; with array `+` concat it is
+        // the rolling-window primitive, so bounded program state needs no numbered bindings.
+        if (e.callee.kind === "ident" && e.callee.name === "now") {
+          if (e.args.length !== 0) throw typeError("now() takes no arguments");
+          return settledText(clockText());
+        }
+        if (e.callee.kind === "ident" && e.callee.name === "take") {
+          if (e.args.length !== 2) throw typeError("take(xs, n) takes an array and a count");
+          const xs = await this.evalExpr(e.args[0]!, scope);
+          const n = await this.evalExpr(e.args[1]!, scope);
+          if (xs.kind !== "array") throw typeError("take: the first argument must be an array");
+          if (n.kind !== "int" && n.kind !== "float") throw typeError("take: the count must be a number");
+          const items = xs.items.slice(0, Math.max(0, Math.floor(Number(n.v))));
+          return { kind: "array", items, trust: trustJoin(items), ingress: ingressJoin(items) };
+        }
         throw new RuntimeError("v0 does not support general calls yet");
       }
       case "arraylit": {
@@ -1928,6 +1972,14 @@ class Interpreter {
     };
   }
 
+  // Provenance metadata for a memory write inside the current reaction. Additive only: existing
+  // metadata keys are untouched, and a reaction with no originating prompt delivery omits the
+  // key entirely rather than inventing an attester.
+  private memoryProvenance(): { provenance: MemoryProvenance } | Record<string, never> {
+    const p = this.promptProvenanceALS.getStore();
+    return p ? { provenance: p } : {};
+  }
+
   private memoryDriverRefs(receipt?: MemoryReceipt): Record<string, unknown> {
     if (!receipt) return {};
     return {
@@ -2000,7 +2052,7 @@ class Interpreter {
         memory: renderReplyRecollection(prompt, value),
         episode: { act: "provider_reply", prompt: compactMemoryText(prompt) },
         summary: valueSummary(value),
-        metadata: { source: "provider_reply", subject: subj, source_event: sourceEvent },
+        metadata: { source: "provider_reply", subject: subj, source_event: sourceEvent, ...this.memoryProvenance() },
       });
     }
     this.ledger.append("Internalized", subj, this.receivedReplyInternalizedPayload(prompt, value, sourceEvent, receipt), agent?.name);
@@ -2084,7 +2136,7 @@ class Interpreter {
         memory: renderStoreRecollection(dest.name, v),
         episode: { act: "store" },
         summary: valueSummary(v),
-        metadata: { source: "store", subject: dest.name },
+        metadata: { source: "store", subject: dest.name, ...this.memoryProvenance() },
       });
       const payload = this.memoryInternalizedPayload(dest.name, v, receipt);
       const ev = this.ledger.append("Internalized", dest.name, payload, agent?.name);
@@ -2261,6 +2313,7 @@ class Interpreter {
       corr, dest: dest.name, delegator: agent?.name,
       scope: info.scope, endorsed: info.endorsed, foreground,
       status: "sent", delivered: false,
+      provenance: this.promptProvenanceALS.getStore(),
     };
     this.tasks.set(corr, t);
     this.ledger.append("Sent", corr, { to: dest.name, task: true }, agent?.name);
@@ -2483,6 +2536,7 @@ class Interpreter {
       case "+": {
         const t = trustJoin([l, r]);
         const ingress = ingressJoin([l, r]);
+        if (l.kind === "array" && r.kind === "array") return { kind: "array", items: [...l.items, ...r.items], trust: t, ingress };
         if (l.kind === "text" || r.kind === "text") return { kind: "text", v: render(l) + render(r), trust: t, ingress };
         return { kind: "float", v: num(l) + num(r), trust: t, ingress };
       }
