@@ -127,6 +127,15 @@ function json(res: ServerResponse, code: number, body: unknown): void {
   res.end(s);
 }
 
+function studioError(e: unknown, fallback = "StudioError"): { cls: string; message: string } {
+  const explicit = (e as { cls?: string })?.cls;
+  const name = (e as Error)?.name;
+  const ctor = (e as Error)?.constructor?.name;
+  const cls = explicit || (name && name !== "Error" ? name : undefined) || (ctor && ctor !== "Error" ? ctor : undefined) || fallback;
+  const message = e instanceof Error ? e.message || e.name : typeof e === "string" ? e : "unexpected Studio error";
+  return { cls, message };
+}
+
 function providerKeyConfigured(name: ProviderName): boolean {
   switch (name) {
     case "mock": return true;
@@ -919,7 +928,7 @@ export function startStudio(opts: StudioOptions): Promise<{ close: () => void }>
       }
       json(res, 404, { error: "not found" });
     } catch (e) {
-      json(res, 500, { error: (e as Error).message });
+      json(res, 500, { error: studioError(e) });
     }
   });
 

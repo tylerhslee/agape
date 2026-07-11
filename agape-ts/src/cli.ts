@@ -9,6 +9,24 @@ import { run, type PromptInput } from "./interp.js";
 import { createMemoryDriver, createProvider, loadManifest } from "./config.js";
 import { show, type LedgerEvent } from "./runtime.js";
 
+function errorClass(e: unknown, fallback = "RuntimeError"): string {
+  const cls = (e as { cls?: string })?.cls;
+  if (cls) return cls;
+  const name = (e as Error)?.name;
+  if (name && name !== "Error") return name;
+  const ctor = (e as Error)?.constructor?.name;
+  return ctor && ctor !== "Error" ? ctor : fallback;
+}
+
+function errorMessage(e: unknown): string {
+  if (e instanceof Error) return e.message || e.name;
+  return typeof e === "string" ? e : "unexpected Agape error";
+}
+
+function printError(e: unknown): void {
+  console.error(`${errorClass(e)}: ${errorMessage(e)}`);
+}
+
 // Load API keys from a `.env` (searched upward from cwd) without clobbering existing env vars.
 // Live provider secrets come from the environment (SPEC.md §17) — never the manifest.
 function loadEnv(start = process.cwd()): void {
@@ -88,8 +106,8 @@ async function main(argv: string[]): Promise<number> {
       if (json) console.log(JSON.stringify({ ok: true, file }));
       return 0;
     } catch (e) {
-      if (json) console.log(JSON.stringify({ ok: false, file, class: (e as { cls?: string }).cls ?? (e as Error).name, error: (e as Error).message }));
-      else console.error(`${(e as { cls?: string }).cls ?? (e as Error).name}: ${(e as Error).message}`);
+      if (json) console.log(JSON.stringify({ ok: false, file, class: errorClass(e), error: errorMessage(e) }));
+      else printError(e);
       return 1;
     }
   }
@@ -102,16 +120,21 @@ async function main(argv: string[]): Promise<number> {
       else file = rest[i]!;
     }
     if (!file) { console.error("usage: agape-ts graph <file.ag> [--format json|dot]"); return 2; }
-    const { check } = await import("./check.js");
-    const { buildGraph, toDot } = await import("./graph.js");
-    const program = parse(readFileSync(file, "utf8"));
-    // the graph is syntactic; a static-check rejection is reported alongside it, not instead of it.
-    try { check(program); } catch (e) {
-      console.error(`note: static check rejects this program — ${(e as { cls?: string }).cls ?? "TypeError"}: ${(e as Error).message}`);
+    try {
+      const { check } = await import("./check.js");
+      const { buildGraph, toDot } = await import("./graph.js");
+      const program = parse(readFileSync(file, "utf8"));
+      // the graph is syntactic; a static-check rejection is reported alongside it, not instead of it.
+      try { check(program); } catch (e) {
+        console.error(`note: static check rejects this program -- ${errorClass(e, "TypeError")}: ${errorMessage(e)}`);
+      }
+      const graph = buildGraph(program, file);
+      console.log(format === "dot" ? toDot(graph) : JSON.stringify(graph, null, 2));
+      return 0;
+    } catch (e) {
+      printError(e);
+      return 1;
     }
-    const graph = buildGraph(program, file);
-    console.log(format === "dot" ? toDot(graph) : JSON.stringify(graph, null, 2));
-    return 0;
   }
   if (cmd !== "run" || rest.length === 0) {
     console.error("usage: agape-ts run <file.ag> [--manifest agape.toml] [--provider mock|anthropic|openai|gemini] [--json] [--prompt name=value]");
@@ -173,8 +196,8 @@ async function main(argv: string[]): Promise<number> {
     console.log(`\nchain-head: ${ledger.head()}`);
     return 0;
   } catch (e) {
-    if (json) console.log(JSON.stringify({ ok: false, file, class: (e as { cls?: string }).cls ?? (e as Error).name, error: (e as Error).message }));
-    else console.error(`${(e as { cls?: string }).cls ?? (e as Error).name}: ${(e as Error).message}`);
+    if (json) console.log(JSON.stringify({ ok: false, file, class: errorClass(e), error: errorMessage(e) }));
+    else printError(e);
     return 1;
   }
 }
@@ -184,7 +207,13 @@ function fmt(e: LedgerEvent): string {
   return `[${String(e.tick).padStart(2, " ")}] ${e.etype}(${e.subject})${payload}`;
 }
 
-main(process.argv.slice(2)).then((code) => process.exit(code));
+main(process.argv.slice(2)).then(
+  (code) => process.exit(code),
+  (e) => {
+    printError(e);
+    process.exit(1);
+  },
+);
 
 // re-export for convenience
 export { show };

@@ -1151,9 +1151,11 @@ function sendPromptChannel(name) {
   return sendPromptInput(promptInputByName(name));
 }
 
-function promptSendInput() {
+function promptInputSelection(options = {}) {
+  const allowEmpty = Boolean(options.allowEmpty);
   const promptInputs = collectInputs().promptInputs;
-  if (promptInputs.length === 1) return promptInputs[0];
+  if (promptInputs.length === 1) return { ok: true, input: promptInputs[0] };
+  if (promptInputs.length === 0 && allowEmpty) return { ok: true, input: null };
   state.collapsed.inputs = false;
   applyPanelState(document.querySelector("[data-panel='inputs']"));
   if (promptInputs.length === 0) {
@@ -1161,12 +1163,17 @@ function promptSendInput() {
     $("results").innerHTML = `<div class="verdict bad"><div class="light"></div><b>Input needed</b>
       <span class="msg">Enter a value for one prompt channel before sending.</span></div>`;
     if (first) $(inputId("prompt", first.name))?.focus();
-    return null;
+    return { ok: false, input: null };
   }
   $("results").innerHTML = `<div class="verdict bad"><div class="light"></div><b>One channel at a time</b>
     <span class="msg">${promptInputs.length} prompt channels have values. Send one channel, then send the next as a separate arrival.</span></div>`;
   $(inputId("prompt", promptInputs[0].name))?.focus();
-  return null;
+  return { ok: false, input: null };
+}
+
+function promptSendInput() {
+  const selection = promptInputSelection();
+  return selection.ok ? selection.input : null;
 }
 
 // the access token (if this studio is token-gated) rides in from the page URL and onto every API call.
@@ -1178,7 +1185,11 @@ async function api(path, opts) {
   const r = await fetch(TOKEN ? `${path}${sep}token=${encodeURIComponent(TOKEN)}` : path, opts);
   if (!r.ok && r.headers.get("content-type")?.includes("json")) {
     const b = await r.json();
-    throw new Error(b.error || `HTTP ${r.status}`);
+    const err = b.error;
+    const message = err && typeof err === "object"
+      ? `${err.cls || "Error"}: ${err.message || "request failed"}`
+      : err;
+    throw new Error(message || `HTTP ${r.status}`);
   }
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   return r.json();
@@ -1700,8 +1711,11 @@ async function attest(decision) {
 $("run").onclick = async () => {
   if (!state.selected) return;
   const useSession = sessionMode();
-  const promptInput = hasPromptInputs() && state.listening ? promptSendInput() : null;
-  if (hasPromptInputs() && state.listening && !promptInput) return;
+  const promptSelection = hasPromptInputs()
+    ? promptInputSelection({ allowEmpty: !state.listening })
+    : { ok: true, input: null };
+  if (!promptSelection.ok) return;
+  const promptInput = promptSelection.input;
   $("run").disabled = true;
   $("run").textContent = state.listening ? "Sending…" : useSession ? "Starting…" : "Running…";
   try {
@@ -1712,6 +1726,7 @@ $("run").onclick = async () => {
         body: JSON.stringify({ program: state.selected }),
       });
       handleSessionResponse(r);
+      if (promptInput && state.sessionId) await sendPromptInput(promptInput);
       return;
     } else if (useSession && state.listening) {
       await sendPromptInput(promptInput);
