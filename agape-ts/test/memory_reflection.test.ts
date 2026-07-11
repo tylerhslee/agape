@@ -178,6 +178,22 @@ describe("memory reflection ([memory] reflect)", () => {
     expect(provider.prompts[0]).toContain("a recollection with no renderable value");
   });
 
+  it("keeps the reflection instruction name-free so no example name can leak into memories", async () => {
+    const substrate = new RecordingSubstrate();
+    const provider = new ProseProvider();
+    const driver = new MemoryRuntimeDriver(substrate, { reflect: true, dedupe: false }, provider);
+
+    const nameless = "exchange — the user said: im heading to bed | I replied: sleep well";
+    await driver.internalize(writeReq(nameless));
+
+    // The only proper names the reflector may see are ones the episode itself
+    // contains — an example name in the instruction gets copied into real
+    // memories by small models.
+    const instruction = provider.prompts[0]!.replace(nameless, "");
+    expect(instruction).not.toMatch(/\b[A-Z][a-z]+ (uses|said|prefers)\b/);
+    expect(provider.prompts[0]).toContain("never invent or assume a name");
+  });
+
   it("classifies the reflected prose, not the raw episode", async () => {
     const substrate = new RecordingSubstrate();
     const driver = new MemoryRuntimeDriver(substrate, { reflect: true, dedupe: false }, new ProseProvider());

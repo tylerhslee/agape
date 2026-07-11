@@ -1,4 +1,4 @@
-# Agape v1.0.0-alpha.2026.7.11.3 — Conformance Test Index
+# Agape v1.0.0-alpha.2026.7.11.4 — Conformance Test Index
 
 **207 tests** — accept: 128, reject: 79
 

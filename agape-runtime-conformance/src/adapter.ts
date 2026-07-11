@@ -1,4 +1,4 @@
-export const LANGUAGE_SPEC_VERSION = "v1.0.0-alpha.2026.7.11.3";
+export const LANGUAGE_SPEC_VERSION = "v1.0.0-alpha.2026.7.11.4";
 
 export type RuntimeKind = "rust-local" | "studio-local" | "cloud" | "soma" | string;
 

@@ -6,6 +6,22 @@ All notable changes to Agape are recorded here. The format follows
 suite, and the studio move in lockstep — a release is the whole bundle at one
 version.
 
+## [1.0.0-alpha.2026.7.11.4] - 2026-07-11
+
+Memory-reflection hygiene fix: the reflection instruction no longer contains any example proper name. The previous attribution rule illustrated itself with a literal name ("Tyler uses …"), and small reflection models copy instruction examples into real memories — an agent with an anonymous user could invent that name for them. Dogfooding surfaced this: an isolated LeeHaRin verify run with zero recall hits internalized "Tyler said he was heading to bed".
+
+### Fixed
+
+- `memory_runtime.ts` reflection prompt: attribution example is now name-free ("the user uses …"), and a new rule forbids referring to people by any name that does not appear in the raw episode itself.
+
+### Added
+
+- Regression test asserting the reflection instruction contains no proper-name example and carries the no-invented-names rule.
+
+### Verified
+
+- TypeScript runtime typecheck, version check, and full unit suite.
+
 ## [1.0.0-alpha.2026.7.11.3] - 2026-07-11
 
 Studio cost-inspection alpha. Every Studio run now carries an explicit estimated cost surface beside ledger latency and provider metadata.
