@@ -95,10 +95,14 @@ class Scope {
     this.vars.set(name, v);
   }
   assign(name: string, v: Value) {
-    if (this.vars.has(name) || !this.parent || this.parent.get(name) === undefined) {
+    if (this.vars.has(name)) {
       this.vars.set(name, v);
-    } else {
+    } else if (this.parent && this.parent.get(name) !== undefined) {
       this.parent.assign(name, v);
+    } else if (this.agent?.fields.has(name)) {
+      this.agent.fields.set(name, v);
+    } else {
+      this.vars.set(name, v);
     }
   }
   addDepGroup(relation: "independent" | "dependent", names: string[]) { this.depGroups.push({ relation, names }); }
@@ -787,6 +791,7 @@ class Interpreter {
     if (!decl) throw new RuntimeError(`unknown agent type '${agentType}'`);
     const homeModule = this.agentModuleOf.get(agentType);
     const inst: AgentInstance = { name, agentType, decl, awake: false, fields: new Map(), mems: new Map(), module: homeModule };
+    for (const f of decl.fields) inst.fields.set(f.name, this.zeroOf(f.type));
     // E-Spawn (§15.4.2): bind constructor arguments positionally to the agent's declared params, evaluated
     // in the SPAWNING scope (the args are the caller's expressions). These become instance fields visible to
     // the ctor/hooks/handlers; an agent-typed param binding is authority-checked by `reach` at each send (§13).
@@ -1662,7 +1667,7 @@ class Interpreter {
   }
 
   // `coll |> fn` (§12): map `fn` over each element of the collection. When `fn` is async, the fan-out is
-  // concurrent (await-all, no short-circuit); the mock fns here are sync-colored so the order is stable.
+  // concurrent (await-all, no short-circuit); the mock fns here are pure/local so the order is stable.
   private async evalPipe(e: A.PipeExpr, scope: Scope): Promise<Value> {
     const src = await this.evalExpr(e.source, scope);
     if (src.kind !== "array") throw new RuntimeError("`|>` requires a collection on the left");

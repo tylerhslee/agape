@@ -211,13 +211,13 @@ class Parser {
     if (t === "reversible") {
       return this.peek(1).type === "action";
     }
-    // function decl: `sync RET NAME(…)` or a bare top-level `RET NAME(…)` (async is default, §15.2).
-    if (t === "sync") return true;
+    // function decl: `pure RET NAME(…)` or a bare top-level `RET NAME(…)` (async is default, §15.2).
+    if (t === "pure") return true;
     if (this.looksLikeFnDecl()) return true;
     return false;
   }
 
-  // a bare top-level function declaration `RET NAME ( … ) {` (no `sync`), distinguished from a
+  // a bare top-level function declaration `RET NAME ( … ) {` (no `pure`), distinguished from a
   // top-level statement by LL lookahead to the `(`/`{` shape after a type and a name.
   private looksLikeFnDecl(): boolean {
     const save = this.i;
@@ -291,7 +291,7 @@ class Parser {
       this.eat(";");
       return { kind: "action", name, fields, reversible: true, pub, pos };
     }
-    if (this.at("sync") || this.looksLikeFnDecl()) return this.withPub(this.parseFn(), pub);
+    if (this.at("pure") || this.looksLikeFnDecl()) return this.withPub(this.parseFn(), pub);
     if (this.at("event")) {
       this.next();
       if (this.at("<")) this.err("`event<T>` is no longer a reply type; declare a named `event Foo(...)` or use a bare reply type `T`");
@@ -408,17 +408,17 @@ class Parser {
     return { kind: "interface", name, members, pub, pos };
   }
 
-  // fn ::= "sync"? type Ident typarams? params block  (async is the default, §15.2)
+  // fn ::= "pure"? type Ident typarams? params block  (async is the default, §15.2)
   private parseFn(): A.FnDecl {
     const pos = this.peek().pos;
-    let sync = false;
-    if (this.at("sync")) { sync = true; this.next(); }
+    let pure = false;
+    if (this.at("pure")) { pure = true; this.next(); }
     const ret = this.parseType();
     const name = this.declName();
     const typarams = this.parseTypeParams(); // `<T, …>` between name and params (§19.5)
     const params = this.parseFieldList();
     const body = this.parseBlock();
-    return { kind: "fn", sync, ret, name, params, body, typarams, pos };
+    return { kind: "fn", pure, ret, name, params, body, typarams, pos };
   }
 
   // a declared name in name-position: an Ident, or a CONTEXTUAL keyword used as a name

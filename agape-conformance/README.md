@@ -1,7 +1,7 @@
-# Agape — Black-Box Conformance Suite (v1.0.0-alpha.2026.7.11.1)
+# Agape — Black-Box Conformance Suite (v1.0.0-alpha.2026.7.11.2)
 
 A set of `.ag` programs, each tagged with an expected outcome, that together
-define when an implementation of **Agape v1.0.0-alpha.2026.7.11.1** is *valid* (every
+define when an implementation of **Agape v1.0.0-alpha.2026.7.11.2** is *valid* (every
 behavior matches the spec) and *complete* (every required behavior is exercised). Tests
 are derived **only** from `../SPEC.md` — never from any implementation. An
 implementation passes by feeding each test through its own front end + runtime
@@ -53,15 +53,15 @@ compiles the body), terminated by `//! ---`. Everything after is the program
 under test.
 
 ```
-//! id:        world_sync_perform_reject
+//! id:        world_pure_perform_reject
 //! section:   06b_world
 //! expect:    reject
 //! error:     ColorViolation
 //! spec:      §4, §6b (a perform is an outbound act → async)
-//! note:      a sync function may not perform
+//! note:      a pure function may not perform
 //! ---
 action Ping(text note);
-sync null poke() { perform Ping("x"); return; }
+pure null poke() { perform Ping("x"); return; }
 ```
 
 ### Header keys

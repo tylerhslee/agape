@@ -1,0 +1,8 @@
+//! id:        fn_pure_calls_async_reject
+//! section:   04_functions
+//! expect:    reject
+//! error:     ColorViolation
+//! spec:      §4 (a pure fn may only call other pure fns)
+//! ---
+text ask(text q) { return self <- q; }
+pure text wrap(text q) { return ask(q); }

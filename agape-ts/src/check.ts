@@ -28,8 +28,8 @@ interface Decls {
   agents: Map<string, A.AgentDecl>;
   interfaces: Map<string, A.InterfaceDecl>;
   // user function declarations (§4/§15.2), keyed by name (bare and, for imports, qualified). Used by the
-  // sync-color check: a `sync` fn may only call other `sync` fns (§4), so calling an `async` (unmarked)
-  // user function from a `sync` body is a ColorViolation.
+  // pure seam-freedom check: a `pure` fn may only call other `pure` fns (§4), so calling an async
+  // (unmarked) user function from a `pure` body is a ColorViolation.
   fns: Map<string, A.FnDecl>;
   // declared-dependency name sets (§3/§5b): a `principal NAME;` names an accountable identity, a
   // `prompt T NAME;` names an external input sensor. Both are "known" names — used in a `by`/prefix
@@ -1117,36 +1117,36 @@ class Checker {
     }
   }
 
-  // COLOR (W-SyncSeamFree, §15.3.3): a `sync` function may reach no declared dependency. A tool call,
-  // a send, or a principal-prefixed decide forces async — inside a `sync` body it is a ColorViolation.
+  // PURE (W-PureSeamFree, §15.3.3): a `pure` function may reach no declared dependency. A tool call,
+  // a send, or a principal-prefixed decide forces async — inside a `pure` body it is a ColorViolation.
   checkFn(f: A.FnDecl): void {
     this.checkFnExport(f);
-    if (f.sync) this.assertSyncBody(f.body);
+    if (f.pure) this.assertPureBody(f.body);
     this.checkBody(f.body, new Scope());
     this.checkDeferenceFlow(f.body, new Scope());
   }
 
-  private assertSyncBody(stmts: A.Stmt[]): void {
-    for (const s of stmts) this.assertSyncStmt(s);
+  private assertPureBody(stmts: A.Stmt[]): void {
+    for (const s of stmts) this.assertPureStmt(s);
   }
-  private assertSyncStmt(s: A.Stmt): void {
+  private assertPureStmt(s: A.Stmt): void {
     switch (s.kind) {
-      case "var": if (s.init) this.assertSyncExpr(s.init); return;
-      case "assign": this.assertSyncExpr(s.value); return;
-      case "say": this.assertSyncExpr(s.arg); return;
-      case "return": if (s.value) this.assertSyncExpr(s.value); return;
-      case "exprstmt": this.assertSyncExpr(s.expr); return;
+      case "var": if (s.init) this.assertPureExpr(s.init); return;
+      case "assign": this.assertPureExpr(s.value); return;
+      case "say": this.assertPureExpr(s.arg); return;
+      case "return": if (s.value) this.assertPureExpr(s.value); return;
+      case "exprstmt": this.assertPureExpr(s.expr); return;
       case "perform":
         // §6b: every perform is async — an action is an act on the world, and whether it is wired to an
         // effector is a deployment fact the checker must not depend on.
-        throw colorViolation(`a \`sync\` function may not \`perform\` (an action is an outbound act → async) (§6b)`);
-      case "emit": for (const a of s.args) this.assertSyncExpr(a); return;
-      case "if": this.assertSyncExpr(s.cond); this.assertSyncBody(s.then); if (s.else) this.assertSyncBody(s.else); return;
-      case "dispatch": this.assertSyncGate(s.gate); for (const arm of s.arms) this.assertSyncBody(arm.body); if (s.abstain) this.assertSyncBody(s.abstain.body); return;
+        throw colorViolation(`a \`pure\` function may not \`perform\` (an action is an outbound act → async) (§6b)`);
+      case "emit": for (const a of s.args) this.assertPureExpr(a); return;
+      case "if": this.assertPureExpr(s.cond); this.assertPureBody(s.then); if (s.else) this.assertPureBody(s.else); return;
+      case "dispatch": this.assertPureGate(s.gate); for (const arm of s.arms) this.assertPureBody(arm.body); if (s.abstain) this.assertPureBody(s.abstain.body); return;
       // §9/§10: a mem WRITE internalizes through the provider (decompose across the region's views) —
-      // a dependency reach, so a `sync` body may not store (the recall seam is likewise async, below).
+      // a dependency reach, so a `pure` body may not store (the recall seam is likewise async, below).
       case "memdecl":
-        throw colorViolation("a `sync` function may not declare/write a `mem` (a memory write internalizes through the provider → async)");
+        throw colorViolation("a `pure` function may not declare/write a `mem` (a memory write internalizes through the provider → async)");
       default: return;
     }
   }
@@ -1161,50 +1161,50 @@ class Checker {
     return undefined;
   }
 
-  private assertSyncGate(g: A.GateExpr): void {
+  private assertPureGate(g: A.GateExpr): void {
     if (g.kind === "decide") {
       // a principal-driven decide (prefix `p decide …` OR `decide c by p` with a declared principal p)
-      // reaches the identity dependency → async; inside a `sync` body it is a ColorViolation (§4/§13).
-      if (this.principalOfDecide(g)) throw colorViolation("a `sync` function may not use a principal-driven `decide` (it reaches the identity dependency → async)");
-      this.assertSyncExpr(g.credence);
+      // reaches the identity dependency → async; inside a `pure` body it is a ColorViolation (§4/§13).
+      if (this.principalOfDecide(g)) throw colorViolation("a `pure` function may not use a principal-driven `decide` (it reaches the identity dependency → async)");
+      this.assertPureExpr(g.credence);
     } else {
-      this.assertSyncExpr(g.subject);
-      this.assertSyncExpr(g.decision);
+      this.assertPureExpr(g.subject);
+      this.assertPureExpr(g.decision);
     }
   }
-  private assertSyncExpr(e: A.Expr): void {
+  private assertPureExpr(e: A.Expr): void {
     switch (e.kind) {
-      case "send": throw colorViolation("a `sync` function may not `<-` (a send reaches the provider → async)");
+      case "send": throw colorViolation("a `pure` function may not `<-` (a send reaches the provider → async)");
       // the memory substrate is async (§9/§10): a recall or ledger query reaches async runtime state.
-      case "recall": throw colorViolation("a `sync` function may not recall (`->` reaches the async memory substrate → async)");
-      case "select": throw colorViolation("a `sync` function may not query the ledger (`select` reaches async runtime state → async)");
-      case "decide": case "endorse": this.assertSyncGate(e); return;
+      case "recall": throw colorViolation("a `pure` function may not recall (`->` reaches the async memory substrate → async)");
+      case "select": throw colorViolation("a `pure` function may not query the ledger (`select` reaches async runtime state → async)");
+      case "decide": case "endorse": this.assertPureGate(e); return;
       case "performexpr":
-        throw colorViolation(`a \`sync\` function may not \`perform\` (an action is an outbound act → async) (§6b)`);
+        throw colorViolation(`a \`pure\` function may not \`perform\` (an action is an outbound act → async) (§6b)`);
       case "call":
-        // §4: a `sync` fn may only call other `sync` fns. Calling a KNOWN user function that is not marked
-        // `sync` (its body may reach a declared dependency — a send, recall, tool call, or principal-decide)
+        // §4: a `pure` fn may only call other `pure` fns. Calling a KNOWN user function that is not marked
+        // `pure` (its body may reach a declared dependency — a send, recall, tool call, or principal-decide)
         // forces async → a ColorViolation. Conservative: only a declared user fn that is provably async
         // triggers this; an unknown/built-in callee (`say`, a prelude helper) stays exempt so no accept
         // test is false-rejected. The call arguments are still walked for their own async reaches.
         if (e.callee.kind === "ident") {
           const callee = this.d.fns.get(e.callee.name);
-          if (callee && !callee.sync) {
-            throw colorViolation(`a \`sync\` function may only call other \`sync\` functions, not the async function '${e.callee.name}' (its body may reach a declared dependency → async) (§4)`);
+          if (callee && !callee.pure) {
+            throw colorViolation(`a \`pure\` function may only call other \`pure\` functions, not the async function '${e.callee.name}' (its body may reach a declared dependency → async) (§4)`);
           }
         }
-        for (const a of e.args) this.assertSyncExpr(a);
+        for (const a of e.args) this.assertPureExpr(a);
         return;
-      case "member": this.assertSyncExpr(e.obj); return;
-      case "binary": this.assertSyncExpr(e.left); this.assertSyncExpr(e.right); return;
-      case "unary": this.assertSyncExpr(e.operand); return;
-      case "fstring": for (const p of e.parts) if (p.kind === "expr") this.assertSyncExpr(p.expr); return;
+      case "member": this.assertPureExpr(e.obj); return;
+      case "binary": this.assertPureExpr(e.left); this.assertPureExpr(e.right); return;
+      case "unary": this.assertPureExpr(e.operand); return;
+      case "fstring": for (const p of e.parts) if (p.kind === "expr") this.assertPureExpr(p.expr); return;
       // §12 aggregation forms carry no async reach of their own; recurse into their operands so an async
       // reach nested inside (a send, a tool call) is still caught.
-      case "agg": for (const o of e.operands) this.assertSyncExpr(o); return;
-      case "quorum": this.assertSyncExpr(e.source); return;
-      case "pipe": this.assertSyncExpr(e.source); this.assertSyncExpr(e.fn); return;
-      case "arraylit": for (const it of e.items) this.assertSyncExpr(it); return;
+      case "agg": for (const o of e.operands) this.assertPureExpr(o); return;
+      case "quorum": this.assertPureExpr(e.source); return;
+      case "pipe": this.assertPureExpr(e.source); this.assertPureExpr(e.fn); return;
+      case "arraylit": for (const it of e.items) this.assertPureExpr(it); return;
       default: return;
     }
   }

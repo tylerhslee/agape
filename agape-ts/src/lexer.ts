@@ -21,7 +21,7 @@ export type FStringPart = { kind: "text"; text: string } | { kind: "expr"; src: 
 // are left as Idents and matched positionally by the parser.
 export const KEYWORDS = new Set([
   "int", "float", "bool", "text", "null", "event", "action", "array",
-  "agent", "extend", "sync", "struct", "enum",
+  "agent", "extend", "pure", "struct", "enum",
   "grants",
   "spawn", "awake", "sleep", "crash", "self", "on", "prompt", "instruction",
   "principal", "policy",
@@ -272,7 +272,45 @@ export function lex(source: string): Token[] {
     if (first?.kind === "text") first.text = first.text.replace(/^\r?\n/, "");
     const last = out[out.length - 1];
     if (last?.kind === "text") last.text = last.text.replace(/\r?\n$/, "");
-    return out.filter((p) => p.kind !== "text" || p.text.length > 0);
+    return dedentPromptParts(out.filter((p) => p.kind !== "text" || p.text.length > 0));
+  }
+
+  // Strip the common leading whitespace of all non-blank lines (Java
+  // text-block style), so prompt blocks can be indented with the surrounding
+  // source without pushing indentation into the rendered prompt. Blank lines
+  // and whitespace-only runs before an interpolation don't set the minimum;
+  // stripping never eats past a line's actual whitespace. Consequence:
+  // indentation-based Markdown code blocks aren't expressible in a prompt
+  // block — use ``` fences.
+  function dedentPromptParts(parts: FStringPart[]): FStringPart[] {
+    let min = Infinity;
+    let atStart = true;
+    for (const p of parts) {
+      if (p.kind !== "text") { atStart = false; continue; }
+      const segs = p.text.split("\n");
+      for (let s = 0; s < segs.length; s++) {
+        if (s === 0 && !atStart) continue;
+        const seg = segs[s]!;
+        const run = seg.match(/^[ \t]*/)![0].length;
+        if (run < seg.length && run < min) min = run; // non-blank lines only
+      }
+      atStart = p.text.endsWith("\n");
+    }
+    if (!Number.isFinite(min) || min === 0) return parts;
+    atStart = true;
+    for (const p of parts) {
+      if (p.kind !== "text") { atStart = false; continue; }
+      const segs = p.text.split("\n");
+      p.text = segs
+        .map((seg, s) => {
+          if (s === 0 && !atStart) return seg;
+          const run = seg.match(/^[ \t]*/)![0].length;
+          return seg.slice(Math.min(run, min));
+        })
+        .join("\n");
+      atStart = p.text.endsWith("\n");
+    }
+    return parts;
   }
 
   function promptBlockAhead(): boolean {

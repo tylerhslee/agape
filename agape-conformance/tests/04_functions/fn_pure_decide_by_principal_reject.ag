@@ -1,0 +1,8 @@
+//! id:        fn_pure_decide_by_principal_reject
+//! section:   04_functions
+//! expect:    reject
+//! error:     ColorViolation
+//! spec:      §4, §13 (`decide c by p` for a principal reaches the identity dependency → async; a pure fn may not)
+//! ---
+principal alice;
+pure null ok(Credence<bool> c) { alice decide c by conformal 0.05; return null; }

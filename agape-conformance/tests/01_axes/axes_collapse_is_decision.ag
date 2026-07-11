@@ -3,4 +3,4 @@
 //! expect:    accept
 //! spec:      §13, §15.2 (`decide c by R` collapses a Credence to a settled, ledgered Decision)
 //! ---
-sync Decision<bool> over(Credence<bool> c) { return decide c by confidence 0.9; }
+pure Decision<bool> over(Credence<bool> c) { return decide c by confidence 0.9; }

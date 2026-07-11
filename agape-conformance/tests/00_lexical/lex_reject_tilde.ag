@@ -5,4 +5,4 @@
 //! spec:      §2 (there is no similarity operator; `~` lexes to an Op but the parser rejects it — a ParseError, not a LexError)
 //! note:      similarity is reached through memory recall or a graded judgment (§10), never a `~` operator
 //! ---
-sync bool f(text a, text b) { return a ~ b; }
+pure bool f(text a, text b) { return a ~ b; }

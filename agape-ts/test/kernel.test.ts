@@ -58,6 +58,34 @@ class RecordingStructuredProvider extends MockProvider {
 
 
 describe("markdown prompt syntax", () => {
+  it("dedents indented prompt blocks by the common leading whitespace", async () => {
+    const provider = new RecordingStructuredProvider("done");
+    const prog = `
+      agent A {
+        on awake {
+          text who = "Ada";
+          if (true) {
+            text answer = self <- prompt {
+              # Task
+
+              Greet \${who}.
+
+              - keep it short
+                - nested item survives relative indent
+            };
+            say(answer);
+          }
+        }
+      }
+      spawn A a; awake a;
+    `;
+    const r = await run(parse(prog), { provider });
+    expect(provider.calls[0]?.prompt).toBe(
+      "# Task\n\nGreet Ada.\n\n- keep it short\n  - nested item survives relative indent",
+    );
+    expect(r.stdout).toEqual(["done"]);
+  });
+
   it("uses ${expr} interpolation and leaves plain braces literal in f-strings", async () => {
     const prog = `
       agent A {
@@ -905,11 +933,68 @@ describe("the memory surface cannot launder trust (§10, §13, §16.7)", () => {
   });
 });
 
-describe("sync color reaches the async memory substrate (§9, §10)", () => {
+describe("pure functions may not reach the async memory substrate (§9, §10)", () => {
   const rejects = (body: string) =>
-    expect(run(parse(`sync null f() { ${body} return null; }`), {})).rejects.toMatchObject({ cls: "ColorViolation" });
-  it("rejects a recall in a sync body", async () => { await rejects(`mem n <- "x"; text t = n -> "q";`); });
-  it("rejects a memory write in a sync body", async () => { await rejects(`mem n; n <- "fact";`); });
+    expect(run(parse(`pure null f() { ${body} return null; }`), {})).rejects.toMatchObject({ cls: "ColorViolation" });
+  it("rejects a recall in a pure body", async () => { await rejects(`mem n <- "x"; text t = n -> "q";`); });
+  it("rejects a memory write in a pure body", async () => { await rejects(`mem n; n <- "fact";`); });
+
+  it("runs bounded pure recursion and updates an agent field", async () => {
+    const prog = `
+      struct WorldModel { position: float, velocity: float }
+      struct Observation { position: float }
+      struct Prediction { position: float }
+      enum FitStatus { Settled, Exhausted }
+      struct FitResult { status: FitStatus, model: WorldModel, error: float, depth_left: int }
+      event Perceived(Observation observation);
+      event ModelUpdated(FitResult result);
+
+      pure float abs(float x) {
+        float result = x;
+        if (x < 0.0) { result = 0.0 - x; }
+        return result;
+      }
+      pure Prediction predict(WorldModel m) { return Prediction { position: m.position + m.velocity }; }
+      pure float prediction_error(Prediction p, Observation o) { return abs(p.position - o.position); }
+      pure WorldModel revise(WorldModel m, Observation o) {
+        Prediction p = predict(m);
+        float residual = o.position - p.position;
+        return WorldModel { position: m.position + (0.50 * residual), velocity: m.velocity + (0.25 * residual) };
+      }
+      pure FitResult fit(WorldModel m, Observation o, float epsilon, int depth) {
+        Prediction p = predict(m);
+        float e = prediction_error(p, o);
+        FitResult result = FitResult { status: Exhausted, model: m, error: e, depth_left: depth };
+        if (e <= epsilon) {
+          result = FitResult { status: Settled, model: m, error: e, depth_left: depth };
+        } else if (depth <= 0) {
+          result = FitResult { status: Exhausted, model: m, error: e, depth_left: depth };
+        } else {
+          WorldModel next = revise(m, o);
+          result = fit(next, o, epsilon, depth - 1);
+        }
+        return result;
+      }
+
+      agent Observer {
+        WorldModel model;
+        model = WorldModel { position: 0.0, velocity: 0.0 };
+        when (Perceived p) {
+          FitResult result = fit(model, p.observation, 0.05, 8);
+          model = result.model;
+          emit ModelUpdated(result);
+          say(f"\${result.status} \${result.error} \${model.position} \${model.velocity}");
+        }
+      }
+      spawn Observer observer; awake observer;
+      emit Perceived(Observation { position: 10.0 });
+    `;
+    const r = await run(parse(prog), {});
+    // f-string interpolation renders enums as the bare variant (render(), not
+    // show()) — same convention as ledger payloads.
+    expect(r.stdout).toEqual(["Settled 0.0390625 6.640625 3.3203125"]);
+    expect(r.ledger.events.map((e) => e.etype)).toContain("ModelUpdated");
+  });
 });
 
 describe("ledger reads carry recorded trust (§10) — Endorsed reads back settled", () => {

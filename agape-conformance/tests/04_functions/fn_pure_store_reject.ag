@@ -1,0 +1,10 @@
+//! id:        fn_pure_store_reject
+//! section:   04_functions
+//! expect:    reject
+//! error:     ColorViolation
+//! spec:      §9, §10 (a mem write reaches the provider-backed memory substrate to internalize, so a pure function may not store)
+//! ---
+pure null cache() {
+  mem notes <- "fact note";
+  return null;
+}

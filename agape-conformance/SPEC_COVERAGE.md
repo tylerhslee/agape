@@ -1,6 +1,6 @@
 # SPEC Coverage Matrix
 
-Target: `SPEC.md` `v1.0.0-alpha.2026.7.11.1` — the core kernel.
+Target: `SPEC.md` `v1.0.0-alpha.2026.7.11.2` — the core kernel.
 
 Scope of this matrix: compiler/language conformance only. Runtime-only obligations in sections 16/17/18 are marked `runtime-suite` because they cannot be proven by feeding `.ag` source to a compiler. They belong in the TypeScript runtime conformance suite and adapters.
 
@@ -13,10 +13,10 @@ Status meanings:
 | SPEC section | Compiler status | Coverage basis |
 |---|---|---|
 | 0 Scope and layering | covered | Trusted-kernel path and static/dynamic separation are covered through authority, taint, gate, and replay-header tests. Runtime execution model is `runtime-suite`. |
-| 1 Orthogonal axes | covered | Axis tests cover sync/async, trust tiers, ledger presence, and independence of the axes. |
+| 1 Orthogonal axes | covered | Axis tests cover pure/async, trust tiers, ledger presence, and independence of the axes. |
 | 2 Lexical structure | covered | Comments, keywords, strings, f-strings, operators, missing semicolons, unknown operators, invalid numeric forms, and unsupported escaped f-string braces. |
 | 3 Types | covered | Scalars, arrays, structs, enums, events/actions, `Credence`, `Decision`, `Endorsement`, `Rule` non-storage, declared dependencies, exact payload arity/types. |
-| 4 Functions/color | covered | Sync restrictions, dependency reaches, tool/store reaches, in-hand gate operations, and trust flow through helper calls. |
+| 4 Functions/color | covered | pure restrictions, dependency reaches, tool/store reaches, in-hand gate operations, and trust flow through helper calls. |
 | 5 Agents/lifecycle | covered | Spawn/awake/sleep/crash, `extend`, hooks, instruction blocks, prompts, and agent construction/resume rules. Runtime persistence/generation is `runtime-suite`. |
 | 5b Prompt | covered | Prompt declaration, prompt-origin settled input at sinks, and missing prompt config. Long-running source behavior is `runtime-suite`. |
 | 6 Communication | covered | Send lifecycle, typed replies, self-send, expiry, lost sends, late delivery refusal, and reach grants. Illegal host-forged traces are `runtime-suite`. |
@@ -30,7 +30,7 @@ Status meanings:
 | 13 Capabilities/governance | covered | Default-deny grants, subtractive extend, reach/use/perform authority, taint at sinks, subject endorsement, the endorsement binder as the settled subject, sink-admissibility only in a committed `if` branch, non-admissibility in the abstained else branch, raw-subject rejection, subject-scope rejection, the deference requirement, principal decisions, failed principal decisions, the inline margin `floor`, and Endorsed ledger records. Margin-floor runtime faults are `runtime-suite`. |
 | 14 Trusted kernel/invariants | covered | Bypass matrix is represented across gates, memory store/recall, the ledger query, tools, prompts, and config tests: no construct launders taint, invents authority, skips endorsement, or writes through an unsettled sink. |
 | 15 Formal semantics | covered | EBNF surfaces, selected T-rules, W-rules, error categories, replay directives, and conformance harness directives. Stochastic theorems are `runtime-suite`. |
-| 15.5 Reproducibility | covered | Compiler suite pins replay directives and ledgered sync `decide`; runtime adapter tests cover replay, no oracle reinvocation, multi-run observational-equivalence/stability checks, and exactly-once idempotency. |
+| 15.5 Reproducibility | covered | Compiler suite pins replay directives and ledgered pure `decide`; runtime adapter tests cover replay, no oracle reinvocation, multi-run observational-equivalence/stability checks, and exactly-once idempotency. |
 | 15.5.6 Conformal | covered | File-level and per-gate conformal declarations, cold abstain/defer surfaces, and config-aware fallback tests. Statistical coverage is `runtime-suite`. |
 | 16 Runtime | runtime-suite | Covered by TypeScript runtime adapter tests for scheduler, ledger, seam protocol, replay, faults, memory, projections, calibration, and API surfaces. |
 | 16.7 Memory runtime | runtime-suite | Compiler tests cover memory surface and trust. Runtime adapter tests cover mandatory envelope, artifact ingestion, idempotency, provenance, learning loop, and no memory-to-action laundering. |

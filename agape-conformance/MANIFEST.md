@@ -1,4 +1,4 @@
-# Agape v1.0.0-alpha.2026.7.11.1 — Conformance Test Index
+# Agape v1.0.0-alpha.2026.7.11.2 — Conformance Test Index
 
 **207 tests** — accept: 128, reject: 79
 
@@ -27,7 +27,7 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 |---|---|---|---|
 | `axes_collapse_is_decision` | accept | — | §13, §15.2 (`decide c by R` collapses a Credence to a settled, ledgered Decision) |
 | `axes_credence_is_graded_judgment` | accept | — | §1, §8 (a semantic judgment is a provider send bound to Credence<E> → graded) |
-| `axes_pure_call_sync_settled` | accept | — | §1 Axis A/B (a pure `sync` fn reaches no dependency and stays `settled`) |
+| `axes_pure_call_settled` | accept | — | §1 Axis A/B (a `pure` fn reaches no dependency and stays `settled`) |
 | `axes_send_reply_is_raw` | accept | — | §1 Axis B/C, §15.3.2 T-Send (`d <- p` is on the ledger; its reply is `raw`) |
 
 ## 03_types
@@ -61,13 +61,13 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 
 | id | expect | error | spec |
 |---|---|---|---|
-| `fn_sync_calls_async_reject` | reject | ColorViolation | §4 (a sync fn may only call other sync fns) |
-| `fn_sync_decide_by_principal_reject` | reject | ColorViolation | §4, §13 (`decide c by p` for a principal reaches the identity dependency → async; a sync fn may not) |
-| `fn_sync_emit_ok` | accept | — | §4 (emit is a ledger append, permitted in sync; a plain event needs no power) |
-| `fn_sync_inhand_decide_ok` | accept | — | §4, §13 (a rule-driven `decide` over an in-hand Credence is a pure collapse, no dependency reach → sync-permitted) |
-| `fn_sync_pure_ok` | accept | — | §4 (a sync fn that reaches no declared dependency is well-formed) |
-| `fn_sync_reaches_seam_reject` | reject | ColorViolation | §1 Axis A, §4 (a sync fn may not reach the provider via `<-`) |
-| `fn_sync_store_reject` | reject | ColorViolation | §9, §10 (a mem write reaches the provider-backed memory substrate to internalize, so a sync function may not store) |
+| `fn_pure_calls_async_reject` | reject | ColorViolation | §4 (a pure fn may only call other pure fns) |
+| `fn_pure_decide_by_principal_reject` | reject | ColorViolation | §4, §13 (`decide c by p` for a principal reaches the identity dependency → async; a pure fn may not) |
+| `fn_pure_emit_ok` | accept | — | §4 (emit is a ledger append, permitted in pure; a plain event needs no power) |
+| `fn_pure_inhand_decide_ok` | accept | — | §4, §13 (a rule-driven `decide` over an in-hand Credence is a pure collapse, no dependency reach → pure-permitted) |
+| `fn_pure_local_ok` | accept | — | §4 (a pure fn that reaches no declared dependency is well-formed) |
+| `fn_pure_reaches_seam_reject` | reject | ColorViolation | §1 Axis A, §4 (a pure fn may not reach the provider via `<-`) |
+| `fn_pure_store_reject` | reject | ColorViolation | §9, §10 (a mem write reaches the provider-backed memory substrate to internalize, so a pure function may not store) |
 | `fn_taint_flows_through_call_reject` | reject | TaintViolation | §15.3.3 (function calls are trust-transparent; taint flowing through a helper still cannot reach a consequential sink) |
 
 ## 05_agents
@@ -116,7 +116,7 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 | `world_replay_chain_head` | accept | — | §6b, §16.5 (recorded replay of a wired perform regenerates the same chain-head: the seam's journal pair re-serves the endpoint result and nothing is re-invoked) |
 | `world_result_event_ingress_to_provider_warn` | accept | — | §6b, §17 (default provider-prompt ingress policy warns when unscreened result-event ingress is interpolated into cognition) |
 | `world_result_event_screened_ingress_to_provider_ok` | accept | — | §6b, §17 (a manifest-screened result-event ingress value is external_screened, so it may feed cognition without warning even under deny mode) |
-| `world_sync_perform_reject` | reject | ColorViolation | §4, §6b (every perform is async — whether an act reaches the world is a deployment fact the checker must not depend on; a `sync` function may not perform) |
+| `world_pure_perform_reject` | reject | ColorViolation | §4, §6b (every perform is async — whether an act reaches the world is a deployment fact the checker must not depend on; a `pure` function may not perform) |
 | `world_unwired_action_pure_ok` | accept | — | §6b (unwired = pure: an unwired action is a ledgered performative — the act is the record; no seam journal pair appears) |
 | `world_wired_perform_invokes_ok` | accept | — | §6b (an [actions.NAME] wiring makes perform invoke the catalog endpoint: the action's own domain row, then the seam's ToolStarted/ToolResolved journal pair correlated by catalog name) |
 | `world_wired_perform_result_event_ok` | accept | — | §6b (a wiring's result_event lands the endpoint's reply as the named event row after the journal pair; a statement-form perform consumes it reactively via `when`) |
@@ -263,7 +263,7 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 | id | expect | error | spec |
 |---|---|---|---|
 | `repro_chain_head_equal` | accept | — | §15.4.2, §15.5 / T4 (a recorded run replays to an identical chain-head: every oracle result is re-served from the journal in order and nothing is re-invoked) |
-| `repro_decision_records_decided` | accept | — | §13, §15 (`decide c by R` records a Decided ledger event while remaining sync/no dependency reach) |
+| `repro_decision_records_decided` | accept | — | §13, §15 (`decide c by R` records a Decided ledger event while remaining pure/no dependency reach) |
 
 ## 16_config
 

@@ -37,6 +37,29 @@ right person.
   packaged `node-linux-x64` archive verification, plus a live provider run against the LeeHaRin
   dogfood project.
 
+## [1.0.0-alpha.2026.7.11.1] - 2026-07-11
+
+Pure-function alpha: the seam-free function marker is now `pure`, not `sync`, so the language no longer overloads a scheduling term for a taint/effect guarantee.
+
+### Changed
+
+- Replaced the Agape source keyword `sync` with `pure` across the lexer, parser, checker diagnostics, spec, kernel notes, distribution docs, examples, and conformance labels. Unmarked functions remain async-capable by default; `pure` means no provider/world/principal/memory-recall seam reach and only calls to other `pure` functions.
+- Clarified SPEC Axis A as function reachability rather than scheduler behavior. `pure` is a seam-freedom claim; runtimes may still meter or cooperatively schedule local work.
+
+### Added
+
+- `examples/predictive_recursion.ag`: a bounded recursive predictive observer that updates an internal `WorldModel` field until prediction error is below a hard-coded threshold or fuel is exhausted.
+- Kernel regression coverage proving bounded `pure` recursion runs and updates an agent field.
+
+### Fixed
+
+- Agent field slots are initialized at spawn and identifier assignment now updates an existing agent field instead of shadowing it with a local binding.
+
+### Verified
+
+- TypeScript runtime typecheck.
+- Direct run of `examples/predictive_recursion.ag` on the mock provider: the model settled with error `0.0390625` under the `0.05` threshold.
+
 ## [1.0.0-alpha.2026.7.11.0] - 2026-07-11
 
 Reflective memory alpha: the first dogfood-driven memory-runtime feature, from the LeeHaRin

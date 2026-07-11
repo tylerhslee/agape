@@ -1,4 +1,4 @@
-# Agape Language Specification (v1.0.0-alpha.2026.7.11.1)
+# Agape Language Specification (v1.0.0-alpha.2026.7.11.2)
 
 > Agape is a programming language for multi-agent systems. This document is the
 > authoritative reference. The prose (§0–§14) defines the language for a reader; the formal
@@ -143,18 +143,18 @@ concurrency.
 
 Agape tracks four independent properties that are easy to conflate.
 
-### Axis A — function color: sync vs async
+### Axis A — function reachability: pure vs async
 
 - Code is **asynchronous by default**. The common case is cognition, which is async.
-- `**sync`** is the marked keyword. A `sync` function may not touch a declared dependency (no `<-`, no
+- `**pure`** is the marked keyword. A `pure` function may not touch a declared dependency (no `<-`, no
 binding to a `Credence` slot, no `perform`, no principal-driven `decide`)
-and may only call other `sync` functions.
-- `sync` is an affirmative, auditable claim of cognition-freedom and effect-freedom; it
+and may only call other `pure` functions.
+- `pure` is an affirmative, auditable claim of cognition-freedom and effect-freedom; it
 propagates downward. Marking the safe property makes visible which code provably cannot
-reach a model, the world, or a human — hot paths, schedulers, and rule-driven
-`decide` over an in-hand `Credence`.
+reach a model, the world, or a human. It is not a scheduling promise that the function
+must monopolize the executor; runtimes may still meter or cooperatively schedule local work.
 - `emit`, rule-driven `decide` over an in-hand `Credence`, and `endorse` over an in-hand
-committed `Decision` are not dependency reaches and are permitted in `sync`; a principal-driven
+committed `Decision` are not dependency reaches and are permitted in `pure`; a principal-driven
 `decide` reaches identity and is async. Only reaching a declared dependency forces async.
 
 ### Axis B — value trust: how settled is the value?
@@ -234,7 +234,7 @@ appends `Decided`, plus **1** terminal identity event (`PrincipalDecision`, or
 - A semantic judgment yields a `Credence<E>` — a graded distribution over the variants of
 enum `E`, not a `bool`. To obtain a committed value, gate it with `decide c by r`; the rule is
 never hidden.
-- `decide c by r` is the gate (`graded → settled`); it is `sync` for a rule-only gate and async when
+- `decide c by r` is the gate (`graded → settled`); it is seam-free for a rule-only gate and async when
 prefixed with a `principal`.
 - `endorse subject by d` applies the decision to that exact subject value and yields an
 `Endorsement<T>`, the settled form admissible for consequential use (§13).
@@ -245,16 +245,16 @@ manifest's provider-prompt ingress policy applies (§17).
 The axes, one per comment, in a single agent:
 
 ```agape
-sync int fee(int cents) { return cents / 10; }   // color S: provably no dependency reach
+pure int fee(int cents) { return cents / 10; }   // pure: provably no dependency reach
 
 agent Teller {
   on awake {
     text note = self <- "describe the request";              // async · raw · lifecycle events
     Credence<bool> ok = self <- f"is this routine: {note}";  // async · graded · lifecycle events
-    Decision<bool> d = decide ok by confidence 0.8;           // sync collapse · settled · Decided
+    Decision<bool> d = decide ok by confidence 0.8;           // local collapse · settled · Decided
     if (d.committed == true) { emit Event("routine"); }      // branch on a settled fact
     else if (d.committed == false) { emit Event("escalate"); }
-    say(f"fee: {fee(1250)}");                                // sync call · settled · no events
+    say(f"fee: {fee(1250)}");                                // pure call · settled · no events
   }
 }
 spawn Teller t; awake t;
@@ -285,7 +285,7 @@ values and instances are lowercase.
 
 ```
 int float bool text null event action       // scalar types + event/action declarations
-agent extend sync                         // declarations (sync = marked color)
+agent extend pure                         // declarations (pure = marked seam-free function)
 struct enum                               // user nominal-type declarations
 grants                                    // capability typing (§13)
 spawn awake sleep crash self on prompt instruction   // lifecycle (incl. `on crash`) + external input sensor + system prompt (§5)
@@ -530,29 +530,29 @@ the decided enum does not pretend to.
 ## 4. Functions
 
 ```
-[sync]? RET_TYPE NAME ( [TYPE PARAM] , ... ) { BODY }
+[pure]? RET_TYPE NAME ( [TYPE PARAM] , ... ) { BODY }
 ```
 
-- A leading optional `sync` marks cognition-freedom and effect-freedom (Axis A); unmarked
+- A leading optional `pure` marks cognition-freedom and effect-freedom (Axis A); unmarked
 = async.
 - `RET_TYPE` is type-first.
 - A function returns an ordinary value. To return a ledger row/receipt, use a concrete type such
   as `LedgerEntry<Held>` or `LedgerEntry<Internalized>`.
 
 ```agape
-sync int   double(int x)            { return x * 2; }                 // sync, bare int
-sync Decision<bool> collapse(Credence<bool> c) { return decide c by confidence 0.9; }  // sync; the collapse is deterministic
+pure int   double(int x)            { return x * 2; }                 // pure, bare int
+pure Decision<bool> collapse(Credence<bool> c) { return decide c by confidence 0.9; }  // pure; the collapse is deterministic
 Credence<bool> about_poker(text x)  {                                 // async, graded judgment
     Credence<bool> c = self <- f"is {x} a game of poker?";
     return c;
 }
 ```
 
-A rule-only `decide c by r` is `sync` (§13). The cognition is in producing the `Credence` (the
+A rule-only `decide c by r` is seam-free (§13). The cognition is in producing the `Credence` (the
 provider send bound to a `Credence` slot, which is async); applying a threshold/margin to a
-`Credence` value is pure comparison. So a `sync` function may take a `Credence` and decide it by a
+`Credence` value is pure comparison. So a `pure` function may take a `Credence` and decide it by a
 local rule; the judgment is agentic, the collapse is deterministic, and the decision is fixed
-given the `Credence` (§15.5). A `sync` function may likewise `emit`, and may `endorse` a subject
+given the `Credence` (§15.5). A `pure` function may likewise `emit`, and may `endorse` a subject
 by an in-hand `Decision` (record only, no dependency reach); it may not use a `principal`-prefixed
 `decide` (`p decide c by r` reaches the identity dependency = async)
 and may not `perform` (every `perform` is async, §6b).
@@ -853,7 +853,7 @@ Emitting stays grant-free: an emit-wired observation is deployment-controlled th
 manifest, not grant-controlled — a documented posture mirroring `prompt`.
 - **Color.** Every `perform` is async (`A`): an act is an act; whether it reaches the world
 is a deployment fact the checker must not depend on. Expressions can never reach the world;
-a `sync` function may not `perform` (§4).
+a `pure` function may not `perform` (§4).
 - **Foreground binding.** A wired action with a `result_event` supports result binding,
 reusing the §6c delegation discipline — the world is just another worker:
 
@@ -1809,7 +1809,7 @@ manifest-wired event/action (§6b); no hidden runtime exists
 outside the kernel contract; every surface construct reduces to kernel operations and adds no
 new trust transition.
 
-**Type & effect** — `sync` is the marked color and cannot reach a declared dependency
+**Type & effect** — `pure` is the marked seam-free function form and cannot reach a declared dependency
 (and cannot `perform`), though it may `emit`, rule-decide an in-hand `Credence`, and `endorse` by
 an in-hand `Decision`;
 typed provider replies are bare values whose send lifecycle is ledgered; a send bound to a
@@ -1915,7 +1915,7 @@ typedecl   ::= "struct" Ident "{" field ("," field)* "}"
              | "action" Ident "(" field ("," field)* ")" ";"   // performative sink; wiring to an effector is manifest config, not source (§6b)
 field      ::= type Ident                                     // "name: T" also accepted (struct fields)
 agent      ::= "agent" Ident params grants? "{" abody* "}"
-fn         ::= "sync"? type Ident params block                // async is the default
+fn         ::= "pure"? type Ident params block                // async is the default
 confdecl   ::= "conformal" Number ";"                         // file-level default conformal α
 
 grants     ::= "grants" "{" ( "*" | cap ("," cap)* ) "}"
@@ -2071,7 +2071,7 @@ dependence coverage over the `Credence[]`. Branching on a gate is an ordinary `i
 **Effect signatures (interprocedural).** Each `f` carries `Φ(f) = (c_f, ρ_f, κ_f)`:
 
 - `c_f ∈ {S,A}` — `A` if its body reaches any declared dependency (including a `perform`) or calls any
-`A`-colored `g`; else `S`. A `sync`-declared `f` asserts `c_f = S`.
+`A`-colored `g`; else `S`. A `pure`-declared `f` asserts `c_f = S`.
 - `ρ_f` — transparent parameters (judgment trust and ingress flow to the result).
 - `κ_f` — consequentially-consumed parameters (fed into a `perform`/reach).
 
@@ -2080,7 +2080,7 @@ dependence coverage over the `Credence[]`. Branching on a gate is an ordinary `i
 ```
 // COLOR — interprocedural (a perform forces A):
 c_f = S
-──────────────────────────────────────  (W-SyncSeamFree)
+──────────────────────────────────────  (W-PureSeamFree)
 ⊢ f  ok    // body reaches no declared dependency (no <-, no Credence-slot, no principal-prefixed decide, NO perform) AND calls only S fns
 
 // AUTHORITY — perform / reach (DEFAULT-DENY):
@@ -2495,7 +2495,7 @@ and an `Endorsement` can only be constructed from a committed-narrowed
 changes no world-effect except through a gate (Lemma 1, §15.5). **(T4) Reproducibility up to
 `≈`** — state is a function of the ledger plus recorded oracle results; a recorded run replays
 to chain-head equality unconditionally; inter-agent message content is derived, not stored.
-**(T5) Color safety** — no `sync` function reaches a declared dependency. Technique for
+**(T5) Pure seam safety** — no `pure` function reaches a declared dependency. Technique for
 T1/T2/T5: progress+preservation. T3 is Lemma 1 (two-run bisimulation, §15.7); T4 is the
 Stability theorem (§15.5.5), modulo O/NI of §15.7.
 
@@ -3049,7 +3049,7 @@ and wires the declared events and actions to them (§6b):
 name = "fact-checker"
 entry = "main.ag"
 version = "0.1.0"
-spec = "1.0.0-alpha.2026.7.11.1"
+spec = "1.0.0-alpha.2026.7.11.2"
 
 [provider]
 backend = "openai"

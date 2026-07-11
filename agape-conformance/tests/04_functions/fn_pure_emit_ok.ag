@@ -1,0 +1,11 @@
+//! id:        fn_pure_emit_ok
+//! section:   04_functions
+//! expect:    accept
+//! spec:      §4 (emit is a ledger append, permitted in pure; a plain event needs no power)
+//! ---
+event Note(text msg);
+pure null log(text m) { emit Note(m); return null; }
+agent Logger {
+  on awake { log("hi"); }
+}
+spawn Logger l; awake l;

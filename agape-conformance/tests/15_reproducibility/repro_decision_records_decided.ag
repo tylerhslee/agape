@@ -2,9 +2,9 @@
 //! section:   15_reproducibility
 //! expect:    accept
 //! contains:  Decided
-//! spec:      §13, §15 (`decide c by R` records a Decided ledger event while remaining sync/no dependency reach)
+//! spec:      §13, §15 (`decide c by R` records a Decided ledger event while remaining pure/no dependency reach)
 //! ---
-sync Decision<bool> gate(Credence<bool> c) { return decide c by confidence 0.8; }
+pure Decision<bool> gate(Credence<bool> c) { return decide c by confidence 0.8; }
 
 agent A {
   on awake {

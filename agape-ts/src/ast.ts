@@ -113,10 +113,10 @@ export interface InstructionDecl extends Node {
   kind: "instruction";
   text: string;
 }
-// A minimal function declaration (§15.2). Only `sync`-color checking is modeled here.
+// A minimal function declaration (§15.2). Only `pure` seam-freedom checking is modeled here.
 export interface FnDecl extends Node {
   kind: "fn";
-  sync: boolean;
+  pure: boolean;
   ret: TypeRef;
   name: string;
   params: Field[];

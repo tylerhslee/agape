@@ -1,0 +1,11 @@
+//! id:        world_pure_perform_reject
+//! section:   06b_world
+//! expect:    reject
+//! error:     ColorViolation
+//! spec:      §4, §6b (every perform is async — whether an act reaches the world is a deployment fact the checker must not depend on; a `pure` function may not perform)
+//! ---
+action Ping(text msg);
+pure null go(text msg) {
+  perform Ping(msg);
+  return null;
+}

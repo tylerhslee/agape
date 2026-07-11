@@ -14,7 +14,7 @@
 Agape is unusual: the **provider seam** means an agentic program *calls a model at
 runtime*. So shipping splits in two:
 
-- **Somatic Agape** — the compiler, the stdlib, any `#!somatic`/all-`sync`
+- **Somatic Agape** — the compiler, the stdlib, any `#!somatic`/all-`pure`
   program. Deterministic, no cognition. **Ships like any normal language**: a
   CLI/runtime package, runs offline, anywhere.
 - **Agentic Agape** — also needs a provider at runtime. The **mock** provider

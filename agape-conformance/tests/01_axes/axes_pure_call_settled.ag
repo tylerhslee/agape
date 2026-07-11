@@ -1,0 +1,9 @@
+//! id:        axes_pure_call_settled
+//! section:   01_axes
+//! expect:    accept
+//! spec:      §1 Axis A/B (a pure `pure` fn reaches no dependency and stays `settled`)
+//! note:      arithmetic only; provably dependency-free.
+//! ---
+pure int dbl(int x) { return x * 2; }
+int y = dbl(21);
+say(f"{y}");

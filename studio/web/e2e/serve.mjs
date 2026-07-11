@@ -29,7 +29,7 @@ if (!existsSync(path.join(web, "dist", "index.html"))) {
 
 const proj = path.join(mkdtempSync(path.join(tmpdir(), "agape-e2e-")), "app");
 mkdirSync(proj, { recursive: true });
-writeFileSync(path.join(proj, "agape.toml"), `[project]\nname = "E2E Fixture"\nlanguage = "1.0.0-alpha.2026.7.11.1"\n\n[memory]\ndriver = "markdown"\npath = ".agape/memory"\n`, "utf8");
+writeFileSync(path.join(proj, "agape.toml"), `[project]\nname = "E2E Fixture"\nlanguage = "1.0.0-alpha.2026.7.11.2"\n\n[memory]\ndriver = "markdown"\npath = ".agape/memory"\n`, "utf8");
 writeFileSync(path.join(proj, "main.ag"), `prompt text question;\nagent Responder { when (Prompt p about question) { say(p.text); } }\nspawn Responder responder;\nawake responder;\n`, "utf8");
 
 const srv = spawn(process.execPath, [tsxCli, "server.ts"], {
