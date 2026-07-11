@@ -1996,7 +1996,16 @@ class Interpreter {
         value,
         memory: String(base.memory ?? ""),
         summary: valueSummary(value),
-        metadata: { source: "provider_reply", subject: subj, source_event: sourceEvent },
+        // episode_prompt gives the memory runtime the raw exchange (what was
+        // asked) so reflection can work from the episode itself instead of
+        // the recollection template above; the runtime consumes the key — it
+        // never reaches the substrate or disk.
+        metadata: {
+          source: "provider_reply",
+          subject: subj,
+          source_event: sourceEvent,
+          episode_prompt: this.compactMemoryText(prompt),
+        },
       });
     }
     this.ledger.append("Internalized", subj, this.receivedReplyInternalizedPayload(prompt, value, sourceEvent, receipt), agent?.name);
