@@ -4,12 +4,17 @@ import {
   type MemoryConsultRequest,
   type MemoryConsultResult,
   type MemoryDriver,
+  type MemoryEpisode,
   type MemoryForgetRequest,
   type MemoryReceipt,
   type MemoryScope,
   type MemoryWriteRequest,
 } from "../src/memory.js";
-import { MemoryRuntimeDriver } from "../src/memory_runtime.js";
+import {
+  MemoryRuntimeDriver,
+  renderReplyRecollection,
+  renderStoreRecollection,
+} from "../src/memory_runtime.js";
 
 class RecordingSubstrate implements MemoryDriver {
   writes: MemoryWriteRequest[] = [];
@@ -48,16 +53,20 @@ class FailingProvider extends ProseProvider {
 const SCOPE = { agent: "a", mem: "notes", project: "t" };
 const RAW =
   "exchange — Tyler said: hello there, please stop greeting me every time | I replied: Hello Tyler — understood, I can adjust!";
-// What the driver actually receives as req.memory: the interpreter's fixed
-// recollection template wrapped around the episode.
-const TEMPLATED = `I stored a text value in private memory 'notes'. I learned the reply content was "${RAW}".`;
 
-function writeReq(memory: string, rendered: string | undefined = memory): MemoryWriteRequest {
+// What the interpreter actually sends: the raw value, the deterministic
+// recollection template as req.memory, and the structured episode context.
+function writeReq(raw: string, episode: MemoryEpisode = { act: "store" }): MemoryWriteRequest {
+  const value = settledText(raw);
   return {
     scope: SCOPE,
-    value: settledText(memory),
-    memory,
-    summary: rendered === undefined ? {} : { rendered },
+    value,
+    memory:
+      episode.act === "provider_reply"
+        ? renderReplyRecollection(episode.prompt ?? "", value)
+        : renderStoreRecollection(SCOPE.mem, value),
+    episode,
+    summary: { rendered: raw },
   };
 }
 
@@ -67,24 +76,24 @@ describe("memory reflection ([memory] reflect)", () => {
     const provider = new ProseProvider();
     const driver = new MemoryRuntimeDriver(substrate, { reflect: true, dedupe: false }, provider);
 
-    const receipt = await driver.internalize(writeReq(TEMPLATED, RAW));
+    const receipt = await driver.internalize(writeReq(RAW));
 
     expect(substrate.writes).toHaveLength(1);
     const stored = substrate.writes[0]!;
     expect(stored.memory).toBe("I met Tyler today; he prefers replies without a greeting.");
     expect(stored.metadata?.memory_reflection).toBe("reflected");
     expect(stored.metadata?.reflected_from_hash).toBeTypeOf("string");
+    expect(receipt.memory).toBe(stored.memory);
     expect(receipt.refs?.stored_memory).toBe(stored.memory);
     expect(receipt.policy?.reflection).toBe("reflected");
-    // The reflection prompt carries the raw episode, NOT the interpreter's
-    // recollection template — no storage scaffolding reaches the model.
+    // Reflection reads the structured episode, never the recollection template.
     expect(provider.prompts[0]).toContain("first-person memory");
     expect(provider.prompts[0]).toContain(RAW);
     expect(provider.prompts[0]).not.toContain("I stored a text value");
     expect(provider.prompts[0]).toContain("memory 'notes'");
   });
 
-  it("frames provider-reply episodes with the asking prompt and consumes episode_prompt", async () => {
+  it("frames provider-reply episodes with the asking prompt", async () => {
     const substrate = new RecordingSubstrate();
     const provider = new ProseProvider();
     const driver = new MemoryRuntimeDriver(
@@ -94,42 +103,27 @@ describe("memory reflection ([memory] reflect)", () => {
     );
 
     await driver.internalize({
-      ...writeReq(TEMPLATED, "The answer is 4."),
-      metadata: { source: "provider_reply", subject: "q", episode_prompt: "what is 2+2" },
+      ...writeReq("The answer is 4.", { act: "provider_reply", prompt: "what is 2+2" }),
+      metadata: { source: "provider_reply", subject: "q" },
     });
 
     expect(provider.prompts[0]).toContain("I asked: what is 2+2");
     expect(provider.prompts[0]).toContain("The reply was: The answer is 4.");
-    expect(provider.prompts[0]).not.toContain("I stored a text value");
-    // episode_prompt is reflection input only — it never reaches the substrate.
-    expect(substrate.writes[0]!.metadata?.episode_prompt).toBeUndefined();
+    expect(provider.prompts[0]).not.toContain("I was asked");
     expect(substrate.writes[0]!.metadata?.subject).toBe("q");
   });
 
-  it("strips episode_prompt from metadata even when reflection is off", async () => {
+  it("keeps the reflect-off path byte-identical: the template is what gets stored", async () => {
     const substrate = new RecordingSubstrate();
     const driver = new MemoryRuntimeDriver(substrate, { dedupe: false, auto_memory: false });
 
-    await driver.internalize({
-      ...writeReq(TEMPLATED, RAW),
-      metadata: { source: "provider_reply", subject: "q", episode_prompt: "what is 2+2" },
-    });
+    const req = writeReq(RAW);
+    const receipt = await driver.internalize(req);
 
-    // Stored text is the template, byte-identical to the pre-reflection path,
-    // and the reflection-only key does not leak to disk.
-    expect(substrate.writes[0]!.memory).toBe(TEMPLATED);
-    expect(substrate.writes[0]!.metadata?.episode_prompt).toBeUndefined();
-    expect(substrate.writes[0]!.metadata?.subject).toBe("q");
-  });
-
-  it("falls back to req.memory as reflection input when no rendered summary exists", async () => {
-    const substrate = new RecordingSubstrate();
-    const provider = new ProseProvider();
-    const driver = new MemoryRuntimeDriver(substrate, { reflect: true, dedupe: false }, provider);
-
-    await driver.internalize(writeReq(TEMPLATED, undefined));
-
-    expect(provider.prompts[0]).toContain(TEMPLATED);
+    expect(substrate.writes[0]!.memory).toBe(req.memory);
+    expect(substrate.writes[0]!.memory).toContain("I stored a text value in private memory 'notes'.");
+    expect(substrate.writes[0]!.metadata?.memory_reflection).toBeUndefined();
+    expect(receipt.memory).toBe(req.memory);
   });
 
   it("stores verbatim by default — reflection is opt-in", async () => {
@@ -137,10 +131,10 @@ describe("memory reflection ([memory] reflect)", () => {
     const provider = new ProseProvider();
     const driver = new MemoryRuntimeDriver(substrate, { dedupe: false }, provider);
 
-    await driver.internalize(writeReq(RAW));
+    const req = writeReq(RAW);
+    await driver.internalize(req);
 
-    expect(substrate.writes[0]!.memory).toBe(RAW);
-    expect(substrate.writes[0]!.metadata?.memory_reflection).toBeUndefined();
+    expect(substrate.writes[0]!.memory).toBe(req.memory);
     expect(provider.prompts).toHaveLength(0);
   });
 
@@ -148,21 +142,40 @@ describe("memory reflection ([memory] reflect)", () => {
     const substrate = new RecordingSubstrate();
     const driver = new MemoryRuntimeDriver(substrate, { reflect: true, dedupe: false });
 
-    await driver.internalize(writeReq(RAW));
+    const req = writeReq(RAW);
+    await driver.internalize(req);
 
-    expect(substrate.writes[0]!.memory).toBe(RAW);
+    expect(substrate.writes[0]!.memory).toBe(req.memory);
     expect(substrate.writes[0]!.metadata?.memory_reflection).toBeUndefined();
   });
 
-  it("falls back to the raw episode when the provider fails", async () => {
+  it("falls back to the template when the provider fails", async () => {
     const substrate = new RecordingSubstrate();
     const driver = new MemoryRuntimeDriver(substrate, { reflect: true, dedupe: false }, new FailingProvider());
 
-    const receipt = await driver.internalize(writeReq(RAW));
+    const req = writeReq(RAW);
+    const receipt = await driver.internalize(req);
 
-    expect(substrate.writes[0]!.memory).toBe(RAW);
+    expect(substrate.writes[0]!.memory).toBe(req.memory);
     expect(substrate.writes[0]!.metadata?.memory_reflection).toBe("failed_fallback_raw");
     expect(receipt.policy?.reflection).toBe("failed_fallback_raw");
+  });
+
+  it("falls back to req.memory as reflection input when the value renders empty", async () => {
+    const substrate = new RecordingSubstrate();
+    const provider = new ProseProvider();
+    const driver = new MemoryRuntimeDriver(substrate, { reflect: true, dedupe: false }, provider);
+
+    const req: MemoryWriteRequest = {
+      scope: SCOPE,
+      value: settledText(""),
+      memory: "a recollection with no renderable value",
+      episode: { act: "store" },
+      summary: {},
+    };
+    await driver.internalize(req);
+
+    expect(provider.prompts[0]).toContain("a recollection with no renderable value");
   });
 
   it("classifies the reflected prose, not the raw episode", async () => {

@@ -13,6 +13,7 @@ import {
 import { check, linkModules, type ModuleInput, type Resolution } from "./check.js";
 import { createMemoryDriver, type Manifest, type ToolBindingConfig } from "./config.js";
 import type { MemoryDriver, MemoryReceipt, MemoryScope } from "./memory.js";
+import { compactMemoryText, renderReplyRecollection, renderStoreRecollection } from "./memory_runtime.js";
 import { parse } from "./parser.js";
 import { typeError, taintViolation, authorityViolation, configError } from "./errors.js";
 import { createToolHandlers, type ToolHandler } from "./tool_adapters.js";
@@ -727,11 +728,11 @@ class Interpreter {
       const v = await this.evalExpr(s.init, scope);
       region.writes.push(v);
       // E-Store (§15.4.2): the declare-with-init form is a store too — it internalizes and traces.
-      const base = this.memoryInternalizedPayload(s.name, v);
       const receipt = await this.memory.internalize({
         scope: memScope,
         value: v,
-        memory: String(base.memory ?? ""),
+        memory: renderStoreRecollection(s.name, v),
+        episode: { act: "store" },
         summary: valueSummary(v),
         metadata: { source: "memdecl", subject: s.name },
       });
@@ -1948,7 +1949,10 @@ class Interpreter {
       ...(receipt?.policy ?? {}),
     };
     return {
-      memory: `I stored ${this.valueMemoryLabel(value)} in private memory '${mem}'. ${this.lessonFromValue(value)}`,
+      // The runtime owns memory-text policy: prefer what it actually stored
+      // (reflected prose when [memory] reflect is on); fall back to the
+      // deterministic template for drivers that don't report it.
+      memory: receipt?.memory ?? renderStoreRecollection(mem, value),
       value: summary,
       effects: receipt?.effects ?? {
         facts: { upserted: 1, tombstoned: 0, deleted: 0 },
@@ -1971,7 +1975,7 @@ class Interpreter {
 
   private receivedReplyInternalizedPayload(prompt: string, value: Value, sourceEvent: number, receipt?: MemoryReceipt): Record<string, unknown> {
     return {
-      memory: this.receivedReplyMemory(prompt, value),
+      memory: receipt?.memory ?? renderReplyRecollection(prompt, value),
       prompt,
       reply: valueSummary(value),
       source_event: sourceEvent,
@@ -1982,107 +1986,19 @@ class Interpreter {
     };
   }
 
-  private receivedReplyMemory(prompt: string, value: Value): string {
-    const asked = this.compactMemoryText(prompt);
-    return `I was asked ${JSON.stringify(asked)}. I received ${this.valueMemoryLabel(value)} from the provider. ${this.lessonFromValue(value)}`;
-  }
-
   private async internalizeReceivedReply(subj: string, prompt: string, value: Value, sourceEvent: number, agent?: AgentInstance): Promise<void> {
     let receipt: MemoryReceipt | undefined;
-    const base = this.receivedReplyInternalizedPayload(prompt, value, sourceEvent);
     if (agent) {
       receipt = await this.memory.internalize({
         scope: this.memoryScope(agent, "__agent__"),
         value,
-        memory: String(base.memory ?? ""),
+        memory: renderReplyRecollection(prompt, value),
+        episode: { act: "provider_reply", prompt: compactMemoryText(prompt) },
         summary: valueSummary(value),
-        // episode_prompt gives the memory runtime the raw exchange (what was
-        // asked) so reflection can work from the episode itself instead of
-        // the recollection template above; the runtime consumes the key — it
-        // never reaches the substrate or disk.
-        metadata: {
-          source: "provider_reply",
-          subject: subj,
-          source_event: sourceEvent,
-          episode_prompt: this.compactMemoryText(prompt),
-        },
+        metadata: { source: "provider_reply", subject: subj, source_event: sourceEvent },
       });
     }
     this.ledger.append("Internalized", subj, this.receivedReplyInternalizedPayload(prompt, value, sourceEvent, receipt), agent?.name);
-  }
-
-  private valueMemoryLabel(value: Value): string {
-    if (value.kind === "struct") return `a structured ${value.typeName ?? "struct"}`;
-    if (value.kind === "array") return `an array with ${value.items.length} ${value.items.length === 1 ? "item" : "items"}`;
-    if (value.kind === "credence") return `a Credence<${value.enumName}> judgment`;
-    if (value.kind === "decision") return `a Decision<${value.enumName}>`;
-    if (value.kind === "endorsement") return "an endorsement";
-    return `a ${value.kind} value`;
-  }
-
-  private lessonFromValue(value: Value): string {
-    if (value.kind === "struct") {
-      const subject = this.textishField(value, "subject");
-      const claims = this.claimStatements(value);
-      if (subject && claims.length) {
-        return `I learned the response should center on ${JSON.stringify(this.compactMemoryText(subject, 120))} through ${claims.length} ${claims.length === 1 ? "atomic claim" : "atomic claims"}: ${this.listMemoryItems(claims)}.`;
-      }
-
-      const verdict = this.textishField(value, "verdict");
-      if (verdict) {
-        const claim = this.textishField(value, "claim") ?? this.textishField(value, "statement") ?? this.textishField(value, "claim_id");
-        const note = this.textishField(value, "note");
-        return `I learned ${claim ? `the check for ${JSON.stringify(this.compactMemoryText(claim, 140))}` : "the check"} returned ${verdict}${note ? `: ${this.compactMemoryText(note, 160)}` : ""}.`;
-      }
-
-      const fields = [...value.fields.keys()];
-      if (fields.length) return `I learned the provider filled ${fields.length} ${fields.length === 1 ? "field" : "fields"}: ${fields.join(", ")}.`;
-    }
-
-    if (value.kind === "array") {
-      return `I learned ${value.items.length} ${value.items.length === 1 ? "item was" : "items were"} produced.`;
-    }
-
-    if (value.kind === "text") {
-      return `I learned the reply content was ${JSON.stringify(this.compactMemoryText(value.v, 220))}.`;
-    }
-
-    return `I learned the resulting value was ${JSON.stringify(this.compactMemoryText(render(value), 220))}.`;
-  }
-
-  private textishField(value: Extract<Value, { kind: "struct" }>, field: string): string | undefined {
-    const found = value.fields.get(field);
-    if (!found) return undefined;
-    if (found.kind === "text") return found.v;
-    if (found.kind === "enumval") return found.variant;
-    if (found.kind === "int" || found.kind === "float" || found.kind === "bool") return String(found.v);
-    return undefined;
-  }
-
-  private claimStatements(value: Extract<Value, { kind: "struct" }>): string[] {
-    const claims = value.fields.get("claims");
-    if (!claims || claims.kind !== "array") return [];
-    const statements: string[] = [];
-    for (const item of claims.items) {
-      if (item.kind === "struct") {
-        const statement = this.textishField(item, "statement") ?? this.textishField(item, "claim");
-        if (statement) statements.push(statement);
-      } else {
-        statements.push(render(item));
-      }
-    }
-    return statements;
-  }
-
-  private listMemoryItems(items: string[]): string {
-    const shown = items.slice(0, 3).map((item) => JSON.stringify(this.compactMemoryText(item, 140)));
-    const suffix = items.length > shown.length ? `, and ${items.length - shown.length} more` : "";
-    return `${shown.join("; ")}${suffix}`;
-  }
-
-  private compactMemoryText(text: string, max = 240): string {
-    const compact = text.replace(/\s+/g, " ").trim();
-    return compact.length > max ? `${compact.slice(0, Math.max(0, max - 3))}...` : compact;
   }
 
   private memoryForgottenPayload(mem: string, region: MemRegion, receipt?: MemoryReceipt): Record<string, unknown> {
@@ -2157,11 +2073,11 @@ class Interpreter {
       if (region.forgotten) throw typeError(`'${dest.name} <-': the handle was forgotten and is no longer writable`);
       region.writes.push(v);
       // E-Store (§15.4.2): a mem write mutates the live private-memory views and appends an audit receipt.
-      const base = this.memoryInternalizedPayload(dest.name, v);
       const receipt = await this.memory.internalize({
         scope: this.memoryScope(agent!, dest.name),
         value: v,
-        memory: String(base.memory ?? ""),
+        memory: renderStoreRecollection(dest.name, v),
+        episode: { act: "store" },
         summary: valueSummary(v),
         metadata: { source: "store", subject: dest.name },
       });

@@ -20,10 +20,23 @@ export interface MemoryStoredCell {
   metadata?: Record<string, unknown>;
 }
 
+/**
+ * Structured context for the episode behind a write: what act produced the
+ * value (an explicit store into a mem region, or a provider reply being
+ * auto-internalized) and, for replies, the asking prompt. The memory runtime
+ * renders recollection text from this — callers pass the episode, not prose.
+ */
+export interface MemoryEpisode {
+  act: "store" | "provider_reply";
+  /** The asking prompt behind a provider reply (compacted). */
+  prompt?: string;
+}
+
 export interface MemoryWriteRequest {
   scope: MemoryScope;
   value: Value;
   memory: string;
+  episode?: MemoryEpisode;
   summary: Record<string, unknown>;
   metadata?: Record<string, unknown>;
 }
@@ -42,6 +55,8 @@ export interface MemoryReceipt {
   status?: string;
   eventId?: string;
   ids?: string[];
+  /** The recollection text the runtime stored (or considered, for skipped/deduped writes). */
+  memory?: string;
   effects?: Record<string, unknown>;
   refs?: Record<string, unknown>;
   policy?: Record<string, unknown>;

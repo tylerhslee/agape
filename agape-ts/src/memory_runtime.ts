@@ -5,7 +5,7 @@
 // classification, reflection, dedupe/consolidation, and recall re-ranking.
 
 import { createHash } from "node:crypto";
-import type { Provider } from "./runtime.js";
+import { render, type Provider, type Value } from "./runtime.js";
 import {
   memoryCandidate,
   type MemoryConsultRequest,
@@ -81,28 +81,23 @@ export class MemoryRuntimeDriver implements MemoryDriver {
     let classification = this.classify(raw, req);
     const source = stringMetadata(req.metadata, "source");
     const explicitStore = source !== "provider_reply";
-    // episode_prompt is reflection input from the interpreter (the raw
-    // exchange behind a provider reply). The runtime consumes it here — it
-    // must not reach the substrate, so the reflect-off disk output stays
-    // byte-identical to the pre-reflection runtime.
-    const { episode_prompt: _consumed, ...passthroughMetadata } = req.metadata ?? {};
 
     // Judgment and dedupe run on the RAW episode, before any cognition is
     // spent on it: junk is skipped and repeats are suppressed for free.
     if (!explicitStore && this.autoMemoryEnabled() && !worthRemembering(raw, classification)) {
-      return skippedReceipt("SKIPPED", "low_signal_auto_memory", classification, this.policy());
+      return skippedReceipt("SKIPPED", "low_signal_auto_memory", classification, this.policy(), raw);
     }
 
     if (this.dedupeEnabled() && raw) {
       const duplicate = await this.findDuplicate(req.scope, raw);
       if (duplicate) {
-        return dedupedReceipt(duplicate, classification, this.policy());
+        return dedupedReceipt(duplicate, classification, this.policy(), raw);
       }
     }
 
     // Reflection: rewrite the surviving episode as a first-person prose
-    // memory, working from the raw episode (rendered value + exchange
-    // context) rather than the interpreter's recollection template, so no
+    // memory, working from the structured episode (the rendered value plus
+    // the act that produced it) rather than the recollection template, so no
     // storage scaffolding leaks into the prose. Non-deterministic but
     // shape-fixed (plain text); the receipt carries the stored prose and the
     // cell keeps the raw hash, so the rewrite never hides what happened.
@@ -124,7 +119,7 @@ export class MemoryRuntimeDriver implements MemoryDriver {
     }
 
     const metadata = {
-      ...passthroughMetadata,
+      ...(req.metadata ?? {}),
       memory_kind: classification.kind,
       memory_tags: classification.tags,
       memory_signal: classification.signal,
@@ -135,9 +130,13 @@ export class MemoryRuntimeDriver implements MemoryDriver {
 
     const receipt = await this.substrate.internalize({ ...req, memory, metadata });
     return enrichReceipt(
-      reflection === "reflected"
-        ? { ...receipt, refs: { ...(receipt.refs ?? {}), stored_memory: memory } }
-        : receipt,
+      {
+        ...receipt,
+        memory,
+        ...(reflection === "reflected"
+          ? { refs: { ...(receipt.refs ?? {}), stored_memory: memory } }
+          : {}),
+      },
       classification,
       this.policy(reflection),
     );
@@ -235,23 +234,113 @@ export class MemoryRuntimeDriver implements MemoryDriver {
   }
 }
 
-// The raw episode behind a write request, reconstructed from parts the
-// request already carries: the rendered value (summary.rendered), the memory
-// scope, and — for provider replies — the episode_prompt the interpreter
-// forwards. This is what reflection should read, NOT req.memory: by the time
-// the driver runs, req.memory is the interpreter's fixed recollection
-// template ("I stored a text value in private memory …"), and reflecting
-// that leaks storage scaffolding into the prose.
+// The raw episode behind a write request, framed from the structured episode
+// context and the rendered value. This is what reflection reads, NOT
+// req.memory: req.memory is the deterministic recollection template ("I
+// stored a text value in private memory …"), and reflecting that would leak
+// storage scaffolding into the prose.
 function episodeText(req: MemoryWriteRequest): string | undefined {
-  const rendered = typeof req.summary?.rendered === "string" ? compactText(req.summary.rendered) : "";
+  const rendered = compactText(render(req.value));
   if (!rendered) return undefined;
-  if (stringMetadata(req.metadata, "source") === "provider_reply") {
-    const prompt = stringMetadata(req.metadata, "episode_prompt");
+  const act =
+    req.episode?.act ??
+    (stringMetadata(req.metadata, "source") === "provider_reply" ? "provider_reply" : "store");
+  if (act === "provider_reply") {
+    const prompt = req.episode?.prompt;
     return prompt
       ? `I asked: ${prompt}\nThe reply was: ${rendered}`
       : `A reply I received: ${rendered}`;
   }
   return `Something I chose to remember (memory '${req.scope.mem}'): ${rendered}`;
+}
+
+// ---- Recollection rendering: the memory layer owns memory-text policy. ----
+// The deterministic templates below are the zero-cost recollection form
+// (§16.7: memory content is "an agent recollection of the turn") used when
+// reflection is off or unavailable. The interpreter calls these — it never
+// composes memory prose itself.
+
+export function renderStoreRecollection(mem: string, value: Value): string {
+  return `I stored ${valueMemoryLabel(value)} in private memory '${mem}'. ${lessonFromValue(value)}`;
+}
+
+export function renderReplyRecollection(prompt: string, value: Value): string {
+  const asked = compactMemoryText(prompt);
+  return `I was asked ${JSON.stringify(asked)}. I received ${valueMemoryLabel(value)} from the provider. ${lessonFromValue(value)}`;
+}
+
+export function compactMemoryText(text: string, max = 240): string {
+  const compact = text.replace(/\s+/g, " ").trim();
+  return compact.length > max ? `${compact.slice(0, Math.max(0, max - 3))}...` : compact;
+}
+
+function valueMemoryLabel(value: Value): string {
+  if (value.kind === "struct") return `a structured ${value.typeName ?? "struct"}`;
+  if (value.kind === "array") return `an array with ${value.items.length} ${value.items.length === 1 ? "item" : "items"}`;
+  if (value.kind === "credence") return `a Credence<${value.enumName}> judgment`;
+  if (value.kind === "decision") return `a Decision<${value.enumName}>`;
+  if (value.kind === "endorsement") return "an endorsement";
+  return `a ${value.kind} value`;
+}
+
+function lessonFromValue(value: Value): string {
+  if (value.kind === "struct") {
+    const subject = textishField(value, "subject");
+    const claims = claimStatements(value);
+    if (subject && claims.length) {
+      return `I learned the response should center on ${JSON.stringify(compactMemoryText(subject, 120))} through ${claims.length} ${claims.length === 1 ? "atomic claim" : "atomic claims"}: ${listMemoryItems(claims)}.`;
+    }
+
+    const verdict = textishField(value, "verdict");
+    if (verdict) {
+      const claim = textishField(value, "claim") ?? textishField(value, "statement") ?? textishField(value, "claim_id");
+      const note = textishField(value, "note");
+      return `I learned ${claim ? `the check for ${JSON.stringify(compactMemoryText(claim, 140))}` : "the check"} returned ${verdict}${note ? `: ${compactMemoryText(note, 160)}` : ""}.`;
+    }
+
+    const fields = [...value.fields.keys()];
+    if (fields.length) return `I learned the provider filled ${fields.length} ${fields.length === 1 ? "field" : "fields"}: ${fields.join(", ")}.`;
+  }
+
+  if (value.kind === "array") {
+    return `I learned ${value.items.length} ${value.items.length === 1 ? "item was" : "items were"} produced.`;
+  }
+
+  if (value.kind === "text") {
+    return `I learned the reply content was ${JSON.stringify(compactMemoryText(value.v, 220))}.`;
+  }
+
+  return `I learned the resulting value was ${JSON.stringify(compactMemoryText(render(value), 220))}.`;
+}
+
+function textishField(value: Extract<Value, { kind: "struct" }>, field: string): string | undefined {
+  const found = value.fields.get(field);
+  if (!found) return undefined;
+  if (found.kind === "text") return found.v;
+  if (found.kind === "enumval") return found.variant;
+  if (found.kind === "int" || found.kind === "float" || found.kind === "bool") return String(found.v);
+  return undefined;
+}
+
+function claimStatements(value: Extract<Value, { kind: "struct" }>): string[] {
+  const claims = value.fields.get("claims");
+  if (!claims || claims.kind !== "array") return [];
+  const statements: string[] = [];
+  for (const item of claims.items) {
+    if (item.kind === "struct") {
+      const statement = textishField(item, "statement") ?? textishField(item, "claim");
+      if (statement) statements.push(statement);
+    } else {
+      statements.push(render(item));
+    }
+  }
+  return statements;
+}
+
+function listMemoryItems(items: string[]): string {
+  const shown = items.slice(0, 3).map((item) => JSON.stringify(compactMemoryText(item, 140)));
+  const suffix = items.length > shown.length ? `, and ${items.length - shown.length} more` : "";
+  return `${shown.join("; ")}${suffix}`;
 }
 
 // The reflection instruction: the agent writes the episode down in its own
@@ -262,6 +351,7 @@ function reflectionPrompt(episode: string): string {
     "You are the private memory faculty of an agent, writing a note that your future self will recall verbatim.",
     "Rewrite the raw episode below as one short first-person memory in plain prose.",
     "Keep every concrete fact, name, number, date, preference, instruction, and commitment.",
+    "Attribute everything to the right person: you are the agent, and facts others state about themselves belong to them, not to you (write \"Tyler uses …\", not \"I use …\").",
     "Drop greetings, pleasantries, mention tokens, formatting artifacts, and repetition.",
     "Never mention the act of storing, remembering, or receiving values — write only about the content of the episode.",
     "If the episode contains a standing instruction or preference from the user, state it imperatively so your future self follows it.",
@@ -371,9 +461,11 @@ function skippedReceipt(
   reason: string,
   classification: ClassifiedMemory,
   policy: Record<string, unknown>,
+  memory?: string,
 ): MemoryReceipt {
   return {
     status,
+    ...(memory === undefined ? {} : { memory }),
     effects: zeroEffects(),
     refs: { skipped_reason: reason },
     policy: {
@@ -388,9 +480,11 @@ function dedupedReceipt(
   duplicate: MemoryStoredCell,
   classification: ClassifiedMemory,
   policy: Record<string, unknown>,
+  memory?: string,
 ): MemoryReceipt {
   return {
     status: "DEDUPED",
+    ...(memory === undefined ? {} : { memory }),
     effects: zeroEffects(),
     refs: {
       duplicate_of: duplicate.id,
