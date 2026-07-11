@@ -81,6 +81,11 @@ export class MemoryRuntimeDriver implements MemoryDriver {
     let classification = this.classify(raw, req);
     const source = stringMetadata(req.metadata, "source");
     const explicitStore = source !== "provider_reply";
+    // episode_prompt is reflection input from the interpreter (the raw
+    // exchange behind a provider reply). The runtime consumes it here — it
+    // must not reach the substrate, so the reflect-off disk output stays
+    // byte-identical to the pre-reflection runtime.
+    const { episode_prompt: _consumed, ...passthroughMetadata } = req.metadata ?? {};
 
     // Judgment and dedupe run on the RAW episode, before any cognition is
     // spent on it: junk is skipped and repeats are suppressed for free.
@@ -96,14 +101,16 @@ export class MemoryRuntimeDriver implements MemoryDriver {
     }
 
     // Reflection: rewrite the surviving episode as a first-person prose
-    // memory. Non-deterministic but shape-fixed (plain text); the receipt
-    // carries the stored prose and the cell keeps the raw episode's hash, so
-    // the rewrite never hides what happened.
+    // memory, working from the raw episode (rendered value + exchange
+    // context) rather than the interpreter's recollection template, so no
+    // storage scaffolding leaks into the prose. Non-deterministic but
+    // shape-fixed (plain text); the receipt carries the stored prose and the
+    // cell keeps the raw hash, so the rewrite never hides what happened.
     let memory = raw;
     let reflection: "reflected" | "empty_fallback_raw" | "failed_fallback_raw" | undefined;
     if (this.reflectEnabled() && raw) {
       try {
-        const prose = compactText(await this.provider!.reply(reflectionPrompt(raw)));
+        const prose = compactText(await this.provider!.reply(reflectionPrompt(episodeText(req) ?? raw)));
         if (prose) {
           memory = prose;
           reflection = "reflected";
@@ -117,7 +124,7 @@ export class MemoryRuntimeDriver implements MemoryDriver {
     }
 
     const metadata = {
-      ...(req.metadata ?? {}),
+      ...passthroughMetadata,
       memory_kind: classification.kind,
       memory_tags: classification.tags,
       memory_signal: classification.signal,
@@ -228,20 +235,40 @@ export class MemoryRuntimeDriver implements MemoryDriver {
   }
 }
 
+// The raw episode behind a write request, reconstructed from parts the
+// request already carries: the rendered value (summary.rendered), the memory
+// scope, and — for provider replies — the episode_prompt the interpreter
+// forwards. This is what reflection should read, NOT req.memory: by the time
+// the driver runs, req.memory is the interpreter's fixed recollection
+// template ("I stored a text value in private memory …"), and reflecting
+// that leaks storage scaffolding into the prose.
+function episodeText(req: MemoryWriteRequest): string | undefined {
+  const rendered = typeof req.summary?.rendered === "string" ? compactText(req.summary.rendered) : "";
+  if (!rendered) return undefined;
+  if (stringMetadata(req.metadata, "source") === "provider_reply") {
+    const prompt = stringMetadata(req.metadata, "episode_prompt");
+    return prompt
+      ? `I asked: ${prompt}\nThe reply was: ${rendered}`
+      : `A reply I received: ${rendered}`;
+  }
+  return `Something I chose to remember (memory '${req.scope.mem}'): ${rendered}`;
+}
+
 // The reflection instruction: the agent writes the episode down in its own
 // words, as prose to its future self — the same move commercial assistant
 // memories make. Kept substrate-agnostic and output-shape-fixed (plain text).
-function reflectionPrompt(raw: string): string {
+function reflectionPrompt(episode: string): string {
   return [
     "You are the private memory faculty of an agent, writing a note that your future self will recall verbatim.",
     "Rewrite the raw episode below as one short first-person memory in plain prose.",
     "Keep every concrete fact, name, number, date, preference, instruction, and commitment.",
     "Drop greetings, pleasantries, mention tokens, formatting artifacts, and repetition.",
+    "Never mention the act of storing, remembering, or receiving values — write only about the content of the episode.",
     "If the episode contains a standing instruction or preference from the user, state it imperatively so your future self follows it.",
     "Output only the memory text, nothing else.",
     "",
     "Raw episode:",
-    raw.slice(0, 6000),
+    episode.slice(0, 6000),
   ].join("\n");
 }
 

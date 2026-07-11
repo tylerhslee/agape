@@ -48,9 +48,17 @@ class FailingProvider extends ProseProvider {
 const SCOPE = { agent: "a", mem: "notes", project: "t" };
 const RAW =
   "exchange — Tyler said: hello there, please stop greeting me every time | I replied: Hello Tyler — understood, I can adjust!";
+// What the driver actually receives as req.memory: the interpreter's fixed
+// recollection template wrapped around the episode.
+const TEMPLATED = `I stored a text value in private memory 'notes'. I learned the reply content was "${RAW}".`;
 
-function writeReq(memory: string): MemoryWriteRequest {
-  return { scope: SCOPE, value: settledText(memory), memory, summary: { rendered: memory } };
+function writeReq(memory: string, rendered: string | undefined = memory): MemoryWriteRequest {
+  return {
+    scope: SCOPE,
+    value: settledText(memory),
+    memory,
+    summary: rendered === undefined ? {} : { rendered },
+  };
 }
 
 describe("memory reflection ([memory] reflect)", () => {
@@ -59,7 +67,7 @@ describe("memory reflection ([memory] reflect)", () => {
     const provider = new ProseProvider();
     const driver = new MemoryRuntimeDriver(substrate, { reflect: true, dedupe: false }, provider);
 
-    const receipt = await driver.internalize(writeReq(RAW));
+    const receipt = await driver.internalize(writeReq(TEMPLATED, RAW));
 
     expect(substrate.writes).toHaveLength(1);
     const stored = substrate.writes[0]!;
@@ -68,9 +76,60 @@ describe("memory reflection ([memory] reflect)", () => {
     expect(stored.metadata?.reflected_from_hash).toBeTypeOf("string");
     expect(receipt.refs?.stored_memory).toBe(stored.memory);
     expect(receipt.policy?.reflection).toBe("reflected");
-    // The reflection prompt carries the raw episode to the provider.
+    // The reflection prompt carries the raw episode, NOT the interpreter's
+    // recollection template — no storage scaffolding reaches the model.
     expect(provider.prompts[0]).toContain("first-person memory");
     expect(provider.prompts[0]).toContain(RAW);
+    expect(provider.prompts[0]).not.toContain("I stored a text value");
+    expect(provider.prompts[0]).toContain("memory 'notes'");
+  });
+
+  it("frames provider-reply episodes with the asking prompt and consumes episode_prompt", async () => {
+    const substrate = new RecordingSubstrate();
+    const provider = new ProseProvider();
+    const driver = new MemoryRuntimeDriver(
+      substrate,
+      { reflect: true, dedupe: false, auto_memory: false },
+      provider,
+    );
+
+    await driver.internalize({
+      ...writeReq(TEMPLATED, "The answer is 4."),
+      metadata: { source: "provider_reply", subject: "q", episode_prompt: "what is 2+2" },
+    });
+
+    expect(provider.prompts[0]).toContain("I asked: what is 2+2");
+    expect(provider.prompts[0]).toContain("The reply was: The answer is 4.");
+    expect(provider.prompts[0]).not.toContain("I stored a text value");
+    // episode_prompt is reflection input only — it never reaches the substrate.
+    expect(substrate.writes[0]!.metadata?.episode_prompt).toBeUndefined();
+    expect(substrate.writes[0]!.metadata?.subject).toBe("q");
+  });
+
+  it("strips episode_prompt from metadata even when reflection is off", async () => {
+    const substrate = new RecordingSubstrate();
+    const driver = new MemoryRuntimeDriver(substrate, { dedupe: false, auto_memory: false });
+
+    await driver.internalize({
+      ...writeReq(TEMPLATED, RAW),
+      metadata: { source: "provider_reply", subject: "q", episode_prompt: "what is 2+2" },
+    });
+
+    // Stored text is the template, byte-identical to the pre-reflection path,
+    // and the reflection-only key does not leak to disk.
+    expect(substrate.writes[0]!.memory).toBe(TEMPLATED);
+    expect(substrate.writes[0]!.metadata?.episode_prompt).toBeUndefined();
+    expect(substrate.writes[0]!.metadata?.subject).toBe("q");
+  });
+
+  it("falls back to req.memory as reflection input when no rendered summary exists", async () => {
+    const substrate = new RecordingSubstrate();
+    const provider = new ProseProvider();
+    const driver = new MemoryRuntimeDriver(substrate, { reflect: true, dedupe: false }, provider);
+
+    await driver.internalize(writeReq(TEMPLATED, undefined));
+
+    expect(provider.prompts[0]).toContain(TEMPLATED);
   });
 
   it("stores verbatim by default — reflection is opt-in", async () => {
