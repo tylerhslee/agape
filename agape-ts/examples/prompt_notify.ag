@@ -12,7 +12,7 @@ agent Notifier grants { perform NotifyUser } {
   when (Prompt p about request) {
     text body = p.text;
 
-    Credence<Notice> c = self <- f"should this request notify the user: {body}";
+    Credence<Notice> c = self <- f"should this request notify the user: ${body}";
 
     // Conformal is cold in this demo runtime, so it abstains locally and reaches the
     // declared principal. Studio supplies a local user attestation for that principal.
@@ -21,7 +21,7 @@ agent Notifier grants { perform NotifyUser } {
     if (d.committed == Notify) {
       Endorsement<text> e = endorse body by d;
       perform NotifyUser(e);
-      say(f"notified: {body}");
+      say(f"notified: ${body}");
     } else if (d.committed == Ignore) {
       Endorsement<text> e = endorse body by d;
       emit Held("ignored by attestation");

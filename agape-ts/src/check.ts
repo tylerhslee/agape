@@ -1635,7 +1635,7 @@ class Checker {
       case "int": return "int";
       case "float": return "float";
       case "bool": return "bool";
-      case "string": case "fstring": return "text";
+      case "string": case "fstring": case "mdimport": return "text";
       case "null": return "null";
       case "self": return "agent";
       case "spawnexpr": {

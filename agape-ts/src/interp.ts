@@ -4,6 +4,7 @@
 
 import { createHash } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { readFile } from "node:fs/promises";
 import type * as A from "./ast.js";
 import {
   Ledger, MockProvider, ingressJoin, ingressOf, render, settledText,
@@ -296,11 +297,14 @@ export async function run(
 export function createSession(program: A.Program, opts: RunOptions = {}): RuntimeSession {
   const manifest: Manifest = opts.manifest ?? { provider: { backend: "mock" } };
   check(program, opts.modules, manifest, opts.strictConfig); // static pass first (TypeError/ModuleError/ConfigError/…)
-  const memory = opts.memory ?? createMemoryDriver(manifest, { cwd: opts.memoryRoot ?? process.cwd() });
+  const provider = opts.provider ?? new MockProvider();
+  // The memory runtime shares the session's provider so reflection (when the
+  // manifest opts in) runs behind the same seam as every other cognition call.
+  const memory = opts.memory ?? createMemoryDriver(manifest, { cwd: opts.memoryRoot ?? process.cwd(), provider });
   const toolHandlers = { ...createToolHandlers(manifest), ...(opts.toolHandlers ?? {}) };
   return new Interpreter(
     program,
-    opts.provider ?? new MockProvider(),
+    provider,
     opts.modules ?? [],
     opts.principal,
     opts.principalAttestations ?? [],
@@ -1528,6 +1532,14 @@ class Interpreter {
       case "int": return { kind: "int", v: e.value, trust: "settled" };
       case "float": return { kind: "float", v: e.value, trust: "settled" };
       case "string": return settledText(e.value);
+      case "mdimport": {
+        try {
+          return { kind: "text", v: await readFile(e.path, "utf8"), trust: "raw", ingress: "external_unscreened" };
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          throw new RuntimeError(`failed to import markdown ${JSON.stringify(e.path)}: ${message}`);
+        }
+      }
       case "bool": return { kind: "bool", v: e.value, trust: "settled" };
       case "null": return { kind: "null", trust: "settled" };
       case "fstring": {

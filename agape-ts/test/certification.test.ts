@@ -18,7 +18,7 @@ action Announce(text body);
 agent Greeter grants { perform Announce } {
   on awake {
     text draft = "hello from testkit";
-    Credence<Verdict> c = self <- f"safe to publish: {draft}";
+    Credence<Verdict> c = self <- f"safe to publish: \${draft}";
     Decision<Verdict> d = decide c by confidence 0.5;
     if (d.committed == Publish) {
       Endorsement<text> e = endorse draft by d;

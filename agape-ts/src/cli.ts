@@ -146,7 +146,7 @@ async function main(argv: string[]): Promise<number> {
     const source = readFileSync(file, "utf8");
     const manifest = loadManifest(manifestForProject(projectRoot, manifestPath), backendOverride);
     const provider = createProvider(manifest);
-    const memory = createMemoryDriver(manifest, { cwd: projectRoot });
+    const memory = createMemoryDriver(manifest, { cwd: projectRoot, provider });
 
     const program = parse(source);
     const { ledger, stdout, warnings } = await run(program, { provider, manifest, memory, promptInputs });

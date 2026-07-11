@@ -81,53 +81,23 @@ export function lex(source: string): Token[] {
       while (i < n && source[i] !== "\n") advance();
       continue;
     }
-    // f-string: f"...{expr}..."
+    // Markdown prompt block: prompt { ... ${expr} ... }
+    if (promptBlockAhead()) {
+      const pos = here();
+      advance("prompt".length);
+      while (i < n && (source[i] === " " || source[i] === "\t" || source[i] === "\r" || source[i] === "\n")) advance();
+      advance(); // opening {
+      const parts = normalizePromptParts(readPromptMarkdownParts(pos));
+      toks.push({ type: "promptmd", value: "", fparts: parts, pos });
+      continue;
+    }
+    // f-string: f"...${expr}...". Plain braces are literal text.
     if (c === "f" && source[i + 1] === '"') {
       const pos = here();
       advance(2); // consume f"
-      const parts: FStringPart[] = [];
-      let text = "";
-      while (i < n && source[i] !== '"') {
-        const ch = source[i]!;
-        if (ch === "\\") {
-          text += readEscape();
-          continue;
-        }
-        if (ch === "{") {
-          if (text) {
-            parts.push({ kind: "text", text });
-            text = "";
-          }
-          advance(); // consume {
-          let depth = 1;
-          let src = "";
-          while (i < n && depth > 0) {
-            const e = source[i]!;
-            if (e === '"') break; // an interpolation must close (`}`) BEFORE the f-string does (§2)
-            if (e === "{") depth++;
-            else if (e === "}") {
-              depth--;
-              if (depth === 0) break;
-            }
-            src += e;
-            advance();
-          }
-          if (depth !== 0) {
-            // unterminated interpolation: emit the (ill-formed) expr part so the PARSER rejects the malformed
-            // interpolation expression — a ParseError, not a LexError (§2: braces must parse as expressions).
-            parts.push({ kind: "expr", src });
-            continue; // the f-string closes at the `"` the outer loop is now positioned on
-          }
-          advance(); // consume }
-          parts.push({ kind: "expr", src });
-          continue;
-        }
-        text += ch;
-        advance();
-      }
+      const parts = readInterpolatedParts(pos, () => i < n && source[i] !== '"', true);
       if (i >= n) throw new LexError(`unterminated f-string at ${pos.line}:${pos.col}`);
       advance(); // closing "
-      if (text) parts.push({ kind: "text", text });
       toks.push({ type: "fstring", value: "", fparts: parts, pos });
       continue;
     }
@@ -194,6 +164,139 @@ export function lex(source: string): Token[] {
 
   toks.push({ type: "eof", value: "", pos: here() });
   return toks;
+
+  function readInterpolatedParts(pos: Pos, keepGoing: () => boolean, useStringEscapes: boolean): FStringPart[] {
+    const parts: FStringPart[] = [];
+    let text = "";
+    const pushText = () => {
+      if (text) {
+        parts.push({ kind: "text", text });
+        text = "";
+      }
+    };
+    while (keepGoing()) {
+      const ch = source[i]!;
+      if (ch === "\\" && source[i + 1] === "$" && source[i + 2] === "{") {
+        text += "${";
+        advance(3);
+        continue;
+      }
+      if (useStringEscapes && ch === "\\") {
+        text += readEscape();
+        continue;
+      }
+      if (ch === "$" && source[i + 1] === "{") {
+        pushText();
+        advance(2); // consume ${
+        const src = readInterpolationExpr(pos);
+        parts.push({ kind: "expr", src });
+        continue;
+      }
+      text += ch;
+      advance();
+    }
+    pushText();
+    return parts;
+  }
+
+  function readPromptMarkdownParts(pos: Pos): FStringPart[] {
+    const parts: FStringPart[] = [];
+    let text = "";
+    const pushText = () => {
+      if (text) {
+        parts.push({ kind: "text", text });
+        text = "";
+      }
+    };
+    while (i < n && !promptBlockCloseAt(i)) {
+      const ch = source[i]!;
+      if (ch === "\\" && source[i + 1] === "$" && source[i + 2] === "{") {
+        text += "${";
+        advance(3);
+        continue;
+      }
+      if (ch === "$" && source[i + 1] === "{") {
+        pushText();
+        advance(2); // consume ${
+        const src = readInterpolationExpr(pos);
+        parts.push({ kind: "expr", src });
+        continue;
+      }
+      text += ch;
+      advance();
+    }
+    if (i >= n) throw new LexError(`unterminated prompt markdown block at ${pos.line}:${pos.col}`);
+    text = text.replace(/[ \t\r]*$/, "");
+    pushText();
+    advance(); // closing }
+    return parts;
+  }
+
+  function readInterpolationExpr(pos: Pos): string {
+    let depth = 1;
+    let src = "";
+    while (i < n && depth > 0) {
+      const e = source[i]!;
+      if (e === '"') {
+        src += e;
+        advance();
+        while (i < n) {
+          const q = source[i]!;
+          src += q;
+          advance();
+          if (q === "\\" && i < n) {
+            src += source[i]!;
+            advance();
+            continue;
+          }
+          if (q === '"') break;
+        }
+        continue;
+      }
+      if (e === "{") depth++;
+      else if (e === "}") {
+        depth--;
+        if (depth === 0) break;
+      }
+      src += e;
+      advance();
+    }
+    if (depth !== 0) throw new LexError(`unterminated interpolation at ${pos.line}:${pos.col}`);
+    advance(); // consume }
+    return src.trim();
+  }
+
+  function normalizePromptParts(parts: FStringPart[]): FStringPart[] {
+    const out = parts.slice();
+    const first = out[0];
+    if (first?.kind === "text") first.text = first.text.replace(/^\r?\n/, "");
+    const last = out[out.length - 1];
+    if (last?.kind === "text") last.text = last.text.replace(/\r?\n$/, "");
+    return out.filter((p) => p.kind !== "text" || p.text.length > 0);
+  }
+
+  function promptBlockAhead(): boolean {
+    if (!source.startsWith("prompt", i)) return false;
+    const prev = source[i - 1] ?? "";
+    const next = source[i + "prompt".length] ?? "";
+    if ((prev && isIdentPart(prev)) || (next && isIdentPart(next))) return false;
+    let j = i + "prompt".length;
+    while (j < n && (source[j] === " " || source[j] === "\t" || source[j] === "\r" || source[j] === "\n")) j++;
+    return source[j] === "{";
+  }
+
+  function promptBlockCloseAt(idx: number): boolean {
+    if (source[idx] !== "}") return false;
+    let before = idx - 1;
+    while (before >= 0 && source[before] !== "\n") {
+      const ch = source[before]!;
+      if (ch !== " " && ch !== "\t" && ch !== "\r") return false;
+      before--;
+    }
+    let after = idx + 1;
+    while (after < n && (source[after] === " " || source[after] === "\t" || source[after] === "\r")) after++;
+    return after >= n || source[after] === "\n" || source[after] === ";" || source[after] === ")" || source[after] === "," || source[after] === "]" || source[after] === "}";
+  }
 
   function readEscape(): string {
     advance(); // consume backslash

@@ -17,7 +17,7 @@ agent Greeter grants { perform Announce } {
     text draft = "hello, world";
 
     // Cognition: a graded judgment over the closed enum `Verdict`.
-    Credence<Verdict> v = self <- f"is this greeting safe to publish: {draft}";
+    Credence<Verdict> v = self <- f"is this greeting safe to publish: ${draft}";
 
     // Collapse the judgment to a sealed Decision by a local rule, then endorse the exact draft.
     Decision<Verdict>  d = decide v by confidence 0.8;

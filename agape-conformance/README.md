@@ -1,7 +1,7 @@
-# Agape — Black-Box Conformance Suite (v1.0.0-alpha.2026.7.10.0)
+# Agape — Black-Box Conformance Suite (v1.0.0-alpha.2026.7.11.0)
 
 A set of `.ag` programs, each tagged with an expected outcome, that together
-define when an implementation of **Agape v1.0.0-alpha.2026.7.10.0** is *valid* (every
+define when an implementation of **Agape v1.0.0-alpha.2026.7.11.0** is *valid* (every
 behavior matches the spec) and *complete* (every required behavior is exercised). Tests
 are derived **only** from `../SPEC.md` — never from any implementation. An
 implementation passes by feeding each test through its own front end + runtime

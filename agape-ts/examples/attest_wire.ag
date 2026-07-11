@@ -28,13 +28,13 @@ agent Treasurer grants { perform WireFunds } {
   on awake {
     Wire request = self <- "extract the incoming wire request: amount in cents, and a short memo";
 
-    Credence<Approval> c = self <- f"should we wire {request.amount_cents} cents for: {request.memo}";
+    Credence<Approval> c = self <- f"should we wire ${request.amount_cents} cents for: ${request.memo}";
     Decision<Approval>  d = boss decide c by conformal 0.05;
 
     if (d.committed == Approve) {
       Endorsement<Wire> e = endorse request by d;
       perform WireFunds(e.amount_cents);
-      emit Wired(f"wired {e.amount_cents} cents on boss's attestation");
+      emit Wired(f"wired ${e.amount_cents} cents on boss's attestation");
     } else if (d.committed == Deny) {
       emit Wired("denied by boss");
     } else {
@@ -43,7 +43,7 @@ agent Treasurer grants { perform WireFunds } {
   }
 }
 
-when (Wired w) { say(f"outcome: {w.note}"); }
+when (Wired w) { say(f"outcome: ${w.note}"); }
 
 spawn Treasurer t;
 awake t;

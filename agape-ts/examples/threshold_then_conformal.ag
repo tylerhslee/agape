@@ -24,10 +24,10 @@ event Routing(text route);
 agent BootstrapDesk grants { perform PublishDraft } {
   when (Prompt p about submission) {
     ReviewPacket packet =
-      self <- f"Prepare a publication review packet. Include request, draft, and rationale. Request: {p.text}";
+      self <- f"Prepare a publication review packet. Include request, draft, and rationale. Request: ${p.text}";
 
     Credence<PublishVote> vote =
-      self <- f"Classify this packet as Publish, Revise, or Reject. Packet: {packet}";
+      self <- f"Classify this packet as Publish, Revise, or Reject. Packet: ${packet}";
 
     Decision<PublishVote> threshold =
       decide vote by confidence 0.92 margin 0.2;
@@ -36,11 +36,11 @@ agent BootstrapDesk grants { perform PublishDraft } {
       Endorsement<ReviewPacket> approved = endorse packet by threshold;
       perform PublishDraft(approved.draft);
       emit Routing("threshold published without human escalation");
-      say(f"threshold publish: {approved.draft}");
+      say(f"threshold publish: ${approved.draft}");
     } else if (threshold.committed == Reject) {
       Endorsement<ReviewPacket> rejected = endorse packet by threshold;
       emit Routing("threshold rejected without human escalation");
-      say(f"threshold reject: {rejected.rationale}");
+      say(f"threshold reject: ${rejected.rationale}");
     } else {
       Decision<PublishVote> conformal =
         reviewer decide vote by conformal 0.1 readiness 10;
@@ -49,15 +49,15 @@ agent BootstrapDesk grants { perform PublishDraft } {
         Endorsement<ReviewPacket> approved = endorse packet by conformal;
         perform PublishDraft(approved.draft);
         emit Routing("conformal principal published and labeled");
-        say(f"reviewer publish: {approved.draft}");
+        say(f"reviewer publish: ${approved.draft}");
       } else if (conformal.committed == Revise) {
         Endorsement<ReviewPacket> revision = endorse packet by conformal;
         emit Routing("conformal principal requested revision and labeled");
-        say(f"reviewer revise: {revision.rationale}");
+        say(f"reviewer revise: ${revision.rationale}");
       } else if (conformal.committed == Reject) {
         Endorsement<ReviewPacket> rejected = endorse packet by conformal;
         emit Routing("conformal principal rejected and labeled");
-        say(f"reviewer reject: {rejected.rationale}");
+        say(f"reviewer reject: ${rejected.rationale}");
       } else {
         emit Routing("conformal principal declined; no label");
         say("held: no endorsement, no publish");
@@ -66,7 +66,7 @@ agent BootstrapDesk grants { perform PublishDraft } {
 
     Event[] labels =
       select * from ledger where { etype == "PrincipalDecision" };
-    say(f"principal labels on ledger: {labels}");
+    say(f"principal labels on ledger: ${labels}");
   }
 }
 

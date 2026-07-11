@@ -22,7 +22,7 @@ action Reimburse(int cents);
 agent Desk grants { perform Reimburse } {
   on awake {
     Claim claim = self <- "extract the claim";
-    Credence<Verdict> c = self <- f"approve {claim.amount_cents}?";
+    Credence<Verdict> c = self <- f"approve \${claim.amount_cents}?";
     Decision<Verdict> d = decide c by confidence 0.85 margin 0.1;
     if (d.committed == Approve) {
       Endorsement<Claim> e = endorse claim by d;
@@ -36,7 +36,7 @@ agent Desk grants { perform Reimburse } {
   }
 }
 
-when (Logged l) { say(f"log: {l.note}"); }
+when (Logged l) { say(f"log: \${l.note}"); }
 
 spawn Desk desk;
 awake desk;
@@ -213,8 +213,8 @@ agent Librarian grants { perform Publish } {
     mem notes <- "alpha";
     notes <- "beta";
     text context = notes -> "query";
-    text answer = self <- f"use {context}";
-    Credence<Verdict> c = self <- f"grounded: {answer}";
+    text answer = self <- f"use \${context}";
+    Credence<Verdict> c = self <- f"grounded: \${answer}";
     Decision<Verdict> d = decide c by confidence 0.8;
     if (d.committed == Grounded) {
       Endorsement<text> e = endorse answer by d;
@@ -246,7 +246,7 @@ action PublishAnswer(text answer);
 event ClaimVerified(Verification result);
 
 Verification verifyClaim(Claim claim) {
-  Credence<Grounding> grounded = self <- f"is grounded: {claim.statement}";
+  Credence<Grounding> grounded = self <- f"is grounded: \${claim.statement}";
   Decision<Grounding> d = decide grounded by confidence 0.75;
   Verification result = Verification { note: "checked" };
   emit ClaimVerified(result);
@@ -255,10 +255,10 @@ Verification verifyClaim(Claim claim) {
 
 agent FactChecker grants { perform PublishAnswer } {
   when (Prompt p about question) {
-    Claim[] claims = self <- f"extract claims from {p.text}";
+    Claim[] claims = self <- f"extract claims from \${p.text}";
     Verification[] rows = claims |> verifyClaim;
-    text answer = self <- f"summarize {rows}";
-    Credence<PublishDecision> ready = self <- f"publish {answer}";
+    text answer = self <- f"summarize \${rows}";
+    Credence<PublishDecision> ready = self <- f"publish \${answer}";
     Decision<PublishDecision> d = decide ready by confidence 0.8;
     if (d.committed == Publish) {
       Endorsement<text> e = endorse answer by d;

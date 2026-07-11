@@ -33,7 +33,18 @@ tar --exclude="agape-ts/node_modules" --exclude="agape-ts/.agape" -C "$ROOT" -cf
 cat > "$STAGE/bin/agape" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
-DIR="$(cd "$(dirname "$0")/.." && pwd)"
+# Resolve symlinks first so the wrapper can be linked onto PATH
+# (e.g. ln -s <install>/bin/agape ~/.local/bin/agape). A plain-readlink loop
+# keeps this portable to systems without `readlink -f`.
+SELF="$0"
+while [ -h "$SELF" ]; do
+  LINK="$(readlink "$SELF")"
+  case "$LINK" in
+    /*) SELF="$LINK" ;;
+    *)  SELF="$(dirname "$SELF")/$LINK" ;;
+  esac
+done
+DIR="$(cd "$(dirname "$SELF")/.." && pwd)"
 exec node "$DIR/agape-ts/node_modules/tsx/dist/cli.mjs" "$DIR/agape-ts/src/cli.ts" "$@"
 SH
 chmod +x "$STAGE/bin/agape"
@@ -118,11 +129,15 @@ else
   shasum -a 256 "$NAME.tar.gz" > "$NAME.tar.gz.sha256"
 fi
 
-# 5. Verify: extract to a clean dir and run the shipped wrapper.
+# 5. Verify: extract to a clean dir and run the shipped wrapper — directly,
+# and through a symlink from an unrelated cwd (the PATH-install shape).
 echo "==> verifying the shipped TypeScript CLI"
 VERIFY="$(mktemp -d)"
 tar -xzf "$NAME.tar.gz" -C "$VERIFY"
 ( cd "$VERIFY/$NAME" && "./bin/agape" run examples/hello.ag >/dev/null )
+mkdir -p "$VERIFY/linkbin"
+ln -s "$VERIFY/$NAME/bin/agape" "$VERIFY/linkbin/agape"
+( cd "$VERIFY" && "./linkbin/agape" run "$VERIFY/$NAME/examples/hello.ag" >/dev/null )
 rm -rf "$VERIFY"
 rm -rf "$ROOT/dist/$NAME"
 

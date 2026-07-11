@@ -143,7 +143,7 @@ export function createProvider(m: Manifest): Provider {
   }
 }
 
-export function createMemoryDriver(m: Manifest, deps: { cwd?: string } = {}): MemoryDriver {
+export function createMemoryDriver(m: Manifest, deps: { cwd?: string; provider?: Provider } = {}): MemoryDriver {
   const cfg = m.memory ?? {};
   const driver = typeof cfg.driver === "string" ? cfg.driver : "markdown";
   let substrate: MemoryDriver;
@@ -158,7 +158,9 @@ export function createMemoryDriver(m: Manifest, deps: { cwd?: string } = {}): Me
     default:
       throw new Error(`unknown memory driver '${driver}' (manifest [memory] driver=...)`);
   }
-  return new MemoryRuntimeDriver(substrate, cfg);
+  // The provider handle enables [memory] reflect = true; without it the
+  // memory runtime is purely lexical (judgment/classify/dedupe/rerank).
+  return new MemoryRuntimeDriver(substrate, cfg, deps.provider);
 }
 
 // ---- a small TOML reader for the manifest subset the runtime needs ----

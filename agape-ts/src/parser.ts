@@ -53,6 +53,7 @@ function assertCore(p: A.Program): void {
       case "tasklit": if (e.objective) walkExpr(e.objective); if (e.acceptance) walkExpr(e.acceptance); break; // core (§6c)
       case "performexpr": e.args.forEach(walkExpr); if (e.expires) walkExpr(e.expires); break; // core (§6b)
       case "fstring": e.parts.forEach((pt) => { if (pt.kind === "expr") walkExpr(pt.expr); }); break;
+      case "mdimport": break;
       default: break;
     }
   };
@@ -1248,11 +1249,17 @@ class Parser {
       if (this.atIdent("margin") && (this.peek(1).type === "int" || this.peek(1).type === "float")) { this.next(); this.number(); }
       return { kind: "ident", name: "__rule__", pos: t.pos };
     }
+    if (this.atIdent("md") && this.peek(1).type === "string") {
+      const pos = this.next().pos;
+      const path = this.next().value;
+      return { kind: "mdimport", path, pos };
+    }
     switch (t.type) {
       case "int": this.next(); return { kind: "int", value: Number(t.value), pos: t.pos };
       case "float": this.next(); return { kind: "float", value: Number(t.value), pos: t.pos };
       case "string": this.next(); return { kind: "string", value: t.value, pos: t.pos };
       case "fstring": this.next(); return this.buildFString(t.fparts!, t.pos);
+      case "promptmd": this.next(); return this.buildFString(t.fparts!, t.pos);
       case "true": this.next(); return { kind: "bool", value: true, pos: t.pos };
       case "false": this.next(); return { kind: "bool", value: false, pos: t.pos };
       case "abstained": this.next(); return { kind: "ident", name: "abstained", pos: t.pos };

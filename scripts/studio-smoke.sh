@@ -31,7 +31,7 @@ mkdir -p "$PROJ"
 cat > "$PROJ/agape.toml" <<TOML
 [project]
 name = "Smoke Fixture"
-language = "1.0.0-alpha.2026.7.10.0"
+language = "1.0.0-alpha.2026.7.11.0"
 
 [memory]
 driver = "markdown"

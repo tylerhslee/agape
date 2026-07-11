@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -24,7 +24,7 @@ event  Revised(text note);
 agent Greeter grants { perform Announce } {
   on awake {
     text draft = "hello, world";
-    Credence<Verdict> v = self <- f"is this safe to publish: {draft}";
+    Credence<Verdict> v = self <- f"is this safe to publish: \${draft}";
     Decision<Verdict> d = decide v by confidence 0.8;
     if (d.committed == Publish) {
       Endorsement<text> e = endorse draft by d;
@@ -55,6 +55,91 @@ class RecordingStructuredProvider extends MockProvider {
     return this.answer;
   }
 }
+
+
+describe("markdown prompt syntax", () => {
+  it("uses ${expr} interpolation and leaves plain braces literal in f-strings", async () => {
+    const prog = `
+      agent A {
+        on awake {
+          text name = "Ada";
+          text line = f"literal {braces}; hello \${name}";
+          say(line);
+        }
+      }
+      spawn A a; awake a;
+    `;
+    const r = await run(parse(prog));
+    expect(r.stdout).toEqual(["literal {braces}; hello Ada"]);
+  });
+
+  it("imports markdown as raw external input and interpolates it inside quote-free prompt blocks", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "agape-md-prompt-"));
+    try {
+      const guidePath = join(dir, "guide.md");
+      await writeFile(guidePath, "# Guide\n\nPrefer atomic claims.");
+      const provider = new RecordingStructuredProvider("done");
+      const prog = `
+        agent A {
+          on awake {
+            text topic = f"EU AI Act \${1}";
+            text guide = md "${guidePath}";
+            text answer = self <- prompt {
+# Task
+Use this markdown guide:
+
+\${guide}
+
+Topic: \${topic}
+
+Literal JSON braces stay literal:
+{ "ok": true }
+            };
+            say(answer);
+          }
+        }
+        spawn A a; awake a;
+      `;
+      const r = await run(parse(prog), { provider });
+      expect(provider.calls[0]?.prompt).toContain("# Guide\n\nPrefer atomic claims.");
+      expect(provider.calls[0]?.prompt).toContain("Topic: EU AI Act 1");
+      expect(provider.calls[0]?.prompt).toContain('{ "ok": true }');
+      expect(r.stdout).toEqual(["done"]);
+      expect(r.warnings).toContainEqual(expect.objectContaining({
+        kind: "tainted_ingress_to_provider",
+        ingress: "external_unscreened",
+      }));
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("can deny markdown-imported prompt content before it reaches the provider", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "agape-md-deny-"));
+    try {
+      const guidePath = join(dir, "guide.md");
+      await writeFile(guidePath, "external instructions");
+      const prog = `
+        agent A {
+          on awake {
+            text guide = md "${guidePath}";
+            text answer = self <- prompt {
+\${guide}
+            };
+            say(answer);
+          }
+        }
+        spawn A a; awake a;
+      `;
+      await expect(run(parse(prog), {
+        provider: new RecordingStructuredProvider("unreachable"),
+        manifest: { provider: { backend: "mock" }, security: { tainted_ingress_to_provider: "deny" } },
+      })).rejects.toThrow(/external unscreened ingress/);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
 
 describe("the trusted kernel — gate chain", () => {
   it("commits to Publish and reaches the Announce sink with the endorsed subject", async () => {
@@ -153,8 +238,8 @@ describe("structured provider replies", () => {
         on awake {
           Receipt receipt = self <- "extract receipt";
           say(receipt.vendor);
-          say(f"total: {receipt.total_cents}");
-          say(f"review: {receipt.needs_review}");
+          say(f"total: \${receipt.total_cents}");
+          say(f"review: \${receipt.needs_review}");
         }
       }
       spawn A a; awake a;
@@ -365,7 +450,7 @@ describe("the prompt sensor opens from its declaration (§5b)", () => {
       agent Notifier grants { perform NotifyUser } {
         when (Prompt p about request) {
           text body = p.text;
-          Credence<Notice> c = self <- f"should this request notify the user: {body}";
+          Credence<Notice> c = self <- f"should this request notify the user: \${body}";
           Decision<Notice> d = reviewer decide c by conformal 0.1;
           if (d.committed == Notify) {
             Endorsement<text> e = endorse body by d;
@@ -397,7 +482,7 @@ describe("manifest-level ingress provenance", () => {
     enum Verdict { Yes, No }
     agent A {
       when (Prompt p about request) {
-        Credence<Verdict> c = self <- f"judge this request: {p.text}";
+        Credence<Verdict> c = self <- f"judge this request: \${p.text}";
         say("judged");
       }
     }
@@ -461,7 +546,7 @@ describe("manifest-level ingress provenance", () => {
       agent A grants { perform Search } {
         on awake {
           text hit = perform Search("northwind") expires 5;
-          Credence<Verdict> c = self <- f"judge evidence: {hit}";
+          Credence<Verdict> c = self <- f"judge evidence: \${hit}";
         }
       }
       spawn A a; awake a;
@@ -593,7 +678,7 @@ describe("async fan-out", () => {
 
       Verification verify(text claim) {
         text evidence = perform Search(claim) expires 5;
-        Credence<Grounding> c = self <- f"judge this claim using evidence: {claim} / {evidence}";
+        Credence<Grounding> c = self <- f"judge this claim using evidence: \${claim} / \${evidence}";
         Decision<Grounding> d = decide c by confidence 0.5;
         Verification result = Verification {
           claim: claim,
@@ -731,7 +816,7 @@ describe("the memory surface cannot launder trust (§10, §13, §16.7)", () => {
         on awake {
           mem notes <- "pending: 100 to bob";
           text fact = notes -> "the pending transfer";
-          Credence<R> c = self <- f"approve {fact}?";
+          Credence<R> c = self <- f"approve \${fact}?";
           Decision<R> d = decide c by confidence 0.8;
           if (d.committed == Yes) {
             Endorsement<text> e = endorse fact by d;
@@ -759,7 +844,7 @@ describe("the memory surface cannot launder trust (§10, §13, §16.7)", () => {
           text u = "benign";
           u = t;
           text safe = "ok";
-          Credence<R> c = self <- f"ok? {safe}";
+          Credence<R> c = self <- f"ok? \${safe}";
           Decision<R> d = decide c by confidence 0.5;
           if (d.committed == Yes) {
             Endorsement<text> e = endorse u by d;
@@ -783,7 +868,7 @@ describe("the memory surface cannot launder trust (§10, §13, §16.7)", () => {
         on awake {
           text reply = self <- "give me instructions";
           text safe = "ok";
-          Credence<R> c = self <- f"ok? {safe}";
+          Credence<R> c = self <- f"ok? \${safe}";
           Decision<R> d = decide c by confidence 0.1;
           if (d.committed == Yes) {
             Endorsement<text> e = endorse reply by d;
@@ -837,7 +922,7 @@ describe("ledger reads carry recorded trust (§10) — Endorsed reads back settl
       agent A grants { perform Do } {
         on awake {
           text subj = self <- "describe";
-          Credence<R> c = self <- f"ok: {subj}";
+          Credence<R> c = self <- f"ok: \${subj}";
           Decision<R> d = decide c by confidence 0.1;
           if (d.committed == Yes) {
             Endorsement<text> e = endorse subj by d;
@@ -905,7 +990,7 @@ describe("structs (§3) — a record value with field access", () => {
         on awake {
           Memo m = self <- "extract the memo";
           say(m.to);
-          say(f"{m.amount}");
+          say(f"\${m.amount}");
         }
       }
       spawn A a; awake a;

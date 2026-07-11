@@ -72,30 +72,30 @@ agent Lead grants { reach Researcher, reach Deployer, perform Deploy, perform An
       objective  "Assess prior art for the v2 release";
       acceptance "A summary where every claim carries an evidence ref";
     } expires ttl;
-    say(f"research done: {found.summary}");
+    say(f"research done: ${found.summary}");
 
     // 2. BACKGROUND — handle-bound; outcomes are ordinary `when` subscriptions
     Task<Findings> survey = rex <- task {
       objective  "Survey the competitive landscape";
       acceptance "A one-paragraph map of the field";
     } expires 200;
-    when (TaskProgress p about survey)  { say(f"survey progress: {p.note}"); }
+    when (TaskProgress p about survey)  { say(f"survey progress: ${p.note}"); }
     when (TaskCompleted c about survey) { perform Announce("survey landed"); }
-    when (TaskFailed f about survey)    { say(f"survey failed: {f.reason}"); }
+    when (TaskFailed f about survey)    { say(f"survey failed: ${f.reason}"); }
 
     // 3. ENDORSED SCOPED TASK — perform authority travels only via the gate (§6c, §13)
     TaskSpec draft = task {
-      objective  f"Deploy v2 given: {found.summary}";     // tainted objective stays tainted
+      objective  f"Deploy v2 given: ${found.summary}";     // tainted objective stays tainted
       acceptance "Deploy exactly one artifact and report the plan";
       scope { perform Deploy }                 // ⊆ Lead's own grants — attenuation, never minting
     };
-    Credence<Go> c = self <- f"is this deploy task safe to hand off: {draft.objective}";
+    Credence<Go> c = self <- f"is this deploy task safe to hand off: ${draft.objective}";
     Decision<Go> d = decide c by confidence 0.9 margin 0.1;
 
     if (d.committed == Approve) {
       Endorsement<TaskSpec> approved = endorse draft by d;   // only in a committed branch
       Findings plan = dep <- approved expires 100;           // an unendorsed scoped send = compile error
-      say(f"deployed: {plan.summary}");
+      say(f"deployed: ${plan.summary}");
     } else {
       say("deploy withheld");                  // fail closed; no endorsement exists here
     }

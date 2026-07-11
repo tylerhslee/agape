@@ -317,6 +317,7 @@ export type Expr =
 
   | StructLit
   | FStringExpr
+  | MarkdownImportExpr
   | StringLit
   | IntLit
   | FloatLit
@@ -446,6 +447,10 @@ export interface TaskLit extends Node {
 export interface FStringExpr extends Node {
   kind: "fstring";
   parts: ({ kind: "text"; text: string } | { kind: "expr"; expr: Expr })[];
+}
+export interface MarkdownImportExpr extends Node {
+  kind: "mdimport";
+  path: string;
 }
 export interface StringLit extends Node { kind: "string"; value: string; }
 export interface IntLit extends Node { kind: "int"; value: number; }

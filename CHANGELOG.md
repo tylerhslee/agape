@@ -6,6 +6,47 @@ All notable changes to Agape are recorded here. The format follows
 suite, and the studio move in lockstep — a release is the whole bundle at one
 version.
 
+## [1.0.0-alpha.2026.7.11.0] - 2026-07-11
+
+Reflective memory alpha: the first dogfood-driven memory-runtime feature, from the LeeHaRin
+assistant. Storing raw episode transcripts and recalling them verbatim turned an agent's memory
+into a style feedback loop — it imitated its own prior replies. The fix is the runtime owning
+reflection at write time, as §16.7's decomposition promises.
+
+### Added
+
+- `[memory] reflect = true`: provider-assisted reflection in the memory runtime. Before a cell is
+  stored, the provider rewrites the raw episode as a short first-person prose memory (concrete
+  facts, preferences, and instructions kept; greetings, filler, and formatting noise dropped;
+  standing user instructions restated imperatively). Opt-in, default off — offline/mock runs are
+  unchanged.
+- The memory runtime now takes the session's provider handle (`createMemoryDriver(manifest,
+  { cwd, provider })`), so reflection runs behind the same provider seam as every other cognition
+  call. Without a handle the write path is purely lexical, as before.
+- Receipts record the reflection outcome (`reflected` / `empty_fallback_raw` /
+  `failed_fallback_raw`), carry the stored prose in `refs.stored_memory`, and keep the raw
+  episode's canonical hash (`reflected_from_hash`) so the rewrite never hides provenance. Provider
+  failure falls back to storing the raw episode — memory is never dropped by a failed reflection.
+- Classification/tagging runs on the reflected prose (what recall will actually see), while write
+  judgment and dedupe run on the raw episode before any cognition is spent.
+- `memory_reflection.test.ts`: reflection on/off/failure/no-provider/classification coverage.
+- Quote-free Markdown prompt blocks: `prompt { ... ${expr} ... }`, with plain `{...}` preserved as literal Markdown/JSON text.
+- `md "path.md"` text imports for attaching Markdown prompt material from project files.
+
+### Changed
+
+- F-string interpolation now uses `${expr}` consistently with prompt blocks; examples and tests were migrated from the old `{expr}` form.
+
+### Fixed
+
+- Markdown imports enter the runtime as `raw` / `external_unscreened`, so interpolating external Markdown into provider prompts triggers the existing ingress warning/deny policy instead of laundering the file as settled source text.
+- The bundled `bin/agape` wrapper now resolves symlinks before locating its install root, and package verification checks the PATH-link shape from an unrelated working directory.
+
+### Verified
+
+- TypeScript runtime typecheck, version check, unit suite, and packaged `node-linux-x64` archive verification.
+
+
 ## [1.0.0-alpha.2026.7.10.0] - 2026-07-10
 
 Beta-readiness alpha on top of the TypeScript markdown-memory runtime release.
@@ -16,6 +57,7 @@ Beta-readiness alpha on top of the TypeScript markdown-memory runtime release.
 - Certification tests for the typed gate chain, project-root markdown memory, and built-in HTTP tool bindings.
 - Dogfood smoke runner for `league-analyzer`, `agape-fact-checker`, and `agape-soma`.
 - `BETA.md` compatibility contract covering `agape.toml`, markdown memory layout, tool bindings, runtime receipts, Studio/project behavior, and Soma deployment.
+
 
 ### Verified
 

@@ -29,10 +29,10 @@ agent Librarian grants { perform Publish } {
     text context = notes -> "which launch code and phrase belong together?";
 
     // AUGMENTED GENERATION — draft an answer grounded in the retrieved context (still tainted).
-    text answer = self <- f"answer in one sentence using this context: {context}";
+    text answer = self <- f"answer in one sentence using this context: ${context}";
 
     // JUDGE + GATE — is the generated answer grounded? Collapse, endorse the exact answer.
-    Credence<Verdict> c = self <- f"is this answer grounded in the retrieved context and does it pair SABLE-47 with north-window: {answer}";
+    Credence<Verdict> c = self <- f"is this answer grounded in the retrieved context and does it pair SABLE-47 with north-window: ${answer}";
     Decision<Verdict>  d = decide c by confidence 0.8;
 
     if (d.committed == Grounded) {
@@ -48,7 +48,7 @@ agent Librarian grants { perform Publish } {
   }
 }
 
-when (Answered a) { say(f"outcome: {a.note}"); }
+when (Answered a) { say(f"outcome: ${a.note}"); }
 
 spawn Librarian lib;
 awake lib;

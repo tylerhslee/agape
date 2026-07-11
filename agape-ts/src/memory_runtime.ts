@@ -2,9 +2,10 @@
 //
 // Substrates persist and recall cells. This wrapper owns the default Agape
 // memory behavior that should not be reimplemented per app: write judgment,
-// classification, dedupe/consolidation, and recall re-ranking.
+// classification, reflection, dedupe/consolidation, and recall re-ranking.
 
 import { createHash } from "node:crypto";
+import type { Provider } from "./runtime.js";
 import {
   memoryCandidate,
   type MemoryConsultRequest,
@@ -26,6 +27,19 @@ export interface MemoryRuntimeConfig {
   dedupe_threshold?: number;
   recall_pool?: number;
   domain_terms?: string[] | string;
+  /**
+   * Provider-assisted reflection (the prose form of §16.7 decomposition):
+   * before a cell is stored, the provider rewrites the raw episode as a short
+   * first-person memory — concrete facts, preferences, and instructions kept;
+   * greetings, filler, and formatting noise dropped. Opt-in (default false):
+   * reflection costs one cognition call per store, and the mock provider's
+   * deterministic reply makes it replay-stable but uninformative, so offline
+   * runs should leave it off. Requires a provider handle; without one the
+   * write path is unchanged. The receipt records the outcome (reflected /
+   * raw fallback) and the cell keeps the raw episode's canonical hash for
+   * provenance.
+   */
+  reflect?: boolean;
   [key: string]: unknown;
 }
 
@@ -55,6 +69,7 @@ export class MemoryRuntimeDriver implements MemoryDriver {
   constructor(
     public readonly substrate: MemoryDriver,
     private readonly cfg: MemoryRuntimeConfig = {},
+    private readonly provider?: Provider,
   ) {}
 
   async declare(scope: MemoryScope): Promise<void> {
@@ -62,13 +77,43 @@ export class MemoryRuntimeDriver implements MemoryDriver {
   }
 
   async internalize(req: MemoryWriteRequest): Promise<MemoryReceipt> {
-    const memory = compactText(req.memory);
-    const classification = this.classify(memory, req);
+    const raw = compactText(req.memory);
+    let classification = this.classify(raw, req);
     const source = stringMetadata(req.metadata, "source");
     const explicitStore = source !== "provider_reply";
 
-    if (!explicitStore && this.autoMemoryEnabled() && !worthRemembering(memory, classification)) {
+    // Judgment and dedupe run on the RAW episode, before any cognition is
+    // spent on it: junk is skipped and repeats are suppressed for free.
+    if (!explicitStore && this.autoMemoryEnabled() && !worthRemembering(raw, classification)) {
       return skippedReceipt("SKIPPED", "low_signal_auto_memory", classification, this.policy());
+    }
+
+    if (this.dedupeEnabled() && raw) {
+      const duplicate = await this.findDuplicate(req.scope, raw);
+      if (duplicate) {
+        return dedupedReceipt(duplicate, classification, this.policy());
+      }
+    }
+
+    // Reflection: rewrite the surviving episode as a first-person prose
+    // memory. Non-deterministic but shape-fixed (plain text); the receipt
+    // carries the stored prose and the cell keeps the raw episode's hash, so
+    // the rewrite never hides what happened.
+    let memory = raw;
+    let reflection: "reflected" | "empty_fallback_raw" | "failed_fallback_raw" | undefined;
+    if (this.reflectEnabled() && raw) {
+      try {
+        const prose = compactText(await this.provider!.reply(reflectionPrompt(raw)));
+        if (prose) {
+          memory = prose;
+          reflection = "reflected";
+          classification = this.classify(memory, req); // tags/kind must describe what recall will see
+        } else {
+          reflection = "empty_fallback_raw";
+        }
+      } catch {
+        reflection = "failed_fallback_raw";
+      }
     }
 
     const metadata = {
@@ -78,17 +123,17 @@ export class MemoryRuntimeDriver implements MemoryDriver {
       memory_signal: classification.signal,
       memory_reason: classification.reason,
       canonical_hash: canonicalHash(memory),
+      ...(reflection ? { memory_reflection: reflection, reflected_from_hash: canonicalHash(raw) } : {}),
     };
 
-    if (this.dedupeEnabled() && memory) {
-      const duplicate = await this.findDuplicate(req.scope, memory);
-      if (duplicate) {
-        return dedupedReceipt(duplicate, classification, this.policy());
-      }
-    }
-
     const receipt = await this.substrate.internalize({ ...req, memory, metadata });
-    return enrichReceipt(receipt, classification, this.policy());
+    return enrichReceipt(
+      reflection === "reflected"
+        ? { ...receipt, refs: { ...(receipt.refs ?? {}), stored_memory: memory } }
+        : receipt,
+      classification,
+      this.policy(reflection),
+    );
   }
 
   async consult(req: MemoryConsultRequest): Promise<MemoryConsultResult> {
@@ -159,22 +204,45 @@ export class MemoryRuntimeDriver implements MemoryDriver {
     return this.cfg.dedupe !== false;
   }
 
+  private reflectEnabled(): boolean {
+    return this.cfg.reflect === true && this.provider !== undefined;
+  }
+
   private domainTerms(): string[] {
     const raw = this.cfg.domain_terms;
     const parts = Array.isArray(raw) ? raw : typeof raw === "string" ? raw.split(",") : [];
     return Array.from(new Set(parts.flatMap((p) => contentTerms(String(p)))));
   }
 
-  private policy(): Record<string, unknown> {
+  private policy(reflection?: string): Record<string, unknown> {
     return {
       memory_runtime: "agape-default",
       auto_memory: this.autoMemoryEnabled(),
       classify: this.cfg.classify !== false,
       dedupe: this.dedupeEnabled(),
       dedupe_threshold: clampNumber(this.cfg.dedupe_threshold, 0.5, 1, 0.9),
+      reflect: this.reflectEnabled(),
+      ...(reflection ? { reflection } : {}),
       recall: "substrate_pool_then_runtime_rerank",
     };
   }
+}
+
+// The reflection instruction: the agent writes the episode down in its own
+// words, as prose to its future self — the same move commercial assistant
+// memories make. Kept substrate-agnostic and output-shape-fixed (plain text).
+function reflectionPrompt(raw: string): string {
+  return [
+    "You are the private memory faculty of an agent, writing a note that your future self will recall verbatim.",
+    "Rewrite the raw episode below as one short first-person memory in plain prose.",
+    "Keep every concrete fact, name, number, date, preference, instruction, and commitment.",
+    "Drop greetings, pleasantries, mention tokens, formatting artifacts, and repetition.",
+    "If the episode contains a standing instruction or preference from the user, state it imperatively so your future self follows it.",
+    "Output only the memory text, nothing else.",
+    "",
+    "Raw episode:",
+    raw.slice(0, 6000),
+  ].join("\n");
 }
 
 function rerankHit(

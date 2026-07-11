@@ -15,13 +15,13 @@ agent Desk grants { perform Reimburse } {
   on awake {
     Claim claim = self <- "extract the incoming claim: amount in cents, and a one-line summary";
 
-    Credence<Verdict> c = self <- f"should we approve this claim for {claim.amount_cents} cents: {claim.summary}";
+    Credence<Verdict> c = self <- f"should we approve this claim for ${claim.amount_cents} cents: ${claim.summary}";
     Decision<Verdict> d = decide c by confidence 0.85 margin 0.1;
 
     if (d.committed == Approve) {
       Endorsement<Claim> e = endorse claim by d;
       perform Reimburse(e.amount_cents);
-      emit Logged(f"approved: {e.amount_cents} cents");
+      emit Logged(f"approved: ${e.amount_cents} cents");
     } else if (d.committed == Deny) {
       emit Logged("denied");
     } else {
@@ -30,7 +30,7 @@ agent Desk grants { perform Reimburse } {
   }
 }
 
-when (Logged l) { say(f"log: {l.note}"); }
+when (Logged l) { say(f"log: ${l.note}"); }
 
 spawn Desk desk;
 awake desk;
