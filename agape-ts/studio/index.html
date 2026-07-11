@@ -276,6 +276,18 @@
   /* ---- console ---- */
   .console { font: 12.5px var(--mono); color: var(--teal); white-space: pre-wrap; }
   .console:empty::after { content: "(no say output)"; color: var(--faint); }
+
+  /* ---- world output (performed actions) ---- */
+  .sinks { display: grid; gap: 10px; }
+  .sinks .none { color: var(--faint); font: 12.5px var(--mono); }
+  .sinkRow .sinkHead { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; }
+  .sinkRow .etype { font: 600 12px var(--mono); color: var(--green, #7ee787); }
+  .sinkRow .subj { font: 11px var(--mono); color: var(--faint); }
+  .sinkBody {
+    white-space: pre-wrap; word-break: break-word; font: 13px/1.5 var(--sans, system-ui);
+    padding: 8px 12px; border-left: 2px solid var(--green, #2ea043);
+    background: rgba(46,160,67,.06); border-radius: 0 8px 8px 0;
+  }
   .details { display: grid; gap: 10px; }
   .detail {
     border: 1px solid var(--line); border-radius: 8px; background: rgba(255,255,255,.018);
@@ -2530,6 +2542,20 @@ function render(r) {
           <span class="tag">${c.name}</span>${pay ? `<span class="pay">${esc(pay)}</span>` : ""}</div>`;
       }).join("")
     }</div><div class="meta">every event is hash-chained; the chain-head is the proof of replay-equivalence (T4)</div>`));
+  }
+
+  // world output — the performed consequential actions: what actually left
+  // the process this run (what a user on the other end of each sink sees).
+  if (r.ok && r.map) {
+    const sinkRows = sinks.map((e) => {
+      const args = Array.isArray(e.payload) ? e.payload : e.payload === undefined ? [] : [e.payload];
+      const body = args.map((a) => (typeof a === "string" ? a : JSON.stringify(a, null, 2))).join("\n");
+      return `<div class="sinkRow"><div class="sinkHead"><span class="etype">${esc(e.etype)}</span>
+        <span class="subj">by ${esc(e.agent || e.subject || "")} · tick #${esc(e.tick)}</span></div>
+        <div class="sinkBody">${esc(body)}</div></div>`;
+    }).join("");
+    out.push(panel("world-output", `World output — ${sinks.length ? `${sinks.length} performed action${sinks.length === 1 ? "" : "s"}` : "performed actions"}`,
+      `<div class="sinks">${sinkRows || '<div class="none">(no performed actions — nothing reached the world this run)</div>'}</div>`));
   }
 
   // say console
