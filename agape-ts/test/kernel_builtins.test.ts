@@ -57,6 +57,27 @@ describe("kernel builtins", () => {
     expect(res.stdout.at(-1)).toBe("three\ntwo");
   });
 
+  it("len and skip walk a list head-to-tail (the re-dispatch iteration idiom)", async () => {
+    const prog = `
+      prompt text ping;
+      agent A {
+        when (Prompt p about ping) {
+          text[] xs = ["a", "b", "c"];
+          say(len(xs));
+          say(take(xs, 1));
+          say(skip(xs, 1));
+          say(len(skip(xs, 3)));
+        }
+      }
+      spawn A a; awake a;
+    `;
+    const res = await run(parse(prog), {
+      provider: new MockProvider(() => ({})),
+      promptInputs: [{ name: "ping", value: "go" }],
+    });
+    expect(res.stdout).toEqual(["3", "a", "b\nc", "0"]);
+  });
+
   it("arrays interpolate one item per line in prompt text", () => {
     expect(
       render({

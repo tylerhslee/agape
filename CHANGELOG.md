@@ -6,6 +6,18 @@ All notable changes to Agape are recorded here. The format follows
 suite, and the studio move in lockstep — a release is the whole bundle at one
 version.
 
+## [1.0.0-alpha.2026.7.11.6] - 2026-07-11
+
+Array-walking builtins: `skip(xs, n)` (drop the first n) and `len(xs)` (settled int count) join `take`. Head/tail decomposition (`take(xs, 1)` / `skip(xs, 1)` / `len(xs) == 0`) makes the §11 bounded reactive re-dispatch idiom iterate over collections — an event handler processes the head and re-emits the tail — without any loop entering the core grammar.
+
+### Added
+
+- Kernel builtins `skip(xs, n)` and `len(xs)`; both pure-legal (no world reach), both shadowed by user functions of the same name. `len` returns settled trust — the count is the kernel's own tally, not cognition.
+
+### Verified
+
+- TypeScript runtime typecheck, version check, unit suite (98), conformance cert (3).
+
 ## [1.0.0-alpha.2026.7.11.5] - 2026-07-11
 
 Provenance + kernel-clock alpha. Memory cells now record WHO the originating episode came from, and programs can read the kernel's own clock — both direct answers to dogfood findings (test contamination indistinguishable from the real user; assistant time-blindness).

@@ -1664,14 +1664,22 @@ class Interpreter {
           if (e.args.length !== 0) throw typeError("now() takes no arguments");
           return settledText(clockText());
         }
-        if (e.callee.kind === "ident" && e.callee.name === "take") {
-          if (e.args.length !== 2) throw typeError("take(xs, n) takes an array and a count");
+        if (e.callee.kind === "ident" && (e.callee.name === "take" || e.callee.name === "skip")) {
+          if (e.args.length !== 2) throw typeError(`${e.callee.name}(xs, n) takes an array and a count`);
           const xs = await this.evalExpr(e.args[0]!, scope);
           const n = await this.evalExpr(e.args[1]!, scope);
-          if (xs.kind !== "array") throw typeError("take: the first argument must be an array");
-          if (n.kind !== "int" && n.kind !== "float") throw typeError("take: the count must be a number");
-          const items = xs.items.slice(0, Math.max(0, Math.floor(Number(n.v))));
+          if (xs.kind !== "array") throw typeError(`${e.callee.name}: the first argument must be an array`);
+          if (n.kind !== "int" && n.kind !== "float") throw typeError(`${e.callee.name}: the count must be a number`);
+          const c = Math.max(0, Math.floor(Number(n.v)));
+          const items = e.callee.name === "take" ? xs.items.slice(0, c) : xs.items.slice(c);
           return { kind: "array", items, trust: trustJoin(items), ingress: ingressJoin(items) };
+        }
+        if (e.callee.kind === "ident" && e.callee.name === "len") {
+          if (e.args.length !== 1) throw typeError("len(xs) takes one array");
+          const xs = await this.evalExpr(e.args[0]!, scope);
+          if (xs.kind !== "array") throw typeError("len: the argument must be an array");
+          // the count is the kernel's own tally of the collection, not cognition — settled.
+          return { kind: "int", v: xs.items.length, trust: "settled", ingress: ingressJoin(xs.items) };
         }
         throw new RuntimeError("v0 does not support general calls yet");
       }

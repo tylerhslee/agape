@@ -1765,17 +1765,22 @@ class Checker {
           // §4/§8: a bare call to a name that is not a declared/imported function is an
           // unknown-identifier TypeError — functions are declared, not self-declaring. Expressions can
           // never reach the world (§6b): observation arrives as events, acts leave as performs.
-          // The two kernel builtins are the exception: now() (the kernel clock → text) and
-          // take(xs, n) (array windowing) — a user-declared fn of the same name shadows them.
+          // The kernel builtins are the exception: now() (the kernel clock → text) and the
+          // array primitives take/skip/len — a user-declared fn of the same name shadows them.
           if (!this.d.fns.has(name)) {
             if (name === "now") {
               if (e.args.length !== 0) throw typeError("now() takes no arguments");
               return "text";
             }
-            if (name === "take") {
-              if (e.args.length !== 2) throw typeError("take(xs, n) takes an array and a count");
+            if (name === "take" || name === "skip") {
+              if (e.args.length !== 2) throw typeError(`${name}(xs, n) takes an array and a count`);
               for (const a of e.args) this.infer(a, scope);
               return "unknown";
+            }
+            if (name === "len") {
+              if (e.args.length !== 1) throw typeError("len(xs) takes one array");
+              this.infer(e.args[0]!, scope);
+              return "int";
             }
             throw typeError(`call to undeclared function '${name}' — functions are declared, not self-declaring; the world is reached only through wired events and actions (§4/§6b/§8)`);
           }
