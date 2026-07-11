@@ -1,6 +1,6 @@
 # Agape Conformance Coverage
 
-Target spec: `../SPEC.md` `v1.0.0-alpha.2026.7.11.0` — the core kernel.
+Target spec: `../SPEC.md` `v1.0.0-alpha.2026.7.11.1` — the core kernel.
 
 This directory is the black-box language conformance suite. Expected behavior is derived only from `SPEC.md`; implementation behavior is not an authority. The `.ag` files are the source of truth, and `MANIFEST.toml` / `MANIFEST.md` are generated from their headers.
 
