@@ -37,9 +37,9 @@ right person.
   packaged `node-linux-x64` archive verification, plus a live provider run against the LeeHaRin
   dogfood project.
 
-## [1.0.0-alpha.2026.7.11.1] - 2026-07-11
+## [1.0.0-alpha.2026.7.11.2] - 2026-07-11
 
-Pure-function alpha: the seam-free function marker is now `pure`, not `sync`, so the language no longer overloads a scheduling term for a taint/effect guarantee.
+Pure-function alpha: the seam-free function marker is now `pure`, not `sync`, so the language no longer overloads a scheduling term for a taint/effect guarantee. Plus prompt-block dedent, so indented Markdown blocks read the way they nest.
 
 ### Changed
 
@@ -48,16 +48,26 @@ Pure-function alpha: the seam-free function marker is now `pure`, not `sync`, so
 
 ### Added
 
+- Prompt blocks dedent: the common leading whitespace of all non-blank lines is stripped
+  (Java-text-block style), so `prompt { ... }` content can be indented with the surrounding
+  source without pushing indentation into the rendered prompt. Indentation-based Markdown code
+  blocks are consequently not expressible in a prompt block — use ``` fences. Column-0 blocks
+  are byte-identical to before.
 - `examples/predictive_recursion.ag`: a bounded recursive predictive observer that updates an internal `WorldModel` field until prediction error is below a hard-coded threshold or fuel is exhausted.
-- Kernel regression coverage proving bounded `pure` recursion runs and updates an agent field.
+- Kernel regression coverage proving bounded `pure` recursion runs and updates an agent field, and pinning prompt-block dedent (nested relative indent survives).
 
 ### Fixed
 
 - Agent field slots are initialized at spawn and identifier assignment now updates an existing agent field instead of shadowing it with a local binding.
+- The bounded-pure-recursion kernel test: its Agape source used unescaped `${…}` inside a JS
+  template literal (evaluated by JS before Agape saw it), and expected qualified enum rendering
+  (`FitStatus.Settled`) where f-string interpolation renders the bare variant (`Settled`,
+  `render()` — the same convention as ledger payloads).
 
 ### Verified
 
-- TypeScript runtime typecheck.
+- TypeScript runtime typecheck, version check, unit suite (84) + certification suite (3), and
+  packaged `node-linux-x64` archive verification.
 - Direct run of `examples/predictive_recursion.ag` on the mock provider: the model settled with error `0.0390625` under the `0.05` threshold.
 
 ## [1.0.0-alpha.2026.7.11.0] - 2026-07-11
