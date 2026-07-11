@@ -29,7 +29,12 @@ reflection at write time, as §16.7's decomposition promises.
   failure falls back to storing the raw episode — memory is never dropped by a failed reflection.
 - Classification/tagging runs on the reflected prose (what recall will actually see), while write
   judgment and dedupe run on the raw episode before any cognition is spent.
-- `memory_reflection.test.ts`: reflection on/off/failure/no-provider/classification coverage.
+- Reflection reads the RAW episode, not the interpreter's recollection template: the driver
+  reconstructs it from the rendered value + memory scope, and provider replies forward the asking
+  prompt as `episode_prompt` metadata (consumed by the runtime, never written to the substrate —
+  reflect-off disk output stays byte-identical). No storage scaffolding leaks into the prose.
+- `memory_reflection.test.ts`: reflection on/off/failure/no-provider/classification coverage, plus
+  episode framing (store and provider-reply) and `episode_prompt` consumption.
 - Quote-free Markdown prompt blocks: `prompt { ... ${expr} ... }`, with plain `{...}` preserved as literal Markdown/JSON text.
 - `md "path.md"` text imports for attaching Markdown prompt material from project files.
 
