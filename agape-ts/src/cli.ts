@@ -172,7 +172,7 @@ async function main(argv: string[]): Promise<number> {
     const memory = createMemoryDriver(manifest, { cwd: projectRoot, provider });
 
     const program = parse(source);
-    const { ledger, stdout, warnings } = await run(program, { provider, manifest, memory, promptInputs });
+    const { ledger, stdout, warnings } = await run(program, { provider, manifest, memory, promptInputs, projectRoot });
 
     if (json) {
       console.log(JSON.stringify({ ok: true, file, provider: manifest.provider.backend, events: ledger.events, stdout, warnings, head: ledger.head() }));

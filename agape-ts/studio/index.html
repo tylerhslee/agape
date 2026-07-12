@@ -11,6 +11,7 @@
     --accent: #7c6cf6; --accent2: #a99df9;
     --green: #34d399; --red: #f87171; --amber: #fbbf24; --cyan: #67e8f9;
     --violet: #c4b5fd; --teal: #5eead4; --orange: #fdba74; --gold: #fde047;
+    --string: #c3e88d;
     --mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
   }
   * { box-sizing: border-box; margin: 0; }
@@ -152,6 +153,15 @@
   .editing + .editStatus, .editing .editStatus { display: flex; }
   .editing pre.code { display: none; }
   .editing .editorWrap { display: grid; }
+  #markdownCard[hidden] { display: none; }
+  .markdownImports { display: grid; gap: 12px; }
+  .mdImportFile { border-top: 1px solid var(--line); padding-top: 12px; }
+  .mdImportFile:first-child { border-top: 0; padding-top: 0; }
+  .mdImportHead { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 6px; font: 11px var(--mono); color: var(--faint); }
+  .mdImportHead b { color: var(--dim); font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mdImportHead span { white-space: nowrap; }
+  .mdImportFile pre.code { max-height: 360px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; background: #0d111a; padding: 8px 0; }
+  .mdImportError { border: 1px solid rgba(248, 113, 113, .35); border-radius: 8px; padding: 10px 12px; font: 12px var(--mono); color: var(--red); background: rgba(127, 29, 29, .18); }
   .inputCard[hidden] { display: none; }
   .inputList { display: grid; gap: 10px; }
   .inputRow {
@@ -190,14 +200,15 @@
   }
   .k  { color: #c792ea; }              /* keywords */
   .t  { color: #82aaff; }              /* types */
-  .s  { color: #c3e88d; }              /* strings */
+  .s  { color: var(--string); }       /* strings */
   .c  { color: #546178; font-style: italic; } /* comments */
   .n  { color: #f78c6c; }              /* numbers */
+  .mdtxt { color: var(--string); }
   .mdh { color: var(--teal); font-weight: 700; }
   .mdm { color: var(--accent2); font-weight: 700; }
   .mdq { color: #9cdcfe; font-style: italic; }
   .mdl { color: #89ddff; text-decoration: underline; }
-  .mdc { color: #c3e88d; }
+  .mdc { color: var(--string); }
 
   /* ---- verdict ---- */
   .verdict { display: flex; align-items: center; gap: 12px; padding: 14px 16px; border-radius: 12px; margin-bottom: 14px; border: 1px solid; }
@@ -508,6 +519,17 @@
           <div class="editStatus" id="editorStatus" hidden></div>
         </div>
       </div>
+      <div class="card collapsible" id="markdownCard" data-panel="markdown" hidden>
+        <div class="cardHead sourceHead">
+          <h2 id="markdownTitle">Markdown imports</h2>
+          <div class="sourceTools">
+            <button class="collapseToggle" type="button" aria-label="Collapse markdown imports" aria-expanded="true" title="Collapse">▾</button>
+          </div>
+        </div>
+        <div class="cardBody">
+          <div class="markdownImports" id="markdownImports"></div>
+        </div>
+      </div>
       <div class="card collapsible" id="configCard" data-panel="config">
         <div class="cardHead sourceHead">
           <h2 id="configTitle">Config · agape.toml</h2>
@@ -560,7 +582,7 @@ let state = {
   editing: false, dirty: false, sessionId: null, listening: false, awaitingAttest: false,
   pollTimer: null, collapsed: {},
   graphView: "visual", graphEvents: [], graphMap: null,
-  spec: null, specSearch: "",
+  spec: null, specSearch: "", markdowns: [],
 };
 
 // ---- persistence: the current view and settings survive a refresh -------------------------------
@@ -641,7 +663,7 @@ function highlightMarkdownText(raw) {
       break;
     }
     if (start > 0 && raw[start - 1] === "\\") {
-      out += highlightMarkdownInline(raw.slice(i, start - 1)) + esc("${");
+      out += highlightMarkdownInline(raw.slice(i, start - 1)) + highlightMarkdownInline("${");
       i = start + 2;
       continue;
     }
@@ -658,10 +680,12 @@ function highlightMarkdownText(raw) {
 }
 
 function highlightMarkdownInline(raw) {
-  return esc(raw)
+  if (!raw) return "";
+  const highlighted = esc(raw)
     .replace(/`([^`]+)`/g, '<span class="mdc">`$1`</span>')
     .replace(/\*\*([^*]+)\*\*/g, '<span class="mdh">**$1**</span>')
     .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<span class="mdl">[$1]($2)</span>');
+  return `<span class="mdtxt">${highlighted}</span>`;
 }
 
 function highlightMarkdownLine(line) {
@@ -727,6 +751,42 @@ function renderCode(src, hi = highlight) {
   return hi(src).split("\n").map((line, i) =>
     `<span class="codeLine"><span class="ln">${i + 1}</span><span class="codeText">${line || " "}</span></span>`
   ).join("");
+}
+
+function renderMarkdownImportFile(md, requestedName) {
+  const name = md && md.name ? md.name : requestedName;
+  const meta = md && typeof md.bytes === "number"
+    ? fmt(md.bytes) + " bytes" + (md.modified ? " · modified " + new Date(md.modified).toLocaleString() : "")
+    : "";
+  return '<div class="mdImportFile"><div class="mdImportHead"><b title="' + esc(name) + '">' + esc(name) + '</b><span>' + esc(meta) + '</span></div><pre class="code">' + renderCode((md && md.source) || "", highlightMarkdownLine) + '</pre></div>';
+}
+
+async function renderMarkdownImports(imports) {
+  const card = document.getElementById("markdownCard");
+  const host = document.getElementById("markdownImports");
+  if (!card || !host) return;
+  const unique = Array.from(new Set(imports || []));
+  state.markdowns = unique;
+  if (!unique.length) {
+    card.hidden = true;
+    host.innerHTML = "";
+    return;
+  }
+  card.hidden = false;
+  document.getElementById("markdownTitle").textContent = "Markdown imports · " + unique.length;
+  host.innerHTML = '<div class="empty">Loading markdown imports.</div>';
+  applyPanelState(card);
+  const selected = state.selected;
+  const rows = await Promise.all(unique.map(async (name) => {
+    try {
+      const md = await api("/api/markdown?name=" + encodeURIComponent(name));
+      return renderMarkdownImportFile(md, name);
+    } catch (e) {
+      return '<div class="mdImportFile"><div class="mdImportHead"><b title="' + esc(name) + '">' + esc(name) + '</b><span>not loaded</span></div><div class="mdImportError">' + esc(e.message || String(e)) + '</div></div>';
+    }
+  }));
+  if (selected !== state.selected) return;
+  host.innerHTML = rows.join("");
 }
 
 function stripMd(text) {
@@ -1264,6 +1324,9 @@ async function showSpec() {
   setEditing(false);
   setConfigEditing(false);
   state.view = "spec";
+  state.markdowns = [];
+  $("markdownCard").hidden = true;
+  $("markdownImports").innerHTML = "";
   $("workspace").classList.add("specMode");
   $("specNav").classList.add("active");
   for (const b of document.querySelectorAll("#programs .prog")) b.classList.remove("active");
@@ -1406,6 +1469,7 @@ async function select(name) {
   state.sourceOrigin = origin;
   state.map = map || null;
   $("source").innerHTML = renderCode(state.source);
+  await renderMarkdownImports(state.map?.markdowns || []);
   // the statically derived orchestration graph (GRAPH.md) — shown before any run.
   state.graph = null;
   state.graphCheck = null;

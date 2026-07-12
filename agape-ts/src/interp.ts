@@ -5,6 +5,7 @@
 import { createHash } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { readFile } from "node:fs/promises";
+import { isAbsolute, relative, resolve as resolvePath } from "node:path";
 import type * as A from "./ast.js";
 import {
   Ledger, MockProvider, ingressJoin, ingressOf, render, settledText,
@@ -74,6 +75,12 @@ interface AgentInstance {
 
 class Scope {
   vars = new Map<string, Value>();
+  // §5b the declared type of each `var`-bound name, kept so an assignment to a typed lvalue can thread the
+  // target's declared type as the `expected` type into the RHS (a bare `xs = self <- prompt {…}` requests
+  // the same structured schema a `text[] xs = self <- prompt {…}` declaration would). Recorded on the OWNING
+  // scope alongside its value; an empty `text[]` loses its element type at the value level, so the declared
+  // TypeRef — not the runtime value — is the reliable source.
+  declaredTypes = new Map<string, A.TypeRef>();
   // §12 dependence declarations in scope, threaded to the fusion point so `all`/`any`/`quorum` compose
   // dependent clusters (Fréchet bound) vs independent units (log-odds) correctly at runtime. Each keeps
   // its relation so only `dependent` groups form clusters.
@@ -96,6 +103,18 @@ class Scope {
   }
   set(name: string, v: Value) {
     this.vars.set(name, v);
+  }
+  setDeclaredType(name: string, t: A.TypeRef) {
+    this.declaredTypes.set(name, t);
+  }
+  // The declared type of a name, resolved exactly as `get` resolves its value (own vars, then parent, then
+  // agent field). Returns undefined for a name with no recorded type (a param, loop binding, or agent field
+  // whose declaration is absent), so callers fall back to today's expected-less behavior.
+  declaredType(name: string): A.TypeRef | undefined {
+    if (this.vars.has(name)) return this.declaredTypes.get(name);
+    if (this.parent) return this.parent.declaredType(name);
+    if (this.agent?.fields.has(name)) return this.agent.decl.fields.find((f) => f.name === name)?.type;
+    return undefined;
   }
   assign(name: string, v: Value) {
     if (this.vars.has(name)) {
@@ -300,6 +319,7 @@ type RunOptions = {
   toolHandlers?: Record<string, ToolHandler>;
   memory?: MemoryDriver;
   memoryRoot?: string;
+  projectRoot?: string;
   strictConfig?: boolean;
   timingOriginMs?: number;
 };
@@ -318,9 +338,10 @@ export function createSession(program: A.Program, opts: RunOptions = {}): Runtim
   const manifest: Manifest = opts.manifest ?? { provider: { backend: "mock" } };
   check(program, opts.modules, manifest, opts.strictConfig); // static pass first (TypeError/ModuleError/ConfigError/…)
   const provider = opts.provider ?? new MockProvider();
+  const projectRoot = resolvePath(opts.projectRoot ?? process.cwd());
   // The memory runtime shares the session's provider so reflection (when the
   // manifest opts in) runs behind the same seam as every other cognition call.
-  const memory = opts.memory ?? createMemoryDriver(manifest, { cwd: opts.memoryRoot ?? process.cwd(), provider });
+  const memory = opts.memory ?? createMemoryDriver(manifest, { cwd: opts.memoryRoot ?? projectRoot, provider });
   const toolHandlers = { ...createToolHandlers(manifest), ...(opts.toolHandlers ?? {}) };
   return new Interpreter(
     program,
@@ -333,6 +354,7 @@ export function createSession(program: A.Program, opts: RunOptions = {}): Runtim
     toolHandlers,
     opts.timingOriginMs,
     memory,
+    projectRoot,
   );
 }
 
@@ -406,6 +428,7 @@ class Interpreter {
     private toolHandlers: Record<string, ToolHandler> = {},
     timingOriginMs: number | undefined = undefined,
     private memory: MemoryDriver = createMemoryDriver(manifest ?? { provider: { backend: "mock" } }),
+    private projectRoot: string = process.cwd(),
   ) {
     this.ledger = new Ledger(timingOriginMs);
     // §3: register the declared principal names so a `decide c by p` (the parser's {policy} rule form)
@@ -556,12 +579,18 @@ class Interpreter {
       case "var": {
         const v = s.init ? await this.evalExpr(s.init, scope, s.type, s.name) : this.zeroOf(s.type);
         scope.set(s.name, v);
+        scope.setDeclaredType(s.name, s.type);
         return;
       }
       case "assign": {
-        const v = await this.evalExpr(s.value, scope);
-        if (s.target.kind === "ident") scope.assign(s.target.name, v);
-        else throw new RuntimeError("v0 only supports simple identifier assignment targets");
+        if (s.target.kind !== "ident") throw new RuntimeError("v0 only supports simple identifier assignment targets");
+        // §5b: thread the target's declared type as the expected type — so `xs = self <- prompt {…}` requests
+        // the same structured schema a `text[] xs = self <- prompt {…}` declaration would, closing the hole
+        // where a bare assignment skipped the structured path and returned a scalar into a typed slot. The
+        // type binds the reply schema and (via bindName) its title; when no type is recorded, behave as before.
+        const expected = scope.declaredType(s.target.name);
+        const v = await this.evalExpr(s.value, scope, expected, s.target.name);
+        scope.assign(s.target.name, v);
         return;
       }
       case "spawn": return this.execSpawn(s, scope);
@@ -1558,6 +1587,26 @@ class Interpreter {
     return { committed: "abstained", margin, basis: "Principal", principalEvent: ev.tick };
   }
 
+  private resolveMarkdownImport(importPath: string): string {
+    if (!importPath || importPath.includes("\0") || importPath.includes("\\") || isAbsolute(importPath) || /^[A-Za-z]:/.test(importPath)) {
+      throw new RuntimeError("markdown import must be a project-relative .md path: " + JSON.stringify(importPath));
+    }
+    if (!/\.(?:md|markdown)$/i.test(importPath)) {
+      throw new RuntimeError("markdown import must end in .md or .markdown: " + JSON.stringify(importPath));
+    }
+    const parts = importPath.split("/");
+    if (parts.some((part) => !part || part === "." || part === "..")) {
+      throw new RuntimeError("markdown import must not contain empty, current, or parent path segments: " + JSON.stringify(importPath));
+    }
+    const root = resolvePath(this.projectRoot);
+    const full = resolvePath(root, importPath);
+    const rel = relative(root, full);
+    if (!rel || rel.startsWith("..") || isAbsolute(rel)) {
+      throw new RuntimeError("markdown import escapes the project root: " + JSON.stringify(importPath));
+    }
+    return full;
+  }
+
   // ---- expressions ----
   private async evalExpr(e: A.Expr, scope: Scope, expected?: A.TypeRef, bindName?: string): Promise<Value> {
     switch (e.kind) {
@@ -1566,10 +1615,10 @@ class Interpreter {
       case "string": return settledText(e.value);
       case "mdimport": {
         try {
-          return { kind: "text", v: await readFile(e.path, "utf8"), trust: "raw", ingress: "external_unscreened" };
+          return { kind: "text", v: await readFile(this.resolveMarkdownImport(e.path), "utf8"), trust: "raw", ingress: "external_unscreened" };
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
-          throw new RuntimeError(`failed to import markdown ${JSON.stringify(e.path)}: ${message}`);
+          throw new RuntimeError("failed to import project markdown " + JSON.stringify(e.path) + ": " + message);
         }
       }
       case "bool": return { kind: "bool", v: e.value, trust: "settled" };

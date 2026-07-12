@@ -100,6 +100,34 @@ describe("kernel builtins", () => {
     expect(() => check(parse(prog))).toThrow(/pure.*kernel clock|kernel clock.*pure/i);
   });
 
+  // §5b type-safety: a bare assignment to a typed lvalue must thread the target's declared type into
+  // the RHS so a `self <- prompt {…}` structured send requests the SAME schema a typed declaration would.
+  // Without it the structured path is skipped and a scalar text lands in a typed slot — a silent hole.
+  it("assigns a self<-prompt array reply into a pre-declared text[] as an array, not a scalar", async () => {
+    const prog = `
+      prompt text ping;
+      agent A {
+        when (Prompt p about ping) {
+          text[] xs = [];
+          xs = self <- prompt {
+            List items about \${p.text}.
+          };
+          say(f"len=\${len(xs)}");
+          say(xs[0]);
+        }
+      }
+      spawn A a; awake a;
+    `;
+    // MockProvider returns ["ok"] for a text[] structured schema; a bare scalar reply would land as
+    // text and crash len(xs), so the handler would produce no output.
+    const res = await run(parse(prog), {
+      provider: new MockProvider(() => ({})),
+      promptInputs: [{ name: "ping", value: "go" }],
+    });
+    expect(res.stdout).toContain("len=1");
+    expect(res.stdout).toContain("ok");
+  });
+
   it("calls to undeclared functions other than the builtins still fail closed", async () => {
     const prog = `
       prompt text ping;

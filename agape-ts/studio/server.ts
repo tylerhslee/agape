@@ -35,6 +35,8 @@ const MAX_SOURCE_BYTES = 256 * 1024;
 const CONFIG_NAME = "agape.toml";
 const MAX_CONFIG_BYTES = 128 * 1024;
 const MAX_SPEC_BYTES = 2 * 1024 * 1024;
+const SAFE_MARKDOWN_NAME = /\.(?:md|markdown)$/i;
+const MAX_MARKDOWN_BYTES = 512 * 1024;
 
 const SECURITY_HEADERS = {
   "cache-control": "no-store",
@@ -87,6 +89,7 @@ interface ProgramMap {
   tools: { name: string; effect: string }[];
   principals: string[];
   prompts: { name: string; type: string }[];
+  markdowns: string[];
 }
 
 function typeLabel(t: A.TypeRef): string {
@@ -103,8 +106,99 @@ function typeLabel(t: A.TypeRef): string {
   }
 }
 
+function collectMarkdownImports(p: A.Program): string[] {
+  const imports = new Set<string>();
+
+  const visitRule = (rule?: A.Rule): void => {
+    if (rule?.kind === "expr") visitExpr(rule.expr);
+  };
+
+  const visitExpr = (e?: A.Expr): void => {
+    if (!e) return;
+    switch (e.kind) {
+      case "mdimport": imports.add(e.path); break;
+      case "fstring":
+        for (const part of e.parts) if (part.kind === "expr") visitExpr(part.expr);
+        break;
+      case "call": visitExpr(e.callee); for (const arg of e.args) visitExpr(arg); break;
+      case "spawnexpr": for (const arg of e.args) visitExpr(arg); break;
+      case "member": visitExpr(e.obj); break;
+      case "index": visitExpr(e.obj); visitExpr(e.index); break;
+      case "binary": visitExpr(e.left); visitExpr(e.right); break;
+      case "unary": visitExpr(e.operand); break;
+      case "agg": for (const operand of e.operands) visitExpr(operand); break;
+      case "quorum": visitExpr(e.source); break;
+      case "pipe": visitExpr(e.source); visitExpr(e.fn); break;
+      case "tasklit": visitExpr(e.objective); visitExpr(e.acceptance); break;
+      case "performexpr": for (const arg of e.args) visitExpr(arg); visitExpr(e.expires); break;
+      case "arraylit": for (const item of e.items) visitExpr(item); break;
+      case "recall": visitExpr(e.mem); visitExpr(e.query); break;
+      case "select": for (const cond of e.cond) visitExpr(cond.value); break;
+      case "structlit": for (const field of e.fields) visitExpr(field.value); break;
+      case "decide": visitExpr(e.credence); visitRule(e.rule); break;
+      case "endorse": visitExpr(e.subject); visitExpr(e.decision); break;
+      case "send": visitExpr(e.dest); visitExpr(e.message); visitExpr(e.expires); break;
+      case "string":
+      case "int":
+      case "float":
+      case "bool":
+      case "null":
+      case "self":
+      case "ident":
+        break;
+    }
+  };
+
+  const visitStmts = (stmts: A.Stmt[] = []): void => {
+    for (const stmt of stmts) visitStmt(stmt);
+  };
+
+  const visitStmt = (stmt: A.Stmt): void => {
+    switch (stmt.kind) {
+      case "var": visitExpr(stmt.init); break;
+      case "assign": visitExpr(stmt.target); visitExpr(stmt.value); break;
+      case "spawn": for (const arg of stmt.args) visitExpr(arg); break;
+      case "emit": for (const arg of stmt.args) visitExpr(arg); break;
+      case "perform": for (const arg of stmt.args) visitExpr(arg); break;
+      case "say": visitExpr(stmt.arg); break;
+      case "return": visitExpr(stmt.value); break;
+      case "if": visitExpr(stmt.cond); visitStmts(stmt.then); visitStmts(stmt.else ?? []); break;
+      case "dispatch":
+        visitExpr(stmt.gate);
+        for (const arm of stmt.arms) visitStmts(arm.body);
+        visitStmts(stmt.abstain?.body ?? []);
+        break;
+      case "when": visitExpr(stmt.about); visitExpr(stmt.guard); visitStmts(stmt.body); break;
+      case "memdecl": visitExpr(stmt.init); break;
+      case "retry": visitStmts(stmt.body); break;
+      case "complete": visitExpr(stmt.value); break;
+      case "fail": visitExpr(stmt.reason); break;
+      case "cancel": visitExpr(stmt.handle); break;
+      case "exprstmt": visitExpr(stmt.expr); break;
+      case "awake":
+      case "sleep":
+      case "forget":
+      case "depdecl":
+        break;
+    }
+  };
+
+  for (const decl of p.decls) {
+    if (decl.kind === "agent") {
+      if (decl.extends) for (const arg of decl.extends.args) visitExpr(arg);
+      visitStmts(decl.ctor);
+      for (const hook of decl.hooks) visitStmts(hook.body);
+      for (const when of decl.whens) visitStmt(when);
+    } else if (decl.kind === "fn") {
+      visitStmts(decl.body);
+    }
+  }
+  visitStmts(p.stmts);
+  return [...imports].sort((a, b) => a.localeCompare(b));
+}
+
 function mapProgram(p: A.Program): ProgramMap {
-  const m: ProgramMap = { agents: [], actions: [], events: [], enums: {}, tools: [], principals: [], prompts: [] };
+  const m: ProgramMap = { agents: [], actions: [], events: [], enums: {}, tools: [], principals: [], prompts: [], markdowns: collectMarkdownImports(p) };
   for (const d of p.decls) {
     switch (d.kind) {
       case "agent": m.agents.push(d.name); break;
@@ -239,6 +333,34 @@ function safeProgramPath(dir: string, name: string): string | undefined {
   const p = resolve(dir, rel);
   if (!insideRoot(dir, p)) return undefined;
   return existsSync(p) ? p : undefined;
+}
+
+function safeMarkdownRel(name: string): string | undefined {
+  if (!name || name.includes("\0") || name.includes("\\") || name.startsWith("/") || /^[A-Za-z]:/.test(name) || !SAFE_MARKDOWN_NAME.test(name)) return undefined;
+  const parts = name.split("/");
+  if (parts.some((part) => !part || part === "." || part === ".." || SKIP_DIRS.has(part))) return undefined;
+  return parts.join("/");
+}
+
+function readMarkdownSource(dir: string, name: string): { status: 200 | 400 | 404 | 413; body: unknown } {
+  const rel = safeMarkdownRel(name);
+  if (!rel) return { status: 400, body: { error: "invalid markdown import path" } };
+  const path = resolve(dir, rel);
+  if (!insideRoot(dir, path)) return { status: 400, body: { error: "markdown import escapes project root" } };
+  if (!existsSync(path)) return { status: 404, body: { error: "markdown import not found" } };
+  const st = statSync(path);
+  if (!st.isFile()) return { status: 404, body: { error: "markdown import not found" } };
+  if (st.size > MAX_MARKDOWN_BYTES) return { status: 413, body: { error: "markdown import is too large" } };
+  return {
+    status: 200,
+    body: {
+      name: rel,
+      source: readFileSync(path, "utf8"),
+      bytes: st.size,
+      modified: st.mtime.toISOString(),
+      origin: "project",
+    },
+  };
 }
 
 function safeWritableProgramPath(dir: string, name: string): string | undefined {
@@ -540,7 +662,7 @@ async function runProgram(
   const provider = createProvider(manifest);
   const memory = createMemoryDriver(manifest, { cwd: opts.dir });
   try {
-    const { ledger, stdout } = await run(program, { provider, manifest, memory, promptInputs, principalAttestations, timingOriginMs: startedAt });
+    const { ledger, stdout } = await run(program, { provider, manifest, memory, promptInputs, principalAttestations, timingOriginMs: startedAt, projectRoot: opts.dir });
     const ms = Date.now() - startedAt;
     const events = eventsWithResponseLatency(ledger.events, ms);
     const providerMeta = { backend: manifest.provider.backend, model: manifest.provider.model };
@@ -688,6 +810,7 @@ async function startRunSession(
       memory,
       principalAttestations,
       timingOriginMs: startedAt,
+      projectRoot: opts.dir,
       onConsult: (req) => new Promise<PrincipalAttestation | undefined>((resolveConsult) => {
         session.pending = { ...req, id: randomBytes(8).toString("base64url") };
         session.runState = "waiting";
@@ -759,7 +882,7 @@ export function startStudio(opts: StudioOptions): Promise<{ close: () => void }>
       if (req.method === "GET" && url.pathname === "/api/meta") {
         return json(res, 200, {
           dir: opts.dir,
-          version: "1.0.0-alpha.2026.7.11.6",
+          version: "1.0.0-alpha.2026.7.11.7",
           providers: providerStatuses(opts.allowLive),
           access: { liveEnabled: opts.allowLive, tokenRequired: Boolean(accessToken) },
         });
@@ -777,6 +900,10 @@ export function startStudio(opts: StudioOptions): Promise<{ close: () => void }>
         let map: ProgramMap | undefined;
         try { map = mapProgram(parse(program.source)); } catch { /* source may be mid-edit; run will show parse errors */ }
         return json(res, 200, { ...program, map });
+      }
+      if (req.method === "GET" && url.pathname === "/api/markdown") {
+        const md = readMarkdownSource(opts.dir, url.searchParams.get("name") ?? "");
+        return json(res, md.status, md.body);
       }
       if (req.method === "GET" && url.pathname === "/api/graph") {
         // the statically DERIVED orchestration graph (GRAPH.md). The graph is syntactic — a program

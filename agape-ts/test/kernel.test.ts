@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -104,14 +104,16 @@ describe("markdown prompt syntax", () => {
   it("imports markdown as raw external input and interpolates it inside quote-free prompt blocks", async () => {
     const dir = await mkdtemp(join(tmpdir(), "agape-md-prompt-"));
     try {
-      const guidePath = join(dir, "guide.md");
+      const promptDir = join(dir, "prompts");
+      await mkdir(promptDir, { recursive: true });
+      const guidePath = join(promptDir, "guide.md");
       await writeFile(guidePath, "# Guide\n\nPrefer atomic claims.");
       const provider = new RecordingStructuredProvider("done");
       const prog = `
         agent A {
           on awake {
             text topic = f"EU AI Act \${1}";
-            text guide = md "${guidePath}";
+            text guide = md "prompts/guide.md";
             text answer = self <- prompt {
 # Task
 Use this markdown guide:
@@ -128,7 +130,7 @@ Literal JSON braces stay literal:
         }
         spawn A a; awake a;
       `;
-      const r = await run(parse(prog), { provider });
+      const r = await run(parse(prog), { provider, projectRoot: dir });
       expect(provider.calls[0]?.prompt).toContain("# Guide\n\nPrefer atomic claims.");
       expect(provider.calls[0]?.prompt).toContain("Topic: EU AI Act 1");
       expect(provider.calls[0]?.prompt).toContain('{ "ok": true }');
@@ -145,12 +147,14 @@ Literal JSON braces stay literal:
   it("can deny markdown-imported prompt content before it reaches the provider", async () => {
     const dir = await mkdtemp(join(tmpdir(), "agape-md-deny-"));
     try {
-      const guidePath = join(dir, "guide.md");
+      const promptDir = join(dir, "prompts");
+      await mkdir(promptDir, { recursive: true });
+      const guidePath = join(promptDir, "guide.md");
       await writeFile(guidePath, "external instructions");
       const prog = `
         agent A {
           on awake {
-            text guide = md "${guidePath}";
+            text guide = md "prompts/guide.md";
             text answer = self <- prompt {
 \${guide}
             };
@@ -162,7 +166,26 @@ Literal JSON braces stay literal:
       await expect(run(parse(prog), {
         provider: new RecordingStructuredProvider("unreachable"),
         manifest: { provider: { backend: "mock" }, security: { tainted_ingress_to_provider: "deny" } },
+        projectRoot: dir,
       })).rejects.toThrow(/external unscreened ingress/);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects markdown imports outside the project root", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "agape-md-escape-"));
+    try {
+      const prog = [
+        "agent A {",
+        "  on awake {",
+        "    text guide = md \"../outside.md\";",
+        "    say(guide);",
+        "  }",
+        "}",
+        "spawn A a; awake a;",
+      ].join("\n");
+      await expect(run(parse(prog), { projectRoot: dir })).rejects.toThrow(/project markdown/);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

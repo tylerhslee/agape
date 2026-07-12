@@ -6,6 +6,22 @@ All notable changes to Agape are recorded here. The format follows
 suite, and the studio move in lockstep — a release is the whole bundle at one
 version.
 
+## [1.0.0-alpha.2026.7.11.7] - 2026-07-11
+
+Type-safety fix: an assignment to a typed lvalue now threads that lvalue's declared type into the RHS, so a `self <- prompt {…}` structured send on the right of a bare assignment requests the SAME schema a typed declaration would. Previously the assignment path evaluated the RHS with no expected type, silently skipping the structured path and dropping a scalar `text` into a typed slot (e.g. `text[] xs = []; xs = self <- prompt {…}` returned text and crashed at `len(xs)`) — a hole in a type-safe language. Surfaced dogfooding LeeHaRin's intent decomposition.
+
+### Fixed
+
+- `interp.ts`: `Scope` now records each `var`-bound name's declared `TypeRef`; the `assign` handler looks it up and passes it as the expected type/bind-name into the RHS evaluation, matching the declaration path. Robust to empty collections (uses the declared type, not a runtime-value guess). Assignments with no recorded type (params, loop bindings) are unchanged.
+
+### Added
+
+- Regression test: a bare assignment of a `self <- prompt` array reply into a pre-declared `text[]` lands as an array (len/index work), not a scalar.
+
+### Verified
+
+- Typecheck, unit suite (100), conformance cert (3).
+
 ## [1.0.0-alpha.2026.7.11.6] - 2026-07-11
 
 Array-walking builtins: `skip(xs, n)` (drop the first n) and `len(xs)` (settled int count) join `take`. Head/tail decomposition (`take(xs, 1)` / `skip(xs, 1)` / `len(xs) == 0`) makes the §11 bounded reactive re-dispatch idiom iterate over collections — an event handler processes the head and re-emits the tail — without any loop entering the core grammar.
