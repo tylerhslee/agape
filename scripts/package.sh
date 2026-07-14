@@ -49,6 +49,17 @@ exec node "$DIR/agape-ts/node_modules/tsx/dist/cli.mjs" "$DIR/agape-ts/src/cli.t
 SH
 chmod +x "$STAGE/bin/agape"
 
+# Windows entry point: cmd/PowerShell users can't invoke the bash wrapper.
+# This shim resolves its own bin/ directory (%~dp0) and invokes node with
+# native Windows paths, propagating the CLI's exit code.
+cat > "$STAGE/bin/agape.cmd" <<'CMD'
+@echo off
+setlocal
+set "DIR=%~dp0.."
+node "%DIR%\agape-ts\node_modules\tsx\dist\cli.mjs" "%DIR%\agape-ts\src\cli.ts" %*
+exit /b %ERRORLEVEL%
+CMD
+
 # 2. Examples, default manifest, license, and bundle README.
 cp SPEC.md "$STAGE/SPEC.md"
 cp LICENSE "$STAGE/LICENSE"
@@ -130,15 +141,42 @@ else
   shasum -a 256 "$NAME.tar.gz" > "$NAME.tar.gz.sha256"
 fi
 
-# 5. Verify: extract to a clean dir and run the shipped wrapper — directly,
-# and through a symlink from an unrelated cwd (the PATH-install shape).
+# 5. Verify: extract to a clean dir and run the shipped entry points — the bash
+# wrapper directly, the PATH-install symlink shape where symlinks are real, and
+# the Windows .cmd shim through cmd.exe when present.
 echo "==> verifying the shipped TypeScript CLI"
 VERIFY="$(mktemp -d)"
 tar -xzf "$NAME.tar.gz" -C "$VERIFY"
+
+# a) Direct run of the bash wrapper (works under sh / Git Bash on every platform).
 ( cd "$VERIFY/$NAME" && "./bin/agape" run examples/hello.ag >/dev/null )
+echo "==> verified: bin/agape (direct)"
+
+# b) PATH-install shape via symlink. On Windows Git Bash, `ln -s` copies rather
+#    than links (MSYS winsymlinks off), so the copied wrapper resolves its own
+#    dir to the linkbin parent and can't find the runtime — that is not the shape
+#    we ship. Only exercise this where a real symlink is actually created.
 mkdir -p "$VERIFY/linkbin"
-ln -s "$VERIFY/$NAME/bin/agape" "$VERIFY/linkbin/agape"
-( cd "$VERIFY" && "./linkbin/agape" run "$VERIFY/$NAME/examples/hello.ag" >/dev/null )
+ln -s "$VERIFY/$NAME/bin/agape" "$VERIFY/linkbin/agape" 2>/dev/null || true
+if [ -h "$VERIFY/linkbin/agape" ]; then
+  ( cd "$VERIFY" && "./linkbin/agape" run "$VERIFY/$NAME/examples/hello.ag" >/dev/null )
+  echo "==> verified: bin/agape (PATH symlink)"
+else
+  echo "==> skipped PATH-symlink check (no native symlink support here)"
+fi
+
+# c) Windows-native entry point: exercise bin/agape.cmd through cmd.exe, but only
+#    under Git Bash / MSYS on a real Windows filesystem. (cmd.exe is also on PATH
+#    under WSL via interop, where the tree lives on a UNC/Linux path cmd.exe can't
+#    use — uname pins this to native Windows.) The .cmd resolves its own dir, so
+#    run it cwd-relative from the bundle root; MSYS_NO_PATHCONV keeps `/c` intact.
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*)
+    ( cd "$VERIFY/$NAME" && MSYS_NO_PATHCONV=1 cmd.exe /c 'bin\agape.cmd run examples\hello.ag' >/dev/null )
+    echo "==> verified: bin/agape.cmd (cmd.exe)"
+    ;;
+esac
+
 rm -rf "$VERIFY"
 rm -rf "$ROOT/dist/$NAME"
 

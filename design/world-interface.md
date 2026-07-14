@@ -143,7 +143,7 @@ text hits = perform Search("prior art") expires 5;
   wiring entries must reference existing `[tools.*]` catalog entries and declared
   action/event names; a foreground-bound perform without a `result_event` is a
   ConfigError.
-- Version: v1.0.0-beta.2026.7.14.0 (same branch as delegation; nothing released).
+- Version: v1.0.0-beta.2026.7.14.1 (same branch as delegation; nothing released).
 
 ## 8. Decision log (owner, 2026-07-03)
 
