@@ -75,7 +75,9 @@ fallback_temperature = 0.7
 backend = "local-keyring"
 
 [memory]
-max_internalize_chars = 12000
+driver = "markdown"
+path = ".agape/memory"
+auto_memory = true
 
 [tools]
 payments = { mcp = "https://payments.internal/mcp" }
@@ -176,6 +178,19 @@ examples, default markdown memory manifest, and, when Node is present, Studio
 (`studio/web-dist` built by Vite plus `studio/agent-server` source without
 `node_modules` or runtime data). The agent-server can serve the built web app via
 `AGAPE_WEB_DIST`, so Studio can run as one local process with no Vite at runtime.
+
+- **Studio launcher.** `bin/agape studio` launches the full React Studio when a
+  web build is available — `AGAPE_WEB_DIST`, or the bundle-relative
+  `studio/web-dist` staged by `package.sh` — by starting the agent-server
+  (installing its dependencies on first run) with the web app mounted. Without a
+  build, or with `--inspector`, it serves the embedded single-file inspector; it
+  prints one line saying which Studio it launched.
+- **Version checking.** `scripts/check-version.mjs` treats `VERSION.md` as the
+  source of truth and understands both prerelease channels (`alpha` and `beta`),
+  flagging any stale reference on either channel; `--root <dir>` checks a
+  non-repo tree (e.g. a release-rehearsal copy). The smoke/E2E fixtures derive
+  the language version from `agape-ts/package.json` instead of hardcoding it,
+  and `agape-ts` dependencies are pinned to caret ranges (no `latest`).
 
 Later: more packaged executable targets, an npm wrapper for `npm i -g agape`, a
 package registry, and a LICENSE before any public release.

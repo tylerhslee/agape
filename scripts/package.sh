@@ -49,8 +49,9 @@ exec node "$DIR/agape-ts/node_modules/tsx/dist/cli.mjs" "$DIR/agape-ts/src/cli.t
 SH
 chmod +x "$STAGE/bin/agape"
 
-# 2. Examples, default manifest, and bundle README.
+# 2. Examples, default manifest, license, and bundle README.
 cp SPEC.md "$STAGE/SPEC.md"
+cp LICENSE "$STAGE/LICENSE"
 cp agape-ts/examples/*.ag "$STAGE/examples/" 2>/dev/null || true
 cat > "$STAGE/agape.toml" <<TOML
 [project]
