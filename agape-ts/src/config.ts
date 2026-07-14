@@ -20,6 +20,14 @@ export interface ProviderConfig {
   fallback_samples?: number; // min 10
   fallback_temperature?: number;
 }
+export interface ProviderSecrets {
+  openaiApiKey?: string;
+  anthropicApiKey?: string;
+  geminiApiKey?: string;
+}
+export interface ProviderFactoryOptions {
+  secrets?: ProviderSecrets;
+}
 export type ManifestAtom = string | number | boolean;
 export type ManifestValue = ManifestAtom | ManifestAtom[] | Record<string, ManifestAtom>;
 export interface BindingConfig {
@@ -132,13 +140,14 @@ export function hasConfiguredBinding(bindings: Record<string, BindingConfig> | u
   return typeof binding?.driver === "string" && binding.driver.trim().length > 0;
 }
 
-export function createProvider(m: Manifest): Provider {
+export function createProvider(m: Manifest, options: ProviderFactoryOptions = {}): Provider {
   const p = m.provider;
+  const secrets = options.secrets ?? {};
   switch (p.backend) {
     case "mock": return new MockProvider();
-    case "anthropic": return new AnthropicProvider(p);
-    case "openai": return new OpenAIProvider(p);
-    case "gemini": return new GeminiProvider(p);
+    case "anthropic": return new AnthropicProvider(p, secrets);
+    case "openai": return new OpenAIProvider(p, secrets);
+    case "gemini": return new GeminiProvider(p, secrets);
     default: throw new Error(`unknown provider backend '${p.backend}' (manifest [provider] backend=…)`);
   }
 }
@@ -365,7 +374,7 @@ function safeSchemaName(name = "Reply"): string {
 // else draw the forced choice `fallback_samples` times and use the empirical frequency.
 // Cognition is asynchronous, so the whole seam is async (the interpreter awaits every judgment).
 abstract class RemoteProvider implements Provider {
-  constructor(protected cfg: ProviderConfig) {}
+  constructor(protected cfg: ProviderConfig, protected secrets: ProviderSecrets = {}) {}
 
   async judge(prompt: string, enumName: string, variants: Variant[]): Promise<{ scores: Record<Variant, number> }> {
     if (this.cfg.exposes_logprobs) {
@@ -414,7 +423,10 @@ class AnthropicProvider extends RemoteProvider {
   private readonly model = this.cfg.model || "claude-haiku-4-5";
   private clientP?: Promise<any>;
   private client(): Promise<any> {
-    return (this.clientP ??= import("@anthropic-ai/sdk").then((m) => new m.default()));
+    return (this.clientP ??= import("@anthropic-ai/sdk").then((m) => {
+      const apiKey = this.secrets.anthropicApiKey;
+      return new m.default(apiKey ? { apiKey } : undefined);
+    }));
   }
 
   protected async pickOnce(prompt: string, enumName: string, variants: Variant[], temperature: number): Promise<Variant> {
@@ -469,7 +481,10 @@ class OpenAIProvider extends RemoteProvider {
   private readonly model = this.cfg.model || "gpt-4o-mini";
   private clientP?: Promise<any>;
   private client(): Promise<any> {
-    return (this.clientP ??= import("openai").then((m) => new m.default()));
+    return (this.clientP ??= import("openai").then((m) => {
+      const apiKey = this.secrets.openaiApiKey;
+      return new m.default(apiKey ? { apiKey } : undefined);
+    }));
   }
 
   // read the first-token distribution and fold its mass onto the enum's variants.
@@ -576,7 +591,7 @@ class GeminiProvider extends RemoteProvider {
       } catch {
         throw new Error("gemini backend selected but @google/genai is not installed (npm i @google/genai)");
       }
-      return new mod.GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY ?? process.env.GOOGLE_API_KEY });
+      return new mod.GoogleGenAI({ apiKey: this.secrets.geminiApiKey ?? process.env.GEMINI_API_KEY ?? process.env.GOOGLE_API_KEY });
     })());
   }
 
