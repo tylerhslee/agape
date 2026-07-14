@@ -2863,6 +2863,68 @@ state (Section 0.2).
   is a relational scan with a boolean field filter over the objective log; it carries recorded trust
   (an `Endorsed` subject reads back `settled`). A typed event query yields `LedgerEntry<Event>[]`;
   a projected `select COLS ...` yields `Record[]`; `select * from ledger ...` yields the full events.
+- **The default substrate: markdown (normative).** The default memory substrate
+  (`[memory] driver = "markdown"`, §17.1) persists cells as user-editable markdown files under the
+  memory root (default `<project>/.agape/memory`):
+
+  ```text
+  <memory root>/
+    MEMORY.md                              # the entrypoint index ([memory] entrypoint)
+    scopes/<project>/<agent>/<mem>.md      # one topic file per memory scope
+    .archive/<scope>-<timestamp>.md        # forget archives ([memory] archive_on_forget)
+  ```
+
+  The scope path segments are the manifest `[project]` name (or `default` when unset), the agent
+  instance name, and the `mem` region name, each sanitized to `[A-Za-z0-9._-]` (any other run of
+  characters becomes `_`; an empty, `.`, or `..` segment becomes `default`).
+
+  **The entrypoint index contract.** `MEMORY.md` holds a runtime-managed scope index between the
+  markers `<!-- agape:markdown-memory-index:start -->` and `<!-- agape:markdown-memory-index:end -->`
+  under a `## Scopes` heading. Each internalize replaces the scope's single bullet —
+  `- [project/agent/mem](scopes/…/mem.md): <one-line latest memory>` — and keeps the block sorted;
+  content outside the marker block is user-owned and preserved. A consult reads the entrypoint
+  (budget-limited by `index_lines`/`index_bytes`, §17.1) plus the scope's topic file as recall
+  candidates.
+
+  **The cell file format.** A topic file begins with a `# Memory: project/agent/mem` heading and
+  free prose; each internalized cell appends one section:
+
+  ````markdown
+  ## <created_at, ISO-8601>
+
+  <!-- agape-memory-id: md:<16 hex> -->
+
+  <the stored memory text>
+
+  ```json
+  { "metadata": { … }, "summary": { … } }
+  ```
+  ````
+
+  The cell id is `md:` plus the first 16 hex digits of a SHA-256 over the scope identity, the memory
+  text, and the write timestamp. The metadata block records `id`, `created_at`, and the scope
+  (`project`, `agent`, `mem`), plus the write's runtime metadata: `source`
+  (`store | memdecl | provider_reply`), `subject`, `source_event` (for internalized replies),
+  `provenance = { attester, prompt_name }` — the attestation identity of the prompt delivery whose
+  reaction produced the write; a reaction with no originating prompt delivery (a heartbeat tick, a
+  spawn/awake hook) omits the key rather than inventing an attester — and the memory-runtime fields
+  `memory_kind`, `memory_tags`, `memory_signal`, `memory_reason`, `canonical_hash`, and (when
+  reflection ran, §17.1) `memory_reflection` and `reflected_from_hash`.
+
+  **Recall over the files.** A consult splits each file at markdown headings into candidate cells;
+  the recall text strips HTML comments and the metadata fence; a cell's id comes from its
+  `agape-memory-id` comment or, absent one, a content hash. Boilerplate scaffolding and forgotten
+  sections are skipped. The files are the canonical cells: they are plain markdown and
+  **user-editable** — recall honors hand edits, and a hand-written section needs no metadata block.
+  `forget` replaces the topic file with a tombstone
+  (`<!-- agape-forgotten at="…" tombstoned="N" -->`), archiving the prior contents first when
+  `archive_on_forget` is set; the receipt refs name the touched files
+  (`markdown_file`, `markdown_index`, and `markdown_archive` when archived).
+
+  **What survives a redeploy.** The memory root is the entire durable memory state: an app and its
+  Studio operating on the same project mount share it, and a redeploy that preserves the mount
+  preserves memory in full. No database or external index is required; derived state (the index
+  block, scores, ranking) is recomputed from the files at read time.
 
 ### 16.7a Projection maintenance and conflicts
 
@@ -3098,15 +3160,17 @@ result_event = "SearchResult"
 tool = "ticketing"
 
 [memory]
-facts_driver = "sqlite"
-graph_driver = "sqlite"
-vector_driver = "sqlite-vec"
-blob_store = "archive"
-indexing = "incremental"
-background_reindex = true
-forget_policy = "cascade"
-archive_retention = "forever"
-max_internalize_chars = 12000
+driver = "markdown"
+path = ".agape/memory"
+entrypoint = "MEMORY.md"
+auto_memory = true
+classify = true
+dedupe = true
+dedupe_threshold = 0.9
+recall_pool = 40
+reflect = false
+archive_on_forget = true
+domain_terms = ["waiver", "roster"]
 ```
 
 Required stable tables:
@@ -3123,7 +3187,9 @@ Required stable tables:
 | `[security]` | ingress-to-cognition policy (`tainted_ingress_to_provider = "warn"|"deny"|"off"`) | optional; default is `warn` |
 | `[security.ingress.prompts.NAME]` | manifest-level ingress screening for a prompt source | optional; that prompt binding is screened |
 | `[security.ingress.events.NAME]` | manifest-level ingress screening for a standing sensor or result-event payload | optional; that event binding is screened |
-| `[memory]` | private-memory storage, indexing, and archival policy | runtime has private memory |
+| `[memory]` | private-memory substrate selection and memory-runtime policy | runtime has private memory |
+| `[runtime]` | host/deployment runtime settings; parsed and preserved, no kernel-defined keys | optional |
+| `[policy]` | recognized only to be rejected — any key is a `ConfigError` (§17.2) | never |
 
 Resolution rules:
 
@@ -3225,17 +3291,78 @@ The `[tools.*]` endpoint catalog (referenced by `[actions.*]`/`[events.*]` wirin
   the `perform NAME` grant (on the perform path), typed marshalling, `ToolStarted`/`ToolResolved`
   journaling, optional result screening, and replay from the recorded result (§6b, §16.4, §16.5).
 
-Memory bindings:
+Memory bindings — substrate selection:
 
-- `facts_driver`, `graph_driver`, `vector_driver`, and `blob_store` select private-memory storage
-  implementations. They do not change memory trust: recall remains tainted (§10).
-- `indexing = "incremental"` and `background_reindex = true` express the default contract:
-  `mem <- value` mutates live views incrementally, while compaction/full re-indexing is
-  runtime-managed in the background.
-- `forget_policy = "cascade"` is the core default for active private memory. If an implementation
-  tombstones or deletes per modality, the ledger payload must say exactly which happened (§10).
-- `archive_retention = "forever"` means blob refs in ledger payloads are recoverable by hash, though
-  the runtime may move old bytes to cold storage.
+- `driver` (string, default `"markdown"`) selects the private-memory substrate. `"markdown"` is the
+  normative default (§16.7): scoped, user-editable markdown files under the project. `"local"` (alias
+  `"mock"`) is a process-local in-memory substrate for tests and replay fixtures. An unrecognized
+  driver is rejected at configuration time. No driver changes memory trust: recall remains tainted
+  (§10).
+
+Markdown-substrate keys (`driver = "markdown"`):
+
+- `path` (string, default `".agape/memory"`; accepted aliases `root`, `directory`) is the memory
+  root. A relative path resolves against the project root; a leading `~` expands to the user home;
+  the placeholders `{project}`, `{agent}`, and `{mem}` substitute the sanitized scope segments.
+- `entrypoint` (string, default `"MEMORY.md"`) names the index file at the memory root (a `.md`
+  suffix is appended if missing).
+- `index_lines` (int, default 200, clamped 1–10000) and `index_bytes` (int, default 25600, clamped
+  1024–10000000) budget how much of the entrypoint index a consult reads as recall candidates.
+- `top_k` (int, default 10, clamped 1–1000) is the substrate's default hit count when a consult does
+  not specify one. Through the composed memory runtime the recall depth is the runtime's own default
+  (10) — the runtime always specifies its pool size — so `top_k` matters only to hosts consulting
+  the substrate directly.
+- `archive_on_forget` (bool, default `true`): `forget` copies the topic file's prior contents to
+  `.archive/<scope>-<timestamp>.md` under the memory root before tombstoning; `false` discards
+  without an archive. The `Forgotten` effects counters must report archived vs deleted accordingly
+  (§10).
+
+Memory-runtime policy keys (they apply over every substrate — the memory runtime wraps the
+configured driver):
+
+- `auto_memory` (bool, default `true`) enables the write-judgment filter on auto-internalized
+  provider replies: a low-signal reply is skipped rather than stored, with receipt
+  `driver_status = "SKIPPED"` and `refs.skipped_reason = "low_signal_auto_memory"`. Explicit stores
+  (`mem <- v`, a `mem` declaration initializer) are never filtered. `false` stores every provider
+  reply unfiltered.
+- `classify` (bool, default `true`) classifies each stored cell lexically into a kind
+  (`preference | fact | procedure | decision | interaction | note`) with tags and a signal score,
+  recorded in the cell metadata (`memory_kind`, `memory_tags`, `memory_signal`, `memory_reason`)
+  and the receipt's `policy.classification`. `false` records kind `note` with reason
+  `classification_disabled`.
+- `dedupe` (bool, default `true`) and `dedupe_threshold` (float, default 0.9, clamped 0.5–1.0)
+  suppress near-duplicate writes: before storing, the runtime consults the substrate and computes a
+  lexical term-overlap similarity against the candidates; a hit at or above the threshold suppresses
+  the write with `driver_status = "DEDUPED"` and refs `duplicate_of`/`duplicate_score`.
+- `recall_pool` (int, default 4× the requested depth, clamped to at least that depth and at most
+  5000) sizes the substrate over-fetch pool that recall re-ranks (query-term overlap, domain-term
+  match, kind match against the query's profile, a verbatim-query bonus, and an order tiebreak)
+  before trimming to the requested depth.
+- `domain_terms` (string array, or one comma-separated string) is domain vocabulary that expands
+  recall queries and boosts re-ranking.
+- `reflect` (bool, default `false`) opts in provider-assisted reflection: before a surviving episode
+  is stored, the session provider rewrites it as a short first-person memory; classification re-runs
+  on the reflected prose, and the cell metadata records `memory_reflection` and
+  `reflected_from_hash` (the raw episode's canonical hash) for provenance. The receipt's policy
+  records the outcome: `reflected`, `empty_fallback_raw` (the provider returned nothing — the raw
+  episode is stored), or `failed_fallback_raw` (the provider call failed — the raw episode is
+  stored). Reflection requires a provider handle; without one the write path is unchanged and the
+  deterministic recollection template is stored (§16.7).
+
+*Future substrate ports (non-normative).* Earlier drafts specified a multi-store substrate port
+keyed by `facts_driver`, `graph_driver`, `vector_driver`, `blob_store`, `indexing`,
+`background_reindex`, `forget_policy`, `archive_retention`, and `max_internalize_chars`. Those keys
+are reserved and not recognized by the current runtime. The `Internalized`/`Forgotten` payloads
+still report per-modality effects and policy fields (§10), so a future port can honor them without
+a ledger schema change.
+
+The `[runtime]` and `[policy]` tables:
+
+- `[runtime]` is a recognized table for host/deployment runtime settings. The runtime parses and
+  preserves its keys for the embedding host and harness fixtures (§17.5); the kernel defines no
+  `[runtime]` keys and never reads them, and an unknown key is not an error.
+- `[policy]` is recognized only to be rejected: any key under `[policy]` is a `ConfigError` before
+  execution, because a decision policy lives in source, never the manifest (§17.2).
 
 Decision rules are not in the manifest. A gate's threshold, margin, floor, conformal alpha, and
 readiness are written inline in source (`decide c by confidence θ margin δ floor m`, §13). The
@@ -3323,6 +3450,61 @@ These are what `health` advertises (§16.9) and what a recording is identified a
 `(I, manifest, recording)` (§17.3). **Changing the memory envelope, the ledger schema, the replay
 contract, or private-memory semantics requires a spec update and passing conformance tests before it
 is considered implemented** — the runtime contract does not drift ahead of (or behind) the document.
+
+### 17.7 Host embedding — binding tool implementations in process
+
+A host application embedding the runtime as a library (§16.9) binds tool implementations by
+supplying **tool handlers** to the session constructor, keyed by `[tools.*]` catalog key:
+
+```ts
+createSession(program, { manifest, toolHandlers: { web_search: async (call) => … } })
+```
+
+A handler receives one call context and returns the effector's reply:
+
+```ts
+interface ToolCallContext {
+  name: string;             // the [tools.*] catalog key
+  binding: ToolBindingConfig; // that catalog entry's manifest table, verbatim
+  args: Value[];            // the wired action's/event's typed argument values
+  payload: string;          // the deterministic correlation payload: name|rendered args
+}
+type ToolHandler = (call: ToolCallContext) => unknown | Promise<unknown>;
+```
+
+Handler resolution and precedence:
+
+- The session's handler map is built from the manifest first, then overlaid with the host's
+  `toolHandlers` — **a host handler overrides the manifest-derived handler for the same catalog
+  key**. From the manifest, `driver = "http"`/`"webhook"` binds the built-in HTTP adapter (POST —
+  or the binding's `method` — to the binding's `url`/`endpoint` with a JSON body of the rendered
+  args and correlation payload; headers from the binding's `headers` table; a bearer token via
+  `bearer_env`/`token_env` environment indirection); `driver = "mcp-http"` binds the built-in
+  MCP-over-HTTP adapter (a JSON-RPC 2.0 `tools/call`, tool name from the binding's `tool`/`name`
+  key, unwrapping the `result` member). Stdio MCP drivers get no built-in adapter — a host process
+  manager must supply the handler.
+- A handler is consulted whenever a wired invocation's catalog entry has any driver other than
+  `"mock"`. `driver = "mock"` never consults a handler: it short-circuits to the built-in
+  deterministic reply (a pure function of the correlation payload) for demos and replay-stable
+  tests. A non-`mock` entry with no registered handler is a `ConfigError` at invocation.
+
+Result and error behavior:
+
+- A reply already shaped as a runtime value (an object with a string `kind` and a `trust` field) is
+  used verbatim, trust included. Any other reply is JSON-coerced to a **settled** runtime value
+  (string → `text`, number → `int`/`float`, boolean, null, array, object → struct). The runtime then
+  stamps the result's **ingress provenance** from the wired `result_event`'s screening configuration
+  — `external_screened` when a `[security.ingress.events.NAME]` table covers it, else
+  `external_unscreened` — so a handler result is judgment-settled but ingress-tracked (§13,
+  §15.3.1), and handler injection cannot bypass ingress policy.
+- Every consultation is journaled: `ToolStarted` before the call (with a binding summary that
+  filters secret-bearing keys — `api_key`, `token`, `secret`, `password`, `credential`, `auth` —
+  out of the payload) and `ToolResolved` after it, applied in issue order (§16.1, §16.5). A handler
+  that throws propagates as the invoking reaction's runtime error; no `ToolResolved` is appended —
+  the seam journals resolutions, not failures.
+- Handlers do not change authority or wiring semantics: the invocation is still reached only through
+  a wired action's `perform` or a wired event (§6b), still governed by grants and task scope (§13),
+  and still replayed from the recorded result without re-invoking the handler (§16.5).
 
 ---
 

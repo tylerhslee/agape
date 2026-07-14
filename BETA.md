@@ -8,13 +8,13 @@ breaking feature changes every week.
 
 The beta compatibility promise covers these surfaces:
 
-- `agape.toml`: provider, memory, prompt, tool, action, security, and runtime binding shape.
-- Markdown memory layout: project-root `.agape/memory/MEMORY.md` plus scoped files under `.agape/memory/scopes/<scope>/<agent>/<slot>.md`.
-- Runtime receipts: ledger event names and payloads used for decisions, endorsements, memory writes, tool calls, prompt ingress, and provider outputs.
-- Tool bindings: host `toolHandlers`, built-in HTTP tools, and MCP-over-HTTP tools configured from the manifest.
-- Provider behavior: mock cognition when no provider is configured; live calls and live embeddings when provider configuration is present.
+- `agape.toml`: provider, memory, prompt, tool, action, security, and runtime binding shape (SPEC §17.1).
+- Markdown memory layout: project-root `.agape/memory/MEMORY.md` plus scoped files under `.agape/memory/scopes/<scope>/<agent>/<slot>.md` (SPEC §16.7, "The default substrate: markdown"; `[memory]` keys in SPEC §17.1).
+- Runtime receipts: ledger event names and payloads used for decisions, endorsements, memory writes, tool calls, prompt ingress, and provider outputs (SPEC §7, §10, §13, §16.2).
+- Tool bindings: host `toolHandlers` (SPEC §17.7), built-in HTTP tools, and MCP-over-HTTP tools configured from the manifest (SPEC §17.1, the `[tools.*]` catalog).
+- Provider behavior: mock cognition when no provider is configured; live calls and live embeddings when provider configuration is present (SPEC §17.1 provider fields, §16.8).
 - Studio/project contract: Studio edits the same project root that the app runtime executes.
-- Soma deployment contract: app and Studio share a persistent Agape project mount, with markdown memory surviving redeploys.
+- Soma deployment contract: app and Studio share a persistent Agape project mount, with markdown memory surviving redeploys (SPEC §16.7, "What survives a redeploy").
 
 Breaking changes to these surfaces should wait for a new beta line once the beta
 tag is cut.
