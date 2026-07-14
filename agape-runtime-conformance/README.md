@@ -1,6 +1,6 @@
 # Agape Runtime Conformance
 
-This is the TypeScript black-box conformance suite for the Agape runtime contract in `../SPEC.md` version `v1.0.0-alpha.2026.7.11.7`.
+This is the TypeScript black-box conformance suite for the Agape runtime contract in `../SPEC.md` version `v1.0.0-beta.2026.7.14.0`.
 
 The tests are derived only from the spec, especially sections 16, 16.7, 16.8, 16.9, 17.5, and 17.6. They do not import or assume the Rust runtime, Studio runtime, or any existing implementation.
 
@@ -15,6 +15,48 @@ AGAPE_RUNTIME_ADAPTER=/absolute/path/to/adapter.js npm test
 The adapter module must export either `default`, `adapter`, or `createAdapter()`. Its object must implement the `RuntimeConformanceAdapter` interface in `src/adapter.ts`.
 
 If `AGAPE_RUNTIME_ADAPTER` is not set, the tests are skipped. That keeps this package installable without blessing any implementation as the reference runtime.
+
+## Running Against agape-ts
+
+The agape-ts compiler/runtime ships an adapter at `../agape-ts/src/runtime_adapter.ts`:
+
+```sh
+npm run test:agape-ts
+# equivalent to: AGAPE_RUNTIME_ADAPTER=../agape-ts/src/runtime_adapter.ts npm test
+```
+
+Current scorecard: **33 passed / 2 failed / 0 skipped** (see "Known agape-ts gaps" below).
+
+Adapter notes (see the headers of `agape-ts/src/runtime_adapter*.ts` for the full design):
+
+- Programs execute on the real agape-ts kernel (parse, check, interp). This suite's embedded
+  sources predate the core-kernel spec strip, so the adapter first applies a transparent
+  source-level desugar (`runtime_adapter_desugar.ts`): `policy` declarations become inline gate
+  rules, gate arm blocks become `if (d.committed == V) { endorse ...; ... }` chains, `write tool`
+  declarations become `action` + manifest `[tools.*]`/`[actions.*]` wiring, `event<T>` reply
+  bindings become bare reply types, prompt binder `.body` becomes the kernel `.text`, f-string
+  `{x}` becomes `${x}`, `{ ... } retry(N)` is unrolled, and cognition-bearing top-level `when`
+  blocks are hoisted into a generated agent. Gate, taint, authority, scheduling, and ledger
+  semantics all come from the kernel, not the shim.
+- `canonicalHash` is the SPEC 16.2 SHA-256 chain over the six canonical fields.
+- `run(record: true)` journals every oracle answer (provider judge/structured/reply, tool
+  results); `replay` re-executes with journal-backed seams, so provider/tool/identity/prompt/
+  decomposition/embedding oracles are never re-invoked and the canonical head must reproduce.
+- The 16.7 memory envelope (artifact decomposition into summary/chunks/facts/triples/vectors,
+  experiences, corrections, context ranking) is adapter-level test-mode machinery over real
+  session-ledger ticks (`runtime_adapter_memory.ts`); the kernel `mem` substrate does not itself
+  decompose artifacts. GateProfile bookkeeping, config resolution, and exactly-once ingress
+  dedup (SPEC 15.5) are likewise implemented at the adapter's transport layer.
+
+### Known agape-ts gaps
+
+- `16_4` "raises MarginFloorViolation and prevents the sink": the kernel folds the `floor`
+  directive into the decide step (a below-floor margin abstains), so the sink is prevented but
+  no `MarginFloorViolation` fault event is ever appended (SPEC 13/16.6 describe a committed
+  decision faulting at the sink).
+- `16_8` "forms warm conformal prediction sets": the kernel's `conformal` rule is cold-start
+  only — it always abstains. There is no calibration-pool fitting, and `Decision.predictionSet`
+  is never produced (SPEC 15.5.6/16.8).
 
 ## Required Test-Mode Surface
 

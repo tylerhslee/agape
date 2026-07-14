@@ -8,7 +8,7 @@ action Flag(text note);
 agent C grants { perform Flag } {
   on awake {
     text report = self <- "describe the transaction";
-    Credence<R> c = self <- f"is this fraud: {report}";
+    Credence<R> c = self <- f"is this fraud: ${report}";
     Decision<R> d = decide c by confidence 0.95 margin 0.2;
     if (d.committed == Fraud) { Endorsement<text> e = endorse report by d; perform Flag(e); }
     else if (d.committed == Clean) { Endorsement<text> e = endorse report by d; say("clean"); }

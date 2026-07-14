@@ -1,6 +1,6 @@
 {
-  "passed": 200,
-  "total": 200,
+  "passed": 207,
+  "total": 207,
   "bySection": {
     "00_lexical": {
       "pass": 11,
@@ -19,20 +19,20 @@
       "total": 8
     },
     "05_agents": {
-      "pass": 12,
-      "total": 12
+      "pass": 15,
+      "total": 15
     },
     "06_communication": {
       "pass": 7,
       "total": 7
     },
     "06b_world": {
-      "pass": 12,
-      "total": 12
+      "pass": 14,
+      "total": 14
     },
     "06c_delegation": {
-      "pass": 29,
-      "total": 29
+      "pass": 31,
+      "total": 31
     },
     "07_ledger": {
       "pass": 7,
@@ -101,8 +101,8 @@
       "section": "00_lexical",
       "expect": "reject",
       "pass": true,
-      "reason": "rejected with ParseError",
-      "errorClass": "ParseError",
+      "reason": "rejected with LexError",
+      "errorClass": "LexError",
       "phase": "parse",
       "hadMatchers": false,
       "directives": []
@@ -134,8 +134,8 @@
       "section": "00_lexical",
       "expect": "reject",
       "pass": true,
-      "reason": "rejected with ParseError",
-      "errorClass": "ParseError",
+      "reason": "rejected with LexError",
+      "errorClass": "LexError",
       "phase": "parse",
       "hadMatchers": false,
       "directives": []
@@ -215,7 +215,7 @@
       "directives": []
     },
     {
-      "id": "axes_pure_call_sync_settled",
+      "id": "axes_pure_call_settled",
       "section": "01_axes",
       "expect": "accept",
       "pass": true,
@@ -469,7 +469,7 @@
       "directives": []
     },
     {
-      "id": "fn_sync_calls_async_reject",
+      "id": "fn_pure_calls_async_reject",
       "section": "04_functions",
       "expect": "reject",
       "pass": true,
@@ -480,7 +480,7 @@
       "directives": []
     },
     {
-      "id": "fn_sync_decide_by_principal_reject",
+      "id": "fn_pure_decide_by_principal_reject",
       "section": "04_functions",
       "expect": "reject",
       "pass": true,
@@ -491,7 +491,7 @@
       "directives": []
     },
     {
-      "id": "fn_sync_emit_ok",
+      "id": "fn_pure_emit_ok",
       "section": "04_functions",
       "expect": "accept",
       "pass": true,
@@ -501,7 +501,7 @@
       "directives": []
     },
     {
-      "id": "fn_sync_inhand_decide_ok",
+      "id": "fn_pure_inhand_decide_ok",
       "section": "04_functions",
       "expect": "accept",
       "pass": true,
@@ -511,7 +511,7 @@
       "directives": []
     },
     {
-      "id": "fn_sync_pure_ok",
+      "id": "fn_pure_local_ok",
       "section": "04_functions",
       "expect": "accept",
       "pass": true,
@@ -521,7 +521,7 @@
       "directives": []
     },
     {
-      "id": "fn_sync_reaches_seam_reject",
+      "id": "fn_pure_reaches_seam_reject",
       "section": "04_functions",
       "expect": "reject",
       "pass": true,
@@ -532,7 +532,7 @@
       "directives": []
     },
     {
-      "id": "fn_sync_store_reject",
+      "id": "fn_pure_store_reject",
       "section": "04_functions",
       "expect": "reject",
       "pass": true,
@@ -627,6 +627,31 @@
       "directives": []
     },
     {
+      "id": "agent_prompt_ingress_to_provider_deny",
+      "section": "05_agents",
+      "expect": "reject",
+      "pass": true,
+      "reason": "rejected with TaintViolation",
+      "errorClass": "TaintViolation",
+      "phase": "run",
+      "hadMatchers": false,
+      "directives": [
+        "manifest"
+      ]
+    },
+    {
+      "id": "agent_prompt_ingress_to_provider_warn",
+      "section": "05_agents",
+      "expect": "accept",
+      "pass": true,
+      "reason": "accepted",
+      "phase": "run",
+      "hadMatchers": false,
+      "directives": [
+        "manifest"
+      ]
+    },
+    {
       "id": "agent_prompt_opens_sensor",
       "section": "05_agents",
       "expect": "accept",
@@ -635,6 +660,18 @@
       "phase": "run",
       "hadMatchers": true,
       "directives": []
+    },
+    {
+      "id": "agent_prompt_screened_ingress_to_provider_ok",
+      "section": "05_agents",
+      "expect": "accept",
+      "pass": true,
+      "reason": "accepted",
+      "phase": "run",
+      "hadMatchers": false,
+      "directives": [
+        "manifest"
+      ]
     },
     {
       "id": "agent_prompt_value_drives_perform_ok",
@@ -834,6 +871,17 @@
       "directives": []
     },
     {
+      "id": "world_pure_perform_reject",
+      "section": "06b_world",
+      "expect": "reject",
+      "pass": true,
+      "reason": "rejected with ColorViolation",
+      "errorClass": "ColorViolation",
+      "phase": "run",
+      "hadMatchers": false,
+      "directives": []
+    },
+    {
       "id": "world_replay_chain_head",
       "section": "06b_world",
       "expect": "accept",
@@ -847,15 +895,28 @@
       ]
     },
     {
-      "id": "world_sync_perform_reject",
+      "id": "world_result_event_ingress_to_provider_warn",
       "section": "06b_world",
-      "expect": "reject",
+      "expect": "accept",
       "pass": true,
-      "reason": "rejected with ColorViolation",
-      "errorClass": "ColorViolation",
+      "reason": "accepted",
       "phase": "run",
       "hadMatchers": false,
-      "directives": []
+      "directives": [
+        "manifest"
+      ]
+    },
+    {
+      "id": "world_result_event_screened_ingress_to_provider_ok",
+      "section": "06b_world",
+      "expect": "accept",
+      "pass": true,
+      "reason": "accepted",
+      "phase": "run",
+      "hadMatchers": false,
+      "directives": [
+        "manifest"
+      ]
     },
     {
       "id": "world_unwired_action_pure_ok",
@@ -1014,6 +1075,30 @@
       "phase": "run",
       "hadMatchers": true,
       "directives": []
+    },
+    {
+      "id": "del_fanout_shared_worker_concurrent_ok",
+      "section": "06c_delegation",
+      "expect": "accept",
+      "pass": true,
+      "reason": "accepted + ledger ok",
+      "phase": "run",
+      "hadMatchers": true,
+      "directives": [
+        "replay"
+      ]
+    },
+    {
+      "id": "del_fanout_spawn_expr_distinct_workers_ok",
+      "section": "06c_delegation",
+      "expect": "accept",
+      "pass": true,
+      "reason": "accepted + ledger ok",
+      "phase": "run",
+      "hadMatchers": true,
+      "directives": [
+        "replay"
+      ]
     },
     {
       "id": "del_foreground_complete_ok",

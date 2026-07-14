@@ -10,7 +10,7 @@ action Search(text q);
 agent A grants { perform Search } {
   on awake {
     text evidence = perform Search("agape") expires 5;
-    text summary = self <- f"summarize external evidence: {evidence}";
+    text summary = self <- f"summarize external evidence: ${evidence}";
     say(summary);
   }
 }

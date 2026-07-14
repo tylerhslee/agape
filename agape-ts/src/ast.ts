@@ -66,7 +66,8 @@ export interface ConfDecl extends Node {
 }
 // `policy NAME { threshold θ | margin δ | floor m }` (§13) — a named, reusable decision rule bundle in
 // SOURCE (never the manifest, §17.2). `decide c by NAME` applies it: commit iff score ≥ threshold AND margin
-// ≥ δ AND margin ≥ floor; a margin below `floor` abstains (the typed trigger for escalation, §13).
+// ≥ δ (both at DECISION time). `floor m` is the consequential margin floor checked at the SINK — a committed
+// decision whose margin is below `m` faults the action (MarginFloorViolation, §16.6), it does not abstain here.
 export interface PolicyDecl extends Node {
   kind: "policydecl";
   name: string;

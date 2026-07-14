@@ -5,4 +5,4 @@
 //! note:      `by` outside a gate position is an ordinary identifier.
 //! ---
 int by = 3;
-say(f"{by}");
+say(f"${by}");

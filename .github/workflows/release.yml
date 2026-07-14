@@ -24,15 +24,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
 
-      # package.sh builds the release binary + studio, archives, and verifies by
-      # running the shipped binary from a clean extraction (fails the job if not).
+      # package.sh stages the agape-ts toolchain + studio, archives, and verifies
+      # by running the shipped CLI from a clean extraction (fails the job if not).
       - name: Package the bundle
         run: bash scripts/package.sh
 

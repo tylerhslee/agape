@@ -307,6 +307,13 @@ export interface ConsultRequest {
   agent?: string;
 }
 
+// §15.5.6 split-conformal calibration input: a past decision scored over the enum's variants, tagged with
+// the true label later recorded for it. When present (and at/above the rule's `readiness`), a `by conformal α`
+// gate calibrates its prediction set from this pool instead of cold-starting. A vanilla runtime supplies none.
+export interface ConformalLabel {
+  scores: Record<string, number>;
+  label: string;
+}
 
 type RunOptions = {
   provider?: Provider;
@@ -322,6 +329,9 @@ type RunOptions = {
   projectRoot?: string;
   strictConfig?: boolean;
   timingOriginMs?: number;
+  // §15.5.6/§16.8: the compatible labelled cases a `by conformal α` gate calibrates from (the GateProfile's
+  // calibration pool, supplied by the runtime that owns the ledger). Absent → conformal gates cold-start.
+  calibration?: ConformalLabel[];
 };
 
 export async function run(
@@ -355,6 +365,7 @@ export function createSession(program: A.Program, opts: RunOptions = {}): Runtim
     opts.timingOriginMs,
     memory,
     projectRoot,
+    opts.calibration ?? [],
   );
 }
 
@@ -398,6 +409,8 @@ class Interpreter {
   private principals = new Set<string>();
   // §13: declared `policy NAME { … }` rule bundles, applied when a `decide c by NAME` names one.
   private policies = new Map<string, A.PolicyDecl>();
+  // §15.2/§20: the file-level `conformal α;` default a bare `by conformal` (no α) inherits (else 0.05, §15.5.6).
+  private fileConformalAlpha?: number;
   private prompts = new Map<string, A.PromptDecl>();
   // §6: sends that EXPIRED before their destination was awake — refused (DeliveryRefused) if it later awakes.
   private pendingExpired: { dest: string; subj: string }[] = [];
@@ -429,6 +442,7 @@ class Interpreter {
     timingOriginMs: number | undefined = undefined,
     private memory: MemoryDriver = createMemoryDriver(manifest ?? { provider: { backend: "mock" } }),
     private projectRoot: string = process.cwd(),
+    private calibrationPool: ConformalLabel[] = [],
   ) {
     this.ledger = new Ledger(timingOriginMs);
     // §3: register the declared principal names so a `decide c by p` (the parser's {policy} rule form)
@@ -500,7 +514,7 @@ class Interpreter {
         // (execAwake), and `conformal α;` is a parse-only default (§20) — none run here.
         case "principal": break;
         case "prompt": this.prompts.set(d.name, d); break;
-        case "conformal": break;
+        case "conformal": this.fileConformalAlpha = d.alpha; break;
         case "policydecl": this.policies.set(d.name, d); break;
       }
     }
@@ -1072,6 +1086,24 @@ class Interpreter {
     return fields;
   }
 
+  // §13/§16.6 the runtime margin floor, checked at the consequential sink. A committed decision whose rule
+  // carried a `floor m` authorizes an Endorsement carrying that `m`; if the endorsed value's margin is below
+  // `m` when it reaches a `perform` argument, the action FAULTS: append a typed MarginFloorViolation (a
+  // catchable Error, the typed trigger for escalation) and abandon the invocation. The action never runs — the
+  // MarginFloorViolation is appended before the action row, so no perform is recorded. Same shape and handling
+  // as the task-scope enablement check (§6c). A rule with no floor raises nothing.
+  private enforceMarginFloor(v: Value, action: string, agent: AgentInstance | undefined): void {
+    if (v.kind !== "endorsement" || v.floor === undefined || v.margin >= v.floor) return;
+    const subject = v.binding ?? render(v.subject);
+    this.ledger.append(
+      "MarginFloorViolation",
+      subject,
+      { action, margin: v.margin, floor: v.floor },
+      agent?.name,
+    );
+    throw new CrashError();
+  }
+
   private async execPerform(s: A.PerformStmt, scope: Scope): Promise<void> {
     const agent = scope.currentAgent();
     // §19.2: the action name may be QUALIFIED (a cross-module action) or a bare name resolved within the
@@ -1100,6 +1132,7 @@ class Interpreter {
     const payload: string[] = [];
     for (const a of s.args) {
       const v = await this.evalExpr(a, scope);
+      this.enforceMarginFloor(v, name, agent); // §13/§16.6 sink margin floor (before the action row is appended)
       const sunk = this.sinkValue(v, name);
       argValues.push(sunk);
       payload.push(render(sunk));
@@ -1145,6 +1178,7 @@ class Interpreter {
     const payload: string[] = [];
     for (const a of e.args) {
       const v = await this.evalExpr(a, scope);
+      this.enforceMarginFloor(v, name, agent); // §13/§16.6 sink margin floor (before the action row is appended)
       const sunk = this.sinkValue(v, name);
       argValues.push(sunk);
       payload.push(render(sunk));
@@ -1382,12 +1416,14 @@ class Interpreter {
       let committed: Committed;
       let margin: number;
       let basis: string;
+      let floor: number | undefined;
+      let predictionSet: string[] | undefined;
       let principalEvent: number | undefined;
       if (pureByForm) {
         // route directly to the principal; no rule collapse (the "rule" IS the principal name).
         ({ committed, margin, basis, principalEvent } = await this.principalRule(cred, scope, principalName!));
       } else {
-        ({ committed, margin, basis } = this.collapse(cred, gate.rule));
+        ({ committed, margin, basis, floor, predictionSet } = this.collapse(cred, gate.rule));
         // prefix form: escalate to the principal ONLY when the rule could not commit (§13).
         if (committed === "abstained" && principalName) {
           ({ committed, margin, basis, principalEvent } = await this.principalRule(cred, scope, principalName));
@@ -1395,7 +1431,7 @@ class Interpreter {
       }
       const decisionSubject = bindName ?? (gate.credence.kind === "ident" ? gate.credence.name : this.agentSubject(scope));
       const decisionId = this.ledger.events.length;
-      this.ledger.append("Decided", decisionSubject, {
+      const decidedPayload: Record<string, unknown> = {
         decision_id: decisionId,
         credence: cred.enumName,
         enum: cred.enumName,
@@ -1406,7 +1442,12 @@ class Interpreter {
         rule: ruleSummary(gate.rule),
         source: scoreSummary(cred.scores),
         principal_event: principalEvent,
-      }, scope.currentAgent()?.name);
+      };
+      // the consequential floor and the conformal prediction set are recorded only when the rule produces
+      // them, so a plain threshold decision's canonical payload is byte-for-byte unchanged (§16.2).
+      if (floor !== undefined) decidedPayload.floor = floor;
+      if (predictionSet !== undefined) decidedPayload.prediction_set = predictionSet;
+      this.ledger.append("Decided", decisionSubject, decidedPayload, scope.currentAgent()?.name);
       // §8/§11: committing a Credence<Entailment> to Contradicts also appends a first-class Contradiction,
       // subjected at the judged credence, so a downstream `when (Contradiction c)` / `when (Error e)` reacts
       // to the conflict (Contradiction extends Error, §9).
@@ -1421,6 +1462,8 @@ class Interpreter {
         committed,
         basis,
         margin,
+        floor,
+        predictionSet,
         decisionId,
         principalEvent,
         rule: ruleSummary(gate.rule),
@@ -1476,7 +1519,7 @@ class Interpreter {
     this.ledger.append("Endorsed", subjId, endorsementPayload, scope.currentAgent()?.name);
     const value: Value = {
       kind: "endorsement", subject, enumName: dec.enumName, committed,
-      basis: dec.basis, margin: dec.margin, committedNarrowed: true, trust: "settled", binding: bindName, decisionId: dec.decisionId,
+      basis: dec.basis, margin: dec.margin, floor: dec.floor, committedNarrowed: true, trust: "settled", binding: bindName, decisionId: dec.decisionId,
       ingress: ingressOf(subject),
     };
     return { value, committed };
@@ -1495,30 +1538,69 @@ class Interpreter {
     return false;
   }
 
-  private collapse(cred: Extract<Value, { kind: "credence" }>, rule: A.Rule): { committed: Committed; margin: number; basis: string } {
+  private collapse(
+    cred: Extract<Value, { kind: "credence" }>,
+    rule: A.Rule,
+  ): { committed: Committed; margin: number; basis: string; floor?: number; predictionSet?: string[] } {
     const { variant, score } = topVariant(cred.scores);
     const runnerUp = secondScore(cred.scores);
     const margin = score - runnerUp;
     if (rule.kind === "confidence") {
+      // §13 threshold basis: commit iff score ≥ θ AND margin ≥ δ (both checked at DECISION time). The `floor m`
+      // is NOT a decision-time gate — it is threaded to the sink where it faults a committed-but-thin decision
+      // (MarginFloorViolation, §16.6). A rule with no floor raises none.
       const passθ = score >= rule.theta;
       const passδ = rule.margin === undefined || margin >= rule.margin;
-      return { committed: passθ && passδ ? variant : "abstained", margin, basis: "Threshold" };
+      return { committed: passθ && passδ ? variant : "abstained", margin, basis: "Threshold", floor: rule.floor };
     }
-    if (rule.kind === "conformal") return { committed: "abstained", margin, basis: "Conformal" };
+    if (rule.kind === "conformal") {
+      // §15.5.6 conformal basis: with a compatible calibration pool at/above the rule's `readiness`, form the
+      // split-conformal prediction set and commit iff it is a singleton. Below readiness (or with no pool) the
+      // quantile is uncertified → the supervised cold start abstains/defers (§13).
+      const conformal = this.conformalCollapse(cred, rule, margin);
+      return { ...conformal, floor: rule.floor };
+    }
     if (rule.kind === "policy") {
-      // §13 named policy: commit iff the score clears `threshold`, the margin clears `margin`, AND the margin
-      // is at or above the `floor` — a margin below the floor abstains (the typed trigger for escalation),
-      // even when the threshold is met. An undefined directive is unconstrained.
+      // §13 named policy: commit iff the score clears `threshold` AND the margin clears `margin` (both at
+      // decision time). The `floor` is threaded to the sink, NOT folded into the decision — a committed
+      // decision whose margin is below the floor faults the ACTION at its `perform` (§16.6), it does not
+      // abstain here. An undefined directive is unconstrained.
       const pol = this.policies.get(rule.name);
       if (pol) {
         const passθ = pol.threshold === undefined || score >= pol.threshold;
         const passδ = pol.margin === undefined || margin >= pol.margin;
-        const passFloor = pol.floor === undefined || margin >= pol.floor;
-        return { committed: passθ && passδ && passFloor ? variant : "abstained", margin, basis: "Threshold" };
+        return { committed: passθ && passδ ? variant : "abstained", margin, basis: "Threshold", floor: pol.floor };
       }
     }
     const passθ = score >= 0.5;
     return { committed: passθ ? variant : "abstained", margin, basis: "Threshold" };
+  }
+
+  // §15.5.6 split-conformal prediction over the gate's calibration pool. Nonconformity nc(x, y) = 1 − score(y|x);
+  // score each calibration case at its TRUE label, take q̂ as the ⌈(n+1)(1−α)⌉-th smallest nc (clamped to the
+  // largest observed nc when that index exceeds n), and form Cα(x) = { v : nc(x, v) ≤ q̂ }. Commit iff |Cα| = 1.
+  private conformalCollapse(
+    cred: Extract<Value, { kind: "credence" }>,
+    rule: Extract<A.Rule, { kind: "conformal" }>,
+    margin: number,
+  ): { committed: Committed; margin: number; basis: string; predictionSet?: string[] } {
+    const alpha = rule.alpha ?? this.fileConformalAlpha ?? 0.05;
+    const pool = this.calibrationPool;
+    const readiness = rule.readiness ?? 1;
+    // cold start: no certified quantile below the readiness minimum of labelled cases.
+    if (pool.length === 0 || pool.length < readiness) {
+      return { committed: "abstained", margin, basis: "Conformal" };
+    }
+    const ncScores = pool
+      .map((c) => 1 - (c.scores[c.label] ?? 0))
+      .sort((a, b) => a - b);
+    const n = ncScores.length;
+    const rank = Math.ceil((n + 1) * (1 - alpha)); // 1-indexed target rank
+    const qHat = rank > n ? ncScores[n - 1]! : ncScores[rank - 1]!;
+    const variants = this.enums.get(cred.enumName) ?? Object.keys(cred.scores);
+    const predictionSet = variants.filter((v) => 1 - (cred.scores[v] ?? 0) <= qHat + 1e-12);
+    const committed: Committed = predictionSet.length === 1 ? (predictionSet[0] as Committed) : "abstained";
+    return { committed, margin, basis: "Conformal", predictionSet };
   }
 
   // Reach the identity dependency (§13): consult the principal `p`. The mock outcome is a PURE function of

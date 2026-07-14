@@ -8,7 +8,7 @@ agent A {
   on awake {
     Credence<bool> ok = self <- "is \"approve #42\" an approval?";
     Decision<bool> b = decide ok by confidence 0.9;
-    say(f"{b}");
+    say(f"${b}");
   }
 }
 spawn A a; awake a;

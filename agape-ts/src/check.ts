@@ -681,6 +681,119 @@ export function check(program: A.Program, modules?: ModuleInput[], manifest?: Ma
   }
   c.checkBody(program.stmts, new Scope());
   c.checkDeferenceFlow(program.stmts, new Scope());
+  checkDenyModePromptIngress(program, manifest, decls.prompts);
+}
+
+// §5b/§17 deny-mode provider-prompt ingress, statically (the T-Send/T-Credence premise
+// `provider_ingress_policy(ι_p, manifest) ≠ deny`, §15.3.2): under [security]
+// tainted_ingress_to_provider = "deny", a prompt arrival whose source has NO manifest-configured
+// ingress screen delivers an `external_unscreened` value, so a send that interpolates it into a
+// cognition prompt is rejected before it can reach the provider — a TaintViolation. A screened
+// source ([security.ingress.prompts.NAME]) delivers `external_screened` values and passes.
+// Conservative dataflow: the `when (Prompt p about NAME)` binder, and any local initialized from
+// an expression that references it, carry the unscreened ingress. (The runtime deny check in the
+// interpreter still guards flows this static walk cannot see.)
+function checkDenyModePromptIngress(program: A.Program, manifest: Manifest | undefined, prompts: Set<string>): void {
+  if (manifest?.security?.tainted_ingress_to_provider !== "deny") return;
+  const screens = manifest.security.ingress?.prompts ?? {};
+  const screened = (name: string) => Object.prototype.hasOwnProperty.call(screens, name);
+
+  // whether an expression references an ingress-carrying binding (or contains a send that does).
+  const refs = (e: A.Expr | undefined, tainted: Set<string>): boolean => {
+    if (!e) return false;
+    switch (e.kind) {
+      case "ident": return tainted.has(e.name);
+      case "member": return refs(e.obj, tainted);
+      case "binary": return refs(e.left, tainted) || refs(e.right, tainted);
+      case "unary": return refs(e.operand, tainted);
+      case "call": return refs(e.callee, tainted) || e.args.some((a) => refs(a, tainted));
+      case "fstring": return e.parts.some((p) => p.kind === "expr" && refs(p.expr, tainted));
+      case "structlit": return e.fields.some((f) => refs(f.value, tainted));
+      case "arraylit": return e.items.some((it) => refs(it, tainted));
+      case "send": return refs(e.message, tainted);
+      default: return false;
+    }
+  };
+
+  // walk every expression under a subscribed handler; a send whose rendered prompt references
+  // ingress-carrying data under deny mode is the violation.
+  const inspectExpr = (e: A.Expr | undefined, tainted: Set<string>, source: string): void => {
+    if (!e) return;
+    if (e.kind === "send" && refs(e.message, tainted)) {
+      throw taintViolation(
+        `provider prompt renders external unscreened ingress from prompt '${source}' under [security] ` +
+        `tainted_ingress_to_provider = "deny" — configure [security.ingress.prompts.${source}] screening, ` +
+        `or change the policy (§5b, §17)`,
+      );
+    }
+    switch (e.kind) {
+      case "member": inspectExpr(e.obj, tainted, source); return;
+      case "binary": inspectExpr(e.left, tainted, source); inspectExpr(e.right, tainted, source); return;
+      case "unary": inspectExpr(e.operand, tainted, source); return;
+      case "call": inspectExpr(e.callee, tainted, source); e.args.forEach((a) => inspectExpr(a, tainted, source)); return;
+      case "fstring": e.parts.forEach((p) => { if (p.kind === "expr") inspectExpr(p.expr, tainted, source); }); return;
+      case "structlit": e.fields.forEach((f) => inspectExpr(f.value, tainted, source)); return;
+      case "arraylit": e.items.forEach((it) => inspectExpr(it, tainted, source)); return;
+      case "send": inspectExpr(e.dest, tainted, source); inspectExpr(e.message, tainted, source); return;
+      default: return;
+    }
+  };
+
+  const inspectBody = (stmts: A.Stmt[], tainted: Set<string>, source: string): void => {
+    for (const st of stmts) {
+      switch (st.kind) {
+        case "var":
+          inspectExpr(st.init, tainted, source);
+          if (st.init && refs(st.init, tainted)) tainted.add(st.name); // conservative propagation
+          break;
+        case "assign":
+          inspectExpr(st.value, tainted, source);
+          if (st.target.kind === "ident" && refs(st.value, tainted)) tainted.add(st.target.name);
+          break;
+        case "say": inspectExpr(st.arg, tainted, source); break;
+        case "return": inspectExpr(st.value, tainted, source); break;
+        case "exprstmt": inspectExpr(st.expr, tainted, source); break;
+        case "emit": st.args.forEach((a) => inspectExpr(a, tainted, source)); break;
+        case "perform": st.args.forEach((a) => inspectExpr(a, tainted, source)); break;
+        case "if":
+          inspectExpr(st.cond, tainted, source);
+          inspectBody(st.then, new Set(tainted), source);
+          if (st.else) inspectBody(st.else, new Set(tainted), source);
+          break;
+        case "when": inspectBody(st.body, new Set(tainted), source); break;
+        case "dispatch":
+          for (const arm of st.arms) inspectBody(arm.body, new Set(tainted), source);
+          if (st.abstain) inspectBody(st.abstain.body, new Set(tainted), source);
+          break;
+        default: break;
+      }
+    }
+  };
+
+  // find every `when (Prompt p about NAME)` handler over an UNSCREENED declared prompt source.
+  const visitWhen = (w: A.WhenStmt): void => {
+    if (w.etype === "Prompt" && w.binder && w.about?.kind === "ident" && prompts.has(w.about.name) && !screened(w.about.name)) {
+      inspectBody(w.body, new Set([w.binder]), w.about.name);
+    }
+    scanForWhens(w.body);
+  };
+  const scanForWhens = (stmts: A.Stmt[]): void => {
+    for (const st of stmts) {
+      switch (st.kind) {
+        case "when": visitWhen(st); break;
+        case "if": scanForWhens(st.then); if (st.else) scanForWhens(st.else); break;
+        case "dispatch": for (const arm of st.arms) scanForWhens(arm.body); if (st.abstain) scanForWhens(st.abstain.body); break;
+        default: break;
+      }
+    }
+  };
+  scanForWhens(program.stmts);
+  for (const d of program.decls) {
+    if (d.kind !== "agent") continue;
+    for (const w of d.whens) visitWhen(w);
+    for (const h of d.hooks) scanForWhens(h.body);
+    scanForWhens(d.ctor);
+  }
 }
 
 function declClass(t: A.TypeRef): Cls {

@@ -7,11 +7,11 @@ enum R { Yes, No }
 agent Desk {
   on awake {
     text item = self <- "describe";
-    Credence<R> c = self <- f"yes: {item}";
+    Credence<R> c = self <- f"yes: ${item}";
     Decision<R> d = decide c by confidence 0.8;
     if (d.committed == Yes) {
       Endorsement<text> e = endorse item by d;
-      say(f"{e.committed}");
+      say(f"${e.committed}");
       if (e.basis == Threshold) { say("threshold"); } else { say("other"); }
       if (e.margin > 0.1) { say("clear"); } else { say("close"); }
     } else if (d.committed == No) { Endorsement<text> e = endorse item by d; say("no"); }

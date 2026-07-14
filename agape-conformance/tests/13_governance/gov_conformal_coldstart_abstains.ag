@@ -8,7 +8,7 @@
 agent A {
   on awake {
     text req = self <- "state the request";
-    Credence<bool> c = self <- f"approve: {req}";
+    Credence<bool> c = self <- f"approve: ${req}";
     Decision<bool> d = decide c by conformal 0.1;
     if (d.committed == true) { Endorsement<text> e = endorse req by d; }
     else if (d.committed == false) { Endorsement<text> e = endorse req by d; }

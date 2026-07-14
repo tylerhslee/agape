@@ -319,6 +319,10 @@ async function main() {
   const outPath = join(HERE, "results.json");
   writeFileSync(outPath, JSON.stringify({ passed, total: rows.length, bySection: Object.fromEntries(bySection), rows }, null, 2));
   console.log(`\nwrote ${outPath}`);
+  return rows.length - passed;
 }
 
-main().then(() => process.exit(0));
+main().then(
+  (failures) => process.exit(failures > 0 ? 1 : 0),
+  (err) => { console.error(err); process.exit(1); },
+);

@@ -10,7 +10,7 @@ action Flag(bool b);
 agent A grants { perform Flag } {
   on awake {
     text subj = self <- "state the case";
-    Credence<bool> c = self <- f"should we flag: {subj}";
+    Credence<bool> c = self <- f"should we flag: ${subj}";
     Decision<bool> d = decide c by confidence 0.5 margin 0.2 floor 0.2;
     if (d.committed == true) { Endorsement<text> e = endorse subj by d; perform Flag(true); }
     else if (d.committed == false) { Endorsement<text> e = endorse subj by d; }

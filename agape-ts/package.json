@@ -2,8 +2,8 @@
   "name": "agape-ts",
   "private": true,
   "type": "module",
-  "version": "1.0.0-alpha.2026.7.11.7",
-  "description": "A TypeScript compiler + runtime for the Agape core kernel (SPEC.md v1.0.0-alpha.2026.7.11.7). Embedded in Agape Studio.",
+  "version": "1.0.0-beta.2026.7.14.0",
+  "description": "A TypeScript compiler + runtime for the Agape core kernel (SPEC.md v1.0.0-beta.2026.7.14.0). Embedded in Agape Studio.",
   "bin": {
     "agape-ts": "src/cli.ts"
   },
@@ -18,14 +18,14 @@
     "version:check": "node ../scripts/check-version.mjs"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "latest",
-    "@google/genai": "latest",
-    "openai": "latest"
+    "@anthropic-ai/sdk": "^0.107.0",
+    "@google/genai": "^2.10.0",
+    "openai": "^6.45.0"
   },
   "devDependencies": {
-    "tsx": "latest",
-    "typescript": "latest",
+    "tsx": "^4.22.4",
+    "typescript": "^6.0.3",
     "vitest": "^2.1.9",
-    "@types/node": "latest"
+    "@types/node": "^26.0.1"
   }
 }

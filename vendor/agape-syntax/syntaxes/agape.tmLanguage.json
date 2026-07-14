@@ -1,0 +1,326 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Agape",
+  "scopeName": "source.agape",
+  "fileTypes": [
+    "ag"
+  ],
+  "patterns": [
+    {
+      "include": "#comments"
+    },
+    {
+      "include": "#prompt-markdown"
+    },
+    {
+      "include": "#fstring"
+    },
+    {
+      "include": "#markdown-import"
+    },
+    {
+      "include": "#string"
+    },
+    {
+      "include": "#numbers"
+    },
+    {
+      "include": "#constants"
+    },
+    {
+      "include": "#declarations"
+    },
+    {
+      "include": "#control"
+    },
+    {
+      "include": "#lifecycle"
+    },
+    {
+      "include": "#governance"
+    },
+    {
+      "include": "#queries"
+    },
+    {
+      "include": "#aggregation"
+    },
+    {
+      "include": "#task"
+    },
+    {
+      "include": "#library"
+    },
+    {
+      "include": "#contextual"
+    },
+    {
+      "include": "#self"
+    },
+    {
+      "include": "#types"
+    },
+    {
+      "include": "#prelude"
+    },
+    {
+      "include": "#function-call"
+    },
+    {
+      "include": "#operators"
+    },
+    {
+      "include": "#punctuation"
+    }
+  ],
+  "repository": {
+    "comments": {
+      "comments": "Comments are `//` to end of line only. `//!` conformance headers are ordinary line comments.",
+      "name": "comment.line.double-slash.agape",
+      "match": "//.*$"
+    },
+    "prompt-markdown": {
+      "comments": "Quote-free Markdown prompt blocks: prompt { ... ${expr} ... }. Plain braces are Markdown text.",
+      "name": "meta.prompt.markdown.agape",
+      "begin": "\\b(prompt)\\b(\\s*)(\\{)",
+      "end": "^(\\s*)(\\})(?=\\s*(?:[;),\\]}]|$))",
+      "beginCaptures": {
+        "1": {
+          "name": "keyword.control.prompt.agape"
+        },
+        "2": {
+          "name": "punctuation.whitespace.prompt.agape"
+        },
+        "3": {
+          "name": "punctuation.section.block.begin.agape"
+        }
+      },
+      "endCaptures": {
+        "2": {
+          "name": "punctuation.section.block.end.agape"
+        }
+      },
+      "patterns": [
+        {
+          "include": "#interpolation"
+        },
+        {
+          "include": "text.html.markdown"
+        }
+      ]
+    },
+    "interpolation": {
+      "name": "meta.interpolation.agape",
+      "begin": "\\$\\{",
+      "end": "\\}",
+      "beginCaptures": {
+        "0": {
+          "name": "punctuation.section.interpolation.begin.agape"
+        }
+      },
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.section.interpolation.end.agape"
+        }
+      },
+      "patterns": [
+        {
+          "include": "$self"
+        }
+      ]
+    },
+    "fstring": {
+      "comments": "F-strings use ${expr} interpolation. Plain braces are literal text.",
+      "name": "string.interpolated.agape",
+      "begin": "f\"",
+      "end": "\"",
+      "beginCaptures": {
+        "0": {
+          "name": "punctuation.definition.string.begin.agape"
+        }
+      },
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.definition.string.end.agape"
+        }
+      },
+      "patterns": [
+        {
+          "name": "constant.character.escape.agape",
+          "match": "\\\\[nt\"\\\\]"
+        },
+        {
+          "include": "#interpolation"
+        }
+      ]
+    },
+    "markdown-import": {
+      "comments": "Markdown import expression: md \"path.md\".",
+      "name": "keyword.other.import.markdown.agape",
+      "match": "\\bmd\\b(?=\\s*\")"
+    },
+    "string": {
+      "comments": "double-quoted strings with \\n, \\t, \\\", and \\\\ escapes.",
+      "name": "string.quoted.double.agape",
+      "begin": "\"",
+      "end": "\"",
+      "beginCaptures": {
+        "0": {
+          "name": "punctuation.definition.string.begin.agape"
+        }
+      },
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.definition.string.end.agape"
+        }
+      },
+      "patterns": [
+        {
+          "name": "constant.character.escape.agape",
+          "match": "\\\\[nt\"\\\\]"
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.float.agape",
+          "match": "\\b[0-9]+\\.[0-9]+\\b"
+        },
+        {
+          "name": "constant.numeric.integer.agape",
+          "match": "\\b[0-9]+\\b"
+        }
+      ]
+    },
+    "constants": {
+      "name": "constant.language.agape",
+      "match": "\\b(?:true|false|null|abstained)\\b"
+    },
+    "declarations": {
+      "patterns": [
+        {
+          "name": "storage.type.declaration.agape",
+          "match": "\\b(?:agent|struct|enum|event|action|tool|principal|policy|prompt|instruction|mem|authority)\\b"
+        },
+        {
+          "name": "storage.modifier.agape",
+          "match": "\\b(?:pub|pure|sync|extend|reversible|read|write)\\b"
+        }
+      ]
+    },
+    "control": {
+      "name": "keyword.control.agape",
+      "match": "\\b(?:when|catch|case|if|else|while|break|return|retry|default|on)\\b"
+    },
+    "lifecycle": {
+      "name": "keyword.other.lifecycle.agape",
+      "match": "\\b(?:spawn|awake|sleep|crash)\\b"
+    },
+    "governance": {
+      "patterns": [
+        {
+          "name": "keyword.other.capability.agape",
+          "match": "\\b(?:grants|perform|reach|use|requires)\\b"
+        },
+        {
+          "name": "keyword.other.gate.agape",
+          "match": "\\b(?:endorse|attest|verify|decide|emit|abstain|defer)\\b"
+        }
+      ]
+    },
+    "queries": {
+      "name": "keyword.other.query.agape",
+      "match": "\\b(?:find|where|select|from|match|origin|forget)\\b"
+    },
+    "aggregation": {
+      "name": "keyword.other.aggregation.agape",
+      "match": "\\b(?:all|any|quorum|independent|dependent)\\b"
+    },
+    "task": {
+      "name": "keyword.other.task.agape",
+      "match": "\\b(?:task|complete|fail|cancel)\\b"
+    },
+    "library": {
+      "name": "keyword.other.library.agape",
+      "match": "\\b(?:module|import|interface)\\b"
+    },
+    "contextual": {
+      "comments": "Contextual words lex as identifiers in the implementation, but highlighting them improves readability at gate/import/query sites.",
+      "name": "keyword.other.contextual.agape",
+      "match": "\\b(?:as|by|about|expires|of|confidence|margin|conformal|floor|readiness|over|to|objective|acceptance|scope)\\b"
+    },
+    "self": {
+      "name": "variable.language.self.agape",
+      "match": "\\bself\\b"
+    },
+    "types": {
+      "name": "support.type.primitive.agape",
+      "match": "\\b(?:int|float|bool|text|null|array|event|action)\\b"
+    },
+    "prelude": {
+      "patterns": [
+        {
+          "name": "support.type.prelude.agape",
+          "match": "\\b(?:Credence|Decision|Entailment|Contradiction|Neutral|Principal|Rule|Basis|Verification|Pass|Fail)\\b"
+        },
+        {
+          "name": "support.type.event.agape",
+          "match": "\\b(?:Event|Error|Decided|Abstained|Contradiction|Attestation|FailedAttestation|QueryResult|Internalized|Forgotten|ToolStarted|ToolResolved|Spawned|AgentAwake|SleepEvent|AgentCrashed|Sent|Delivered|Resolved|Expired|DeliveryRefused|PromptOpened|Prompt|TypeMismatch|RetryExhausted|FailedVerification|Violation)\\b"
+        },
+        {
+          "name": "support.function.prelude.agape",
+          "match": "\\b(?:say|store|embed)\\b"
+        },
+        {
+          "name": "entity.name.type.agape",
+          "match": "\\b[A-Z][A-Za-z0-9_]*\\b"
+        }
+      ]
+    },
+    "function-call": {
+      "name": "entity.name.function.agape",
+      "match": "\\b[a-z_][A-Za-z0-9_]*(?=\\s*\\()"
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.arrow.agape",
+          "match": "<-|->|\\|>"
+        },
+        {
+          "name": "keyword.operator.comparison.agape",
+          "match": "==|!=|>=|<=|&&|\\|\\||<|>"
+        },
+        {
+          "name": "keyword.operator.assignment.agape",
+          "match": "\\+=|="
+        },
+        {
+          "name": "keyword.operator.logical.agape",
+          "match": "!"
+        },
+        {
+          "name": "keyword.operator.arithmetic.agape",
+          "match": "[+\\-*/]"
+        }
+      ]
+    },
+    "punctuation": {
+      "patterns": [
+        {
+          "name": "punctuation.separator.annotation.agape",
+          "match": ":"
+        },
+        {
+          "name": "punctuation.accessor.agape",
+          "match": "\\."
+        },
+        {
+          "name": "punctuation.separator.agape",
+          "match": "[,;]"
+        }
+      ]
+    }
+  }
+}

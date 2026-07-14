@@ -9,7 +9,7 @@ action Disburse(int amount);
 agent A grants { * } {
   on awake {
     text req = self <- "state the payment request";
-    Credence<R> c = self <- f"should we pay: {req}";
+    Credence<R> c = self <- f"should we pay: ${req}";
     Decision<R> d = decide c by confidence 0.9;
     if (d.committed == Pay) { Endorsement<text> e = endorse req by d; perform Disburse(100); }
     else if (d.committed == Hold) { Endorsement<text> e = endorse req by d; }

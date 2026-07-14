@@ -26,12 +26,16 @@ TSX_CLI="$ROOT/agape-ts/node_modules/tsx/dist/cli.mjs"
 [ -f "$TSX_CLI" ] || { echo "studio-smoke: missing agape-ts deps - run 'npm install' in agape-ts"; exit 1; }
 [ -f "$ROOT/studio/web/dist/index.html" ] || { echo "studio-smoke: web app not built - run 'npm run build' in studio/web"; exit 1; }
 
+# The fixture pins the language version the runtime actually ships — derive it
+# so releases don't require a manual bump here.
+AGAPE_VERSION="$(node -p "require('$ROOT/agape-ts/package.json').version")"
+
 PROJ="$(mktemp -d)/app"
 mkdir -p "$PROJ"
 cat > "$PROJ/agape.toml" <<TOML
 [project]
 name = "Smoke Fixture"
-language = "1.0.0-alpha.2026.7.11.7"
+language = "$AGAPE_VERSION"
 
 [memory]
 driver = "markdown"

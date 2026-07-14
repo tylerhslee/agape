@@ -1,11 +1,11 @@
 # agape-ts — a TypeScript compiler + runtime for Agape
 
 A from-scratch implementation of the Agape **core kernel** (per `../SPEC.md`,
-v1.0.0-alpha.2026.7.11.7), written in TypeScript so it can live inside Agape Studio. It lexes,
+v1.0.0-beta.2026.7.14.0), written in TypeScript so it can live inside Agape Studio. It lexes,
 parses, statically checks, and runs the complete core language, with the trusted kernel
 (`decide` → `Decided` → committed `endorse` → granted sink → ledger) enforced both statically and at runtime.
 
-**Conformance: 167/167 (100%)** against `../agape-conformance` — see [CONFORMANCE.md](CONFORMANCE.md).
+**Conformance: 207/207 (100%)** against `../agape-conformance` — see [CONFORMANCE.md](CONFORMANCE.md).
 
 ## Run
 

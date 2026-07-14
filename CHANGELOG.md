@@ -6,6 +6,78 @@ All notable changes to Agape are recorded here. The format follows
 suite, and the studio move in lockstep — a release is the whole bundle at one
 version.
 
+## [1.0.0-beta.2026.7.14.0] - 2026-07-14
+
+The first beta: the surfaces documented in `BETA.md` now fall under the
+compatibility promise. The language surfaces the compiler and suite already
+enforce are specified, licensed, and packaged for a public beta, and the CI
+that guards them is rebuilt around the TypeScript toolchain. No language
+semantics change — this is a documentation, conformance-surface, tooling, and
+packaging pass, with the runtime-contract kernel gaps closed.
+
+### Added
+
+- **`${expr}` interpolation lockstep restored.** The SPEC lexical lines, the
+  conformance sources (43 tests migrated `{expr}` → `${expr}`), and the two
+  lexical reject tests (now assert `LexError`) agree on the interpolation
+  syntax again; the manifests, coverage docs, and `results.json` are regenerated
+  at 207/207.
+- **Static deny-mode prompt-ingress enforcement** in `check.ts`
+  (`checkDenyModePromptIngress()`): a prompt-tainted value reaching a
+  deny-mode provider seam is rejected at check time.
+- **Beta compatibility surfaces specified in SPEC.** §16.7 defines the
+  markdown memory substrate, §17.1 rewrites `[memory]` to the shipped keys and
+  adds `[runtime]`/`[policy]` rows, and new §17.7 documents host embedding via
+  `toolHandlers`. `BETA.md` now cites these sections.
+- **Runtime-contract conformance adapter** for agape-ts
+  (`runtime_adapter.ts`, `runtime_adapter_desugar.ts`,
+  `runtime_adapter_memory.ts`) plus the `test:agape-ts` script: all 35
+  black-box tests pass, and the CI adapter step blocks on any failure.
+- **`MarginFloorViolation` enforced at the consequential sink** (§13/§16.6):
+  the margin floor is checked where an endorsed value crosses into the world,
+  not folded into `decide`, so a below-floor decision faults at the sink.
+- **Warm split-conformal prediction sets** (§15.5.6): a warm gate emits a
+  calibrated `prediction_set` from a split-conformal calibration pool;
+  cold-start behavior (abstain) is unchanged.
+- **Apache-2.0 `LICENSE`** at the repository root; the packaged bundle stages
+  it alongside `SPEC.md` and the bundle `README`.
+- **Beta-capable version checking**: `check-version.mjs` accepts
+  `alpha`/`beta` pre-release tags and a `--root` flag; the studio smoke and
+  E2E fixtures derive the version instead of pinning it.
+
+### Changed
+
+- **CI rebuilt around agape-ts.** `ci.yml` drops the deleted agape-rs job for
+  an agape-ts gate (install → typecheck → test → conformance →
+  runtime-contract), de-rusts the studio/E2E/release jobs, and vendors the
+  syntax pack under `vendor/agape-syntax/` (consumed by `studio/web` via a
+  `file:` dependency). The conformance runner (`run.mts`) now exits nonzero on
+  any failure so the gate can catch drift.
+- **Packaged-Studio launcher**: the `agape studio` CLI subcommand launches the
+  staged Studio (agent-server + web-dist) with an `--inspector` fallback.
+- Dependency versions pinned across `agape-ts` and the studio packages with
+  consistent lockfiles.
+- **Studio E2E rewritten for the new shell** (`studio.spec.ts`): the Playwright
+  flow drives the current rail UI and passes 2/2; the CI e2e gate is re-enabled
+  (its `continue-on-error` escape removed). The fixture launcher (`serve.mjs`)
+  uses the `${expr}` prompt form and preserves version derivation.
+
+### Fixed
+
+- **Studio run-panel payload-rendering crash** (React error #31): `fmtPayload`
+  in `ProjectView.jsx` now renders object-valued ledger payloads instead of
+  passing an object as a React child, so runs with structured payloads display.
+
+### Verified
+
+- agape-ts typecheck; unit suite (105); conformance 207/207 (exit 0).
+- `check-version.mjs` ok at `1.0.0-beta.2026.7.14.0`; conformance manifests
+  up to date (no drift).
+- Runtime-contract: 35 skipped without an adapter (exit 0); 35/35 with the
+  agape-ts adapter (both former kernel gaps closed).
+- Studio agent-server 51/51; studio web 15/15 + build; bundle smoke and
+  `package.sh` self-verify (LICENSE lands in the tarball).
+
 ## [1.0.0-alpha.2026.7.11.7] - 2026-07-11
 
 Type-safety fix: an assignment to a typed lvalue now threads that lvalue's declared type into the RHS, so a `self <- prompt {…}` structured send on the right of a bare assignment requests the SAME schema a typed declaration would. Previously the assignment path evaluated the RHS with no expected type, silently skipping the structured path and dropping a scalar `text` into a typed slot (e.g. `text[] xs = []; xs = self <- prompt {…}` returned text and crashed at `len(xs)`) — a hole in a type-safe language. Surfaced dogfooding LeeHaRin's intent decomposition.

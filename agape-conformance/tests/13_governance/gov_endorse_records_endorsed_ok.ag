@@ -7,7 +7,7 @@
 agent A {
   on awake {
     text item = self <- "state the request";
-    Credence<bool> c = self <- f"is this an approval: {item}";
+    Credence<bool> c = self <- f"is this an approval: ${item}";
     Decision<bool> d = decide c by confidence 0.9;
     if (d.committed == true) { Endorsement<text> e = endorse item by d; }
     else if (d.committed == false) { Endorsement<text> e = endorse item by d; }

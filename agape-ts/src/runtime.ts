@@ -38,6 +38,12 @@ export type Value =
       rule?: Record<string, unknown>;
       binding?: string;
       principalEvent?: number;
+      // the rule's consequential margin `floor m` (§13), threaded so the endorse it authorizes carries it
+      // to the sink, where a committed decision whose margin is below `m` faults (MarginFloorViolation, §16.6).
+      floor?: number;
+      // under `by conformal α`, the split-conformal prediction set { v : nc(v) ≤ q̂ } (§15.5.6); a singleton
+      // is the commit, any other cardinality abstains. Absent for the threshold basis.
+      predictionSet?: string[];
       // the exact Credence<E> this decision was collapsed from (§13). The endorse runtime backstop uses
       // it to confirm a raw/graded subject is the very judgment the decision settled — "a decision about
       // other_response cannot endorse response" — and to fail closed otherwise (§14).
@@ -54,6 +60,9 @@ export type Value =
       trust: "settled";
       binding?: string;
       decisionId: number;
+      // inherited from the authorizing decision's rule (§13): the consequential margin floor checked when
+      // this endorsed value reaches a `perform` sink (MarginFloorViolation, §16.6).
+      floor?: number;
     } & ValueIngress)
   | ({ kind: "agentref"; name: string; agentType: string; trust: "settled" } & ValueIngress)
   | ({ kind: "memref"; name: string; trust: "settled" } & ValueIngress) // a handle into private memory (§10)

@@ -70,9 +70,9 @@ export default function ProjectView({ info, provider, editorPrefs, setEditorPref
     if (!result || !result.ok) return null;
     const sent = {}; const calls = [];
     for (const e of result.events) {
-      if (e.etype === "Sent" && e.corr != null) sent[e.corr] = e.payload;
+      if (e.etype === "Sent" && e.corr != null) sent[e.corr] = fmtPayload(e.payload);
       else if (e.etype === "Resolved" && e.corr != null && sent[e.corr] != null) {
-        calls.push({ input: sent[e.corr], output: e.payload });
+        calls.push({ input: sent[e.corr], output: fmtPayload(e.payload) });
       }
     }
     const tok = (s) => Math.ceil((s || "").length / 4);
@@ -89,7 +89,7 @@ export default function ProjectView({ info, provider, editorPrefs, setEditorPref
     const acts = result.events.filter((e) => actions.includes(e.etype));
     const answer = acts.length ? acts[acts.length - 1] : null;
     const abstained = result.events.some((e) => e.etype === "Abstained");
-    const rejected = !answer && result.events.some((e) => /reject/i.test(e.payload || ""));
+    const rejected = !answer && result.events.some((e) => /reject/i.test(fmtPayload(e.payload)));
     return { asked: result.asked || {}, answer, abstained, rejected };
   }, [result, src]);
 
@@ -222,7 +222,7 @@ export default function ProjectView({ info, provider, editorPrefs, setEditorPref
               {convo.answer ? (
                 <div className="pj-msg-row">
                   <span className="pj-who agape">agape</span>
-                  <span className="pj-bubble"><span className="pj-verified">✓ verified</span>{convo.answer.payload}</span>
+                  <span className="pj-bubble"><span className="pj-verified">✓ verified</span>{fmtPayload(convo.answer.payload)}</span>
                 </div>
               ) : (
                 <div className="pj-msg-row">
@@ -349,6 +349,24 @@ function judgeProviderForCognition(cognitionProvider) {
   return cognitionProvider === "openai" ? "openai" : "anthropic";
 }
 
+// Ledger event payloads are structured objects (tainted values carry `rendered`,
+// sends carry {to, prompt}, resolutions carry {reply}, …). Flatten to readable
+// text before anything reaches the DOM — objects as React children crash the panel.
+function fmtPayload(p) {
+  if (p == null) return "";
+  if (typeof p === "string") return p;
+  if (Array.isArray(p)) return p.map(fmtPayload).join(", ");
+  if (typeof p === "object") {
+    if (typeof p.rendered === "string") return p.rendered;
+    if (p.value !== undefined) return fmtPayload(p.value);
+    if (p.input !== undefined) return fmtPayload(p.input);
+    if (p.reply !== undefined) return fmtPayload(p.reply);
+    if (typeof p.prompt === "string") return p.prompt;
+    try { return JSON.stringify(p); } catch { return String(p); }
+  }
+  return String(p);
+}
+
 // Color the ledger by what each event means: decisions/deliveries are the points
 // that matter; the send chain is dim scaffolding.
 function SpineRow({ e }) {
@@ -357,12 +375,13 @@ function SpineRow({ e }) {
   if (/Decided|Reply|Attestation|Internalized/.test(k)) cls = "ev-good";
   else if (/Abstained|Failed|Error|Contradiction|TypeMismatch|RetryExhausted|Crashed|Expired|rejected/.test(k) || k === "Event") cls = "ev-warn";
   else if (/Prompt|Draft|Spawned|AgentAwake/.test(k)) cls = "ev-note";
+  const pay = fmtPayload(e.payload);
   return (
     <div className={"ev " + cls}>
       <span className="ev-t">{e.tick}</span>
       <span className="ev-k">{e.etype}</span>
       <span className="ev-s">{e.subject || ""}</span>
-      <span className="ev-p">{e.payload && e.payload !== e.subject ? e.payload : ""}</span>
+      <span className="ev-p">{pay && pay !== e.subject ? pay : ""}</span>
     </div>
   );
 }
