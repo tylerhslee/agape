@@ -1153,3 +1153,104 @@ describe("core grammar lockstep — removed constructs are ParseErrors", () => {
     expect(() => parse(`policy P { threshold 0.5 } agent X { on awake { say("x"); } }`)).toThrow(/core kernel/);
   });
 });
+
+// A provider that returns a FIXED, un-normalized score vector (the gate reads the raw leads, §15.5.6).
+class RawScoreProvider extends MockProvider {
+  constructor(private readonly fixed: Record<string, number>) { super(); }
+  override async judge(): Promise<{ scores: Record<string, number> }> { return { scores: { ...this.fixed } }; }
+}
+
+describe("§13/§16.6 consequential margin floor at the sink", () => {
+  // Publish clears the 0.8 threshold and the 0.0 margin, so the decision COMMITS; but its 0.02 lead is below
+  // the rule's 0.5 floor, so the committed value faults the action when it reaches the `perform` sink.
+  const src = `
+    enum Verdict { Publish, Revise }
+    action PublishMemo(text body);
+    agent A grants { perform PublishMemo } {
+      on awake {
+        text body = "draft";
+        Credence<Verdict> c = self <- "publish?";
+        Decision<Verdict> d = decide c by confidence 0.8 margin 0.0 floor 0.5;
+        if (d.committed == Publish) {
+          Endorsement<text> e = endorse body by d;
+          perform PublishMemo(e);
+        }
+      }
+    }
+    spawn A a; awake a;
+  `;
+
+  it("commits the decision but faults the action with MarginFloorViolation, preventing the sink", async () => {
+    const r = await run(parse(src), { provider: new RawScoreProvider({ Publish: 0.81, Revise: 0.79 }) });
+    const types = r.ledger.events.map((e) => e.etype);
+    // the decision itself COMMITTED — the floor is a sink check, not a decide-time abstain (§13).
+    const decided = r.ledger.events.find((e) => e.etype === "Decided");
+    expect((decided!.payload as Record<string, unknown>).committed).toBe("Publish");
+    expect((decided!.payload as Record<string, unknown>).floor).toBe(0.5);
+    // the sink faults: a typed MarginFloorViolation is appended and the action never runs.
+    expect(types).toContain("MarginFloorViolation");
+    expect(types).not.toContain("PublishMemo");
+  });
+
+  it("performs the action when the committed margin clears the floor", async () => {
+    // a decisive judgment: Publish's 0.90 − 0.10 = 0.80 lead clears the 0.5 floor, so the perform runs.
+    const r = await run(parse(src), { provider: new RawScoreProvider({ Publish: 0.9, Revise: 0.1 }) });
+    const types = r.ledger.events.map((e) => e.etype);
+    expect(types).toContain("PublishMemo");
+    expect(types).not.toContain("MarginFloorViolation");
+  });
+});
+
+describe("§15.5.6 warm split-conformal prediction sets", () => {
+  const src = (readiness: number) => `
+    enum Gate { Approve, Reject }
+    agent Calib {
+      on awake {
+        Credence<Gate> c = self <- "judge";
+        Decision<Gate> d = decide c by conformal 0.1 readiness ${readiness};
+      }
+    }
+    spawn Calib g; awake g;
+  `;
+  // four labelled cases; nonconformity at the true label = {0.05, 0.10, 0.08, 0.12}. With α=0.1, n=4 the
+  // quantile rank ⌈(n+1)(1−α)⌉ = 5 > n, so q̂ clamps to the largest observed nc = 0.12.
+  const pool = [
+    { scores: { Approve: 0.95, Reject: 0.05 }, label: "Approve" },
+    { scores: { Approve: 0.9, Reject: 0.1 }, label: "Approve" },
+    { scores: { Approve: 0.08, Reject: 0.92 }, label: "Reject" },
+    { scores: { Approve: 0.12, Reject: 0.88 }, label: "Reject" },
+  ];
+  const decidedPayload = (r: Awaited<ReturnType<typeof run>>) =>
+    r.ledger.events.find((e) => e.etype === "Decided")!.payload as Record<string, unknown>;
+
+  it("commits on a singleton prediction set once readiness is met", async () => {
+    // judgment {Approve:0.93} → nc(Approve)=0.07 ≤ 0.12, nc(Reject)=0.93 > 0.12 ⇒ Cα = {Approve} (singleton).
+    const r = await run(parse(src(4)), {
+      provider: new RawScoreProvider({ Approve: 0.93, Reject: 0.07 }),
+      calibration: pool,
+    });
+    const p = decidedPayload(r);
+    expect(p.basis).toBe("Conformal");
+    expect(p.prediction_set).toEqual(["Approve"]);
+    expect(p.committed).toBe("Approve");
+  });
+
+  it("abstains when the prediction set is not a singleton", async () => {
+    // a boundary judgment {0.5, 0.5}: nc = {0.5, 0.5}, both > q̂=0.12 ⇒ Cα = {} (non-singleton) ⇒ abstain.
+    const r = await run(parse(src(4)), {
+      provider: new RawScoreProvider({ Approve: 0.5, Reject: 0.5 }),
+      calibration: pool,
+    });
+    const p = decidedPayload(r);
+    expect(p.basis).toBe("Conformal");
+    expect((p.prediction_set as string[]).length).not.toBe(1);
+    expect(p.committed).toBe("abstained");
+  });
+
+  it("cold-starts (abstains, no prediction set) below readiness or with no calibration pool", async () => {
+    const r = await run(parse(src(4)), { provider: new RawScoreProvider({ Approve: 0.93, Reject: 0.07 }) });
+    const p = decidedPayload(r);
+    expect(p.committed).toBe("abstained");
+    expect(p.prediction_set).toBeUndefined();
+  });
+});

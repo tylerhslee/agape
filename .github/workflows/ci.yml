@@ -61,13 +61,12 @@ jobs:
           npm ci --no-audit --no-fund || npm install --no-audit --no-fund
           npx vitest run
 
-      # Non-blocking run against the agape-ts adapter (33/35 pass). Two cases
-      # fail on documented kernel gaps: 16_4 MarginFloorViolation is never
-      # emitted (§16.6) and 16_8 warm conformal prediction sets are
-      # unimplemented (§15.5.6). Kept non-blocking until those land.
+      # Blocking run against the agape-ts adapter (35/35 pass). The former
+      # kernel gaps are closed: 16_4 MarginFloorViolation is enforced at the
+      # consequential sink (§16.6) and 16_8 warm conformal prediction sets are
+      # implemented (§15.5.6).
       - name: Runtime-contract conformance (agape-ts adapter)
         working-directory: agape-runtime-conformance
-        continue-on-error: true
         run: npm run test:agape-ts
 
   # ── the conformance manifests stay in lockstep with the .ag sources ───────
@@ -133,8 +132,6 @@ jobs:
   e2e:
     name: studio E2E (Playwright)
     runs-on: ubuntu-latest
-    # e2e spec targets the old rail UI — non-blocking until the spec is rewritten for the new shell (tracked).
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

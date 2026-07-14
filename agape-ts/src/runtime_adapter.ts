@@ -147,7 +147,15 @@ class HarnessProvider implements Provider {
 
   private scriptedScores(variants: Variant[]): Record<string, number> {
     const p = this.mode.provider;
-    if (p && typeof p === "object" && p.credence) return normalize(p.credence, variants);
+    // an explicitly-scripted credence is the model's own score vector — used by the gate AS-IS (§15.5.6: the
+    // score vector need not be a normalized distribution; a threshold/margin/floor rule reads the raw leads).
+    // Renormalizing would corrupt a deliberately-non-unit vector (e.g. {0.81, 0.79}, where 0.81 must clear an
+    // 0.8 threshold with a thin 0.02 margin), so pass the given scores through, defaulting an omitted variant to 0.
+    if (p && typeof p === "object" && p.credence) {
+      const out: Record<string, number> = {};
+      for (const v of variants) out[v] = Math.max(0, p.credence[v] ?? 0);
+      return out;
+    }
     const stochastic = this.mode.stochasticProvider;
     if (stochastic && this.stochasticRng) {
       const jittered: Record<string, number> = {};
@@ -511,7 +519,13 @@ class AgapeTsConformanceAdapter {
   private async execute(
     source: string,
     testMode: TestMode,
-    opts2: { record?: boolean; replayJournal?: OracleJournal; stochasticSeed?: number; absorb?: boolean },
+    opts2: {
+      record?: boolean;
+      replayJournal?: OracleJournal;
+      stochasticSeed?: number;
+      absorb?: boolean;
+      calibration?: Array<{ scores: Record<string, number>; label: string }>;
+    },
   ): Promise<RunOutcome> {
     const { source: kernelSource, tools } = desugarLegacySurface(source);
     const journal: OracleJournal = { judge: [], structured: [], reply: [], tools: [] };
@@ -519,6 +533,8 @@ class AgapeTsConformanceAdapter {
     try {
       const program = parse(kernelSource);
       const runOpts = this.buildRunOptions(tools, program, testMode, journal, opts2.replayJournal, opts2.stochasticSeed);
+      // §15.5.6/§16.8: a warm conformal gate calibrates from the compatible label pool the runtime owns.
+      if (opts2.calibration) runOpts.calibration = opts2.calibration;
       const session = createSession(program, runOpts);
       await session.start();
       for (const arrival of testMode.promptArrivals ?? []) {
@@ -1013,10 +1029,11 @@ class AgapeTsConformanceAdapter {
       });
     }
 
-    // The decision itself comes from a real kernel run of the gate rule over the judged scores.
+    // The decision itself comes from a real kernel run of the gate rule over the judged scores. A conformal
+    // rule carries its `readiness N` (the labelled-case minimum) so the kernel warm/cold-starts correctly.
     const rule =
       input.policy.basis === "conformal"
-        ? `conformal ${input.policy.alpha ?? 0.05}`
+        ? `conformal ${input.policy.alpha ?? 0.05}${input.policy.readiness !== undefined ? ` readiness ${input.policy.readiness}` : ""}`
         : `confidence ${input.policy.threshold ?? 0.5}${input.policy.margin !== undefined ? ` margin ${input.policy.margin}` : ""}`;
     const source = `
       enum Gate { ${input.enumVariants.join(", ")} }
@@ -1028,15 +1045,21 @@ class AgapeTsConformanceAdapter {
       }
       spawn Calib g; awake g;
     `;
-    const outcome = await this.execute(source, { provider: { credence: scores } }, {});
+    // §15.5.6 warm conformal: feed the kernel the compatible calibration pool ONLY when the profile is fit
+    // (conformal basis, no scope drift). A drifted or threshold profile passes no pool → the kernel cold-starts.
+    const calibration =
+      input.policy.basis === "conformal" && !drifted && input.labels.length > 0 ? input.labels : undefined;
+    const outcome = await this.execute(source, { provider: { credence: scores } }, { calibration });
     const decided = outcome.events.filter((e) => e.etype === "Decided").pop();
     const payload = (decided?.payload ?? {}) as Record<string, unknown>;
     const committed = drifted ? "abstained" : String(payload.committed ?? "abstained");
+    const predictionSet = Array.isArray(payload.prediction_set) ? (payload.prediction_set as string[]) : undefined;
     return {
       decision: {
         committed,
         basis: String(payload.basis ?? (input.policy.basis === "conformal" ? "Conformal" : "Threshold")),
         margin: Number(payload.margin ?? 0),
+        ...(predictionSet && !drifted ? { predictionSet } : {}),
         usedProfileId: profile.id,
       },
       profile,
