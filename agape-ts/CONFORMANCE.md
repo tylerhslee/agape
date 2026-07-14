@@ -1,6 +1,6 @@
 # agape-ts — conformance status vs the black-box suite
 
-This implementation is run against `../agape-conformance` (Agape **v1.0.0-beta.2026.7.14.0**, the
+This implementation is run against `../agape-conformance` (Agape **v1.0.0-beta.2026.7.14.1**, the
 **core kernel** — 207 tests across 18 sections, including `06b_world` and `06c_delegation`) by
 `conformance/run.mts`, which feeds each test's program through this
 front end (lex → parse → **check**) + runtime (**run**) and matches the `//!`-header expectation

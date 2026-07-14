@@ -6,6 +6,32 @@ All notable changes to Agape are recorded here. The format follows
 suite, and the studio move in lockstep — a release is the whole bundle at one
 version.
 
+## [1.0.0-beta.2026.7.14.1] - 2026-07-14
+
+A packaging-only patch over the first beta. The Windows Release job failed in
+`package.sh` self-verification; this release fixes the bundle so all three
+platform artifacts build. No language, compiler, runtime, or studio semantics
+change — the version bump keeps the lockstep surfaces aligned.
+
+### Fixed
+
+- **Windows bundle self-verify.** Under Git Bash / MSYS, `ln -s` copies the
+  bash wrapper instead of linking it, so the copied wrapper resolved its own
+  directory to the `linkbin` parent and node could not find
+  `agape-ts/node_modules/tsx/dist/cli.mjs` (`MODULE_NOT_FOUND`). The
+  PATH-install symlink check in `package.sh` is now guarded on a real symlink
+  actually being created (`[ -h ]`), and skipped where the platform has no
+  native symlink support.
+
+### Added
+
+- **Native `bin/agape.cmd` entry point** staged into the bundle for
+  cmd/PowerShell users: it resolves its own `bin/` directory (`%~dp0`), invokes
+  node with native Windows paths, and propagates the CLI exit code. The `.cmd`
+  shim is verified end-to-end through `cmd.exe` on native Windows only
+  (`uname`-gated to `MINGW*/MSYS*/CYGWIN*` so WSL interop `cmd.exe` never runs
+  against a UNC path).
+
 ## [1.0.0-beta.2026.7.14.0] - 2026-07-14
 
 The first beta: the surfaces documented in `BETA.md` now fall under the
