@@ -1,9 +1,10 @@
 //! id:        sem_schema_violation_array_typemismatch
 //! section:   08_semantic
 //! expect:    accept
-//! contains:  TypeMismatch
+//! contains:  TypeMismatch; AgentCrashed(a)
+//! order:     TypeMismatch; AgentCrashed
 //! provider:  schema_violation
-//! spec:      §8 (array<T> compiles to schema-constrained output; schema failure raises TypeMismatch)
+//! spec:      §8, §16.6 (array<T> compiles to schema-constrained output; a schema failure faults the send with TypeMismatch, then the reaction crashes)
 //! ---
 struct Memo { body: text }
 agent A {

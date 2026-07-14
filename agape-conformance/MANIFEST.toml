@@ -1039,27 +1039,41 @@ id = "sem_schema_violation_array_typemismatch"
 section = "08_semantic"
 path = "tests/08_semantic/sem_schema_violation_array_typemismatch.ag"
 expect = "accept"
-contains = ["TypeMismatch"]
+contains = ["TypeMismatch", "AgentCrashed(a)"]
+order = ["TypeMismatch", "AgentCrashed"]
 provider = "schema_violation"
-spec = "§8 (array<T> compiles to schema-constrained output; schema failure raises TypeMismatch)"
+spec = "§8, §16.6 (array<T> compiles to schema-constrained output; a schema failure faults the send with TypeMismatch, then the reaction crashes)"
 
 [[test]]
 id = "sem_schema_violation_enum_typemismatch"
 section = "08_semantic"
 path = "tests/08_semantic/sem_schema_violation_enum_typemismatch.ag"
 expect = "accept"
-contains = ["TypeMismatch"]
+contains = ["TypeMismatch", "AgentCrashed(a)"]
+order = ["TypeMismatch", "AgentCrashed"]
 provider = "schema_violation"
-spec = "§8 (Enum compiles to a closed enum schema; schema failure raises TypeMismatch)"
+spec = "§8, §16.6 (Enum compiles to a closed enum schema; a schema failure faults the send with TypeMismatch, then the reaction crashes)"
+
+[[test]]
+id = "sem_schema_violation_faults_send_on_crash"
+section = "08_semantic"
+path = "tests/08_semantic/sem_schema_violation_faults_send_on_crash.ag"
+expect = "accept"
+contains = ["TypeMismatch", "AgentCrashed(a)", "Recovered(a)"]
+absent = ["Resolved"]
+order = ["TypeMismatch", "AgentCrashed", "Recovered"]
+provider = "schema_violation"
+spec = "§8, §16.6 (a typed reply that fails its schema faults AT the send: TypeMismatch then the reaction crashes, so the downstream field access never runs and no null enters the binding; `on crash` recovers with state intact)"
 
 [[test]]
 id = "sem_schema_violation_typemismatch"
 section = "08_semantic"
 path = "tests/08_semantic/sem_schema_violation_typemismatch.ag"
 expect = "accept"
-contains = ["TypeMismatch"]
+contains = ["TypeMismatch", "AgentCrashed(a)"]
+order = ["TypeMismatch", "AgentCrashed"]
 provider = "schema_violation"
-spec = "§8 (structured output uses constrained decoding; on schema failure the runtime raises a clean TypeMismatch — catchable and retryable)"
+spec = "§8, §16.6 (structured output uses constrained decoding; on schema failure the runtime appends a TypeMismatch and faults the send — the reaction crashes, no null enters the binding)"
 
 [[test]]
 id = "prelude_action_cannot_be_error_reject"
@@ -1221,6 +1235,37 @@ section = "11_control"
 path = "tests/11_control/ctrl_if_else.ag"
 expect = "accept"
 spec = "§11 (if/else over a bool)"
+
+[[test]]
+id = "ctrl_retry_exhausts_faults"
+section = "11_control"
+path = "tests/11_control/ctrl_retry_exhausts_faults.ag"
+expect = "accept"
+contains = ["TypeMismatch", "RetryExhausted(a)", "AgentCrashed(a)", "Recovered(a)"]
+absent = ["Resolved"]
+order = ["TypeMismatch", "RetryExhausted", "AgentCrashed", "Recovered"]
+provider = "schema_violation"
+spec = "§11, §16.6 (a persistent TypeMismatch exhausts the `retry N` block: after N attempts the runtime appends RetryExhausted and faults per the send-fault rule — the reaction crashes and `on crash` recovers)"
+
+[[test]]
+id = "ctrl_retry_first_attempt_ok"
+section = "11_control"
+path = "tests/11_control/ctrl_retry_first_attempt_ok.ag"
+expect = "accept"
+contains = ["Resolved"]
+absent = ["TypeMismatch", "RetryExhausted", "AgentCrashed"]
+spec = "§11 (a `retry N` block parses and runs in the core kernel; when the block's first attempt does not fault, it runs exactly once and no RetryExhausted is recorded)"
+
+[[test]]
+id = "ctrl_retry_recovers_typemismatch"
+section = "11_control"
+path = "tests/11_control/ctrl_retry_recovers_typemismatch.ag"
+expect = "accept"
+contains = ["TypeMismatch", "Resolved"]
+absent = ["AgentCrashed", "RetryExhausted"]
+order = ["TypeMismatch", "Resolved"]
+provider = "schema_violation_once"
+spec = "§11, §16.6 (a bounded `retry N` block is core: on a TypeMismatch it re-asks the provider, re-running the block; a transient schema failure recovers on the next attempt and the first attempt's TypeMismatch stays on the ledger)"
 
 [[test]]
 id = "ctrl_ungated_credence_committed_reject"

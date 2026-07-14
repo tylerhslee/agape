@@ -220,7 +220,11 @@ export class Ledger {
   readonly events: LedgerEvent[] = [];
   private lastMs: number;
 
-  constructor(private originMs = Date.now()) {
+  // §17.7 host embedding: an optional live observer, invoked once per append in tick order, immediately
+  // AFTER the event is committed to `events`. A read-only sink for embedding UIs (Studio timeline, a
+  // streaming fact-checker); an exception it throws is swallowed so a faulty observer never corrupts the
+  // run — the append has already committed.
+  constructor(private originMs = Date.now(), private onEvent?: (event: LedgerEvent) => void) {
     this.lastMs = originMs;
   }
 
@@ -237,6 +241,9 @@ export class Ledger {
     };
     this.lastMs = now;
     this.events.push(ev);
+    if (this.onEvent) {
+      try { this.onEvent(ev); } catch { /* observation is best-effort; a faulty observer never corrupts the run */ }
+    }
     return ev;
   }
   // a simple content hash of the canonical fields (a stand-in for the §16.2 SHA-256 chain).

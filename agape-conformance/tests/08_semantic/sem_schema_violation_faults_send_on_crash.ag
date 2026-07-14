@@ -1,0 +1,19 @@
+//! id:        sem_schema_violation_faults_send_on_crash
+//! section:   08_semantic
+//! expect:    accept
+//! provider:  schema_violation
+//! contains:  TypeMismatch; AgentCrashed(a); Recovered(a)
+//! order:     TypeMismatch; AgentCrashed; Recovered
+//! absent:    Resolved
+//! spec:      §8, §16.6 (a typed reply that fails its schema faults AT the send: TypeMismatch then the reaction crashes, so the downstream field access never runs and no null enters the binding; `on crash` recovers with state intact)
+//! ---
+struct Memo { amount: int, to: text }
+event Recovered(text why);
+agent A {
+  on awake {
+    Memo m = self <- "extract the memo";
+    say(m.to);                              // never reached: the send above faulted
+  }
+  on crash { emit Recovered("schema fault recovered"); }
+}
+spawn A a; awake a;

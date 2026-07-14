@@ -16,7 +16,7 @@ export function parse(source: string): A.Program {
 }
 
 // The core kernel is the complete language with NO syntactic sugar and NO library layer. Constructs the
-// full surface once had — the arm block, all/any fusion, the policy declaration, retry, reversible
+// full surface once had — the arm block, all/any fusion, the policy declaration, reversible
 // sinks, agent-memory queries, and the whole library layer (modules,
 // imports, visibility, generics, interfaces) — are not part of the core grammar, so accepting one would
 // break lockstep with the stripped SPEC.md. This pass walks the parsed program and rejects each as a
@@ -60,7 +60,7 @@ function assertCore(p: A.Program): void {
   const walkStmt = (s: A.Stmt): void => {
     switch (s.kind) {
       case "dispatch": return bad("a gate arm block (branch on `.committed` with `if`)");
-      case "retry": return bad("`retry` (the core has no unbounded or bounded loop)");
+      case "retry": s.body.forEach(walkStmt); break; // core (§11): the sole bounded loop — recovery on a TypeMismatch
       case "complete": walkExpr(s.value); break;  // core (§6c)
       case "fail": walkExpr(s.reason); break;     // core (§6c)
       case "cancel": walkExpr(s.handle); break;   // core (§6c)

@@ -1201,7 +1201,10 @@ of the constrained decode or sampling fallback (§3, §16.8).
 - A provider should expose logprobs or equivalent per-variant score data for efficient
 gated/`Credence` decisions; when it does not, a configured sampling fallback estimates the score
 distribution (§17).
-- On schema failure the runtime raises a clean `TypeMismatch` (catchable, retryable).
+- On schema failure — a reply that cannot be parsed into the declared type — the runtime appends a
+clean `TypeMismatch` and **faults the send**: the reaction crashes (recoverable via `on crash`,
+§16.6) and no null ever enters the typed binding. A bounded `retry N` block (§11) re-asks the
+provider as the recovery.
 
 ---
 
@@ -1242,12 +1245,13 @@ type Task<T>                                               // a settled backgrou
 //   TaskCancelled(corr) / TaskProgress(subj)   delegator cancel tombstone / repeatable worker progress (§6c)
 //   CompletionRefused(corr)                    a late complete/fail after cancel/expiry, refused (§6c)
 //   TaskScopeViolation(subj)                   a perform outside the endorsed task's scope at the sink (§6c, §13)
+//   RetryExhausted(subj)                       a `retry N` block exhausted all N attempts on a persistent TypeMismatch (§11, §16.6)
 //   TaskSubmitted / TaskAssigned / TaskExpired subscription ALIASES for Sent/Delivered/Expired filtered to task-sends (§6c) — no rows of their own
 ```
 
 **Event-type hierarchy.** `Error` is the root; `Contradiction`, `TypeMismatch`,
-`FailedPrincipalDecision`, `MarginFloorViolation`, `TaskScopeViolation`, and `AgentCrashed` extend
-it. `when` matches by
+`FailedPrincipalDecision`, `MarginFloorViolation`, `TaskScopeViolation`, `RetryExhausted`, and
+`AgentCrashed` extend it. `when` matches by
 subtype, so `when (Error e)` catches a `Contradiction`; a contradiction is an `Error`
 subtype, and code that wants only faults matches the specific types. `Expired` and a lost
 send are not errors, and neither is `TaskFailed` — a recorded task outcome, not a program
@@ -1405,8 +1409,9 @@ by r`) and test the committed variant (`if (d.committed == true)`).
 A committed variant is a settled value, so `==` over `.committed` is exactly-gated (§15.5.5) and is
 the kernel form of verdict branching. Branching on a gate's outcome is an ordinary `if`-chain over
 `.committed`, with the `abstained` sentinel as the case no committed variant matched. `if`, the
-reactive `when` (§7), bounded fan-out over a finite collection (§12), and function call are the whole
-of Agape's control vocabulary; there is no unbounded loop (§0.2).
+reactive `when` (§7), bounded fan-out over a finite collection (§12), the bounded `retry N` recovery
+block (below), and function call are the whole of Agape's control vocabulary; there is no *unbounded*
+loop (§0.2).
 
 ```agape
 enum Grade { Pass, Fail }
@@ -1420,6 +1425,28 @@ agent Marker {
   }
 }
 spawn Marker m; awake m;
+```
+
+**Bounded recovery — `retry N`.** A `{ … } retry(N)` block runs its body and, when an attempt
+faults with a `TypeMismatch` — a structured/typed reply that could not be parsed into the declared
+type (§8, §16.6) — re-asks the provider by re-running the block, for at most `N` attempts. `N` is a
+literal bound, so the block still terminates (§0.2); it is the *sole* loop, and it recovers only a
+`TypeMismatch` — an unrecoverable seam failure (an `empty` provider, §16.6) still crashes and is not
+retried. Each attempt's `TypeMismatch` stays on the ledger for audit. When all `N` attempts are
+exhausted the runtime appends `RetryExhausted` and faults the reaction, the same crash path as an
+unretried `TypeMismatch` (`on crash` recovers with state intact, §16.6). The block shares the
+enclosing scope, so a binding an attempt makes persists.
+
+```agape
+struct Memo { amount: int, to: text }
+agent Extractor {
+  on awake {
+    { Memo m = self <- "extract the memo"; say(m.to); }
+    retry(3)                          // re-ask on a schema-violating reply, up to 3 attempts
+  }
+  on crash { emit Event("extraction failed after 3 attempts"); }   // reached only if all 3 fault
+}
+spawn Extractor e; awake e;
 ```
 
 ---
@@ -1948,6 +1975,7 @@ stmt       ::= vardecl | assign | spawn | prompt | principal | depdecl
              | "return" expr? ";"                       // `say(x)` is an ordinary call (`expr ;`)
              | "if" "(" expr ")" block ("else" block)?
              | when
+             | block "retry" "(" Int ")"                // bounded recovery: re-run the block on a TypeMismatch, ≤ N attempts (§11, §16.6)
              | expr ";"
 vardecl    ::= type Ident ("=" expr)? ";"               // disambiguated from `assign` by the leading `type Ident` (LL(2))
 assign     ::= postfix "=" expr ";"                     // postfix covers `x`, `self.f`, `x.f`, `x[i]`
@@ -2065,7 +2093,10 @@ synchronous (the committed `Decision` is in hand). A principal prefix makes `dec
 reach the identity dependency). A result-bound `perform` (T-Perform-Bound) is async and settled;
 every `perform` requires its `perform` grant (W-Auth). T-Fuse (`quorum`) requires total
 dependence coverage over the `Credence[]`. Branching on a gate is an ordinary `if` over
-`.committed`; the flow-narrowing that permits subject endorsement is W-Decision (below).
+`.committed`; the flow-narrowing that permits subject endorsement is W-Decision (below). A typed
+send (`T x = d <- p`) types to `T_reply`, but a reply that fails `schema(T)` binds no value — it
+faults at the send (`TypeMismatch`, E-Send-TypeMismatch; §16.6), and a bounded `retry N` (§11) is
+the recovery.
 
 ### 15.3.3 Statement & agent well-formedness — the guarantees
 
@@ -2254,6 +2285,13 @@ S' = append³(S, Sent(x,@d), Delivered(x,@d), Resolved(x,@d))   // subjects only
 ⟨Π|…|μ|S| x = (d <- p); k⟩ → ⟨Π'|…|μ[x↦v (trust raw; graded if x : Credence<E>, T-Credence; ingress ingress(render(p)))]|S'| k⟩
 // default warn records an audit diagnostic for external_unscreened prompt ingress; off is silent.
 // strict deny aborts before `think`, so no provider call is made.
+
+// SEND (schema-violating typed reply) — the structured/typed reply cannot be parsed into T:
+// TypeMismatch is appended and the send FAULTS (E-Crash). No value binds; a null never enters the
+// typed slot. A `retry N` (§11) re-asks up to N times; on exhaustion RetryExhausted then this fault.
+awake(dest)   (Π, render(p), schema(T)) ⇝ (raw, Π')   raw ⊭ schema(T)   T ≠ Credence<E>
+─────────────────────────────────────────────────────────────  (E-Send-TypeMismatch)
+⟨Π|…|μ|S| x = (d <- p); k⟩ → ⟨Π'|…|μ| append³(S, Sent, Delivered, TypeMismatch(x)); fault⟩
 
 // SEND (lost) — dest not awake at delivery: chain stalls at Sent:
 ¬awake(dest)
@@ -2696,8 +2734,8 @@ appends its opening event, invokes the seam, journals the result (§16.5), and a
   (mandatory; no fuzzy fallback). A logprob-exposing connector returns the committed value plus the
   per-variant score/logprob vector; a text-only connector returns only the value and is served by the
   sampling fallback (§16.8). The result is journaled as the send's `Resolved` (with the raw response and
-  per-variant scores, §15.5.1, for replay and calibration). A schema-violating return is a `TypeMismatch`
-  (§16.6).
+  per-variant scores, §15.5.1, for replay and calibration). A schema-violating return faults the send
+  as a `TypeMismatch` (§16.6).
 - **Identity (`principal_decide`).** A principal-prefixed `p decide c by r` runs the rule first; when
   it cannot commit, it presents `(p, c)` to the identity dependency, which returns the principal's
   signed verdict (a variant of `E`). The backend (e.g. `local-keyring`, §17)
@@ -2765,8 +2803,13 @@ wall-clock `expires` lifetime's firing (§6); a logical-tick lifetime is already
   fields and memory intact — they are a function of the ledger, not fragile in-flight state (§5). Unlike
   `sleep`, the mailbox stays open. A crash loop is a policy concern for an ordinary `when (AgentCrashed …)`
   subscription (§5), not a built-in.
-- **TypeMismatch.** A schema-violating provider return is a typed `TypeMismatch` (§8) — catchable and
-  handleable, not in itself a crash.
+- **TypeMismatch.** A structured/typed reply that cannot be parsed into its declared type (§8)
+  appends a typed `TypeMismatch` and **faults the send** — the same crash path as any runtime fault
+  (`AgentCrashed`; `on crash` recovers with fields and memory intact), so a null never enters the
+  typed binding. It is a catchable `Error` (§9): `when (Error e)` / `on crash` may handle it. The
+  bounded `retry N` block (§11) is the intended recovery — on a `TypeMismatch` it re-asks the
+  provider, re-running the block for at most `N` attempts (each attempt's `TypeMismatch` is retained
+  for audit); on exhaustion it appends `RetryExhausted` and faults per this rule.
 - **MarginFloorViolation.** When a consequential sink receives an endorsed value whose `.margin` is
   below the gate's rule `floor m` (§13), the runtime appends a typed `MarginFloorViolation` and
   faults the invocation (the action does not run). Like `TypeMismatch` it is a catchable `Error`
@@ -3407,7 +3450,10 @@ the epistemic remainder). All three are explicit, enforced, and checkable.
 A conformant implementation ships a test mode the black-box suite drives:
 
 - **Fault injection.** A designated stub provider returns schema-violating output on
-demand, so a `TypeMismatch` is triggerable deterministically.
+demand, so a `TypeMismatch` send-fault (§16.6) is triggerable deterministically — including a
+*transient* variant that violates the schema for a bounded number of sends and then conforms, so a
+`retry N` recovery (§11) and its exhaustion crash are both observable. A separate `empty` provider
+models the unrecoverable seam failure (the provider returns nothing → `AgentCrashed`, §16.6).
 - **Recorded replay.** The runner can capture a run's journal and replay it; "chain-head
 equality" is equality of the ledger's terminal hash under the canonical event
 serialization.
@@ -3505,6 +3551,20 @@ Result and error behavior:
 - Handlers do not change authority or wiring semantics: the invocation is still reached only through
   a wired action's `perform` or a wired event (§6b), still governed by grants and task scope (§13),
   and still replayed from the recorded result without re-invoking the handler (§16.5).
+
+**Live ledger observation.** A host that renders a run as it happens — a Studio timeline, a
+streaming fact-checker UI — may pass an `onEvent` observer to the session; the runtime invokes it
+once per ledger append, in tick order, immediately after the event is committed:
+
+```ts
+createSession(program, { manifest, onEvent: (event) => stream.push(event) })
+```
+
+The observer is a read-only sink over the same `LedgerEvent` values the run records (§16.2): it
+adds no authority, changes no semantics, and sees exactly the committed sequence in append order.
+An exception thrown by the observer is contained by the runtime and never corrupts the run — the
+append has already committed and execution proceeds; a faulty observer degrades observation only,
+not the ledger.
 
 ---
 

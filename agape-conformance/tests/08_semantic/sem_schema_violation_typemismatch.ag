@@ -2,8 +2,9 @@
 //! section:   08_semantic
 //! expect:    accept
 //! provider:  schema_violation
-//! contains:  TypeMismatch
-//! spec:      §8 (structured output uses constrained decoding; on schema failure the runtime raises a clean TypeMismatch — catchable and retryable)
+//! contains:  TypeMismatch; AgentCrashed(a)
+//! order:     TypeMismatch; AgentCrashed
+//! spec:      §8, §16.6 (structured output uses constrained decoding; on schema failure the runtime appends a TypeMismatch and faults the send — the reaction crashes, no null enters the binding)
 //! ---
 struct Memo { amount: int, to: text }
 agent A {

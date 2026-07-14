@@ -10,6 +10,7 @@ import type * as A from "./ast.js";
 import {
   Ledger, MockProvider, ingressJoin, ingressOf, render, settledText,
   type Provider, type StructuredSchema, type Value, type Committed, type Variant, type Trust, type IngressProvenance,
+  type LedgerEvent,
 } from "./runtime.js";
 import { check, linkModules, type ModuleInput, type Resolution } from "./check.js";
 import { createMemoryDriver, type Manifest, type ToolBindingConfig } from "./config.js";
@@ -23,6 +24,11 @@ export class RuntimeError extends Error {}
 // §5: an unrecoverable seam failure (the provider returns nothing) crashes the agent — CONTAINED, not a
 // death: AgentCrashed is recorded, the on-crash hook runs, and the instance's state survives.
 class CrashError extends Error {}
+// §8/§16.6: a structured/typed reply that cannot be parsed into its declared type faults the send. It is
+// a CrashError SUBTYPE, so an uncaught TypeMismatch is contained exactly like any crash (AgentCrashed +
+// on-crash hook); a `retry N` block (§11) catches THIS type specifically to re-ask, and lets any other
+// crash (an `empty` seam failure) propagate unretried.
+class TypeMismatchError extends CrashError {}
 // §6c: `complete`/`fail` terminate the enclosing task handler (control flow, not a fault).
 class TaskDoneSignal extends Error {}
 
@@ -332,6 +338,10 @@ type RunOptions = {
   // §15.5.6/§16.8: the compatible labelled cases a `by conformal α` gate calibrates from (the GateProfile's
   // calibration pool, supplied by the runtime that owns the ledger). Absent → conformal gates cold-start.
   calibration?: ConformalLabel[];
+  // §17.7 host embedding: a live ledger-append observer. Invoked once per append, in tick order, right
+  // after the event is committed (§16.2). Read-only — it adds no authority and changes no semantics; an
+  // exception it throws is contained by the runtime and never corrupts the run.
+  onEvent?: (event: LedgerEvent) => void;
 };
 
 export async function run(
@@ -366,6 +376,7 @@ export function createSession(program: A.Program, opts: RunOptions = {}): Runtim
     memory,
     projectRoot,
     opts.calibration ?? [],
+    opts.onEvent,
   );
 }
 
@@ -443,8 +454,9 @@ class Interpreter {
     private memory: MemoryDriver = createMemoryDriver(manifest ?? { provider: { backend: "mock" } }),
     private projectRoot: string = process.cwd(),
     private calibrationPool: ConformalLabel[] = [],
+    onEvent?: (event: LedgerEvent) => void,
   ) {
-    this.ledger = new Ledger(timingOriginMs);
+    this.ledger = new Ledger(timingOriginMs, onEvent);
     // §3: register the declared principal names so a `decide c by p` (the parser's {policy} rule form)
     // can be reinterpreted as a principal escalation by evalGate.
     for (const d of program.decls) if (d.kind === "principal") this.principals.add(d.name);
@@ -609,17 +621,23 @@ class Interpreter {
       }
       case "spawn": return this.execSpawn(s, scope);
       case "retry": {
-        // §11: re-attempt the block up to N times; an attempt that appends a FAULT event (an `Error` subtype,
-        // e.g. a `TypeMismatch` from a malformed reply) is retried. On exhaustion, emit `RetryExhausted`. The
-        // block shares the enclosing scope, so assignments an attempt makes persist (§11).
+        // §11/§16.6: run the block, and on a TypeMismatch send-fault re-ask the provider by re-running it,
+        // for at most N attempts. Only a `TypeMismatch` is retryable — an unrecoverable seam failure (an
+        // `empty` provider → a plain CrashError) propagates unretried. Each attempt's TypeMismatch stays on
+        // the ledger for audit. On exhaustion, emit `RetryExhausted` and fault the reaction (the same crash
+        // path as an unretried TypeMismatch; `on crash` recovers). The block shares the enclosing scope, so a
+        // binding an attempt makes persists.
         for (let attempt = 0; attempt < s.n; attempt++) {
-          const before = this.ledger.events.length;
-          for (const st of s.body) await this.execStmt(st, scope);
-          const faulted = this.ledger.events.slice(before).some((ev) => this.isErrorSubtype(ev.etype));
-          if (!faulted) return; // the attempt succeeded
+          try {
+            for (const st of s.body) await this.execStmt(st, scope);
+            return; // the attempt succeeded
+          } catch (err) {
+            if (!(err instanceof TypeMismatchError)) throw err; // only a TypeMismatch is retryable
+            // the attempt's TypeMismatch is already on the ledger; re-ask on the next attempt
+          }
         }
         this.ledger.append("RetryExhausted", this.agentSubject(scope), undefined, scope.currentAgent()?.name);
-        return;
+        throw new CrashError(); // all N attempts exhausted — fault the reaction (§16.6)
       }
       case "awake": return this.execAwake(this.instanceNameOf(s.name, scope));
       case "sleep": {
@@ -2326,13 +2344,14 @@ class Interpreter {
     }
     this.ledger.append("Delivered", subj, { to: destName }, scope.currentAgent()?.name);
     this.checkProviderIngress(msgVal, prompt, scope, subj);
-    // §5/§8 provider faults: `empty` = an unrecoverable seam failure → the agent crashes (contained); a
-    // `schema_violation` = a structured typed reply that fails its schema → a clean, catchable TypeMismatch.
+    // §5/§8/§16.6 provider faults: `empty` = an unrecoverable seam failure → the agent crashes (contained);
+    // `schema_violation` = a structured typed reply that fails its schema → a TypeMismatch that FAULTS the
+    // send (a null never enters the typed binding; `retry N` re-asks, §11).
     const fault = (this.provider as { fault?: string }).fault;
     if (fault === "empty") throw new CrashError();
     if (fault === "schema_violation" && expected && expected.kind !== "credence") {
       this.ledger.append("TypeMismatch", subj, undefined, scope.currentAgent()?.name);
-      return { kind: "null", trust: "raw" };
+      throw new TypeMismatchError();
     }
     if (expected?.kind === "credence") {
       const variants = this.variantsOf(expected.enumName);
@@ -2365,6 +2384,9 @@ class Interpreter {
         ? this.provider.structured(prompt, schema, bindName ?? "Reply")
         : this.provider.reply(`${prompt}\n\nReturn only JSON matching this schema:\n${JSON.stringify(schema)}`).then((reply) => JSON.parse(reply)))
         .then((raw) => ({ raw }), (error) => ({ error }));
+      // §8/§16.6: a reply that cannot be parsed into the declared type FAULTS the send — TypeMismatch is
+      // recorded and a TypeMismatchError is thrown, so no null enters the typed binding. The throw travels
+      // through inResolutionOrder in resolution order (the TypeMismatch lands ordered before the fault).
       let value: Value = { kind: "null", trust: "raw" };
       await this.inResolutionOrder(rawWork, async ({ raw, error }) => {
         if (error) {
@@ -2373,28 +2395,27 @@ class Interpreter {
             raw,
             error: (error as Error).message,
           }, scope.currentAgent()?.name);
-          value = { kind: "null", trust: "raw" };
-          return;
+          throw new TypeMismatchError();
         }
         try {
           value = this.valueFromStructured(raw, structuredType, scope);
-          const resolved = this.ledger.append("Resolved", subj, {
-            kind: "structured",
-            prompt,
-            schema,
-            reply: valueSummary(value),
-          }, scope.currentAgent()?.name);
-          // §16.7: a received typed reply is internalized into the agent's private memory — the mandatory
-          // memory envelope (consult+internalize is unconditional; no opt-in/opt-out config knob).
-          await this.internalizeReceivedReply(subj, prompt, value, resolved.tick, scope.currentAgent());
         } catch (err) {
           this.ledger.append("TypeMismatch", subj, {
             schema,
             raw,
             error: (err as Error).message,
           }, scope.currentAgent()?.name);
-          value = { kind: "null", trust: "raw" };
+          throw new TypeMismatchError();
         }
+        const resolved = this.ledger.append("Resolved", subj, {
+          kind: "structured",
+          prompt,
+          schema,
+          reply: valueSummary(value),
+        }, scope.currentAgent()?.name);
+        // §16.7: a received typed reply is internalized into the agent's private memory — the mandatory
+        // memory envelope (consult+internalize is unconditional; no opt-in/opt-out config knob).
+        await this.internalizeReceivedReply(subj, prompt, value, resolved.tick, scope.currentAgent());
       });
       return value;
     }

@@ -267,15 +267,19 @@ describe("structured provider replies", () => {
     expect(memory?.experience).toBeUndefined();
   });
 
-  it("records the raw bad value when a structured reply fails its schema", async () => {
+  it("faults the send (no null-fill) when a structured reply fails its schema, recording the raw bad value", async () => {
     const r = await run(parse(TEXT_REPLY), { provider: new RecordingStructuredProvider({ value: "wrapped" }) });
-    expect(r.stdout).toEqual(["null"]);
+    // §8/§16.6 (owner ruling): a schema-violating typed reply faults AT the send — no null is
+    // substituted into `claim`, so the downstream `say(claim)` never runs (stdout is empty).
+    expect(r.stdout).toEqual([]);
     const mismatch = r.ledger.events.find((e) => e.etype === "TypeMismatch" && e.subject === "claim");
     expect(mismatch?.payload).toMatchObject({
       schema: { type: "string" },
       raw: { value: "wrapped" },
       error: "structured reply field is not text",
     });
+    // the fault crashes the reaction (contained, recoverable via `on crash`).
+    expect(r.ledger.events.map((e) => e.etype)).toContain("AgentCrashed");
   });
 
   it("uses the struct itself as the schema for typed struct replies", async () => {
@@ -1252,5 +1256,34 @@ describe("§15.5.6 warm split-conformal prediction sets", () => {
     const p = decidedPayload(r);
     expect(p.committed).toBe("abstained");
     expect(p.prediction_set).toBeUndefined();
+  });
+});
+
+describe("§17.7 host embedding — the onEvent live ledger observer", () => {
+  const PROG = `
+    agent A {
+      on awake { emit Event("hello"); emit Event("world"); }
+    }
+    spawn A a; awake a;
+  `;
+
+  it("invokes onEvent once per append, in tick order, matching the committed ledger", async () => {
+    const observed: { tick: number; etype: string }[] = [];
+    const r = await run(parse(PROG), { onEvent: (e) => observed.push({ tick: e.tick, etype: e.etype }) });
+    // one callback per committed event, in the ledger's tick order
+    expect(observed.map((e) => e.tick)).toEqual(r.ledger.events.map((e) => e.tick));
+    expect(observed.map((e) => e.etype)).toEqual(r.ledger.events.map((e) => e.etype));
+    // ticks are the canonical 0..n-1 append order
+    expect(observed.map((e) => e.tick)).toEqual(observed.map((_v, i) => i));
+    expect(observed.map((e) => e.etype)).toContain("AgentAwake");
+  });
+
+  it("contains an exception thrown by the observer — the run and ledger are unaffected", async () => {
+    let calls = 0;
+    const r = await run(parse(PROG), { onEvent: () => { calls++; throw new Error("observer boom"); } });
+    // every append still fired the (throwing) callback, and the run completed with a full ledger
+    expect(calls).toBe(r.ledger.events.length);
+    expect(r.ledger.events.map((e) => e.etype)).toContain("AgentAwake");
+    expect(r.ledger.events.filter((e) => e.etype === "Event").length).toBe(2);
   });
 });

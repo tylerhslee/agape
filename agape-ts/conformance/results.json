@@ -1,6 +1,6 @@
 {
-  "passed": 207,
-  "total": 207,
+  "passed": 211,
+  "total": 211,
   "bySection": {
     "00_lexical": {
       "pass": 11,
@@ -39,8 +39,8 @@
       "total": 7
     },
     "08_semantic": {
-      "pass": 10,
-      "total": 10
+      "pass": 11,
+      "total": 11
     },
     "09_prelude": {
       "pass": 6,
@@ -51,8 +51,8 @@
       "total": 11
     },
     "11_control": {
-      "pass": 5,
-      "total": 5
+      "pass": 8,
+      "total": 8
     },
     "12_aggregation": {
       "pass": 6,
@@ -1449,6 +1449,18 @@
       ]
     },
     {
+      "id": "sem_schema_violation_faults_send_on_crash",
+      "section": "08_semantic",
+      "expect": "accept",
+      "pass": true,
+      "reason": "accepted + ledger ok",
+      "phase": "run",
+      "hadMatchers": true,
+      "directives": [
+        "provider"
+      ]
+    },
+    {
       "id": "sem_schema_violation_typemismatch",
       "section": "08_semantic",
       "expect": "accept",
@@ -1676,6 +1688,40 @@
       "phase": "run",
       "hadMatchers": false,
       "directives": []
+    },
+    {
+      "id": "ctrl_retry_exhausts_faults",
+      "section": "11_control",
+      "expect": "accept",
+      "pass": true,
+      "reason": "accepted + ledger ok",
+      "phase": "run",
+      "hadMatchers": true,
+      "directives": [
+        "provider"
+      ]
+    },
+    {
+      "id": "ctrl_retry_first_attempt_ok",
+      "section": "11_control",
+      "expect": "accept",
+      "pass": true,
+      "reason": "accepted + ledger ok",
+      "phase": "run",
+      "hadMatchers": true,
+      "directives": []
+    },
+    {
+      "id": "ctrl_retry_recovers_typemismatch",
+      "section": "11_control",
+      "expect": "accept",
+      "pass": true,
+      "reason": "accepted + ledger ok",
+      "phase": "run",
+      "hadMatchers": true,
+      "directives": [
+        "provider"
+      ]
     },
     {
       "id": "ctrl_ungated_credence_committed_reject",

@@ -1,9 +1,10 @@
 //! id:        sem_schema_violation_enum_typemismatch
 //! section:   08_semantic
 //! expect:    accept
-//! contains:  TypeMismatch
+//! contains:  TypeMismatch; AgentCrashed(a)
+//! order:     TypeMismatch; AgentCrashed
 //! provider:  schema_violation
-//! spec:      §8 (Enum compiles to a closed enum schema; schema failure raises TypeMismatch)
+//! spec:      §8, §16.6 (Enum compiles to a closed enum schema; a schema failure faults the send with TypeMismatch, then the reaction crashes)
 //! ---
 enum Ticket { Billing, Bug }
 agent A {

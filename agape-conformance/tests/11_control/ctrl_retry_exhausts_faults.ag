@@ -1,0 +1,19 @@
+//! id:        ctrl_retry_exhausts_faults
+//! section:   11_control
+//! expect:    accept
+//! provider:  schema_violation
+//! contains:  TypeMismatch; RetryExhausted(a); AgentCrashed(a); Recovered(a)
+//! order:     TypeMismatch; RetryExhausted; AgentCrashed; Recovered
+//! absent:    Resolved
+//! spec:      §11, §16.6 (a persistent TypeMismatch exhausts the `retry N` block: after N attempts the runtime appends RetryExhausted and faults per the send-fault rule — the reaction crashes and `on crash` recovers)
+//! ---
+struct Memo { amount: int, to: text }
+event Recovered(text why);
+agent A {
+  on awake {
+    { Memo m = self <- "extract the memo"; }
+    retry(2)
+  }
+  on crash { emit Recovered("gave up after retries"); }
+}
+spawn A a; awake a;

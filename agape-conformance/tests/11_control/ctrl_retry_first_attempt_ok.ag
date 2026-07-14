@@ -1,0 +1,15 @@
+//! id:        ctrl_retry_first_attempt_ok
+//! section:   11_control
+//! expect:    accept
+//! contains:  Resolved
+//! absent:    TypeMismatch; RetryExhausted; AgentCrashed
+//! spec:      §11 (a `retry N` block parses and runs in the core kernel; when the block's first attempt does not fault, it runs exactly once and no RetryExhausted is recorded)
+//! ---
+struct Memo { amount: int, to: text }
+agent A {
+  on awake {
+    { Memo m = self <- "extract the memo"; say(m.to); }
+    retry(3)
+  }
+}
+spawn A a; awake a;

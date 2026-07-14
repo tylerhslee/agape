@@ -23,10 +23,10 @@ Status meanings:
 | 6b Tools | covered | Read/write tools, effect-class requirement, use grants, settled write inputs, and tainted write inputs. Replay non-invocation is `runtime-suite`. |
 | 6c Delegation | covered | The task literal (objective/acceptance/expires), foreground and background binding, worker-side `on assigned`/`complete`/`fail`, cooperative cancellation, both failure paths, the ledger aliases plus the four real task events, and delegation authority (static grant ∧ endorsed-task enablement). Runtime task scheduling is `runtime-suite`. |
 | 7 Ledger/events/when | covered | Event emission, exact spine assertions, event order, prospective `when`, guards, `about`, query-result events, and tool event pairs. Canonical hashing is `runtime-suite`. |
-| 8 Semantic checking | covered | Provider-produced `Credence`, closed enums, entailment, schema-violation TypeMismatch, and exact schema assertions for enum/struct/array outputs. |
+| 8 Semantic checking | covered | Provider-produced `Credence`, closed enums, entailment, the schema-violation TypeMismatch that faults the send (with `on crash` recovery), and exact schema assertions for enum/struct/array outputs. |
 | 9 Prelude | covered | Built-in events, Error subtyping, user Error leaves, Contradiction catching, Expired non-Error behavior, and `say` non-ledger behavior. |
 | 10 Memory | covered | `store`, the `mem` handle, recall taint, forget/tombstone, the objective `select … from ledger` query, origin projection, no ledger recall, recall requires a `mem`, and query expression/statement distinction. Memory envelope internals are `runtime-suite`. |
-| 11 Control flow | covered | `if`/`else`, branching on a `Decision`'s `.committed` over enum variants, the abstained else case, ungated `Credence` rejection, and `Credence`-in-`if` rejection. |
+| 11 Control flow | covered | `if`/`else`, branching on a `Decision`'s `.committed` over enum variants, the abstained else case, ungated `Credence` rejection, `Credence`-in-`if` rejection, and the bounded `retry N` recovery block (transient-TypeMismatch recovery, exhaustion crash, and first-attempt success). |
 | 12 Aggregation/quorum | covered | `quorum`, total dependence coverage, independent and dependent fusion, mixed independent/dependent clusters, and partial-coverage rejection. Runtime fan-out scheduling is `runtime-suite`. |
 | 13 Capabilities/governance | covered | Default-deny grants, subtractive extend, reach/use/perform authority, taint at sinks, subject endorsement, the endorsement binder as the settled subject, sink-admissibility only in a committed `if` branch, non-admissibility in the abstained else branch, raw-subject rejection, subject-scope rejection, the deference requirement, principal decisions, failed principal decisions, the inline margin `floor`, and Endorsed ledger records. Margin-floor runtime faults are `runtime-suite`. |
 | 14 Trusted kernel/invariants | covered | Bypass matrix is represented across gates, memory store/recall, the ledger query, tools, prompts, and config tests: no construct launders taint, invents authority, skips endorsement, or writes through an unsettled sink. |
@@ -40,4 +40,4 @@ Status meanings:
 | 17 Configuration | covered | Manifest binding errors, connector fallback fixtures, decision-rules-not-in-manifest, and dependency binding requirements. Config precedence execution is `runtime-suite`. |
 | 18 Deployment | out-of-scope | Deployment packaging/reporting is not compiler behavior. |
 
-Current language suite index: `207` tests (`128` accept, `79` reject).
+Current language suite index: `211` tests (`132` accept, `79` reject).

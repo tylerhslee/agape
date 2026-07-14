@@ -1,0 +1,17 @@
+//! id:        ctrl_retry_recovers_typemismatch
+//! section:   11_control
+//! expect:    accept
+//! provider:  schema_violation_once
+//! contains:  TypeMismatch; Resolved
+//! order:     TypeMismatch; Resolved
+//! absent:    AgentCrashed; RetryExhausted
+//! spec:      §11, §16.6 (a bounded `retry N` block is core: on a TypeMismatch it re-asks the provider, re-running the block; a transient schema failure recovers on the next attempt and the first attempt's TypeMismatch stays on the ledger)
+//! ---
+struct Memo { amount: int, to: text }
+agent A {
+  on awake {
+    { Memo m = self <- "extract the memo"; say(m.to); }
+    retry(2)
+  }
+}
+spawn A a; awake a;

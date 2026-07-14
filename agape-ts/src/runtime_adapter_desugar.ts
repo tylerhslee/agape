@@ -14,9 +14,8 @@
 //        -> the kernel `if (d.committed == V) { Endorsement<text> e = endorse s by d; ... } else ...`
 //   4. `event<T> x = ...` reply bindings -> `T x = ...` when `struct T` is declared, else `text x = ...`.
 //   5. `when (Prompt p about src)` binder field `p.body` -> `p.text` (the kernel Prompt binder field).
-//   6. `{ BODY } retry(N)` -> BODY re-issued N additional times inside `if (true) { ... }` blocks.
-//        (The kernel has no bounded loop; this is an unrolled approximation whose observable
-//        behavior matches the suite's fault-then-recover scenario.)
+//   6. (removed) `{ BODY } retry(N)` is now a CORE construct (§11) — the kernel parses and runs the
+//        real bounded recovery, so the suite's `retry(N)` sources pass straight through unmodified.
 //   7. f-string interpolation `f"... {x} ..."` -> the kernel spelling `f"... ${x} ..."`.
 //   8. A TOP-LEVEL `when` whose body consults cognition (`self <-`) or performs an action is
 //        hoisted into a generated `agent __Conformance grants { * } { ... }` (spawned+awoken at
@@ -92,8 +91,8 @@ export function desugarLegacySurface(input: string): DesugarResult {
   // ---- 3. gate arm blocks -> if/else chains ----
   src = desugarArmBlocks(src);
 
-  // ---- 6. retry blocks -> unrolled attempts ----
-  src = desugarRetry(src);
+  // (retry is now a CORE construct (§11): the kernel parses `{ … } retry(N)` and runs the real
+  //  bounded recovery, so the suite's `retry(N)` sources pass straight through — no desugar.)
 
   // ---- 8. hoist cognition-bearing top-level `when` blocks into a generated agent ----
   src = hoistTopLevelWhens(src);
@@ -242,32 +241,3 @@ function parseArms(inner: string): Arm[] {
   return arms;
 }
 
-function desugarRetry(input: string): string {
-  let src = input;
-  for (let guard = 0; guard < 8; guard++) {
-    const m = /\}\s*retry\s*\(\s*(\d+)\s*\)/.exec(src);
-    if (!m) break;
-    const n = Number(m[1]);
-    // find the matching `{` for the `}` right before `retry(`
-    const closeIdx = m.index;
-    let depth = 0;
-    let openIdx = -1;
-    for (let i = closeIdx; i >= 0; i--) {
-      const ch = src[i]!;
-      if (ch === "}") depth++;
-      else if (ch === "{") {
-        depth--;
-        if (depth === 0) {
-          openIdx = i;
-          break;
-        }
-      }
-    }
-    if (openIdx < 0) break;
-    const body = src.slice(openIdx + 1, closeIdx).trim();
-    const attempts = [body];
-    for (let k = 0; k < n; k++) attempts.push(`if (true) { ${body} }`);
-    src = src.slice(0, openIdx) + attempts.join("\n            ") + src.slice(m.index + m[0].length);
-  }
-  return src;
-}

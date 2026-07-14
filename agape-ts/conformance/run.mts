@@ -73,18 +73,25 @@ function providerFor(h: Header): Provider {
     }
     return new MockProvider(() => ({ ...scores }));
   }
-  // `empty` (seam failure → crash) and `schema_violation` (→ TypeMismatch) aren't modeled by this
-  // runtime; return an empty-distribution provider so the run proceeds and the assertion simply
-  // fails, which is the honest "unimplemented" signal.
-  if (p === "empty" || p === "schema_violation") {
-    // §5/§8 fault injection: `empty` = an unrecoverable seam failure (the provider returns nothing → the
-    // agent crashes); `schema_violation` = a structured reply that fails its schema (→ a clean TypeMismatch).
-    // The runtime reads `.fault` to model the two faults.
-    const prov: Provider & { fault?: string } = new (class implements Provider {
-      async judge() { return { scores: {} as Record<string, number> }; }
-      async reply() { return ""; }
-    })();
-    prov.fault = p;
+  // §5/§8/§16.6 fault injection: the runtime reads a provider's `.fault` seam once per send.
+  //   `empty`                 — an unrecoverable seam failure (returns nothing → the agent crashes).
+  //   `schema_violation`      — a structured reply that fails its schema on EVERY send (→ a
+  //                             TypeMismatch that faults the send; with `retry N`, exhausts).
+  //   `schema_violation_once` — a TRANSIENT variant: the schema fails on the first send and then the
+  //                             reply conforms, so a `retry N` recovery (§11) is observable.
+  // The valid replies (after the fault clears) are the ordinary MockProvider structured outputs, so a
+  // recovered attempt resolves normally.
+  if (p === "empty" || p === "schema_violation" || p === "schema_violation_once") {
+    const prov = new MockProvider() as MockProvider & { fault?: string };
+    let remaining = p === "schema_violation_once" ? 1 : Number.POSITIVE_INFINITY;
+    Object.defineProperty(prov, "fault", {
+      configurable: true,
+      get(): string | undefined {
+        if (p === "empty") return "empty";
+        if (remaining > 0) { remaining--; return "schema_violation"; }
+        return undefined; // the transient fault has cleared — the next send resolves normally
+      },
+    });
     return prov;
   }
   return new MockProvider();

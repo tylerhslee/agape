@@ -6,6 +6,42 @@ All notable changes to Agape are recorded here. The format follows
 suite, and the studio move in lockstep — a release is the whole bundle at one
 version.
 
+## [Unreleased]
+
+Structured-reply schema violations now fault at the send site, and the bounded
+`retry N` recovery block returns to the core kernel. Owner ruling; SPEC-first
+(spec → conformance → implementation). No version bump — this rides the next
+beta tag.
+
+### Changed
+
+- **A schema-violating typed/structured reply faults AT the send (§8, §16.6).**
+  Previously the runtime recorded a `TypeMismatch` and silently **null-filled**
+  the typed binding, so the program crashed later at the first field access
+  ("no field 'X' on null") with no way to guard. Now the send appends its
+  `TypeMismatch` and **faults the reaction** — the same contained crash path as
+  any runtime fault (`AgentCrashed`, recoverable via `on crash`). A null never
+  enters a typed binding from a structured send. The §17.5 fault-injection path
+  behaves identically. The typing rule is unchanged (T-Send still types to the
+  reply type); a new operational rule `E-Send-TypeMismatch` states the fault.
+
+### Added
+
+- **`retry N` is back in the core kernel as the bounded recovery (§11).** A
+  `{ … } retry(N)` block re-asks the provider on a `TypeMismatch`, re-running
+  the block for at most `N` attempts; each attempt's `TypeMismatch` stays on the
+  ledger for audit. On exhaustion it appends `RetryExhausted` and faults per the
+  send-fault rule. It recovers **only** a `TypeMismatch` — an unrecoverable
+  `empty` seam failure still crashes unretried. The core-kernel grammar
+  (§15.2 EBNF) and the parser's `assertCore` gate admit it again; `RetryExhausted`
+  is now a documented `Error` subtype (§9).
+- **`RunOptions.onEvent` — a live ledger-append observer for embedding hosts
+  (§17.7).** `createSession(program, { onEvent })` invokes the callback once per
+  ledger append, in tick order, immediately after the event commits. It is a
+  read-only sink (Studio timelines, a streaming fact-checker UI): it adds no
+  authority and changes no semantics, and an exception it throws is contained so
+  a faulty observer never corrupts the run.
+
 ## [1.0.0-beta.2026.7.14.1] - 2026-07-14
 
 A packaging-only patch over the first beta. The Windows Release job failed in

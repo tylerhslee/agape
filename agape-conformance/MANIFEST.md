@@ -1,6 +1,6 @@
 # Agape v1.0.0-beta.2026.7.14.1 — Conformance Test Index
 
-**207 tests** — accept: 128, reject: 79
+**211 tests** — accept: 132, reject: 79
 
 A conformant implementation must satisfy every `accept`/`reject` test (rejects with the declared error class; accepts matching any asserted spine).
 
@@ -180,9 +180,10 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 | `sem_schema_array_nested_exact` | accept | — | §8 (array<T> compiles to an array schema whose item schema is the exact schema for T) |
 | `sem_schema_enum_exact` | accept | — | §8 (Enum compiles to a closed enum structured-output schema) |
 | `sem_schema_struct_exact` | accept | — | §8 (struct compiles to an exact object schema with all fields required and no extra fields) |
-| `sem_schema_violation_array_typemismatch` | accept | — | §8 (array<T> compiles to schema-constrained output; schema failure raises TypeMismatch) |
-| `sem_schema_violation_enum_typemismatch` | accept | — | §8 (Enum compiles to a closed enum schema; schema failure raises TypeMismatch) |
-| `sem_schema_violation_typemismatch` | accept | — | §8 (structured output uses constrained decoding; on schema failure the runtime raises a clean TypeMismatch — catchable and retryable) |
+| `sem_schema_violation_array_typemismatch` | accept | — | §8, §16.6 (array<T> compiles to schema-constrained output; a schema failure faults the send with TypeMismatch, then the reaction crashes) |
+| `sem_schema_violation_enum_typemismatch` | accept | — | §8, §16.6 (Enum compiles to a closed enum schema; a schema failure faults the send with TypeMismatch, then the reaction crashes) |
+| `sem_schema_violation_faults_send_on_crash` | accept | — | §8, §16.6 (a typed reply that fails its schema faults AT the send: TypeMismatch then the reaction crashes, so the downstream field access never runs and no null enters the binding; `on crash` recovers with state intact) |
+| `sem_schema_violation_typemismatch` | accept | — | §8, §16.6 (structured output uses constrained decoding; on schema failure the runtime appends a TypeMismatch and faults the send — the reaction crashes, no null enters the binding) |
 
 ## 09_prelude
 
@@ -219,6 +220,9 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 | `ctrl_gate_abstain_ok` | accept | — | §11, §13 (the `abstained` sentinel is the else case when the gate commits no variant) |
 | `ctrl_gate_all_variants_ok` | accept | — | §11, §13 (branch on a Decision's .committed with an if-chain over the enum variants) |
 | `ctrl_if_else` | accept | — | §11 (if/else over a bool) |
+| `ctrl_retry_exhausts_faults` | accept | — | §11, §16.6 (a persistent TypeMismatch exhausts the `retry N` block: after N attempts the runtime appends RetryExhausted and faults per the send-fault rule — the reaction crashes and `on crash` recovers) |
+| `ctrl_retry_first_attempt_ok` | accept | — | §11 (a `retry N` block parses and runs in the core kernel; when the block's first attempt does not fault, it runs exactly once and no RetryExhausted is recorded) |
+| `ctrl_retry_recovers_typemismatch` | accept | — | §11, §16.6 (a bounded `retry N` block is core: on a TypeMismatch it re-asks the provider, re-running the block; a transient schema failure recovers on the next attempt and the first attempt's TypeMismatch stays on the ledger) |
 | `ctrl_ungated_credence_committed_reject` | reject | TypeError | §3, §11 (a Credence<E> is consumed only by a gate/combinator; testing `.committed` before a gate is a TypeError) |
 
 ## 12_aggregation

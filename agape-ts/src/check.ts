@@ -434,6 +434,7 @@ function collectBareUses(program: A.Program): Set<string> {
       case "spawn": if (!s.agentType.includes(".")) out.add(s.agentType); for (const a of s.args) addExpr(a); return;
       case "if": addExpr(s.cond); addStmts(s.then); if (s.else) addStmts(s.else); return;
       case "when": if (!s.etype.includes(".")) out.add(s.etype); addStmts(s.body); return;
+      case "retry": addStmts(s.body); return;
       case "dispatch":
         if (s.gate.kind === "decide") addExpr(s.gate.credence); else { addExpr(s.gate.subject); addExpr(s.gate.decision); }
         for (const arm of s.arms) addStmts(arm.body); if (s.abstain) addStmts(s.abstain.body); return;
@@ -518,6 +519,7 @@ function collectQualifiedRefs(program: A.Program): Set<string> {
       case "spawn": addName(s.agentType); for (const a of s.args) addExpr(a); return;
       case "if": addExpr(s.cond); addStmts(s.then); if (s.else) addStmts(s.else); return;
       case "when": addName(s.etype); addStmts(s.body); return;
+      case "retry": addStmts(s.body); return;
       case "dispatch":
         if (s.gate.kind === "decide") addExpr(s.gate.credence); else { addExpr(s.gate.subject); addExpr(s.gate.decision); }
         for (const arm of s.arms) addStmts(arm.body); if (s.abstain) addStmts(s.abstain.body); return;
@@ -761,6 +763,7 @@ function checkDenyModePromptIngress(program: A.Program, manifest: Manifest | und
           if (st.else) inspectBody(st.else, new Set(tainted), source);
           break;
         case "when": inspectBody(st.body, new Set(tainted), source); break;
+        case "retry": inspectBody(st.body, new Set(tainted), source); break; // §11: taint flows into the recovery block
         case "dispatch":
           for (const arm of st.arms) inspectBody(arm.body, new Set(tainted), source);
           if (st.abstain) inspectBody(st.abstain.body, new Set(tainted), source);
@@ -782,6 +785,7 @@ function checkDenyModePromptIngress(program: A.Program, manifest: Manifest | und
       switch (st.kind) {
         case "when": visitWhen(st); break;
         case "if": scanForWhens(st.then); if (st.else) scanForWhens(st.else); break;
+        case "retry": scanForWhens(st.body); break;
         case "dispatch": for (const arm of st.arms) scanForWhens(arm.body); if (st.abstain) scanForWhens(st.abstain.body); break;
         default: break;
       }
@@ -870,6 +874,7 @@ class Checker {
       case "spawn": for (const a of s.args) this.walkExpr(a); return;
       case "if": this.walkExpr(s.cond); this.walkStmts(s.then); if (s.else) this.walkStmts(s.else); return;
       case "when": this.walkStmts(s.body); return;
+      case "retry": this.walkStmts(s.body); return; // §11: validate types inside the recovery block
       case "dispatch":
         this.walkGate(s.gate);
         for (const arm of s.arms) this.walkStmts(arm.body);
@@ -1104,6 +1109,9 @@ class Checker {
       case "when":
         this.scanDecisionEnums(s.body, env, out);
         return;
+      case "retry":
+        this.scanDecisionEnums(s.body, env, out);
+        return;
       default:
         return;
     }
@@ -1255,6 +1263,7 @@ class Checker {
         throw colorViolation(`a \`pure\` function may not \`perform\` (an action is an outbound act → async) (§6b)`);
       case "emit": for (const a of s.args) this.assertPureExpr(a); return;
       case "if": this.assertPureExpr(s.cond); this.assertPureBody(s.then); if (s.else) this.assertPureBody(s.else); return;
+      case "retry": this.assertPureBody(s.body); return;
       case "dispatch": this.assertPureGate(s.gate); for (const arm of s.arms) this.assertPureBody(arm.body); if (s.abstain) this.assertPureBody(s.abstain.body); return;
       // §9/§10: a mem WRITE internalizes through the provider (decompose across the region's views) —
       // a dependency reach, so a `pure` body may not store (the recall seam is likewise async, below).
@@ -1439,6 +1448,12 @@ class Checker {
         if (this.d.agents.has(s.agentType)) scope.setAgentType(s.name, s.agentType);
         return;
       }
+      case "retry":
+        // §11: the bounded recovery block shares the enclosing scope (an attempt's binding persists), so
+        // its body is checked in `scope` — the consequential-perform static rule (checkInvoke) and every
+        // other statement check apply inside a `retry` exactly as at top level.
+        this.checkBody(s.body, scope);
+        return;
       default: return; // awake/sleep/return/when — no shape checks
     }
   }
@@ -1665,6 +1680,7 @@ class Checker {
         case "emit": return st.args.some(sinkExpr);
         case "if": return walk(st.then) || (st.else ? walk(st.else) : false) || sinkExpr(st.cond);
         case "when": return walk(st.body);
+        case "retry": return walk(st.body);
         case "dispatch": return st.arms.some((a) => walk(a.body)) || (st.abstain ? walk(st.abstain.body) : false);
         default: return false;
       }
@@ -1730,6 +1746,7 @@ class Checker {
           case "say": exprHas(st.arg); break;
           case "if": walk(st.then); if (st.else) walk(st.else); break;
           case "when": walk(st.body); break;
+          case "retry": walk(st.body); break;
           case "dispatch":
             if (st.gate.kind === "decide") exprHas(st.gate);
             else if (st.gate.kind === "endorse" && this.endorseIsPrincipalDriven(st.gate, inner)) found = true;

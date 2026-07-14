@@ -15,7 +15,7 @@ Header keys: id, section, expect (accept|reject|blocked), error (iff reject),
 spine|contains|absent|order (ledger matchers; `; `-separated),
 warning|absent_warning (runtime warning matchers; `; `-separated), schema (compiler schema assertions;
 `; `-separated), question (iff blocked), spec, note.
-Run directives (the §17.5 harness contract): provider (empty|schema_violation|credence(...)),
+Run directives (the §17.5 harness contract): provider (empty|schema_violation|schema_violation_once|credence(...)),
 principal (grant|deny — the identity-dependency ruling for `decide c by p`), manifest
 (key=value; `; `-separated; e.g. `tools.search.driver=mcp`), replay (chain_head_equal),
 modules (companion module filenames; `; `-separated; live in a sibling <id>.d/ dir — v1.1.0),
@@ -44,7 +44,9 @@ ERROR_CLASSES = {"LexError", "ParseError", "TypeError", "ColorViolation",
                  # v1.1.0 library layer + gate:
                  "ModuleError", "VisibilityError", "InterfaceError", "GateError"}
 # Harness directives — the §17.5 test-mode contract a conformant runtime must honor.
-PROVIDER_MODES = {"empty", "schema_violation"}   # plus a scripted `credence(...)` form
+# `schema_violation` fails every send; `schema_violation_once` is the transient variant that
+# fails the first send then conforms, so a `retry N` recovery (§11, §16.6) is observable.
+PROVIDER_MODES = {"empty", "schema_violation", "schema_violation_once"}   # plus a scripted `credence(...)` form
 PRINCIPAL_MODES = {"grant", "deny"}   # the identity-dependency ruling for `decide c by p`
 REPLAY_MODES = {"chain_head_equal"}
 
