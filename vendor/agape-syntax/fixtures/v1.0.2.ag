@@ -1,0 +1,56 @@
+instruction "Prefer abstaining to guessing.";
+conformal 0.05;
+
+prompt text request;
+principal alice;
+
+enum Outcome { Refund, Explain, Escalate }
+event Case(text request);
+reversible action Reply(text message);
+action IssueCredit(int amount, text reason);
+
+policy Support { threshold 0.85 margin 0.05 floor 0.15 }
+
+agent SupportDesk grants { perform Reply, perform IssueCredit } {
+  mem notes <- "no cases yet";
+
+  when (Prompt p about request) {
+    emit Case(p);
+    notes <- p;
+
+    text guide = md "docs/support-guide.md";
+    text task = prompt {
+# Support triage
+
+Use this Markdown guide:
+
+${guide}
+
+Classify this support request:
+
+> ${p}
+
+Literal JSON braces stay literal:
+{ "ok": true }
+    };
+
+    Credence<Outcome> outcome =
+      self <- f"classify this support request: ${task}" expires 10;
+
+    alice decide outcome conformal 0.05 {
+      Refund: {
+        perform IssueCredit(25, "duplicate charge");
+        perform Reply("I've issued a $25 credit.");
+      }
+      Explain: perform Reply("I can explain the charge.");
+      Escalate: perform Reply("I'm routing this to a specialist.");
+      default: perform Reply("I need a human review.");
+    } defer to alice;
+
+    text prior = notes -> "recent cases";
+    say(prior);
+  }
+}
+
+spawn SupportDesk desk;
+awake desk;

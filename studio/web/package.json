@@ -12,7 +12,7 @@
     "e2e": "playwright test"
   },
   "dependencies": {
-    "@agape-lang/syntax": "file:../../../agape-language-pack/packages/agape-syntax",
+    "@agape-lang/syntax": "file:../../vendor/agape-syntax",
     "@monaco-editor/react": "^4.6.0",
     "monaco-editor": "^0.55.1",
     "monaco-vim": "^0.4.4",
