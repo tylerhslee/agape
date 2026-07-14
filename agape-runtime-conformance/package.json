@@ -6,6 +6,7 @@
   "description": "Black-box TypeScript conformance tests for the Agape runtime contract in SPEC.md sections 16 and 17.",
   "scripts": {
     "test": "vitest run",
+    "test:agape-ts": "AGAPE_RUNTIME_ADAPTER=../agape-ts/src/runtime_adapter.ts vitest run",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
