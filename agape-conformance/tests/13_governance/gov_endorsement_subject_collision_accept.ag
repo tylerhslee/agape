@@ -9,11 +9,11 @@ action PublishMemo(text body);
 agent A grants { perform PublishMemo } {
   on awake {
     Memo memo = Memo { committed: "field", body: "draft" };
-    Credence<Verdict> c = self <- f"is ready: {memo.body}";
+    Credence<Verdict> c = self <- f"is ready: ${memo.body}";
     Decision<Verdict> d = decide c by confidence 0.9;
     if (d.committed == Publish) {
       Endorsement<Memo> e = endorse memo by d;
-      say(f"{e.committed}");
+      say(f"${e.committed}");
       say(e.subject.committed);
       perform PublishMemo(e.body);
     } else if (d.committed == Revise) { Endorsement<Memo> e = endorse memo by d; }

@@ -10,7 +10,7 @@ action Flag(text body);
 agent C grants { perform Flag } {
   on awake {
     text body = self <- "draft the report body";
-    Credence<R> c = self <- f"is this fraud: {body}";
+    Credence<R> c = self <- f"is this fraud: ${body}";
     Decision<R> d = decide c by confidence 0.9;
     if (d.committed == Fraud) { perform Flag(body); }
   }

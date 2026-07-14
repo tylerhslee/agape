@@ -1,7 +1,7 @@
 //! id:        lex_reject_malformed_fstring
 //! section:   00_lexical
 //! expect:    reject
-//! error:     ParseError
-//! spec:      §2 (f-string interpolation braces must parse as expressions)
+//! error:     LexError
+//! spec:      §2 (an f-string ${ interpolation must be closed by } before the string ends)
 //! ---
-text s = f"hello {";
+text s = f"hello ${name";

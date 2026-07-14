@@ -10,7 +10,7 @@ enum R { Yes, No }
 agent A {
   on awake {
     text req = self <- "state the request";
-    Credence<R> c = self <- f"yes: {req}";
+    Credence<R> c = self <- f"yes: ${req}";
     Decision<R> d = decide c by conformal 0.05;
     if (d.committed == Yes) { Endorsement<text> e = endorse req by d; say("yes"); }
     else if (d.committed == No) { Endorsement<text> e = endorse req by d; say("no"); }

@@ -9,7 +9,7 @@ action Reply(text body);
 agent A grants { perform Reply } {
   on awake {
     text draft = "the answer";
-    Credence<Verdict> c = self <- f"is this faithful: {draft}";
+    Credence<Verdict> c = self <- f"is this faithful: ${draft}";
     Decision<Verdict> d = decide c by confidence 0.9;
     perform Reply(draft);
   }

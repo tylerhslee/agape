@@ -9,7 +9,7 @@ agent Desk {
   on awake {
     Credence<R> c = self <- "yes?";
     Endorsement<R> e = decide c by confidence 0.8;
-    say(f"{e}");
+    say(f"${e}");
   }
 }
 spawn Desk d; awake d;

@@ -8,7 +8,7 @@ action Flag(bool b);
 agent A grants { perform Flag } {
   on awake {
     text note = self <- "describe";
-    Credence<bool> c = self <- f"flag it: {note}";
+    Credence<bool> c = self <- f"flag it: ${note}";
     Decision<bool> d = decide c by confidence 0.9;
     if (d.committed == true) { Endorsement<text> e = endorse note by d; perform Flag(true); }
     else if (d.committed == false) { Endorsement<text> e = endorse note by d; }

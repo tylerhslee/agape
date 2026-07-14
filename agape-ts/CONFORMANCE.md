@@ -1,7 +1,8 @@
 # agape-ts — conformance status vs the black-box suite
 
 This implementation is run against `../agape-conformance` (Agape **v1.0.0-alpha.2026.7.11.7**, the
-**core kernel** — 164 tests) by `conformance/run.mts`, which feeds each test's program through this
+**core kernel** — 207 tests across 18 sections, including `06b_world` and `06c_delegation`) by
+`conformance/run.mts`, which feeds each test's program through this
 front end (lex → parse → **check**) + runtime (**run**) and matches the `//!`-header expectation
 (`accept`/`reject` + error class + ledger matchers + §17.5 directives).
 
@@ -16,17 +17,16 @@ Measured against the canonical suite (the conformance tests and `SPEC.md` are th
 changed only with spec-grounded evidence that the test itself is wrong).
 
 ```
-TOTAL  164 / 164  (100%)        kernel vitest suite: 33 / 33        tsc --noEmit: clean
+TOTAL  207 / 207  (100%)        vitest suite: 100 / 100        tsc --noEmit: clean
 
-00_lexical         11 / 11  ✓   10_memory          11 / 11  ✓
-01_axes             4 / 4   ✓   11_control          5 / 5   ✓
-03_types           22 / 22  ✓   12_aggregation      5 / 5   ✓
-04_functions        9 / 9   ✓   13_governance      30 / 30  ✓
-05_agents          12 / 12  ✓   15_reproducibility  2 / 2   ✓
-06_communication    7 / 7   ✓   16_config           9 / 9   ✓
-07_ledger           7 / 7   ✓   22_gate            14 / 14  ✓
-08_semantic        10 / 10  ✓
-09_prelude          6 / 6   ✓
+00_lexical         11 / 11  ✓   07_ledger           7 / 7   ✓   13_governance      21 / 21  ✓
+01_axes             4 / 4   ✓   08_semantic        10 / 10  ✓   15_reproducibility  2 / 2   ✓
+03_types           22 / 22  ✓   09_prelude          6 / 6   ✓   16_config          13 / 13  ✓
+04_functions        8 / 8   ✓   10_memory          11 / 11  ✓   22_gate            14 / 14  ✓
+05_agents          15 / 15  ✓   11_control          5 / 5   ✓
+06_communication    7 / 7   ✓   12_aggregation      6 / 6   ✓
+06b_world          14 / 14  ✓
+06c_delegation     31 / 31  ✓
 ```
 
 ## Grammar lockstep

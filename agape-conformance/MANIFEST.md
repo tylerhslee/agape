@@ -11,10 +11,10 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 |---|---|---|---|
 | `lex_comment_fstring` | accept | — | §2 (line comments; f-string interpolation; INT/FLOAT literals) |
 | `lex_contextual_word_as_identifier` | accept | — | §2 (contextual words `as`/`by`/`reach`/`origin` lex as identifiers out of position) |
-| `lex_reject_fstring_escaped_brace` | reject | ParseError | §2 (f-string braces introduce parsed expressions; escaped literal braces are not part of the grammar) |
+| `lex_reject_fstring_escaped_brace` | reject | LexError | §2 (f-string escapes are \n \t \" \\ and \${; plain braces are already literal, so \{ is an invalid escape) |
 | `lex_reject_keyword_as_identifier` | reject | ParseError | §2 (reserved keywords may not be used as identifiers) |
 | `lex_reject_leading_dot_number` | reject | ParseError | §2 (Float is decimal digits with a point; `.5` is not a numeric literal) |
-| `lex_reject_malformed_fstring` | reject | ParseError | §2 (f-string interpolation braces must parse as expressions) |
+| `lex_reject_malformed_fstring` | reject | LexError | §2 (an f-string ${ interpolation must be closed by } before the string ends) |
 | `lex_reject_missing_semicolon` | reject | ParseError | §2 (statement terminator `;` is explicit and required) |
 | `lex_reject_tilde` | reject | ParseError | §2 (there is no similarity operator; `~` lexes to an Op but the parser rejects it — a ParseError, not a LexError) |
 | `lex_reject_trailing_dot_number` | reject | ParseError | §2 (Float is decimal digits with a point and digits; `1.` is not a numeric literal) |
@@ -27,7 +27,7 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 |---|---|---|---|
 | `axes_collapse_is_decision` | accept | — | §13, §15.2 (`decide c by R` collapses a Credence to a settled, ledgered Decision) |
 | `axes_credence_is_graded_judgment` | accept | — | §1, §8 (a semantic judgment is a provider send bound to Credence<E> → graded) |
-| `axes_pure_call_settled` | accept | — | §1 Axis A/B (a `pure` fn reaches no dependency and stays `settled`) |
+| `axes_pure_call_settled` | accept | — | §1 Axis A/B (a pure `pure` fn reaches no dependency and stays `settled`) |
 | `axes_send_reply_is_raw` | accept | — | §1 Axis B/C, §15.3.2 T-Send (`d <- p` is on the ledger; its reply is `raw`) |
 
 ## 03_types
@@ -113,10 +113,10 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 | `world_foreground_perform_binding_ok` | accept | — | §6b, §13 (foreground perform binding: a wired action with a result_event binds its reply like a §6c delegation; a judgment-settled request yields judgment-settled external ingress, which may drive a further perform) |
 | `world_perform_unsettled_reject` | reject | TaintViolation | §6b, §13 (every perform is a consequential sink taking settled args only — anti-exfiltration: un-endorsed cognition never leaves the process on the perform path) |
 | `world_perform_unsettled_unwired_reject` | reject | TaintViolation | §6b, §13 (the settled-only rule for perform args is UNIFORM: it does not depend on whether the deployment wires the action — checker semantics never depend on the manifest) |
+| `world_pure_perform_reject` | reject | ColorViolation | §4, §6b (every perform is async — whether an act reaches the world is a deployment fact the checker must not depend on; a `pure` function may not perform) |
 | `world_replay_chain_head` | accept | — | §6b, §16.5 (recorded replay of a wired perform regenerates the same chain-head: the seam's journal pair re-serves the endpoint result and nothing is re-invoked) |
 | `world_result_event_ingress_to_provider_warn` | accept | — | §6b, §17 (default provider-prompt ingress policy warns when unscreened result-event ingress is interpolated into cognition) |
 | `world_result_event_screened_ingress_to_provider_ok` | accept | — | §6b, §17 (a manifest-screened result-event ingress value is external_screened, so it may feed cognition without warning even under deny mode) |
-| `world_pure_perform_reject` | reject | ColorViolation | §4, §6b (every perform is async — whether an act reaches the world is a deployment fact the checker must not depend on; a `pure` function may not perform) |
 | `world_unwired_action_pure_ok` | accept | — | §6b (unwired = pure: an unwired action is a ledgered performative — the act is the record; no seam journal pair appears) |
 | `world_wired_perform_invokes_ok` | accept | — | §6b (an [actions.NAME] wiring makes perform invoke the catalog endpoint: the action's own domain row, then the seam's ToolStarted/ToolResolved journal pair correlated by catalog name) |
 | `world_wired_perform_result_event_ok` | accept | — | §6b (a wiring's result_event lands the endpoint's reply as the named event row after the journal pair; a statement-form perform consumes it reactively via `when`) |

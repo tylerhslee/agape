@@ -6,7 +6,7 @@
 agent A {
   on awake {
     bool yes = self <- "is the sky blue?";
-    say(f"{yes}");
+    say(f"${yes}");
   }
 }
 spawn A a; awake a;

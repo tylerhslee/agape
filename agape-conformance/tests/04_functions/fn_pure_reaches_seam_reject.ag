@@ -4,4 +4,4 @@
 //! error:     ColorViolation
 //! spec:      §1 Axis A, §4 (a pure fn may not reach the provider via `<-`)
 //! ---
-pure text classify(text x) { return self <- f"classify {x}"; }
+pure text classify(text x) { return self <- f"classify ${x}"; }

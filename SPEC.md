@@ -73,7 +73,7 @@ action Release(text build);          // a consequential sink (needs a grant)
 agent Gatekeeper grants { perform Release } {
   on awake {
     text build = self <- "name the release candidate";           // testimony (raw)
-    Credence<Verdict> c = self <- f"is {build} safe to ship?";   // graded judgment
+    Credence<Verdict> c = self <- f"is ${build} safe to ship?";   // graded judgment
     Decision<Verdict> d = decide c by confidence 0.9;            // sealed; ledgered as Decided
     if (d.committed == Ship) {
       Endorsement<text> e = endorse build by d;                  // the settled subject
@@ -250,11 +250,11 @@ pure int fee(int cents) { return cents / 10; }   // pure: provably no dependency
 agent Teller {
   on awake {
     text note = self <- "describe the request";              // async · raw · lifecycle events
-    Credence<bool> ok = self <- f"is this routine: {note}";  // async · graded · lifecycle events
+    Credence<bool> ok = self <- f"is this routine: ${note}";  // async · graded · lifecycle events
     Decision<bool> d = decide ok by confidence 0.8;           // local collapse · settled · Decided
     if (d.committed == true) { emit Event("routine"); }      // branch on a settled fact
     else if (d.committed == false) { emit Event("escalate"); }
-    say(f"fee: {fee(1250)}");                                // pure call · settled · no events
+    say(f"fee: ${fee(1250)}");                               // pure call · settled · no events
   }
 }
 spawn Teller t; awake t;
@@ -268,7 +268,8 @@ spawn Teller t; awake t;
 - **Whitespace:** insignificant except as a token separator.
 - **Statement terminator:** `;` (explicit, required).
 - **String:** `String` = `"..."` with escapes `\n \t \" \\`.
-- **F-string:** `FString` = `f"...{expr}..."`. Lexed as one `FSTR` token; `{expr}` parsed after.
+- **F-string:** `FString` = `f"...${expr}..."`. Lexed as one `FSTR` token; each `${expr}` parsed
+after. Plain `{` `}` are literal text; write `\${` for a literal `${`.
 - **Numbers:** `Int` = a decimal integer (`42`); `Float` = a decimal with a point (`3.5`).
 The grammar terminal `Number` = `Int | Float` (so `conformal α` accepts either; `quorum(Int, …)`
 requires an `Int`).
@@ -334,7 +335,7 @@ agent Notes {
   on awake {
     mem log <- "the first note";                     // <- writes into a mem region
     text hit = log -> "what was noted?";             // -> recalls (always tainted)
-    Credence<bool> b = self <- f"useful? {hit}";     // an f-string interpolates {expr}
+    Credence<bool> b = self <- f"useful? ${hit}";    // an f-string interpolates ${expr}
     Decision<bool> d = decide b by confidence 0.75;  // Number literals: 0.75, 42
     if (d.committed == true) { say("kept"); } else { say("dropped"); }
   }
@@ -432,7 +433,7 @@ consuming one anywhere but the gate or `quorum` is a `TypeError`.
 enum Route { Handle, Escalate }
 
 Credence<Route> route =
-  self <- f"triage this request: {body}";
+  self <- f"triage this request: ${body}";
 ```
 
 The provider receives the rendered prompt plus a schema whose only legal categorical outputs are
@@ -543,7 +544,7 @@ the decided enum does not pretend to.
 pure int   double(int x)            { return x * 2; }                 // pure, bare int
 pure Decision<bool> collapse(Credence<bool> c) { return decide c by confidence 0.9; }  // pure; the collapse is deterministic
 Credence<bool> about_poker(text x)  {                                 // async, graded judgment
-    Credence<bool> c = self <- f"is {x} a game of poker?";
+    Credence<bool> c = self <- f"is ${x} a game of poker?";
     return c;
 }
 ```
@@ -707,7 +708,7 @@ agent Analyst {}
 agent Desk(Analyst quant) grants { reach Analyst } {
   on awake {
     text view = quant <- "one-line view on the filing" expires 5;  // Sent → Delivered → Resolved
-    Credence<bool> agree = self <- f"do we agree: {view}";        // graded when Credence-bound
+    Credence<bool> agree = self <- f"do we agree: ${view}";       // graded when Credence-bound
     Decision<bool> d = decide agree by confidence 0.8;
     if (d.committed == true) { emit Event("aligned"); }
     else { emit Event("review"); }
@@ -788,7 +789,7 @@ action Announce(text note);          // unwired action: a pure ledgered performa
 agent Researcher grants { perform Search } {
   on awake {
     text hits = perform Search("prior art") expires 5;   // foreground binding (below)
-    emit Event(f"found: {hits}");
+    emit Event(f"found: ${hits}");
   }
 }
 ```
@@ -927,7 +928,7 @@ agent Lead grants { reach Researcher } {
       acceptance "A one-paragraph map of the field";
     } expires 200;
     when (TaskCompleted done about h) { emit Event("survey landed"); }
-    when (TaskFailed oops about h)    { emit Event(f"survey failed: {oops.reason}"); }
+    when (TaskFailed oops about h)    { emit Event(f"survey failed: ${oops.reason}"); }
   }
 }
 spawn Lead lead; awake lead;
@@ -1124,7 +1125,7 @@ part of the semantics so that replay is well-defined.
 
 ```agape
 event Logged(text note);
-Credence<Entailment> rel = self <- f"does {claim} entail {evidence}?";
+Credence<Entailment> rel = self <- f"does ${claim} entail ${evidence}?";
 Decision<Entailment> d = decide rel by confidence 0.9;
 if      (d.committed == Entails)     { emit Logged("supported"); }
 else if (d.committed == Contradicts) { emit Logged("refuted"); }
@@ -1151,8 +1152,8 @@ prompt and compiles the destination type into a schema:
 enum Triage { Auto, Human }
 struct Summary { title: text, urgent: bool }
 
-Credence<Triage> t = self <- f"triage: {body}";
-Summary s = self <- f"summarize: {body}";
+Credence<Triage> t = self <- f"triage: ${body}";
+Summary s = self <- f"summarize: ${body}";
 ```
 
 The first call constrains the backend to the closed enum `Triage` and records a distribution over
@@ -1166,9 +1167,9 @@ the output schema; the provider is forced to answer inside `E`, and the result i
 distribution over `E`'s variants (the credence).
 
 ```agape
-Credence<bool> ok        = self <- f"is {x} an approval?";           // over { true, false }
-Credence<Entailment> rel = self <- f"does {p} entail {h}?";          // over { Entails, Contradicts, Neutral }
-Credence<Ticket> kind    = self <- f"classify this ticket: {body}";  // over a user enum Ticket
+Credence<bool> ok        = self <- f"is ${x} an approval?";          // over { true, false }
+Credence<Entailment> rel = self <- f"does ${p} entail ${h}?";        // over { Entails, Contradicts, Neutral }
+Credence<Ticket> kind    = self <- f"classify this ticket: ${body}"; // over a user enum Ticket
 ```
 
 `Credence<E>` over any user enum is a constrained classifier whose output is trust-tracked
@@ -1556,7 +1557,7 @@ action ReleaseFunds(int cents);
 agent Clerk grants { perform ReleaseFunds } {
   on awake {
     text request = "release $100";
-    Credence<Approval> a = self <- f"assess this request: {request}";
+    Credence<Approval> a = self <- f"assess this request: ${request}";
     Decision<Approval> d = decide a by confidence 0.95 margin 0.2;
 
     if (d.committed == Approve) {
@@ -1596,7 +1597,7 @@ a sink consumes:
 enum Verdict { Faithful, Unsupported }
 action Publish(text body);   event NeedsRevision(text body);   action Escalate(text id);
 
-Credence<Verdict> c = self <- f"is this faithful: {response}";
+Credence<Verdict> c = self <- f"is this faithful: ${response}";
 Decision<Verdict>  d = decide c by confidence 0.9 margin 0.1;
 
 if (d.committed == Faithful) {
@@ -1854,7 +1855,7 @@ principal treasurer;
 agent Clerk grants { perform Pay } {            // authority: exactly one power
   on awake {
     Payout req = self <- "extract the payout request";         // raw cognition
-    Credence<Approval> c = self <- f"approve {req.amount_cents} to {req.payee}?";
+    Credence<Approval> c = self <- f"approve ${req.amount_cents} to ${req.payee}?";
     Decision<Approval> d = treasurer decide c by conformal 0.05;  // cold → escalates to a human
     if (d.committed == Approve) {
       Endorsement<Payout> e = endorse req by d;                // the only path to settlement

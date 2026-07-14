@@ -9,7 +9,7 @@ action Publish(text body);
 agent Worker {
   on assigned {
     text draft = self <- "write the copy";
-    Credence<Quality> q = self <- f"is the copy good: {draft}";
+    Credence<Quality> q = self <- f"is the copy good: ${draft}";
     Decision<Quality> d = decide q by confidence 0.9;
     if (d.committed == Good) {
       Endorsement<text> e = endorse draft by d;

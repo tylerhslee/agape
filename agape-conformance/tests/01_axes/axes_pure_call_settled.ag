@@ -6,4 +6,4 @@
 //! ---
 pure int dbl(int x) { return x * 2; }
 int y = dbl(21);
-say(f"{y}");
+say(f"${y}");

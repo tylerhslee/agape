@@ -14,13 +14,14 @@ Status meanings:
 |---|---|---|
 | 0 Scope and layering | covered | Trusted-kernel path and static/dynamic separation are covered through authority, taint, gate, and replay-header tests. Runtime execution model is `runtime-suite`. |
 | 1 Orthogonal axes | covered | Axis tests cover pure/async, trust tiers, ledger presence, and independence of the axes. |
-| 2 Lexical structure | covered | Comments, keywords, strings, f-strings, operators, missing semicolons, unknown operators, invalid numeric forms, and unsupported escaped f-string braces. |
+| 2 Lexical structure | covered | Comments, keywords, strings, f-strings (`${expr}` interpolation with literal plain braces, invalid escapes, unterminated interpolation), operators, missing semicolons, unknown operators, and invalid numeric forms. |
 | 3 Types | covered | Scalars, arrays, structs, enums, events/actions, `Credence`, `Decision`, `Endorsement`, `Rule` non-storage, declared dependencies, exact payload arity/types. |
 | 4 Functions/color | covered | pure restrictions, dependency reaches, tool/store reaches, in-hand gate operations, and trust flow through helper calls. |
 | 5 Agents/lifecycle | covered | Spawn/awake/sleep/crash, `extend`, hooks, instruction blocks, prompts, and agent construction/resume rules. Runtime persistence/generation is `runtime-suite`. |
 | 5b Prompt | covered | Prompt declaration, prompt-origin settled input at sinks, and missing prompt config. Long-running source behavior is `runtime-suite`. |
 | 6 Communication | covered | Send lifecycle, typed replies, self-send, expiry, lost sends, late delivery refusal, and reach grants. Illegal host-forged traces are `runtime-suite`. |
 | 6b Tools | covered | Read/write tools, effect-class requirement, use grants, settled write inputs, and tainted write inputs. Replay non-invocation is `runtime-suite`. |
+| 6c Delegation | covered | The task literal (objective/acceptance/expires), foreground and background binding, worker-side `on assigned`/`complete`/`fail`, cooperative cancellation, both failure paths, the ledger aliases plus the four real task events, and delegation authority (static grant ∧ endorsed-task enablement). Runtime task scheduling is `runtime-suite`. |
 | 7 Ledger/events/when | covered | Event emission, exact spine assertions, event order, prospective `when`, guards, `about`, query-result events, and tool event pairs. Canonical hashing is `runtime-suite`. |
 | 8 Semantic checking | covered | Provider-produced `Credence`, closed enums, entailment, schema-violation TypeMismatch, and exact schema assertions for enum/struct/array outputs. |
 | 9 Prelude | covered | Built-in events, Error subtyping, user Error leaves, Contradiction catching, Expired non-Error behavior, and `say` non-ledger behavior. |
@@ -39,4 +40,4 @@ Status meanings:
 | 17 Configuration | covered | Manifest binding errors, connector fallback fixtures, decision-rules-not-in-manifest, and dependency binding requirements. Config precedence execution is `runtime-suite`. |
 | 18 Deployment | out-of-scope | Deployment packaging/reporting is not compiler behavior. |
 
-Current language suite index: `164` tests (`101` accept, `63` reject).
+Current language suite index: `207` tests (`128` accept, `79` reject).

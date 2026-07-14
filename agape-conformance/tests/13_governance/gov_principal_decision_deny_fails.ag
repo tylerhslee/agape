@@ -12,7 +12,7 @@ principal alice;
 agent Clerk grants { perform ReleaseFunds } {
   on awake {
     text req = self <- "state the refund request";
-    Credence<Approval> c = self <- f"assess: {req}";
+    Credence<Approval> c = self <- f"assess: ${req}";
     Decision<Approval> d = alice decide c by conformal 0.05;
     if (d.committed == Approve) { Endorsement<text> e = endorse req by d; perform ReleaseFunds(10000); }
     else if (d.committed == Decline) { Endorsement<text> e = endorse req by d; say("declined"); }

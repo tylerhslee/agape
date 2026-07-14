@@ -10,7 +10,7 @@ action Commit(text body);
 agent Desk grants { perform Commit } {
   when (Ask q) {
     text body = q.body;
-    Credence<R> c = self <- f"commit: {body}";
+    Credence<R> c = self <- f"commit: ${body}";
     Decision<R> d = decide c by conformal 0.05;
     if (d.committed == Approve) { Endorsement<text> e = endorse body by d; perform Commit(e); }
     else if (d.committed == Reject) { Endorsement<text> e = endorse body by d; say("rejected"); }

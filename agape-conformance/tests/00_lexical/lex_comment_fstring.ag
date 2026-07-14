@@ -7,5 +7,5 @@
 // a line comment
 int a = 2 + 3;
 float r = 7.0 / 2.0;
-text g = f"a={a}, r={r}";
+text g = f"a=${a}, r=${r}";
 say(g);

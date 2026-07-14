@@ -8,7 +8,7 @@
 prompt text question;
 agent A {
   when (Prompt p about question) {
-    text draft = self <- f"answer using the screened user request: {p.text}";
+    text draft = self <- f"answer using the screened user request: ${p.text}";
     say(draft);
   }
 }

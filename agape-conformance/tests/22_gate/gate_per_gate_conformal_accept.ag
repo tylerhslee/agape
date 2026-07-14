@@ -12,7 +12,7 @@ principal boss;
 agent Desk grants { perform Act } {
   when (Ask q) {
     text body = q.body;
-    Credence<R> c = self <- f"act on: {body}";
+    Credence<R> c = self <- f"act on: ${body}";
     Decision<R> d = boss decide c by conformal 0.01;
     if (d.committed == Yes) { Endorsement<text> e = endorse body by d; perform Act(e); }
     else if (d.committed == No) { Endorsement<text> e = endorse body by d; say("no"); }
