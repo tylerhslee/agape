@@ -350,6 +350,14 @@ error = "ColorViolation"
 spec = "§9, §10 (a mem write reaches the provider-backed memory substrate to internalize, so a pure function may not store)"
 
 [[test]]
+id = "fn_reject_nonterminal_return"
+section = "04_functions"
+path = "tests/04_functions/fn_reject_nonterminal_return.ag"
+expect = "reject"
+error = "TypeError"
+spec = "§4 (`return` is honored in tail position only — the final statement of a function body; a `return` nested in an `if` is never evaluated and would be silently ignored, so it is a static error, not a runtime no-op)"
+
+[[test]]
 id = "fn_taint_flows_through_call_reject"
 section = "04_functions"
 path = "tests/04_functions/fn_taint_flows_through_call_reject.ag"

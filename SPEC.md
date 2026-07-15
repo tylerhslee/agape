@@ -539,6 +539,14 @@ the decided enum does not pretend to.
 - `RET_TYPE` is type-first.
 - A function returns an ordinary value. To return a ledger row/receipt, use a concrete type such
   as `LedgerEntry<Held>` or `LedgerEntry<Internalized>`.
+- `return` is honored in **tail position only** — the final statement of the function body. A
+  `return` that is not in that position (nested inside an `if`/gate arm/`retry`, a non-final
+  top-level statement, or anywhere in a non-function body such as an agent hook, `when`, or
+  constructor) is a **static error**: the kernel has no early-return control flow, so such a
+  `return` would be silently ignored — its expression never evaluated — and is rejected at check
+  time rather than allowed to misbehave at runtime. To exit early, assign to a result variable in
+  the branches and `return` it as the last statement (whether the kernel should grow real
+  early-return semantics is an open design question, deferred to the language owner).
 
 ```agape
 pure int   double(int x)            { return x * 2; }                 // pure, bare int

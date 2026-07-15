@@ -683,7 +683,54 @@ export function check(program: A.Program, modules?: ModuleInput[], manifest?: Ma
   }
   c.checkBody(program.stmts, new Scope());
   c.checkDeferenceFlow(program.stmts, new Scope());
+  checkReturnPlacement(program);
   checkDenyModePromptIngress(program, manifest, decls.prompts);
+}
+
+// §4: `return` is honored in TAIL POSITION ONLY — the runtime (interp `callFn`) inspects only a
+// function's top-level statements and acts on a `return` solely when it is the final one. A `return`
+// anywhere else — nested inside an `if`/gate arm/`retry`, a non-final top-level statement, or in a
+// non-function body (agent hook, `when`, constructor, top-level program) — is NEVER honored: its
+// expression is not even evaluated and its value is silently discarded. That silent no-op is a
+// correctness trap in a typed language (it once ate a demo author's recursion), so we reject it
+// statically rather than let it misbehave at runtime. Whether the kernel should grow real
+// early-return control flow is an open language-design question, deferred to the owner.
+function checkReturnPlacement(program: A.Program): void {
+  const complain = (): never => {
+    throw typeError(
+      "`return` is only honored in tail position — the final statement of a function body. " +
+      "This `return` is not in that position, so the kernel would silently ignore it (its expression " +
+      "is never evaluated and its value is discarded). The kernel has no early-return control flow: " +
+      "assign to a result variable in each branch and `return` it as the last statement instead (§4).",
+    );
+  };
+  // Walk a statement list. `allowTail` is true only for a function's own top-level statement list —
+  // the sole place the runtime honors a `return`, and then only as the final element. Nested bodies
+  // are always entered with `allowTail = false` because the runtime never looks inside them.
+  const walk = (stmts: A.Stmt[], allowTail: boolean): void => {
+    stmts.forEach((s, i) => {
+      const isFinal = i === stmts.length - 1;
+      if (s.kind === "return" && !(allowTail && isFinal)) complain();
+      switch (s.kind) {
+        case "if": walk(s.then, false); if (s.else) walk(s.else, false); break;
+        case "retry": walk(s.body, false); break;
+        case "when": walk(s.body, false); break;
+        case "dispatch":
+          for (const arm of s.arms) walk(arm.body, false);
+          if (s.abstain) walk(s.abstain.body, false);
+          break;
+      }
+    });
+  };
+  for (const d of program.decls) {
+    if (d.kind === "fn") walk(d.body, true);
+    else if (d.kind === "agent") {
+      for (const h of d.hooks) walk(h.body, false);
+      for (const w of d.whens) walk(w.body, false);
+      walk(d.ctor, false);
+    }
+  }
+  walk(program.stmts, false);
 }
 
 // §5b/§17 deny-mode provider-prompt ingress, statically (the T-Send/T-Credence premise

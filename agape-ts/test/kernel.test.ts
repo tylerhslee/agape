@@ -1090,6 +1090,58 @@ describe("pure functions may not reach the async memory substrate (§9, §10)", 
   });
 });
 
+describe("`return` is honored in tail position only — nested returns are a static error, not a silent no-op (§4)", () => {
+  // The runtime (interp callFn) acts on a `return` solely when it is the FINAL top-level statement of
+  // a function body; a `return` anywhere else is never evaluated. Rather than let that misbehave at
+  // runtime (it once silently ate a demo author's recursion), the checker rejects it as a TypeError.
+  const rejectsReturn = (prog: string) =>
+    expect(run(parse(prog), {})).rejects.toMatchObject({ cls: "TypeError" });
+
+  it("rejects a `return` nested inside an `if` branch", async () => {
+    await rejectsReturn(`pure int f(int x) { if (x < 0) { return 0 - x; } return x; }`);
+  });
+
+  it("rejects a `return` nested inside an `else` branch", async () => {
+    await rejectsReturn(`pure int f(int x) { if (x < 0) { return x; } else { return 0 - x; } }`);
+  });
+
+  it("rejects a non-final top-level `return` in a function body", async () => {
+    await rejectsReturn(`pure int f(int x) { return x; int y = x + 1; }`);
+  });
+
+  it("rejects a `return` inside a `retry` block", async () => {
+    await rejectsReturn(`int f(int x) { { return x; } retry(2) return x; }`);
+  });
+
+  it("rejects a `return` in an agent hook (a non-function body never honors `return`)", async () => {
+    await rejectsReturn(`agent A { on awake { return; } } spawn A a; awake a;`);
+  });
+
+  it("accepts a `return` in the spec'd tail position — the final statement of the function body", async () => {
+    const prog = `
+      pure int inc(int x) { return x + 1; }
+      agent A { on awake { int y = inc(41); say(f"\${y}"); } }
+      spawn A a; awake a;
+    `;
+    const r = await run(parse(prog), {});
+    expect(r.stdout).toEqual(["42"]);
+  });
+
+  it("accepts a tail `return` reached after an `if` that assigns a result variable (the early-exit workaround)", async () => {
+    const prog = `
+      pure int classify(int x) {
+        int result = x;
+        if (x < 0) { result = 0 - x; }
+        return result;
+      }
+      agent A { on awake { say(f"\${classify(0 - 7)}"); } }
+      spawn A a; awake a;
+    `;
+    const r = await run(parse(prog), {});
+    expect(r.stdout).toEqual(["7"]);
+  });
+});
+
 describe("ledger reads carry recorded trust (§10) — Endorsed reads back settled", () => {
   // §10: a `from ledger` read is deterministic and carries recorded trust — an `Endorsed`-origin row reads
   // back `settled` (the ledger is the proof of endorsement), while a non-endorsed origin stays `graded`.

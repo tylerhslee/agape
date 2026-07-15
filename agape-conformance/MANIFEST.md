@@ -1,6 +1,6 @@
 # Agape v1.0.0-beta.2026.7.14.1 — Conformance Test Index
 
-**216 tests** — accept: 137, reject: 79
+**217 tests** — accept: 137, reject: 80
 
 A conformant implementation must satisfy every `accept`/`reject` test (rejects with the declared error class; accepts matching any asserted spine).
 
@@ -68,6 +68,7 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 | `fn_pure_local_ok` | accept | — | §4 (a pure fn that reaches no declared dependency is well-formed) |
 | `fn_pure_reaches_seam_reject` | reject | ColorViolation | §1 Axis A, §4 (a pure fn may not reach the provider via `<-`) |
 | `fn_pure_store_reject` | reject | ColorViolation | §9, §10 (a mem write reaches the provider-backed memory substrate to internalize, so a pure function may not store) |
+| `fn_reject_nonterminal_return` | reject | TypeError | §4 (`return` is honored in tail position only — the final statement of a function body; a `return` nested in an `if` is never evaluated and would be silently ignored, so it is a static error, not a runtime no-op) |
 | `fn_taint_flows_through_call_reject` | reject | TaintViolation | §15.3.3 (function calls are trust-transparent; taint flowing through a helper still cannot reach a consequential sink) |
 
 ## 05_agents

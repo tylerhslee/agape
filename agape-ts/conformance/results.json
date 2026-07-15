@@ -1,6 +1,6 @@
 {
-  "passed": 216,
-  "total": 216,
+  "passed": 217,
+  "total": 217,
   "bySection": {
     "00_lexical": {
       "pass": 11,
@@ -15,8 +15,8 @@
       "total": 22
     },
     "04_functions": {
-      "pass": 8,
-      "total": 8
+      "pass": 9,
+      "total": 9
     },
     "05_agents": {
       "pass": 16,
@@ -538,6 +538,17 @@
       "pass": true,
       "reason": "rejected with ColorViolation",
       "errorClass": "ColorViolation",
+      "phase": "run",
+      "hadMatchers": false,
+      "directives": []
+    },
+    {
+      "id": "fn_reject_nonterminal_return",
+      "section": "04_functions",
+      "expect": "reject",
+      "pass": true,
+      "reason": "rejected with TypeError",
+      "errorClass": "TypeError",
       "phase": "run",
       "hadMatchers": false,
       "directives": []

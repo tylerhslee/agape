@@ -88,6 +88,21 @@ beta tag.
   and empty-seam faults each state their cause. The contained-crash path records
   that reason on the `AgentCrashed` ledger row (additive payload), so the ledger
   — and any ledger view — names **why** an agent crashed.
+- **A `return` outside tail position is now a static error instead of a silent
+  no-op (§4).** The runtime (interp `callFn`) honors `return` only as the FINAL
+  top-level statement of a function body; a `return` nested inside an `if`/gate
+  arm/`retry`, a non-final top-level `return`, or a `return` in a non-function
+  body (agent hook, `when`, constructor, top-level) was **silently ignored** —
+  its expression not even evaluated, its value discarded — so an author who wrote
+  an early `return` (e.g. a recursion base case inside an `if`) saw it eaten with
+  no diagnostic. The checker now **rejects** any such `return` as a `TypeError`
+  at check time (message: "`return` is only honored in tail position…"), so the
+  trap fails loudly instead of misbehaving at runtime. SPEC §4 gains the
+  tail-position-only clarification. This closes the footgun without adding
+  early-return control flow: whether the kernel should grow real early-return
+  semantics remains an **open design question deferred to the owner**. Existing
+  programs already used the workaround pattern (assign a result variable in the
+  branches, `return` it last), so no conformance program or example changed.
 
 ## [1.0.0-beta.2026.7.14.1] - 2026-07-14
 
