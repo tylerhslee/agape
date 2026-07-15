@@ -1198,6 +1198,13 @@ output via constrained decoding (mandatory; no fuzzy fallback).
 enum→`{type:string,enum:[...]}`, struct→`{type:object,…,additionalProperties:false}`,
 array→`{type:array,items}`. A `Credence<E>` reply records the per-variant score vector
 of the constrained decode or sampling fallback (§3, §16.8).
+- The derived schema is **strict by construction**, recursively: every object sets
+`additionalProperties: false` and lists **every** declared field in `required` — a struct has no
+optional fields, so all fields are always present — and only the supported keyword/type subset above
+appears. This is exactly the shape strict constrained-decoding modes require (e.g. OpenAI
+`json_schema` `strict:true`, Gemini response schemas), so a well-typed program's schema is accepted
+by the connector rather than rejected as a malformed request. A connector that requires an object at
+the schema root wraps a non-object reply type in a single-field object at the seam (§16.4).
 - A provider should expose logprobs or equivalent per-variant score data for efficient
 gated/`Credence` decisions; when it does not, a configured sampling fallback estimates the score
 distribution (§17).
@@ -2734,8 +2741,15 @@ appends its opening event, invokes the seam, journals the result (§16.5), and a
   (mandatory; no fuzzy fallback). A logprob-exposing connector returns the committed value plus the
   per-variant score/logprob vector; a text-only connector returns only the value and is served by the
   sampling fallback (§16.8). The result is journaled as the send's `Resolved` (with the raw response and
-  per-variant scores, §15.5.1, for replay and calibration). A schema-violating return faults the send
-  as a `TypeMismatch` (§16.6).
+  per-variant scores, §15.5.1, for replay and calibration). A returned reply that cannot be parsed into
+  the declared type — a *schema-violating return* — faults the send as a `TypeMismatch` (§16.6), the
+  retryable send-fault. This is distinct from a **connector error** — the request is rejected (e.g. an
+  HTTP 4xx), the transport fails, or the model refuses — which is an unrecoverable seam failure and
+  **crashes** the agent (§16.6), unretried: a rejected or failed *request* is not a schema-violating
+  *reply*, and the crash names the provider's status and message so an operator is not misled into
+  blaming the reply schema. A deterministic request-level rejection (a 4xx other than 429) cannot
+  succeed on re-ask — the connector's own retries are already exhausted when the error surfaces — and
+  the fault says so.
 - **Identity (`principal_decide`).** A principal-prefixed `p decide c by r` runs the rule first; when
   it cannot commit, it presents `(p, c)` to the identity dependency, which returns the principal's
   signed verdict (a variant of `E`). The backend (e.g. `local-keyring`, §17)

@@ -443,6 +443,9 @@ class AnthropicProvider extends RemoteProvider {
     return matchVariant(textOf(resp.content), variants);
   }
 
+  // §16.4/§16.6: forces the reply through a tool whose input_schema IS the declared type, so the model can only
+  // return schema-conforming JSON. A thrown error here is a CONNECTOR error (request rejected, network, refusal)
+  // — the interpreter surfaces it as a crash naming the provider status/message, NOT a reply-schema TypeMismatch.
   override async structured(prompt: string, schema: StructuredSchema, name?: string): Promise<unknown> {
     const client = await this.client();
     const toolName = "return_structured_reply";
@@ -535,6 +538,13 @@ class OpenAIProvider extends RemoteProvider {
     return matchVariant(resp.choices?.[0]?.message?.content ?? "", variants);
   }
 
+  // §16.4/§16.6: OpenAI strict `json_schema` mode — constrained decoding guarantees a schema-conforming reply
+  // (the generator emits strict-conformant schemas by construction: additionalProperties:false and every
+  // property required on every object, recursively; §8). A non-object root is wrapped in `{ value }` because
+  // strict mode requires an object root. A thrown error here is a CONNECTOR error (the request was rejected —
+  // e.g. an HTTP 4xx — the network failed, or the model refused); the interpreter surfaces it as a crash naming
+  // the provider status/message (deterministic rejections say re-asking cannot succeed), NOT a reply-schema
+  // TypeMismatch, so a rejected REQUEST is never misdiagnosed as a schema-violating REPLY.
   override async structured(prompt: string, schema: StructuredSchema, name?: string): Promise<unknown> {
     const client = await this.client();
     const wrapped = schema.type === "object"
@@ -605,6 +615,9 @@ class GeminiProvider extends RemoteProvider {
     return matchVariant(resp.text ?? "", variants);
   }
 
+  // §16.4/§16.6: Gemini JSON mode with a response schema. A thrown error here is a CONNECTOR error (request
+  // rejected, network, refusal) — the interpreter surfaces it as a crash naming the provider status/message,
+  // NOT a reply-schema TypeMismatch.
   override async structured(prompt: string, schema: StructuredSchema): Promise<unknown> {
     const client = await this.client();
     const resp = await client.models.generateContent({

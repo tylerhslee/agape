@@ -39,6 +39,19 @@ function crashReason(err: unknown): string {
   return m && m.trim() ? m : "the agent crashed without a specified reason";
 }
 
+// §16.4/§16.6: a CONNECTOR error surfaced from the provider seam — the request was rejected, the network
+// failed, or the model refused. Distinct from a schema/type violation of a RETURNED reply (a TypeMismatch,
+// §8). Pulls an HTTP status out of the SDK error when one is present, and flags a DETERMINISTIC request-level
+// rejection (a 4xx other than 429): the connector's own retries are already exhausted by the time the error
+// reaches here, so re-asking under the SAME request cannot succeed — the fault message says so.
+function connectorFault(err: unknown): { status?: number; message: string; deterministic: boolean } {
+  const e = err as { status?: number; message?: string; error?: { message?: string } } | undefined;
+  const status = typeof e?.status === "number" ? e.status : undefined;
+  const message = e?.error?.message ?? e?.message ?? String(err);
+  const deterministic = status !== undefined && status >= 400 && status < 500 && status !== 429;
+  return { status, message, deterministic };
+}
+
 // §6c task-send state, correlated by the delegator-side binding name (the corr subject).
 interface TaskState {
   corr: string;
@@ -2404,23 +2417,51 @@ class Interpreter {
     const structuredType = this.structuredType(expected, scope);
     if (structuredType) {
       const schema = this.schemaOf(structuredType, scope)!;
-      const rawWork: Promise<{ raw?: unknown; error?: unknown }> = (this.provider.structured
-        ? this.provider.structured(prompt, schema, bindName ?? "Reply")
-        : this.provider.reply(`${prompt}\n\nReturn only JSON matching this schema:\n${JSON.stringify(schema)}`).then((reply) => JSON.parse(reply)))
-        .then((raw) => ({ raw }), (error) => ({ error }));
-      // §8/§16.6: a reply that cannot be parsed into the declared type FAULTS the send — TypeMismatch is
-      // recorded and a TypeMismatchError is thrown, so no null enters the typed binding. The throw travels
-      // through inResolutionOrder in resolution order (the TypeMismatch lands ordered before the fault).
+      // §16.4/§16.6: separate a CONNECTOR error (the provider rejected the request, the network failed, or the
+      // model refused) from a schema/type violation of a RETURNED reply. A connector error is an unrecoverable
+      // seam failure → a CRASH (unretried, like an `empty` seam result); a reply that comes back but cannot be
+      // parsed into the declared type faults the send as a TypeMismatch (retryable via `retry N`, §11). In the
+      // native-structured path the provider throws only on a connector error (constrained decoding guarantees a
+      // conforming reply); in the text fallback a rejected `reply()` is a connector error while unparseable JSON
+      // is a reply-schema violation.
+      type RawOutcome = { raw: unknown } | { connector: unknown } | { parse: unknown; text: string };
+      const rawWork: Promise<RawOutcome> = (async (): Promise<RawOutcome> => {
+        if (this.provider.structured) {
+          try { return { raw: await this.provider.structured(prompt, schema, bindName ?? "Reply") }; }
+          catch (connector) { return { connector }; }
+        }
+        let text: string;
+        try { text = await this.provider.reply(`${prompt}\n\nReturn only JSON matching this schema:\n${JSON.stringify(schema)}`); }
+        catch (connector) { return { connector }; }
+        try { return { raw: JSON.parse(text) }; }
+        catch (parse) { return { parse, text }; }
+      })();
       let value: Value = { kind: "null", trust: "raw" };
-      await this.inResolutionOrder(rawWork, async ({ raw, error }) => {
-        if (error) {
+      await this.inResolutionOrder(rawWork, async (outcome) => {
+        if ("connector" in outcome) {
+          // §16.4/§16.6: a connector error is a CRASH, not a TypeMismatch — re-asking the SAME request cannot
+          // fix a rejected/failed connection, so it is NOT retried (a `retry N` block catches only TypeMismatch).
+          // The fault names the provider status/message; a deterministic request-level rejection says retrying
+          // cannot succeed, so operators are not misled into blaming the reply schema.
+          const fault = connectorFault(outcome.connector);
+          throw new CrashError(
+            `the provider seam failed for the structured send '${subj}'` +
+            (fault.status !== undefined ? ` (HTTP ${fault.status})` : "") +
+            `: ${fault.message}` +
+            (fault.deterministic
+              ? "; the request was rejected by the provider, so re-asking cannot succeed"
+              : "; an unrecoverable connector failure crashes the agent") +
+            ` (§16.4/§16.6)`);
+        }
+        if ("parse" in outcome) {
           this.ledger.append("TypeMismatch", subj, {
             schema,
-            raw,
-            error: (error as Error).message,
+            raw: outcome.text,
+            error: (outcome.parse as Error).message,
           }, scope.currentAgent()?.name);
-          throw new TypeMismatchError(`the model's structured reply for '${subj}' could not be parsed into the declared type ${typeLabel(structuredType)}: ${(error as Error).message}; the send faults (§8/§16.6)`);
+          throw new TypeMismatchError(`the model's text reply for '${subj}' was not valid JSON for the declared type ${typeLabel(structuredType)}: ${(outcome.parse as Error).message}; the send faults (§8/§16.6)`);
         }
+        const raw = outcome.raw;
         try {
           value = this.valueFromStructured(raw, structuredType, scope);
         } catch (err) {
