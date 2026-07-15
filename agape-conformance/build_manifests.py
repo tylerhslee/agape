@@ -16,7 +16,8 @@ spine|contains|absent|order (ledger matchers; `; `-separated),
 warning|absent_warning (runtime warning matchers; `; `-separated), schema (compiler schema assertions;
 `; `-separated), question (iff blocked), spec, note.
 Run directives (the §17.5 harness contract): provider (empty|schema_violation|schema_violation_once|credence(...)),
-principal (grant|deny — the identity-dependency ruling for `decide c by p`), manifest
+principal (grant|deny — the identity-dependency ruling for `decide c by p`), attester
+(the principal the ruling's verified attester resolves to — the mock host authenticator, §13/§17.7), manifest
 (key=value; `; `-separated; e.g. `tools.search.driver=mcp`), replay (chain_head_equal),
 modules (companion module filenames; `; `-separated; live in a sibling <id>.d/ dir — v1.1.0),
 packages (name=path/to/lib.ag package roots under <id>.d/).
@@ -104,6 +105,9 @@ def load_tests():
             assert p in PROVIDER_MODES or p.startswith("credence("), f"{path}: bad provider mode {p!r}"
         if t.get("principal"):
             assert t["principal"] in PRINCIPAL_MODES, f"{path}: bad principal mode {t['principal']!r}"
+        if t.get("attester"):
+            # the mock host authenticator: the principal the ruling's verified attester resolves to (§13, §17.7)
+            assert t["attester"].strip(), f"{path}: empty attester directive"
         if t.get("replay"):
             assert t["replay"] in REPLAY_MODES, f"{path}: bad replay mode {t['replay']!r}"
         for m in t.get("manifest", []):
@@ -152,7 +156,7 @@ def render_toml(tests):
             if t.get(k):
                 arr = ", ".join(f'"{toml_escape(x)}"' for x in t[k])
                 L.append(f"{k} = [{arr}]")
-        for k in ("provider", "principal", "replay"):
+        for k in ("provider", "principal", "attester", "replay"):
             if t.get(k):
                 L.append(f'{k} = "{toml_escape(t[k])}"')
         if t["expect"] == "blocked":

@@ -67,6 +67,11 @@ export interface SecurityIngressConfig {
 export interface SecurityConfig {
   tainted_ingress_to_provider?: TaintedIngressToProviderPolicy;
   ingress?: SecurityIngressConfig;
+  // §13/§17.1 attester identity binding: the authenticator that verifies an attester identity as a
+  // principal at a `p decide` ruling. Keyed by the declared principal's simple name; absent = the
+  // default `none` (unverified — the ruling's attester is taken on trust). `driver = "host"` (or an
+  // implementation-defined verifier) enforces the attester-match check at the identity seam (§16.4).
+  attesters?: Record<string, BindingConfig>;
 }
 export interface Manifest {
   provider: ProviderConfig;
@@ -253,6 +258,20 @@ function setSecurityManifestValue(manifest: Manifest, tablePath: string[], path:
     return;
   }
   const full = tablePath.length ? [...tablePath.slice(1), ...path] : path;
+  // §13/§17.1: [security.attesters.NAME] — the per-principal attester authenticator.
+  if (full[0] === "attesters") {
+    const name = full[1];
+    if (!name) return;
+    const rest = full.slice(2);
+    const attesters = security.attesters ?? (security.attesters = {});
+    if (rest.length === 0) {
+      attesters[name] = bindingFromValue(value);
+    } else {
+      const binding = attesters[name] ?? (attesters[name] = {});
+      binding[rest.join(".")] = value as ManifestValue;
+    }
+    return;
+  }
   if (full[0] !== "ingress") return;
   const kind = full[1];
   if (kind !== "prompts" && kind !== "events") return;

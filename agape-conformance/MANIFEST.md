@@ -1,6 +1,6 @@
 # Agape v1.0.0-beta.2026.7.14.1 — Conformance Test Index
 
-**211 tests** — accept: 132, reject: 79
+**216 tests** — accept: 137, reject: 79
 
 A conformant implementation must satisfy every `accept`/`reject` test (rejects with the declared error class; accepts matching any asserted spine).
 
@@ -89,6 +89,7 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 | `agent_reawake_no_reconstruct` | accept | — | §5 (re-awake resumes the agent: no re-bind, no re-construct) |
 | `agent_sleep_runs_hook` | accept | — | §5 (sleep closes the mailbox and runs the on-sleep hook) |
 | `agent_spawn_instantiate_only` | accept | — | §5 (spawn instantiates + constructs only: no mailbox, no awake hook) |
+| `when_reaction_crash_contained` | accept | — | §16.6 (the reaction boundary: a `when`-body firing is a handler invocation just like `on awake`; an uncaught fault is CONTAINED — AgentCrashed is recorded and the on-crash hook runs with state intact — never propagated out of the run) |
 
 ## 06_communication
 
@@ -240,6 +241,9 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 
 | id | expect | error | spec |
 |---|---|---|---|
+| `gov_attester_unverified_accepted` | accept | — | §13, §17.1 (the default `none` attester authenticator is ACCEPTED, not rejected: the ruling's attester is taken on trust and recorded — marked unverified in the PrincipalDecision attestation — so a fresh local-dev gate still defers, rules, and resumes without a bound authenticator) |
+| `gov_attester_verified_resumes` | accept | — | §13, §17.7 (a host authenticator is bound; the attested ruling's verified identity resolves to the deferred principal, so the attester-match passes, PrincipalDecision is recorded, and the reaction resumes through endorse to the sink) |
+| `gov_attester_wrong_principal_rejected` | accept | — | §13, §16.4 (a host authenticator is bound; the attested ruling's verified identity resolves to a DIFFERENT principal than the gate deferred to, so the attester-match rejects the ruling — FailedPrincipalDecision, the decision stays abstained, fail-closed, and no subject reaches the sink) |
 | `gov_bare_decision_no_perform_reject` | reject | TaintViolation | §13 (a sealed Decision<E> alone does not settle a subject; performing the raw artifact without an `endorse` is a taint violation) |
 | `gov_conformal_coldstart_abstains` | accept | — | §13 (a conformal gate with no recorded decisions is below its labelled-case readiness floor and records a Decided abstention — the supervised cold start) |
 | `gov_conformal_gate_ok` | accept | — | §13 (the conformal basis `by conformal α` is a distribution-free finite-sample gate calibrated from the ledger) |
@@ -254,6 +258,7 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 | `gov_endorsement_subject_collision_accept` | accept | — | §13 (Endorsement metadata accessors win name collisions; the subject field remains reachable through `.subject`) |
 | `gov_grants_star_ok` | accept | — | §13 (grants { * } is the explicit unconstrained opt-out — lattice top) |
 | `gov_margin_floor_abstains` | accept | — | §13 (a rule's `margin δ` requires the top-vs-runner-up lead ≥ δ at decision time; a 0.10 lead below the 0.20 margin records a Decided abstention, so no Endorsed is recorded) |
+| `gov_pending_principal_decision_records` | accept | — | §13 (a principal-prefixed `p decide c by r` that cannot commit DEFERS: it appends a durable PendingPrincipalDecision receipt before the attested ruling resolves it to PrincipalDecision, then the canonical Decided) |
 | `gov_perform_reach_subtractive_reject` | reject | AuthorityViolation | §5, §13 (grants are subtractive under extend for `perform`/`reach` too — a child may not exceed its parent's authority) |
 | `gov_perform_ungranted_reject` | reject | AuthorityViolation | §13 (default-deny: an agent may only perform actions in its grants) |
 | `gov_principal_decision_deny_fails` | accept | — | §13 (when the principal declines, `p decide c by r` records FailedPrincipalDecision and a Decided abstention) |

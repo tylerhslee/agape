@@ -478,6 +478,16 @@ absent = ["AgentAwake(a)"]
 spec = "§5 (spawn instantiates + constructs only: no mailbox, no awake hook)"
 
 [[test]]
+id = "when_reaction_crash_contained"
+section = "05_agents"
+path = "tests/05_agents/when_reaction_crash_contained.ag"
+expect = "accept"
+absent = ["Handled"]
+order = ["AgentCrashed(a)", "Recovered(a)"]
+provider = "empty"
+spec = "§16.6 (the reaction boundary: a `when`-body firing is a handler invocation just like `on awake`; an uncaught fault is CONTAINED — AgentCrashed is recorded and the on-crash hook runs with state intact — never propagated out of the run)"
+
+[[test]]
 id = "comm_expiry_tombstone"
 section = "06_communication"
 path = "tests/06_communication/comm_expiry_tombstone.ag"
@@ -1321,6 +1331,39 @@ error = "TypeError"
 spec = "§12 (fusion — incl. quorum — requires a total independent/dependent declaration)"
 
 [[test]]
+id = "gov_attester_unverified_accepted"
+section = "13_governance"
+path = "tests/13_governance/gov_attester_unverified_accepted.ag"
+expect = "accept"
+contains = ["PendingPrincipalDecision", "PrincipalDecision", "Endorsed", "Decided"]
+manifest = ["security.attesters.alice.driver=none"]
+principal = "grant"
+spec = "§13, §17.1 (the default `none` attester authenticator is ACCEPTED, not rejected: the ruling's attester is taken on trust and recorded — marked unverified in the PrincipalDecision attestation — so a fresh local-dev gate still defers, rules, and resumes without a bound authenticator)"
+
+[[test]]
+id = "gov_attester_verified_resumes"
+section = "13_governance"
+path = "tests/13_governance/gov_attester_verified_resumes.ag"
+expect = "accept"
+contains = ["PendingPrincipalDecision", "PrincipalDecision", "Endorsed", "Decided"]
+manifest = ["security.attesters.alice.driver=host"]
+principal = "grant"
+attester = "alice"
+spec = "§13, §17.7 (a host authenticator is bound; the attested ruling's verified identity resolves to the deferred principal, so the attester-match passes, PrincipalDecision is recorded, and the reaction resumes through endorse to the sink)"
+
+[[test]]
+id = "gov_attester_wrong_principal_rejected"
+section = "13_governance"
+path = "tests/13_governance/gov_attester_wrong_principal_rejected.ag"
+expect = "accept"
+contains = ["PendingPrincipalDecision", "FailedPrincipalDecision", "Decided"]
+absent = ["PrincipalDecision", "Endorsed"]
+manifest = ["security.attesters.alice.driver=host"]
+principal = "grant"
+attester = "mallory"
+spec = "§13, §16.4 (a host authenticator is bound; the attested ruling's verified identity resolves to a DIFFERENT principal than the gate deferred to, so the attester-match rejects the ruling — FailedPrincipalDecision, the decision stays abstained, fail-closed, and no subject reaches the sink)"
+
+[[test]]
 id = "gov_bare_decision_no_perform_reject"
 section = "13_governance"
 path = "tests/13_governance/gov_bare_decision_no_perform_reject.ag"
@@ -1432,6 +1475,16 @@ contains = ["Decided"]
 absent = ["Endorsed"]
 provider = "credence(true=0.55, false=0.45)"
 spec = "§13 (a rule's `margin δ` requires the top-vs-runner-up lead ≥ δ at decision time; a 0.10 lead below the 0.20 margin records a Decided abstention, so no Endorsed is recorded)"
+
+[[test]]
+id = "gov_pending_principal_decision_records"
+section = "13_governance"
+path = "tests/13_governance/gov_pending_principal_decision_records.ag"
+expect = "accept"
+contains = ["PendingPrincipalDecision", "PrincipalDecision", "Decided", "Endorsed"]
+order = ["PendingPrincipalDecision", "PrincipalDecision", "Decided"]
+principal = "grant"
+spec = "§13 (a principal-prefixed `p decide c by r` that cannot commit DEFERS: it appends a durable PendingPrincipalDecision receipt before the attested ruling resolves it to PrincipalDecision, then the canonical Decided)"
 
 [[test]]
 id = "gov_perform_reach_subtractive_reject"

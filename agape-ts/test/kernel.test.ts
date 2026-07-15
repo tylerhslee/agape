@@ -446,6 +446,72 @@ describe("the identity dependency fails closed (§13)", () => {
     expect(ledger(r)).toContain("Endorsed");
     expect(ledger(r)).toContain("ReleaseFunds");
   });
+
+  // §13 attestation protocol — deferral appends a durable PendingPrincipalDecision receipt whose tick
+  // is the correlation id the subsequent ruling references. §17 attester-match seam — a ruling records
+  // a PrincipalDecision only if its verified attester resolves to the deferred principal.
+  const evt = (r: Awaited<ReturnType<typeof run>>, etype: string) => r.ledger.events.find((e) => e.etype === etype);
+
+  it("defers with a durable PendingPrincipalDecision receipt correlated to the ruling", async () => {
+    const r = await run(parse(RELEASE), { provider: new MockProvider(scores), principal: "grant" });
+    const seq = ledger(r);
+    expect(seq).toContain("PendingPrincipalDecision");
+    expect(seq.indexOf("PendingPrincipalDecision")).toBeLessThan(seq.indexOf("PrincipalDecision"));
+    expect(seq.indexOf("PrincipalDecision")).toBeLessThan(seq.indexOf("Decided"));
+    const pending = evt(r, "PendingPrincipalDecision")!;
+    const ruling = evt(r, "PrincipalDecision")!;
+    // the PrincipalDecision references the pending receipt's tick as its correlation id
+    expect((ruling.payload as { pending?: number }).pending).toBe(pending.tick);
+  });
+
+  it("under the default `none` authenticator, records the ruling on trust but marks it unverified", async () => {
+    const r = await run(parse(RELEASE), { provider: new MockProvider(scores), principal: "grant" });
+    const ruling = evt(r, "PrincipalDecision")!;
+    const attestation = (ruling.payload as { attestation?: { attester_verification?: string } }).attestation;
+    expect(attestation?.attester_verification).toBe("unverified");
+    expect(ledger(r)).toContain("ReleaseFunds");
+  });
+
+  it("with a bound host authenticator, a matching attester verifies and resumes to the sink", async () => {
+    const manifest = parseManifestDirective("security.attesters.alice.driver=host");
+    const r = await run(parse(RELEASE), {
+      provider: new MockProvider(scores),
+      principal: "grant",
+      manifest,
+      attesterVerifier: (req) => (req.principal === "alice" ? "alice" : undefined),
+    });
+    const ruling = evt(r, "PrincipalDecision")!;
+    const attestation = (ruling.payload as { attestation?: { attester_verification?: string } }).attestation;
+    expect(attestation?.attester_verification).toBe("verified");
+    expect(ledger(r)).toContain("Endorsed");
+    expect(ledger(r)).toContain("ReleaseFunds");
+  });
+
+  it("with a bound host authenticator, a WRONG-principal attester is rejected and fails closed", async () => {
+    const manifest = parseManifestDirective("security.attesters.alice.driver=host");
+    const r = await run(parse(RELEASE), {
+      provider: new MockProvider(scores),
+      principal: "grant",
+      manifest,
+      attesterVerifier: () => "mallory", // the verified identity is NOT the deferred principal
+    });
+    const seq = ledger(r);
+    expect(seq).toContain("PendingPrincipalDecision");
+    expect(seq).toContain("FailedPrincipalDecision");
+    expect(seq).not.toContain("PrincipalDecision");
+    expect(seq).not.toContain("Endorsed");
+    expect(seq).not.toContain("ReleaseFunds"); // fail-closed: the sink never fires
+    const failed = evt(r, "FailedPrincipalDecision")!;
+    expect((failed.payload as { resolved_attester?: string }).resolved_attester).toBe("mallory");
+  });
+
+  it("a bound authenticator with NO verifier available rejects the ruling (fail-closed)", async () => {
+    const manifest = parseManifestDirective("security.attesters.alice.driver=host");
+    const r = await run(parse(RELEASE), { provider: new MockProvider(scores), principal: "grant", manifest });
+    expect(ledger(r)).toContain("FailedPrincipalDecision");
+    expect(ledger(r)).not.toContain("PrincipalDecision");
+    expect(ledger(r)).not.toContain("ReleaseFunds");
+  });
 });
 
 describe("the prompt sensor opens from its declaration (§5b)", () => {

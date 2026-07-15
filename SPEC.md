@@ -1235,8 +1235,9 @@ type Task<T>                                               // a settled backgrou
 //   Decided(subj)          a Credence was collapsed by a Rule into a Decision, committed or abstained
 //   Endorsed(subj)         a committed Decision was applied to an exact subject value
 //   Contradiction(subj)    emitted when a Credence<Entailment> commits to Contradicts
-//   PrincipalDecision(subj)    a principal-prefixed `p decide c by r` that escalated and got a ruling
-//   FailedPrincipalDecision(subj)  the principal declined or was unavailable (decision stays abstained)
+//   PendingPrincipalDecision(subj)  a principal-prefixed `p decide c by r` deferred: awaiting an attested ruling (correlation id = its tick, §13)
+//   PrincipalDecision(subj)    a principal-prefixed `p decide c by r` that escalated and got an attested, attester-verified ruling
+//   FailedPrincipalDecision(subj)  the principal declined, was unavailable, or the attester did not verify as the principal (decision stays abstained)
 //   MarginFloorViolation(subj)  a committed decision's margin was below the rule floor at a sink (§13)
 //   QueryResult(subj)      the event a query STATEMENT lands
 //   MemoryConsulted(subj)  the memory-envelope consult trace (counts/query meta, §16.7)
@@ -1684,6 +1685,53 @@ returns `Endorsement<T>`. In the `else`/abstained branch (`d.committed == abstai
 endorsement may be constructed, so the subject cannot reach a sink unless it is independently
 judgment-settled (for example, a literal or external ingress value with no un-endorsed model
 cognition).
+
+### The attestation protocol — deferral, the pending decision, and the attested ruling
+
+A principal-prefixed `p decide c by r` that cannot commit by its rule **defers to `p`**. Deferral is
+not a silent branch and not only an in-memory pause: the runtime appends a durable
+**`PendingPrincipalDecision { who = p, credence = ledger-id(c), corr }`** receipt whose tick is the
+**correlation id** `corr`. This receipt is the whole protocol's join key — it records, on the
+append-only ledger, that the gate reached outside the program for an accountable ruling and is
+awaiting one. Nothing about the deferral is new kernel machinery beyond this receipt and the
+attester check below; everything else composes the existing primitives (`prompt` ingress, `perform`
+actions, receipts, correlation).
+
+- **Notification is an ordinary action, not a gate feature.** Reaching a human is world-reach, so it
+  is a `perform` of a declared `action` (§6b) like any other — the program may `perform Notify(…)`
+  carrying the `corr` so the recipient can answer the right pending decision. The gate does not
+  notify; the program does. A deployment that never notifies still records the pending decision;
+  a deployment that notifies uses the same wired-action discipline (grants, settled args, journaling)
+  as every other outbound act. No `notify` keyword exists.
+- **The ruling arrives as an attested response correlated to `corr`.** The principal's answer enters
+  the program the way any external answer does — as an **attested** arrival carrying (i) the ruled
+  variant of `E` (or a decline), (ii) the deployment-verified **attester identity** (§17), and
+  (iii) the `corr` it answers. In an in-process host (a Studio attestation flow) this is the
+  identity seam's synchronous reply (§16.4); in an out-of-band host the ruling arrives later as an
+  attested `prompt` ingress (§5b) the host routes to the pending decision by `corr`. Either shape is
+  the same logical event: an attested resolution of a recorded pending decision.
+- **The kernel verifies the attester before recording a ruling.** The runtime checks that the
+  response's verified attester identity **is the principal `p` the gate deferred to** (the
+  attester-match check, resolved by the principal's configured authenticator, §17). Only then does it
+  record `PrincipalDecision { who, credence, decision, attestation }` (basis `Principal`) referencing
+  `corr`. A ruling whose attester verifies as a **different** principal, or that fails to verify, or a
+  decline or unavailable principal, records `FailedPrincipalDecision` referencing `corr` and the
+  decision stays `abstained` — the fail-closed default (§13). A refusal or a rejected attester
+  contributes **no** calibration label (§13): only an actual, attester-verified ruling labels the
+  gate's judgment.
+- **Resume is the ordinary bounded idiom (§11).** When the attested ruling resolves the pending
+  decision, the awaiting `p decide c by r` yields its `Decision<E>` and the reaction proceeds into the
+  branch that tests `d.committed` — the same `if (d.committed == V) { endorse … } else { … }` shape as
+  a rule-only gate. Nothing resumes into a sink except through `endorse` inside a committed branch. An
+  out-of-band host re-dispatches the correlated reaction; an in-process host simply returns from the
+  seam call. Every step — the pending receipt, the notifying action, the attested ruling, and the
+  final `Decided` — is on the ledger, so the deferral-to-decision path replays deterministically from
+  the recorded attested rulings (§16.5) and never re-consults the human.
+
+The pending receipt makes autonomy's supervised phase (§13, cold start) auditable rather than
+implicit: a fresh gate's every deferral is a ledgered `PendingPrincipalDecision`, each grounded
+ruling is the labelled case that earns later autonomy, and the human's accountability is bound to a
+verified identity, not asserted by an unforgeable name in source (§3).
 
 ### The rule selects the basis; the gate stays uniform
 
@@ -2751,13 +2799,22 @@ appends its opening event, invokes the seam, journals the result (§16.5), and a
   succeed on re-ask — the connector's own retries are already exhausted when the error surfaces — and
   the fault says so.
 - **Identity (`principal_decide`).** A principal-prefixed `p decide c by r` runs the rule first; when
-  it cannot commit, it presents `(p, c)` to the identity dependency, which returns the principal's
-  signed verdict (a variant of `E`). The backend (e.g. `local-keyring`, §17)
-  signs a canonical serialization of `(who = p, credence = ledger-id(c), decision)`; the runtime
-  records `PrincipalDecision { who, credence, decision, signature }` (§9). A declined ruling
-  records a `FailedPrincipalDecision` (§13). In both cases, and also when the rule commits without
-  escalation, the resulting `Decision` is recorded as `Decided`. No key material appears in source
-  (§3).
+  it cannot commit, it **defers**: it appends `PendingPrincipalDecision { who = p, credence =
+  ledger-id(c), corr }` (the correlation id `corr` is that receipt's tick, §13) and presents
+  `(p, c, corr)` to the identity dependency, which returns the principal's attested verdict (a variant
+  of `E`) together with the deployment-verified attester identity. The backend (e.g. `local-keyring`,
+  `oidc`, `webauthn`, §17) signs a canonical serialization of `(who = p, credence = ledger-id(c),
+  decision)`; before recording a ruling the runtime runs the **attester-match check** — the response's
+  verified attester identity must resolve, through the principal's configured authenticator
+  (`[security.attesters]`, §17), to the principal `p` the gate deferred to. On a match the runtime
+  records `PrincipalDecision { who, credence, decision, attestation }` referencing `corr`, where
+  `attestation` carries the attester identity, signature, and the `attester_verification` label
+  (`verified` under an authenticator, `unverified` under the default `none` — the local-dev
+  trust-on-config posture, §17). A declined ruling, an unavailable principal, or an attester that
+  verifies as a **different** principal (or fails to verify) records a `FailedPrincipalDecision`
+  referencing `corr` (§13), and the decision stays `abstained`. In every case — match, mismatch,
+  decline, or a rule that commits without escalation — the resulting `Decision` is recorded as
+  `Decided`. No key material appears in source (§3).
 - **World (`invoke`, MCP).** A wired `perform A(args)` — or a wired `emit` — resolves its
   `[actions.NAME]`/`[events.NAME]` wiring to its `[tools.*]` catalog entry (§17.1), issues an
   MCP `tools/call` with the marshalled args, appends the `ToolStarted`/`ToolResolved` pair (the
@@ -3244,6 +3301,7 @@ Required stable tables:
 | `[security]` | ingress-to-cognition policy (`tainted_ingress_to_provider = "warn"|"deny"|"off"`) | optional; default is `warn` |
 | `[security.ingress.prompts.NAME]` | manifest-level ingress screening for a prompt source | optional; that prompt binding is screened |
 | `[security.ingress.events.NAME]` | manifest-level ingress screening for a standing sensor or result-event payload | optional; that event binding is screened |
+| `[security.attesters.NAME]` | the authenticator that verifies an attester identity as principal `NAME` at a `p decide` ruling (§13) | optional; default is `none` (unverified) |
 | `[memory]` | private-memory substrate selection and memory-runtime policy | runtime has private memory |
 | `[runtime]` | host/deployment runtime settings; parsed and preserved, no kernel-defined keys | optional |
 | `[policy]` | recognized only to be rejected — any key is a `ConfigError` (§17.2) | never |
@@ -3327,6 +3385,36 @@ Identity bindings:
   may back production principals.
 - A principal decision must return a variant of the gated enum plus an attestation/signature payload
   recorded in `PrincipalDecision` or `FailedPrincipalDecision` (§13, §16.4).
+
+Attester identity binding (`[security.attesters.NAME]`):
+
+- This table names the **authenticator** that binds the accountable *human* answering a
+  `NAME decide c by r` deferral (§13) to the declared principal `NAME`. The identity binding
+  (`[identity.NAME]`, above) is the *transport* that reaches the principal and returns a signed
+  verdict; the attester binding is the *authentication* that says the signer is who they claim. They
+  are separate concerns and may use different drivers.
+- `driver = "none"` is the **default** (a principal with no `[security.attesters.NAME]` table is
+  `none`): the attester identity accompanying a ruling is taken **on trust** from configuration or the
+  host, **not verified**. The runtime still records the ruling, but its attestation is labelled
+  `attester_verification = "unverified"`. This is the local-development posture; a deployment that
+  needs accountable identity **must** bind a verifying authenticator. `none` is unverified by
+  construction — the spec does not pretend a config-declared name is a credential (§3).
+- `driver = "host"` binds an **external authenticator supplied by the embedding host** (§17.7): the
+  host presents a verified attester identity with each ruling ingress (e.g. a Cloud IAP-verified
+  email, an OIDC subject, a WebAuthn assertion), and the runtime maps it to a principal. A verified
+  identity that resolves to `NAME` yields `attester_verification = "verified"` and a
+  `PrincipalDecision`; one that resolves to a **different** principal, or that fails to verify,
+  **rejects** the ruling — a `FailedPrincipalDecision` (attester mismatch), decision `abstained`,
+  fail-closed (§13).
+- `driver = "oidc"`, `"webauthn"`, `"kms"`, or implementation-defined drivers may bind concrete
+  verifiers; their transports and credentials are secret references (`*_env`, `secret_ref`), never
+  inline (§17.1). The kernel contract is uniform across drivers: an attester either verifies as the
+  deferred principal (record `PrincipalDecision`) or it does not (record `FailedPrincipalDecision`);
+  the driver only decides *how* the identity is verified, never *whether* the match is enforced.
+- The attester binding grants no authority and changes no types. It cannot widen a principal's reach
+  or a gate's admissibility; it only decides whether a ruling counts as that principal's ruling. A
+  binding for a principal not declared in source is ignored or, in strict mode, a `ConfigError`
+  (§17.1).
 
 The `[tools.*]` endpoint catalog (referenced by `[actions.*]`/`[events.*]` wiring, §6b):
 
@@ -3473,10 +3561,13 @@ equality" is equality of the ledger's terminal hash under the canonical event
 serialization.
 - **Rule observation.** Decision rules are in the test's own source — the gate's inline rule
 (§13), no manifest fixture — and the gate records the applied `Rule` in its
-`Decided` event (and, when it escalates, the paired `PrincipalDecision` event), so which rule
-governed is observable. A fixture `agape.toml`
+`Decided` event (and, when it escalates, the paired `PendingPrincipalDecision` + `PrincipalDecision`
+events), so which rule governed is observable. A fixture `agape.toml`
 sets only **connector/dependency** config for the run (e.g. `exposes_logprobs` to exercise the
-sampling fallback, §16.8).
+sampling fallback, §16.8, or `[security.attesters.NAME]` to exercise attester verification, §13).
+The harness supplies the mock ruling and its verified attester identity deterministically (the
+`principal:` / `attester:` directives, §13), so the deferral → pending → attested-ruling protocol
+replays without a live human.
 - **Kernel bypass coverage.** Every surface feature introduced above the kernel (the gate, memory
   store/recall, the ledger query, provider fallback, runtime adapters) must have negative tests
   proving it cannot bypass taint, endorsement, grants, the perform-only outbound path, or replay. A feature is
@@ -3579,6 +3670,40 @@ adds no authority, changes no semantics, and sees exactly the committed sequence
 An exception thrown by the observer is contained by the runtime and never corrupts the run — the
 append has already committed and execution proceeds; a faulty observer degrades observation only,
 not the ledger.
+
+**Verified attester identity.** A host that binds a principal's attester authenticator with
+`[security.attesters.NAME] driver = "host"` (§17.1) supplies the verification at the seam by passing
+an **`attesterVerifier`** to the session. It is consulted exactly when a `p decide c by r` defers and
+a ruling arrives (§13, §16.4), for a principal whose attester driver is not `none`:
+
+```ts
+createSession(program, { manifest, attesterVerifier: (req) => resolvePrincipal(req) })
+```
+
+```ts
+interface AttesterRequest {
+  principal: string;      // the principal the gate deferred to (the target of the match)
+  corr: number;           // the PendingPrincipalDecision tick this ruling answers (§13)
+  attester?: string;      // the attester identity the host verified for this ingress (e.g. an IAP email, OIDC sub)
+  binding: BindingConfig; // the [security.attesters.NAME] table, verbatim (driver + secret refs)
+}
+// return the principal the verified attester IS, or undefined to reject the ruling
+type AttesterVerifier = (req: AttesterRequest) => string | undefined | Promise<string | undefined>;
+```
+
+- The host returns the principal that the verified identity **is** — the runtime records
+  `PrincipalDecision` only when the returned principal equals `req.principal`. A returned *different*
+  principal, or `undefined`, **rejects** the ruling: `FailedPrincipalDecision`, decision `abstained`,
+  fail-closed (§13). The verifier never sees decision authority; it answers only "who signed this,"
+  and the kernel decides admission.
+- Under the default `none` authenticator no verifier is consulted: the ruling's attester is recorded
+  on trust with `attester_verification = "unverified"` (§17.1). Passing an `attesterVerifier` for a
+  principal whose manifest driver is `none` does not silently upgrade it — the manifest is
+  authoritative for whether verification is enforced.
+- The verification is journaled inside the resulting `PrincipalDecision`/`FailedPrincipalDecision`
+  attestation (attester identity, `attester_verification`, and, on rejection, the resolved principal),
+  so replay serves the recorded verdict and never re-consults the verifier (§16.5). Verification is an
+  identity-seam operation, not `.ag` source syntax; source names only the `principal` (§3).
 
 ---
 

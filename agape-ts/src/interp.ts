@@ -13,7 +13,7 @@ import {
   type LedgerEvent,
 } from "./runtime.js";
 import { check, linkModules, type ModuleInput, type Resolution } from "./check.js";
-import { createMemoryDriver, type Manifest, type ToolBindingConfig } from "./config.js";
+import { createMemoryDriver, type Manifest, type ToolBindingConfig, type BindingConfig } from "./config.js";
 import type { MemoryDriver, MemoryProvenance, MemoryReceipt, MemoryScope } from "./memory.js";
 import { compactMemoryText, renderReplyRecollection, renderStoreRecollection } from "./memory_runtime.js";
 import { parse } from "./parser.js";
@@ -334,6 +334,21 @@ export interface ConsultRequest {
   agent?: string;
 }
 
+// §13/§16.4/§17.7 — the attester-match seam. When a principal's `[security.attesters.NAME]`
+// authenticator is not `none`, the runtime consults this host-supplied verifier before recording a
+// ruling: given the principal the gate deferred to (`principal`), the pending decision's correlation
+// id (`corr`), and the attester identity the host verified for this ingress (`attester`), the host
+// returns the principal that the verified identity IS — or `undefined` to reject. A returned principal
+// equal to `principal` records `PrincipalDecision` (verified); anything else records
+// `FailedPrincipalDecision` (attester mismatch), fail-closed (§13).
+export interface AttesterRequest {
+  principal: string;
+  corr: number;
+  attester?: string;
+  binding: BindingConfig;
+}
+export type AttesterVerifier = (req: AttesterRequest) => string | undefined | Promise<string | undefined>;
+
 // §15.5.6 split-conformal calibration input: a past decision scored over the enum's variants, tagged with
 // the true label later recorded for it. When present (and at/above the rule's `readiness`), a `by conformal α`
 // gate calibrates its prediction set from this pool instead of cold-starting. A vanilla runtime supplies none.
@@ -350,6 +365,11 @@ type RunOptions = {
   promptInputs?: PromptInput[];
   principalAttestations?: PrincipalAttestation[];
   onConsult?: (req: ConsultRequest) => Promise<PrincipalAttestation | undefined>;
+  // §13/§17.7 host embedding: the verified-attester seam. Consulted when a principal's manifest
+  // attester driver is not `none`; returns the principal the verified identity resolves to (or
+  // undefined to reject the ruling). Absent + a non-`none` driver → the ruling cannot be verified
+  // and is rejected (fail-closed), exactly as a non-mock tool with no handler is a ConfigError.
+  attesterVerifier?: AttesterVerifier;
   toolHandlers?: Record<string, ToolHandler>;
   memory?: MemoryDriver;
   memoryRoot?: string;
@@ -398,6 +418,7 @@ export function createSession(program: A.Program, opts: RunOptions = {}): Runtim
     projectRoot,
     opts.calibration ?? [],
     opts.onEvent,
+    opts.attesterVerifier,
   );
 }
 
@@ -476,6 +497,7 @@ class Interpreter {
     private projectRoot: string = process.cwd(),
     private calibrationPool: ConformalLabel[] = [],
     onEvent?: (event: LedgerEvent) => void,
+    private attesterVerifier?: AttesterVerifier,
   ) {
     this.ledger = new Ledger(timingOriginMs, onEvent);
     // §3: register the declared principal names so a `decide c by p` (the parser's {policy} rule form)
@@ -1669,6 +1691,27 @@ class Interpreter {
   // fabricate an approval that never happened (a governance/authority soundness requirement). No
   // taint/authority/endorsement bypass: the Decision still settles a subject only through the unchanged
   // endorse machinery.
+  // §13/§16.4 — the attester-match check. Resolve the principal's `[security.attesters.NAME]`
+  // authenticator: `none` (default, or an absent table) records the ruling on trust and marks it
+  // `unverified`; any other driver enforces verification through the host `attesterVerifier`, which
+  // returns the principal the verified identity IS. A returned principal equal to `who` is `verified`;
+  // a different principal, `undefined`, or a driver with no verifier available is `rejected`.
+  private async verifyAttester(
+    who: string,
+    corr: number,
+    att: PrincipalAttestation,
+  ): Promise<{ ok: boolean; label: "verified" | "unverified" | "rejected"; resolved?: string; driver: string }> {
+    const binding = this.manifest?.security?.attesters?.[who];
+    const driver = String(binding?.driver ?? "none");
+    if (driver === "none") return { ok: true, label: "unverified", driver };
+    if (!this.attesterVerifier) return { ok: false, label: "rejected", driver };
+    const suppliedAttester = typeof att.attester === "string" ? att.attester
+      : typeof att.verified_attester === "string" ? att.verified_attester : undefined;
+    const resolved = await this.attesterVerifier({ principal: who, corr, attester: suppliedAttester, binding: binding ?? {} });
+    if (resolved === who) return { ok: true, label: "verified", resolved, driver };
+    return { ok: false, label: "rejected", resolved: resolved ?? undefined, driver };
+  }
+
   private async principalRule(
     cred: Extract<Value, { kind: "credence" }>,
     scope: Scope,
@@ -1676,32 +1719,42 @@ class Interpreter {
   ): Promise<{ committed: Committed; margin: number; basis: string; principalEvent?: number }> {
     const { variant, score } = topVariant(cred.scores);
     const margin = score - secondScore(cred.scores);
+    const agent = scope.currentAgent()?.name;
+    // §13 attestation protocol — DEFER: appending the durable pending-decision receipt BEFORE the
+    // ruling is resolved. Its tick is the correlation id `corr` that the notifying action, the attested
+    // response, and the resulting PrincipalDecision / FailedPrincipalDecision all reference.
+    const pending = this.ledger.append("PendingPrincipalDecision", who, { credence: cred.enumName, ...scoreSummary(cred.scores) }, agent);
+    const corr = pending.tick;
+    const failed = (kind: string, extra: Record<string, unknown>, att?: PrincipalAttestation) => {
+      const attestation = localAttestation(kind, { principal: who, credence: cred.enumName, ...extra }, att);
+      const ev = this.ledger.append("FailedPrincipalDecision", who, { credence: cred.enumName, ...extra, ...scoreSummary(cred.scores), pending: corr, attestation }, agent);
+      return { committed: "abstained" as Committed, margin, basis: "Principal", principalEvent: ev.tick };
+    };
     // apply one attestation (pre-supplied by the harness/UI, or returned live by the consult seam):
     // an explicit decline / an out-of-enum ruling → FailedPrincipalDecision (fail closed); a valid
-    // variant ruling → PrincipalDecision (basis Principal). §13: "the human's reply arrives as one
-    // of E's variants".
-    const apply = (att: PrincipalAttestation) => {
-      if (att.approved === false) {
-        const attestation = localAttestation("principal-decline", { principal: who, credence: cred.enumName, scores: cred.scores }, att);
-        const ev = this.ledger.append("FailedPrincipalDecision", who, { credence: cred.enumName, ...scoreSummary(cred.scores), attestation }, scope.currentAgent()?.name);
-        return { committed: "abstained" as Committed, margin, basis: "Principal", principalEvent: ev.tick };
-      }
+    // variant ruling is then subject to the attester-match check before it can record a
+    // PrincipalDecision (§13). §13: "the human's reply arrives as one of E's variants".
+    const applyRuling = async (att: PrincipalAttestation) => {
+      if (att.approved === false) return failed("principal-decline", { scores: cred.scores }, att);
       const decision = att.decision || variant;
       if (!Object.prototype.hasOwnProperty.call(cred.scores, decision)) {
-        const attestation = localAttestation("principal-invalid", { principal: who, credence: cred.enumName, decision }, att);
-        const ev = this.ledger.append("FailedPrincipalDecision", who, { credence: cred.enumName, decision, ...scoreSummary(cred.scores), attestation }, scope.currentAgent()?.name);
-        return { committed: "abstained" as Committed, margin, basis: "Principal", principalEvent: ev.tick };
+        return failed("principal-invalid", { decision }, att);
       }
-      const attestation = localAttestation("principal-decision", { principal: who, credence: cred.enumName, decision, scores: cred.scores }, att);
-      const ev = this.ledger.append("PrincipalDecision", who, { credence: cred.enumName, decision, ...scoreSummary(cred.scores), attestation }, scope.currentAgent()?.name);
+      // §13/§16.4 attester-match: a valid ruling records a PrincipalDecision only if its attester
+      // verifies as `who`; a mismatch / unverifiable ruling fails closed (no fabricated authority).
+      const check = await this.verifyAttester(who, corr, att);
+      if (!check.ok) {
+        return failed("principal-attester-mismatch", { decision, attester_verification: check.label, resolved_attester: check.resolved ?? null }, att);
+      }
+      const attestation = localAttestation("principal-decision", { principal: who, credence: cred.enumName, decision, scores: cred.scores }, { ...att, attester_verification: check.label });
+      const ev = this.ledger.append("PrincipalDecision", who, { credence: cred.enumName, decision, ...scoreSummary(cred.scores), pending: corr, attestation }, agent);
       return { committed: decision as Committed, margin, basis: "Principal", principalEvent: ev.tick };
     };
     const attested = this.principalAttestations.find((a) => a.principal === who);
-    if (attested) return apply(attested);
-    if (this.principalOutcome === "grant") {
-      const ev = this.ledger.append("PrincipalDecision", who, { credence: cred.enumName, decision: variant, ...scoreSummary(cred.scores) }, scope.currentAgent()?.name);
-      return { committed: variant, margin, basis: "Principal", principalEvent: ev.tick };
-    }
+    if (attested) return applyRuling(attested);
+    // the harness `principal: grant` directive rules the credence's top variant — routed through the
+    // same applyRuling path so the pending receipt and attester-match apply uniformly.
+    if (this.principalOutcome === "grant") return applyRuling({ principal: who, decision: variant });
     // §16.4 — the LIVE consult seam: no pre-supplied ruling and no harness directive, but a consult
     // handler is attached (the studio's attestation flow). The run PAUSES here awaiting the principal's
     // ruling: one of E's variants (→ PrincipalDecision) or a decline (→ FailedPrincipalDecision).
@@ -1712,16 +1765,13 @@ class Interpreter {
         variants: this.enums.get(cred.enumName) ?? Object.keys(cred.scores),
         scores: cred.scores,
         margin,
-        agent: scope.currentAgent()?.name,
+        agent,
       });
-      if (supplied) return apply({ ...supplied, principal: who });
-      const attestation = localAttestation("principal-decline", { principal: who, credence: cred.enumName, scores: cred.scores });
-      const ev = this.ledger.append("FailedPrincipalDecision", who, { credence: cred.enumName, ...scoreSummary(cred.scores), attestation }, scope.currentAgent()?.name);
-      return { committed: "abstained", margin, basis: "Principal", principalEvent: ev.tick };
+      if (supplied) return applyRuling({ ...supplied, principal: who });
+      return failed("principal-decline", { scores: cred.scores });
     }
     // explicit deny, OR unavailable/unconfigured → fail closed (abstain), never a fabricated approval.
-    const ev = this.ledger.append("FailedPrincipalDecision", who, { credence: cred.enumName, ...scoreSummary(cred.scores) }, scope.currentAgent()?.name);
-    return { committed: "abstained", margin, basis: "Principal", principalEvent: ev.tick };
+    return failed("principal-unavailable", {});
   }
 
   private resolveMarkdownImport(importPath: string): string {

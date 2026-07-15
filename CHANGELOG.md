@@ -8,8 +8,10 @@ version.
 
 ## [Unreleased]
 
-Structured-reply schema violations now fault at the send site, and the bounded
-`retry N` recovery block returns to the core kernel. Owner ruling; SPEC-first
+Structured-reply schema violations now fault at the send site, the bounded
+`retry N` recovery block returns to the core kernel, and the principal-attestation
+protocol becomes a durable, attester-verified end-to-end path (deferral → pending
+decision → attested ruling → resume). Owner ruling; SPEC-first
 (spec → conformance → implementation). No version bump — this rides the next
 beta tag.
 
@@ -41,6 +43,28 @@ beta tag.
   read-only sink (Studio timelines, a streaming fact-checker UI): it adds no
   authority and changes no semantics, and an exception it throws is contained so
   a faulty observer never corrupts the run.
+- **The attestation protocol — deferral, a durable pending decision, and the
+  attested ruling (§13, §16.4).** A principal-prefixed `p decide c by r` that
+  cannot commit now **defers** by appending a durable
+  `PendingPrincipalDecision { who, credence, corr }` receipt (its tick is the
+  correlation id) *before* the ruling resolves it. Notification stays an ordinary
+  §6b action (no `notify` keyword); the ruling arrives as an attested response
+  correlated to `corr`; and the resulting `PrincipalDecision` /
+  `FailedPrincipalDecision` references `corr`, so the whole defer→notify→ruling→
+  resume path is on the ledger and replays deterministically. Every escalation is
+  now ledger-auditable as a pending decision — the supervised cold start is
+  explicit, not implicit. `PendingPrincipalDecision` is added to the prelude (§9).
+- **The attester-identity seam — `[security.attesters.NAME]` (§13, §17.1, §17.7).**
+  The runtime now verifies that the attester answering a `p decide` deferral **is**
+  the principal `p`, via a per-principal authenticator. The default `none` (any
+  principal with no table) takes the attester on trust and records the ruling
+  marked `attester_verification = "unverified"` — the spec states plainly this is
+  unverified, a local-dev posture. A bound authenticator (`driver = "host"` or an
+  implementation-defined verifier) enforces the match: an attester that resolves to
+  a **different** principal, or fails to verify, **rejects** the ruling —
+  `FailedPrincipalDecision`, decision `abstained`, fail-closed. Hosts supply the
+  verified identity via `createSession(program, { attesterVerifier })` (§17.7);
+  it is journaled inside the ruling's attestation and replayed, never re-consulted.
 
 ### Fixed
 

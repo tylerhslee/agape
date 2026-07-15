@@ -35,6 +35,7 @@ interface Header {
   order?: string[];
   provider?: string;
   principal?: string;
+  attester?: string;
   manifest?: string;
   replay?: string;
   modules?: string;
@@ -160,15 +161,19 @@ async function runTest(h: Header, src: string, companions: ModuleInput[]): Promi
   const manifest = h.manifest ? parseManifestDirective(h.manifest) : undefined;
   // §13/§17.5: the `principal:` directive supplies the mock outcome of a principal-driven decide.
   const principal = h.principal;
+  // §13/§16.4/§17.7: the `attester:` directive is the mock host authenticator — the principal that the
+  // ruling's verified attester identity resolves to. The kernel records PrincipalDecision only when it
+  // equals the deferred principal, else FailedPrincipalDecision (attester mismatch).
+  const attesterVerifier = h.attester !== undefined ? () => h.attester : undefined;
   // §17.1/§17.5: the harness runs the configuration section in configured/strict binding mode, where every
   // declared principal/prompt/tool dependency must be bound in the manifest; other sections auto-bind mocks.
   const strictConfig = h.section === "16_config";
   try {
-    const r = await run(program, { provider: providerFor(h), modules: companions, manifest, principal, strictConfig });
+    const r = await run(program, { provider: providerFor(h), modules: companions, manifest, principal, attesterVerifier, strictConfig });
     const events = r.ledger.events.map((e) => ({ type: mapEtype(e.etype), subject: e.subject }));
     const out: Outcome = { threw: false, phase: "run", events, head: r.ledger.head() };
     if (h.replay === "chain_head_equal") {
-      const r2 = await run(parse(src), { provider: providerFor(h), modules: companions, manifest, principal, strictConfig });
+      const r2 = await run(parse(src), { provider: providerFor(h), modules: companions, manifest, principal, attesterVerifier, strictConfig });
       out.head2 = r2.ledger.head();
     }
     return out;
@@ -287,7 +292,7 @@ async function main() {
       const companions = loadCompanions(secDir, f, h);
       const o = await runTest(h, src, companions);
       const v = evaluate(h, o);
-      const directives = (["provider", "principal", "manifest", "replay", "modules", "packages"] as const).filter((k) => h[k]);
+      const directives = (["provider", "principal", "attester", "manifest", "replay", "modules", "packages"] as const).filter((k) => h[k]);
       rows.push({
         id: h.id, section, expect: h.expect, pass: v.pass, reason: v.reason,
         errorClass: o.errorClass, phase: o.phase,

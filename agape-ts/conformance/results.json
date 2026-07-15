@@ -1,6 +1,6 @@
 {
-  "passed": 212,
-  "total": 212,
+  "passed": 216,
+  "total": 216,
   "bySection": {
     "00_lexical": {
       "pass": 11,
@@ -59,8 +59,8 @@
       "total": 6
     },
     "13_governance": {
-      "pass": 21,
-      "total": 21
+      "pass": 25,
+      "total": 25
     },
     "15_reproducibility": {
       "pass": 2,
@@ -1809,6 +1809,47 @@
       "directives": []
     },
     {
+      "id": "gov_attester_unverified_accepted",
+      "section": "13_governance",
+      "expect": "accept",
+      "pass": true,
+      "reason": "accepted + ledger ok",
+      "phase": "run",
+      "hadMatchers": true,
+      "directives": [
+        "principal",
+        "manifest"
+      ]
+    },
+    {
+      "id": "gov_attester_verified_resumes",
+      "section": "13_governance",
+      "expect": "accept",
+      "pass": true,
+      "reason": "accepted + ledger ok",
+      "phase": "run",
+      "hadMatchers": true,
+      "directives": [
+        "principal",
+        "attester",
+        "manifest"
+      ]
+    },
+    {
+      "id": "gov_attester_wrong_principal_rejected",
+      "section": "13_governance",
+      "expect": "accept",
+      "pass": true,
+      "reason": "accepted + ledger ok",
+      "phase": "run",
+      "hadMatchers": true,
+      "directives": [
+        "principal",
+        "attester",
+        "manifest"
+      ]
+    },
+    {
       "id": "gov_bare_decision_no_perform_reject",
       "section": "13_governance",
       "expect": "reject",
@@ -1952,6 +1993,18 @@
       "hadMatchers": true,
       "directives": [
         "provider"
+      ]
+    },
+    {
+      "id": "gov_pending_principal_decision_records",
+      "section": "13_governance",
+      "expect": "accept",
+      "pass": true,
+      "reason": "accepted + ledger ok",
+      "phase": "run",
+      "hadMatchers": true,
+      "directives": [
+        "principal"
       ]
     },
     {
