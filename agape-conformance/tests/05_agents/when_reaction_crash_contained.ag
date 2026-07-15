@@ -1,0 +1,23 @@
+//! id:        when_reaction_crash_contained
+//! section:   05_agents
+//! expect:    accept
+//! provider:  empty
+//! order:     AgentCrashed(a); Recovered(a)
+//! absent:    Handled
+//! spec:      §16.6 (the reaction boundary: a `when`-body firing is a handler invocation just like `on awake`; an uncaught fault is CONTAINED — AgentCrashed is recorded and the on-crash hook runs with state intact — never propagated out of the run)
+//! ---
+// An unrecoverable seam failure (the provider returns nothing) raised INSIDE a `when` reaction body must
+// be contained exactly like a crash in `on awake`: AgentCrashed is recorded and `on crash` recovers. Before
+// the §16.6 reaction-boundary fix, a `when`-reaction crash escaped the run entirely, bypassing `on crash`.
+event Go(text x);
+event Handled(text x);
+event Recovered(text how);
+agent A {
+  when (Go g) {
+    Credence<bool> c = self <- "is the sky blue?";
+    emit Handled("unreachable — the send above crashes the reaction");
+  }
+  on crash { emit Recovered("recovered with state intact"); }
+}
+spawn A a; awake a;
+emit Go("start");

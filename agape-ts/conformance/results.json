@@ -1,6 +1,6 @@
 {
-  "passed": 211,
-  "total": 211,
+  "passed": 212,
+  "total": 212,
   "bySection": {
     "00_lexical": {
       "pass": 11,
@@ -19,8 +19,8 @@
       "total": 8
     },
     "05_agents": {
-      "pass": 15,
-      "total": 15
+      "pass": 16,
+      "total": 16
     },
     "06_communication": {
       "pass": 7,
@@ -712,6 +712,18 @@
       "phase": "run",
       "hadMatchers": true,
       "directives": []
+    },
+    {
+      "id": "when_reaction_crash_contained",
+      "section": "05_agents",
+      "expect": "accept",
+      "pass": true,
+      "reason": "accepted + ledger ok",
+      "phase": "run",
+      "hadMatchers": true,
+      "directives": [
+        "provider"
+      ]
     },
     {
       "id": "comm_expiry_tombstone",

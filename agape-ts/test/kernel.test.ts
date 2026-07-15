@@ -1287,3 +1287,81 @@ describe("§17.7 host embedding — the onEvent live ledger observer", () => {
     expect(r.ledger.events.filter((e) => e.etype === "Event").length).toBe(2);
   });
 });
+
+// A provider whose seam faults on EVERY send: `empty` (an unrecoverable seam failure) or `schema_violation`
+// (a structured reply that fails its declared schema). Mirrors the conformance harness's fault injection.
+class FaultProvider extends MockProvider {
+  constructor(readonly fault: "empty" | "schema_violation") { super(); }
+}
+
+describe("§16.6 reaction-boundary crash containment + informative fault messages", () => {
+  const reasonOf = (r: Awaited<ReturnType<typeof run>>) =>
+    (r.ledger.events.find((e) => e.etype === "AgentCrashed")?.payload as { reason?: string } | undefined)?.reason;
+
+  it("contains a crash raised inside a `when` reaction body — AgentCrashed + on-crash, never escaping run()", async () => {
+    const prog = `
+      event Go(text x);
+      event Recovered(text how);
+      agent A {
+        when (Go g) { Credence<bool> c = self <- "is the sky blue?"; }
+        on crash { emit Recovered("state intact"); }
+      }
+      spawn A a; awake a;
+      emit Go("start");
+    `;
+    // an empty-seam fault raised inside the `when (Go g)` body must be contained just like `on awake` —
+    // before the reaction-boundary fix this CrashError escaped run() entirely, bypassing `on crash`.
+    const r = await run(parse(prog), { provider: new FaultProvider("empty") });
+    const etypes = r.ledger.events.map((e) => e.etype);
+    expect(etypes).toContain("AgentCrashed"); // contained, not thrown out of run()
+    expect(etypes).toContain("Recovered");    // the agent's on-crash hook ran with state intact
+    const reason = reasonOf(r);
+    expect(reason).toBeTruthy();
+    expect(reason).not.toBe("");               // the AgentCrashed row NAMES why (no empty message)
+    expect(reason).toMatch(/empty seam result|no completion/);
+  });
+
+  it("names the declared type in the crash reason when a structured reply violates its schema (TypeMismatch)", async () => {
+    const prog = `
+      struct Receipt { vendor: text, total_cents: int }
+      event Recovered(text how);
+      agent A {
+        on awake { Receipt receipt = self <- "extract the receipt"; say(receipt.vendor); }
+        on crash { emit Recovered("held"); }
+      }
+      spawn A a; awake a;
+    `;
+    const r = await run(parse(prog), { provider: new FaultProvider("schema_violation") });
+    expect(r.ledger.events.map((e) => e.etype)).toContain("TypeMismatch");
+    const reason = reasonOf(r);
+    expect(reason).toBeTruthy();
+    // the owner ruling: the fault text must NAME the declared type and the schema violation
+    expect(reason).toContain("Receipt");
+    expect(reason).toMatch(/did not match|could not be parsed|violated/);
+  });
+
+  it("names the delegated task and its fail reason when a foreground delegation faults the delegator", async () => {
+    const prog = `
+      event Go(text x);
+      event Recovered(text how);
+      agent Worker { on assigned { fail "cannot settle the claim"; } }
+      agent Lead grants { reach Worker } {
+        when (Go g) {
+          Worker w = spawn Worker; awake w;
+          text r = w <- task { objective "produce a number"; acceptance "an int"; } expires 10;
+          say(r);
+        }
+        on crash { emit Recovered("abstained"); }
+      }
+      spawn Lead lead; awake lead;
+      emit Go("start");
+    `;
+    const r = await run(parse(prog));
+    expect(r.ledger.events.map((e) => e.etype)).toContain("AgentCrashed");
+    expect(r.ledger.events.map((e) => e.etype)).toContain("Recovered");
+    const reason = reasonOf(r);
+    expect(reason).toBeTruthy();
+    expect(reason).toContain("failed");
+    expect(reason).toContain("cannot settle the claim"); // the correlated TaskFailed(reason) is surfaced
+  });
+});

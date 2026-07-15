@@ -42,6 +42,29 @@ beta tag.
   authority and changes no semantics, and an exception it throws is contained so
   a faulty observer never corrupts the run.
 
+### Fixed
+
+- **A fault raised inside a `when` reaction body is now CONTAINED (§16.6).**
+  The reaction boundary says a `when`-body firing is a handler invocation just
+  like `on awake` or a task handler, so an uncaught fault must be contained —
+  `AgentCrashed` recorded, the `on crash` hook run, the agent surviving with
+  state intact. `fireSubscriptions` did not catch `CrashError`, so a crash in a
+  `when` reaction (e.g. a coordinator whose whole pipeline runs under
+  `when (Prompt …)`, or a foreground delegation whose worker `fail`s) **escaped
+  `run()` entirely**, bypassing the program's `on crash`. It is now contained on
+  the same path as the awake-hook and task-handler crashes. Top-level `when`
+  firings (no owning agent) abandon just that invocation.
+- **Every runtime fault now carries an informative message; `AgentCrashed`
+  records the reason (§16.6 observability).** Previously every `CrashError` /
+  `TypeMismatchError` was constructed with **no message**, so a fault that
+  reached an embedding host surfaced as an empty string. Each throw site now
+  names what failed: a `TypeMismatch` names the **declared type** and the schema
+  violation (owner ruling); a foreground-delegation fault names the task and the
+  correlated `TaskFailed(reason)`; retry-exhaustion, margin-floor, task-scope,
+  and empty-seam faults each state their cause. The contained-crash path records
+  that reason on the `AgentCrashed` ledger row (additive payload), so the ledger
+  — and any ledger view — names **why** an agent crashed.
+
 ## [1.0.0-beta.2026.7.14.1] - 2026-07-14
 
 A packaging-only patch over the first beta. The Windows Release job failed in

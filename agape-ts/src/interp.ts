@@ -32,6 +32,13 @@ class TypeMismatchError extends CrashError {}
 // §6c: `complete`/`fail` terminate the enclosing task handler (control flow, not a fault).
 class TaskDoneSignal extends Error {}
 
+// The human-legible reason for a contained crash, recorded on the AgentCrashed row (§16.6 observability).
+// Every CrashError this runtime raises carries an informative message; the fallback is defensive only.
+function crashReason(err: unknown): string {
+  const m = err instanceof Error ? err.message : String(err);
+  return m && m.trim() ? m : "the agent crashed without a specified reason";
+}
+
 // §6c task-send state, correlated by the delegator-side binding name (the corr subject).
 interface TaskState {
   corr: string;
@@ -43,6 +50,7 @@ interface TaskState {
   status: "sent" | "delivered" | "completed" | "failed" | "cancelled" | "expired";
   delivered: boolean;   // it reached the worker at least once (drives the on-cancelled hook)
   result?: Value;
+  reason?: string;      // the `fail` reason (correlated TaskFailed(reason)), surfaced in the delegator's fault message
   // The delegating reaction's prompt provenance: a background delivery drains AFTER the
   // originating async context has ended, so the task carries it and restores it at delivery.
   provenance?: MemoryProvenance;
@@ -637,7 +645,8 @@ class Interpreter {
           }
         }
         this.ledger.append("RetryExhausted", this.agentSubject(scope), undefined, scope.currentAgent()?.name);
-        throw new CrashError(); // all N attempts exhausted — fault the reaction (§16.6)
+        // all N attempts exhausted — fault the reaction (§16.6)
+        throw new CrashError(`retry(${s.n}) exhausted: all ${s.n} attempt(s) returned a structured reply that failed its declared schema; faulting the reaction (§11/§16.6)`);
       }
       case "awake": return this.execAwake(this.instanceNameOf(s.name, scope));
       case "sleep": {
@@ -679,6 +688,7 @@ class Interpreter {
           throw new TaskDoneSignal();
         }
         t.status = "failed";
+        t.reason = v.v;
         this.ledger.append("TaskFailed", t.corr, { reason: v.v }, inst.name);
         await this.fireSubscriptions("TaskFailed", t.corr, new Map([["reason", v]]));
         throw new TaskDoneSignal();
@@ -917,8 +927,9 @@ class Interpreter {
       await this.runHook(inst, "awake");
     } catch (err) {
       if (!(err instanceof CrashError)) throw err;
-      // §5: a crash is CONTAINED — record AgentCrashed, run the on-crash hook, and the instance survives.
-      this.ledger.append("AgentCrashed", name, undefined, name);
+      // §5: a crash is CONTAINED — record AgentCrashed (with the fault reason, so the ledger names WHY the
+      // agent crashed — §16.6 observability), run the on-crash hook, and the instance survives.
+      this.ledger.append("AgentCrashed", name, { reason: crashReason(err) }, name);
       await this.runHook(inst, "crash");
     }
   }
@@ -1003,7 +1014,7 @@ class Interpreter {
         // the handler completed/failed the task — normal termination
       } else if (err instanceof CrashError) {
         // §16.6: the fault is contained to the WORKER's invocation; the task stays open (expiry backstops).
-        this.ledger.append("AgentCrashed", inst.name, undefined, inst.name);
+        this.ledger.append("AgentCrashed", inst.name, { reason: crashReason(err) }, inst.name);
         await this.runHook(inst, "crash");
       } else {
         throw err;
@@ -1066,7 +1077,20 @@ class Interpreter {
           const g = await this.evalExpr(sub.when.guard, hscope);
           if (!(g.kind === "bool" && g.v)) continue;
         }
-        for (const st of sub.when.body) await this.execStmt(st, hscope);
+        // §16.6 the reaction boundary: this `when`-body firing is ONE handler invocation, and a fault is
+        // CONTAINED to it. For an agent-bound reaction, record AgentCrashed and run the agent's `on crash`
+        // hook (fields + memory survive); a top-level `when` (no agent) simply abandons this firing. This
+        // mirrors the awake-hook (execAwake) and task-handler (deliverTask) crash paths — without it, a
+        // reaction crash escaped `run()` entirely, bypassing the program's `on crash`.
+        try {
+          for (const st of sub.when.body) await this.execStmt(st, hscope);
+        } catch (err) {
+          if (!(err instanceof CrashError)) throw err;
+          if (sub.inst) {
+            this.ledger.append("AgentCrashed", sub.inst.name, { reason: crashReason(err) }, sub.inst.name);
+            await this.runHook(sub.inst, "crash");
+          }
+        }
       }
     } finally {
       this.dispatchDepth--;
@@ -1119,7 +1143,7 @@ class Interpreter {
       { action, margin: v.margin, floor: v.floor },
       agent?.name,
     );
-    throw new CrashError();
+    throw new CrashError(`margin floor violation: the endorsed value for '${subject}' has margin ${v.margin}, below the floor ${v.floor} the gate requires to perform '${action}'; the action is refused (§13/§16.6)`);
   }
 
   private async execPerform(s: A.PerformStmt, scope: Scope): Promise<void> {
@@ -1143,7 +1167,7 @@ class Interpreter {
       const bare = name.includes(".") ? name.split(".").pop()! : name;
       if (!active.endorsed || !(active.scope.includes(name) || active.scope.includes(bare))) {
         this.ledger.append("TaskScopeViolation", agent.name, { action: name, task: active.corr }, agent.name);
-        throw new CrashError();
+        throw new CrashError(`task-scope violation: agent '${agent.name}' cannot perform '${name}' — the active assigned task '${active.corr}' ${!active.endorsed ? "is not endorsed" : `does not name '${name}' in its scope`}; the action is refused (§6c/§13/§16.6)`);
       }
     }
     const argValues: Value[] = [];
@@ -1185,7 +1209,7 @@ class Interpreter {
       const bare = name.includes(".") ? name.split(".").pop()! : name;
       if (!active.endorsed || !(active.scope.includes(name) || active.scope.includes(bare))) {
         this.ledger.append("TaskScopeViolation", agent.name, { action: name, task: active.corr }, agent.name);
-        throw new CrashError();
+        throw new CrashError(`task-scope violation: agent '${agent.name}' cannot perform '${name}' — the active assigned task '${active.corr}' ${!active.endorsed ? "is not endorsed" : `does not name '${name}' in its scope`}; the action is refused (§6c/§13/§16.6)`);
       }
     }
     if (e.expires === undefined) throw typeError("a result-bound `perform` requires `expires` (§6b/§6c)");
@@ -2348,10 +2372,10 @@ class Interpreter {
     // `schema_violation` = a structured typed reply that fails its schema → a TypeMismatch that FAULTS the
     // send (a null never enters the typed binding; `retry N` re-asks, §11).
     const fault = (this.provider as { fault?: string }).fault;
-    if (fault === "empty") throw new CrashError();
+    if (fault === "empty") throw new CrashError(`the provider returned no completion for the send '${subj}' to '${destName}' (empty seam result); an unrecoverable seam failure crashes the agent (§5/§16.6)`);
     if (fault === "schema_violation" && expected && expected.kind !== "credence") {
       this.ledger.append("TypeMismatch", subj, undefined, scope.currentAgent()?.name);
-      throw new TypeMismatchError();
+      throw new TypeMismatchError(`the model's structured reply for '${subj}' did not match the declared type ${typeLabel(expected)} (schema violation); the send faults (§8/§16.6)`);
     }
     if (expected?.kind === "credence") {
       const variants = this.variantsOf(expected.enumName);
@@ -2395,7 +2419,7 @@ class Interpreter {
             raw,
             error: (error as Error).message,
           }, scope.currentAgent()?.name);
-          throw new TypeMismatchError();
+          throw new TypeMismatchError(`the model's structured reply for '${subj}' could not be parsed into the declared type ${typeLabel(structuredType)}: ${(error as Error).message}; the send faults (§8/§16.6)`);
         }
         try {
           value = this.valueFromStructured(raw, structuredType, scope);
@@ -2405,7 +2429,7 @@ class Interpreter {
             raw,
             error: (err as Error).message,
           }, scope.currentAgent()?.name);
-          throw new TypeMismatchError();
+          throw new TypeMismatchError(`the model's structured reply for '${subj}' violated the declared type ${typeLabel(structuredType)}: ${(err as Error).message}; the send faults (§8/§16.6)`);
         }
         const resolved = this.ledger.append("Resolved", subj, {
           kind: "structured",
@@ -2486,7 +2510,7 @@ class Interpreter {
         t.status = "expired";
         this.ledger.append("Expired", corr, { to: dest.name, task: true }, agent?.name);
         await this.fireSubscriptions("Expired", corr, new Map());
-        throw new CrashError();
+        throw new CrashError(`delegated task '${corr}' to '${dest.name}' expired undelivered (the worker was not awake); the foreground delegation faults the delegator (§6c/§16.6)`);
       }
       await this.deliverTask(t);
       if (t.status === "completed") return this.foregroundResult(t.result!);
@@ -2496,7 +2520,10 @@ class Interpreter {
         this.ledger.append("Expired", corr, { to: dest.name, task: true }, agent?.name);
         await this.fireSubscriptions("Expired", corr, new Map());
       }
-      throw new CrashError(); // failed / cancelled / expired — fault the awaiting invocation (§16.6)
+      // failed / cancelled / expired — fault the awaiting invocation (§16.6). The failure reason is the
+      // correlated TaskFailed(reason) row (§6c); include it so the delegator's crash names WHY.
+      const why = t.status === "failed" && t.reason ? `: ${t.reason}` : "";
+      throw new CrashError(`delegated task '${corr}' to '${dest.name}' ${t.status}${why}; the foreground delegation faults the delegator (§6c/§16.6)`);
     }
     this.pendingDeliveries.push(t);
     return { kind: "taskref", corr, trust: "settled" };
