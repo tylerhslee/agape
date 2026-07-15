@@ -925,7 +925,7 @@ class AgapeTsConformanceAdapter {
         stale: false,
       };
       cells.push(cell);
-      const groupKey = `${fact.subject} ${fact.key}`;
+      const groupKey = `${fact.subject}0000${fact.key}`;
       const group = bySubjectKey.get(groupKey) ?? [];
       group.push(cell);
       bySubjectKey.set(groupKey, group);
@@ -1169,7 +1169,7 @@ class AgapeTsConformanceAdapter {
     for (let i = 0; i < input.repetitions; i++) {
       // exactly-once ingress: the adapter's transport layer deduplicates repeated external input
       // by idempotency key before it reaches the runtime (SPEC 15.5 exactly-once delivery).
-      const key = `${arrival.source} ${arrival.idempotencyKey ?? canonicalJson(arrival)}`;
+      const key = `${arrival.source}0000${arrival.idempotencyKey ?? canonicalJson(arrival)}`;
       if (this.seenIdempotencyKeys.has(key)) continue;
       this.seenIdempotencyKeys.add(key);
       this.counters.promptArrivals++;
