@@ -5,7 +5,7 @@ v1.0.0-beta.2026.7.16.1), written in TypeScript so it can live inside Agape Stud
 parses, statically checks, and runs the complete core language, with the trusted kernel
 (`decide` → `Decided` → committed `endorse` → granted sink → ledger) enforced both statically and at runtime.
 
-**Conformance: 217/217 (100%)** against `../agape-conformance`, plus 45/45 on the
+**Conformance: 217/217 (100%)** against `../agape-conformance`, plus 48/48 on the
 `../agape-runtime-conformance` runtime-contract suite and 127/127 vitest units — see [CONFORMANCE.md](CONFORMANCE.md).
 
 ## Run

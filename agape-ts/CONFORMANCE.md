@@ -7,7 +7,7 @@ front end (lex → parse → **check**) + runtime (**run**) and matches the `//!
 (`accept`/`reject` + error class + ledger matchers + §17.5 directives).
 
 The black-box **runtime-contract** suite in `../agape-runtime-conformance` (SPEC §16–§17) is a
-separate gate — 45 tests across 12 files, including the §16.3a task-dispatch/delegation and
+separate gate — 48 tests across 12 files, including the §16.3a task-dispatch/delegation and
 §16.4 attestation-protocol contracts — driven through the shared runtime adapter
 (`npm run test:agape-ts`).
 
@@ -23,7 +23,7 @@ changed only with spec-grounded evidence that the test itself is wrong).
 
 ```
 TOTAL  217 / 217  (100%)        vitest suite: 127 / 127        tsc --noEmit: clean
-                                runtime-contract: 45 / 45
+                                runtime-contract: 48 / 48
 
 00_lexical         11 / 11  ✓   07_ledger           7 / 7   ✓   13_governance      25 / 25  ✓
 01_axes             4 / 4   ✓   08_semantic        11 / 11  ✓   15_reproducibility  2 / 2   ✓
