@@ -6,7 +6,9 @@ All notable changes to Agape are recorded here. The format follows
 suite, and the studio move in lockstep — a release is the whole bundle at one
 version.
 
-## [Unreleased]
+## [1.0.0-beta.2026.7.16.1] - 2026-07-16
+
+Same-day patch over the second beta: concurrent §6c task delivery — overlapping worker execution with unchanged replay determinism, measured 2.78× on a 3-task workload.
 
 ### Changed
 
