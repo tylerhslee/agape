@@ -6,14 +6,19 @@ All notable changes to Agape are recorded here. The format follows
 suite, and the studio move in lockstep — a release is the whole bundle at one
 version.
 
-## [Unreleased]
+## [1.0.0-beta.2026.7.16.0] - 2026-07-16
 
-Structured-reply schema violations now fault at the send site, the bounded
-`retry N` recovery block returns to the core kernel, and the principal-attestation
-protocol becomes a durable, attester-verified end-to-end path (deferral → pending
-decision → attested ruling → resume). Owner ruling; SPEC-first
-(spec → conformance → implementation). No version bump — this rides the next
-beta tag.
+The second beta hardens **recovery semantics**, lands the **attestation protocol**,
+and closes the **delegation contract** coverage gap. Faults now surface where they
+happen and stay contained: a schema-violating structured reply faults at the send
+site, a provider connector error crashes unretried (distinct from a bad reply), the
+bounded `retry N` recovery block returns to the core kernel, a fault inside a `when`
+body is contained like any other handler crash, and every runtime fault carries an
+informative message. The principal-attestation protocol becomes a durable,
+attester-verified end-to-end path (deferral → durable pending decision → attested
+ruling → resume). And the §6c delegation contract, previously proven only at the
+language level, gains a dedicated runtime-contract test file. Owner ruling; SPEC-first
+(spec → conformance → implementation).
 
 ### Changed
 
@@ -26,6 +31,21 @@ beta tag.
   enters a typed binding from a structured send. The §17.5 fault-injection path
   behaves identically. The typing rule is unchanged (T-Send still types to the
   reply type); a new operational rule `E-Send-TypeMismatch` states the fault.
+- **A provider connector error CRASHES unretried, distinct from a schema-violating
+  reply (§8, §16.4, §16.6).** The structured send path conflated two failures: any
+  rejection of `provider.structured` — an HTTP 4xx, a network failure, a refusal (a
+  **connector** error, a bad *request*) — was treated exactly like a schema-violating
+  **reply**, appending a `TypeMismatch` and throwing a *retryable* error. So a
+  `retry N` block re-asked the provider `N` times on a deterministic request-level
+  rejection that could never succeed, then crashed with a misleading "did not match
+  the declared type." Now a connector error is a **crash** (unretried, like an empty
+  seam result) per §16.6's connector-error rule — the fault names the provider status
+  and message; only a reply that comes back and cannot be parsed into the declared
+  type stays a retryable `TypeMismatch`. The seam tags each outcome
+  `connector | parse | raw` so the three cases are distinct. Relatedly, the
+  type→schema generator is documented as **strict by construction** (§8): recursively
+  `additionalProperties: false` with every field required on every object — the shape
+  strict structured-decoding modes require.
 
 ### Added
 
@@ -65,6 +85,22 @@ beta tag.
   `FailedPrincipalDecision`, decision `abstained`, fail-closed. Hosts supply the
   verified identity via `createSession(program, { attesterVerifier })` (§17.7);
   it is journaled inside the ruling's attestation and replayed, never re-consulted.
+- **Runtime-contract coverage for the §6c delegation dispatch (§16.3a).** Delegation
+  was proven at the language level (`agape-conformance/06c_delegation`, 31 tests) but
+  had no dedicated runtime-contract file exercising scheduler dispatch, `Task*`
+  receipts/correlation, fault recovery, and replay. New
+  `agape-runtime-conformance/tests/16_3a_task_dispatch.test.ts` adds **8** black-box
+  tests: the full `Sent → Delivered → Resolved → TaskCompleted` receipt chain,
+  background completion delivered to `when(TaskCompleted about h)`, a `TaskFailed`
+  resting at the delivered prefix, a foreground terminal fault recovering via
+  `on crash`, an endorsed completion settling a direct `perform`, a late completion
+  after a tombstone becoming `CompletionRefused` (first terminal wins), an unendorsed
+  task perform faulting with `TaskScopeViolation`, and a delegation trace replaying to
+  an identical chain-head with zero oracle re-invocation. No adapter or kernel change.
+- **Explicit provider API keys in agape-ts (`agape-ts/src/config.ts`).** The runtime
+  secrets can now carry `openaiApiKey` / `anthropicApiKey` / `geminiApiKey` directly;
+  each provider client is constructed with the explicit key when present, falling back
+  to the environment (`GEMINI_API_KEY` / `GOOGLE_API_KEY` for Gemini) otherwise.
 
 ### Fixed
 
@@ -103,6 +139,10 @@ beta tag.
   semantics remains an **open design question deferred to the owner**. Existing
   programs already used the workaround pattern (assign a result variable in the
   branches, `return` it last), so no conformance program or example changed.
+- **NUL-byte hygiene in `runtime_adapter`.** Two composite-key separators were
+  embedded as raw `0x00` bytes, which made the file classify as **binary** and blocked
+  text tooling (grep, diff, agent edits). They are now `\u0000` escapes; behavior is
+  identical and the file is plain UTF-8 again.
 
 ## [1.0.0-beta.2026.7.14.1] - 2026-07-14
 

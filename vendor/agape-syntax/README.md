@@ -1,6 +1,6 @@
 # @agape-lang/syntax
 
-Canonical syntax definitions for Agape language specification v1.0.0-beta.2026.7.14.1.
+Canonical syntax definitions for Agape language specification v1.0.0-beta.2026.7.16.0.
 
 This package is the shared source for:
 

@@ -1,4 +1,4 @@
-# Agape Language Specification (v1.0.0-beta.2026.7.14.1)
+# Agape Language Specification (v1.0.0-beta.2026.7.16.0)
 
 > Agape is a programming language for multi-agent systems. This document is the
 > authoritative reference. The prose (§0–§14) defines the language for a reader; the formal
@@ -3234,7 +3234,7 @@ and wires the declared events and actions to them (§6b):
 name = "fact-checker"
 entry = "main.ag"
 version = "0.1.0"
-spec = "1.0.0-beta.2026.7.14.1"
+spec = "1.0.0-beta.2026.7.16.0"
 
 [provider]
 backend = "openai"

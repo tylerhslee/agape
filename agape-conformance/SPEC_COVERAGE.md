@@ -1,6 +1,6 @@
 # SPEC Coverage Matrix
 
-Target: `SPEC.md` `v1.0.0-beta.2026.7.14.1` — the core kernel.
+Target: `SPEC.md` `v1.0.0-beta.2026.7.16.0` — the core kernel.
 
 Scope of this matrix: compiler/language conformance only. Runtime-only obligations in sections 16/17/18 are marked `runtime-suite` because they cannot be proven by feeding `.ag` source to a compiler. They belong in the TypeScript runtime conformance suite and adapters.
 
