@@ -2670,7 +2670,8 @@ assigned, monotonic, gap-free (§7).
   block: the runtime appends the operation's opening event(s) (`Sent`, `ToolStarted`, …), issues the
   oracle call (§16.4), and enqueues a **resolution** on `Q`. The continuation after the call resumes
   when that resolution is dispatched. Many operations may be in flight at once (a query's fan-out over
-  a collection, §12, issues all its calls before any resolves).
+  a collection, §12, issues all its calls before any resolves; the worker-side oracle calls of
+  concurrently-delivered background tasks likewise overlap, §16.3a).
 - **The scheduler loop.** While `Q` is non-empty or the top level is unfinished: take the next ready
   resolution, apply its effect (append the closing event(s) — `Resolved`, `ToolResolved`, a bound
   `Credence` — and resume its continuation), then drain any subscriptions the appends fired.
@@ -2776,6 +2777,19 @@ A task-send routes like any send; what changes is who resolves it and what lands
   payload is discarded (§15.4.2).
 - **Foreground fault.** A result-bound delegation whose terminal is not `TaskCompleted` faults
   the delegator's awaiting invocation through the crash path (§16.6).
+- **Concurrent delivery.** Background (handle-bound) deliveries **may overlap**: their worker-side
+  oracle calls (provider sends, §16.4) may be in flight at once, exactly as a `|>` fan-out overlaps
+  its dependency calls (§16.1, §12). Scheduling is a runtime freedom, and the determinism obligation
+  is **unchanged** — concurrency is achieved the same way as fan-out (§16.1, §16.5): every ledger
+  append still commits in a deterministic **issue order**, and every oracle result is journaled, so
+  a recorded run replays to the identical chain-head (T4, §16.5) with zero oracle re-invocation. The
+  ordering invariants this pins are **per-task**: each correlation's receipt chain
+  (`Sent → Delivered → Resolved → TaskCompleted`, or its `TaskFailed`/`Expired`/`TaskCancelled`
+  terminal) stays internally ordered, and the first-terminal-wins rule holds per correlation. The
+  **inter-task** interleaving is scheduling-dependent but journal-derived: it is a deterministic
+  function of the recorded run (issue order of the batch), not of wall-clock resolution timing, so it
+  is reproduced exactly on replay. A conformant runtime **may** also deliver them sequentially — the
+  contract fixes only the per-task invariants and chain-head reproducibility, not an overlap policy.
 - **Status projection.** "One status per task" is a ledger projection — a `select … from ledger`
   fold over the correlation — maintained like any projection (§16.7a), never a stored event.
 

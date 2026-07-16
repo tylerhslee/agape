@@ -188,20 +188,37 @@ class HarnessProvider implements Provider {
       return this.replayJournal.structured.shift();
     }
     this.counters.providerCalls++;
-    let raw: unknown;
-    if (this.queue.length > 0) {
-      const idx = this.queue.findIndex((entry) => entry.subject !== undefined && prompt.includes(entry.subject));
-      const entry = idx >= 0 ? this.queue.splice(idx, 1)[0] : this.queue.shift();
-      if (entry?.delayMs) await new Promise((r) => setTimeout(r, entry.delayMs));
-      raw = entry?.payload ?? defaultStructured(schema);
-      if (schema.type === "string" && typeof raw !== "string") raw = JSON.stringify(raw);
-    } else if (typeof this.mode.provider === "object" && this.mode.provider?.kind === "static") {
-      raw = schema.type === "string" ? this.mode.provider.text ?? "ok" : defaultStructured(schema);
-    } else {
-      raw = defaultStructured(schema);
+    // §16.5: the journal must record results in ISSUE order — replay answers the i-th call (in issue order)
+    // with the i-th recorded result. Under concurrent delivery (§16.3a) a structured call may RESOLVE out of
+    // issue order (unequal provider latency), so we reserve this call's journal slot NOW — synchronously, at
+    // invocation, before the `await` — and fill it after resolution. Pushing at resolution time would order
+    // the journal by wall-clock and break replay's issue-order contract.
+    const slot = this.journal.structured.length;
+    this.journal.structured.push(undefined);
+    // track genuine in-flight overlap across the `await` below (§16.1/§16.3a): the high-water mark is ≥ 2
+    // iff two workers' oracle calls were simultaneously in flight.
+    this.counters.inFlightProviderCalls++;
+    if (this.counters.inFlightProviderCalls > this.counters.maxInFlightProviderCalls) {
+      this.counters.maxInFlightProviderCalls = this.counters.inFlightProviderCalls;
     }
-    this.journal.structured.push(raw);
-    return raw;
+    try {
+      let raw: unknown;
+      if (this.queue.length > 0) {
+        const idx = this.queue.findIndex((entry) => entry.subject !== undefined && prompt.includes(entry.subject));
+        const entry = idx >= 0 ? this.queue.splice(idx, 1)[0] : this.queue.shift();
+        if (entry?.delayMs) await new Promise((r) => setTimeout(r, entry.delayMs));
+        raw = entry?.payload ?? defaultStructured(schema);
+        if (schema.type === "string" && typeof raw !== "string") raw = JSON.stringify(raw);
+      } else if (typeof this.mode.provider === "object" && this.mode.provider?.kind === "static") {
+        raw = schema.type === "string" ? this.mode.provider.text ?? "ok" : defaultStructured(schema);
+      } else {
+        raw = defaultStructured(schema);
+      }
+      this.journal.structured[slot] = raw;
+      return raw;
+    } finally {
+      this.counters.inFlightProviderCalls--;
+    }
   }
 
   async reply(prompt: string): Promise<string> {
@@ -282,11 +299,18 @@ interface Counters {
   promptArrivals: number;
   decompositionCalls: number;
   embeddingCalls: number;
+  // §16.1/§16.3a concurrency observability: how many provider oracle calls are simultaneously in flight
+  // (`inFlightProviderCalls`, live) and the high-water mark over a run (`maxInFlightProviderCalls`). A mark
+  // ≥ 2 is direct evidence that two workers' oracle calls genuinely overlapped — the honest scheduler-level
+  // signal a concurrency test asserts on, independent of any wall-clock timing.
+  inFlightProviderCalls: number;
+  maxInFlightProviderCalls: number;
 }
 
 const freshCounters = (): Counters => ({
   providerCalls: 0, toolCalls: 0, identityCalls: 0,
   promptArrivals: 0, decompositionCalls: 0, embeddingCalls: 0,
+  inFlightProviderCalls: 0, maxInFlightProviderCalls: 0,
 });
 
 // ---------- lifecycle correlation for the conformance event shape ----------

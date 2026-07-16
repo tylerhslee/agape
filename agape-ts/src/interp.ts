@@ -470,6 +470,14 @@ class Interpreter {
   // §16.1: seam calls can be in flight concurrently, but their observable close events are applied in
   // issue order so replay is independent of wall-clock promise resolution order.
   private resolutionTail: Promise<void> = Promise.resolve();
+  // §16.1/§16.3a concurrent task delivery: a cooperative turn scheduler. A `turn fiber` (one concurrent
+  // background delivery) runs its append-producing code atomically while HOLDING the turn, yielding it only
+  // across an oracle `await` (the overlappable part). Turns are (re)granted strictly in ISSUE ORDER via
+  // `turnChain` — the same discipline as `resolutionTail` — so the interleaving of concurrent fibers'
+  // appends is a deterministic function of submission order, independent of wall-clock oracle timing. This
+  // makes the batch's chain head reproducible on replay (§16.5) while its worker oracle calls overlap.
+  private turnChain: Promise<void> = Promise.resolve();
+  private turnFiberALS = new AsyncLocalStorage<{ held: (() => void) | null }>();
   // §19.2 module resolution (erased from the linker): a bound bare name (selective import) → its
   // qualified name, and every companion module's simple decl names, so a bare name in a companion
   // agent's body resolves within that module (`emit Glitch` inside `m` → `m.Glitch`).
@@ -1000,9 +1008,15 @@ class Interpreter {
     if (this.drainingTasks) return;
     this.drainingTasks = true;
     try {
+      // §16.1/§16.3a: a drain batch's background deliveries run CONCURRENTLY — their worker-side oracle
+      // calls (provider sends) overlap, exactly as a `|>` fan-out overlaps its dependency calls (§12).
+      // Determinism is preserved the same way (§16.5): every ledger append commits through the issue-order
+      // turn scheduler (`runTurnFiber` + `inResolutionOrder`), so the chain head is a function of the journal,
+      // not of wall-clock resolution timing. Each fiber's per-task receipt chain stays internally ordered;
+      // the inter-task interleaving is the fixed submission (issue) order of the batch, reproduced on replay.
       while (this.pendingDeliveries.length > 0) {
-        const t = this.pendingDeliveries.shift()!;
-        await this.deliverTask(t);
+        const batch = this.pendingDeliveries.splice(0, this.pendingDeliveries.length);
+        await Promise.all(batch.map((t) => this.runTurnFiber(() => this.deliverTask(t))));
       }
     } finally {
       this.drainingTasks = false;
@@ -1374,6 +1388,8 @@ class Interpreter {
   }
 
   private async inResolutionOrder<T>(work: Promise<T>, apply: (result: T) => void | Promise<void>): Promise<T> {
+    const fiber = this.turnFiberALS.getStore();
+    if (fiber) return this.inTurnOrder(fiber, work, apply);
     const previous = this.resolutionTail;
     let release!: () => void;
     this.resolutionTail = new Promise<void>((resolve) => { release = resolve; });
@@ -1391,6 +1407,58 @@ class Interpreter {
       return result;
     } finally {
       release();
+    }
+  }
+
+  // The turn-holding oracle boundary for a concurrent delivery fiber (§16.1/§16.3a). The fiber RELEASES the
+  // turn across `await work` (so sibling fibers' oracle calls overlap), then RE-ACQUIRES it in issue order
+  // (`await previous` on the `turnChain`) before applying its append — and KEEPS holding it into the
+  // continuation, so every append the handler makes between this oracle and the next runs atomically, in a
+  // deterministic order. The held turn is released at the next oracle boundary (below) or at fiber end
+  // (`runTurnFiber`). Errors keep the turn held so the fiber's crash-recovery appends (§16.6) stay ordered.
+  private async inTurnOrder<T>(
+    fiber: { held: (() => void) | null },
+    work: Promise<T>,
+    apply: (result: T) => void | Promise<void>,
+  ): Promise<T> {
+    const previous = this.turnChain;
+    let release!: () => void;
+    this.turnChain = new Promise<void>((resolve) => { release = resolve; });
+    // yield the turn we were holding (from this fiber's previous segment) so siblings can run while we await.
+    const holding = fiber.held;
+    fiber.held = null;
+    if (holding) holding();
+    let result: T;
+    try {
+      result = await work;
+    } catch (err) {
+      await previous;      // re-acquire in issue order, then keep the turn for the fiber's crash recovery.
+      fiber.held = release;
+      throw err;
+    }
+    await previous;
+    await apply(result);
+    fiber.held = release;  // hold the turn through the continuation until the next yield / fiber end.
+    return result;
+  }
+
+  // Run one concurrent background delivery as a turn fiber (§16.1/§16.3a). It acquires the turn in issue
+  // (submission) order BEFORE its opening appends, so the whole delivery — Delivered receipt, handler body,
+  // terminal — commits atomically relative to sibling fibers except where an oracle boundary yields. The
+  // turn is always released at fiber end, whatever the outcome, so a sibling can never deadlock behind it.
+  private async runTurnFiber(fn: () => Promise<void>): Promise<void> {
+    const fiber: { held: (() => void) | null } = { held: null };
+    const previous = this.turnChain;
+    let release!: () => void;
+    this.turnChain = new Promise<void>((resolve) => { release = resolve; });
+    await previous;         // acquire the turn in submission order (issue order of the batch).
+    fiber.held = release;
+    try {
+      await this.turnFiberALS.run(fiber, fn);
+    } finally {
+      const r = fiber.held;
+      fiber.held = null;
+      if (r) r();
     }
   }
 

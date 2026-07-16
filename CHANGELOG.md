@@ -6,6 +6,33 @@ All notable changes to Agape are recorded here. The format follows
 suite, and the studio move in lockstep — a release is the whole bundle at one
 version.
 
+## [Unreleased]
+
+### Changed
+
+- **Background task delivery runs concurrently (§16.1/§16.3a), with replay determinism
+  unchanged (§16.5).** A drain batch's background (handle-bound) deliveries now overlap their
+  worker-side oracle calls — exactly as a `|>` fan-out overlaps its dependency calls (§12) —
+  instead of the scheduler awaiting each delivery to completion in submission order. On a
+  scripted 3-task workload with per-task latency injected, this lifts observed concurrency from
+  ~0.8–0.9× (effectively sequential) to **~2.8×** (three provider calls simultaneously in
+  flight). Determinism is achieved the same way as fan-out: a cooperative **turn scheduler**
+  commits every ledger append in issue order (the append order is a function of the journal, not
+  of wall-clock oracle timing), so a recorded run replays to the identical chain-head (T4, §16.5)
+  with zero oracle re-invocation. The per-task receipt-chain invariants
+  (`Sent → Delivered → Resolved → TaskCompleted`, first-terminal-wins) are unchanged; only the
+  inter-task interleave — always a deterministic, journal-derived function of submission order —
+  is now overlapped. SPEC §16.3a gains a normative **Concurrent delivery** clause and §16.1's
+  asynchrony note now names concurrent background deliveries; the delegation runtime-contract
+  suite (§16.3a) gains three tests: genuine overlap, concurrent record→replay chain-head
+  equality under unequal latency, and per-task ordering preserved under the interleave.
+- **The conformance harness journals structured-provider results in issue order (§16.5).** The
+  scripted provider previously appended each structured reply to the replay journal at
+  *resolution* time; under concurrent delivery with unequal latency a call could resolve out of
+  issue order, so replay (which answers the i-th call in issue order) served a mismatched result
+  and diverged. The harness now reserves each call's journal slot at invocation, filling it on
+  resolution — restoring the §16.5 issue-order contract independent of wall-clock timing.
+
 ## [1.0.0-beta.2026.7.16.0] - 2026-07-16
 
 The second beta hardens **recovery semantics**, lands the **attestation protocol**,

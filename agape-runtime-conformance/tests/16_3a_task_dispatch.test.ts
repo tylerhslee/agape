@@ -288,4 +288,111 @@ suite("SPEC 16.3a task-send dispatch and delegation lifecycle", () => {
     expect(after.providerCalls).toBe(before.providerCalls);
     expect(after.toolCalls).toBe(before.toolCalls);
   });
+
+  // ---- §16.1/§16.3a concurrent background delivery ----
+  //
+  // A batch of background (handle-bound) deliveries MAY overlap their worker-side oracle calls (§16.3a
+  // "Concurrent delivery"), exactly as a `|>` fan-out overlaps its dependency calls (§16.1, §12), while the
+  // determinism obligation is unchanged: every append commits in issue order and every oracle result is
+  // journaled, so a recorded run replays to the identical chain-head (T4, §16.5). These three tests pin,
+  // respectively: genuine overlap, replay reproducibility under concurrency, and the per-task receipt-chain
+  // ordering invariants surviving the concurrent interleave.
+
+  // Three independent workers each drive a latency-injected provider call. The scheduler must let those
+  // calls be simultaneously in flight — the honest, timing-independent signal is the harness provider's
+  // in-flight high-water mark (`maxInFlightProviderCalls`), which reaches ≥ 2 only if two workers' oracle
+  // calls genuinely overlapped. (Sequential delivery would hold the mark at 1.)
+  const concurrentSource = `
+    struct Finding { verdict: text }
+    agent Worker {
+      on assigned {
+        Finding f = self <- "assess the assigned claim";
+        complete f;
+      }
+    }
+    agent Lead grants { reach Worker } {
+      on awake {
+        spawn Worker w1; awake w1;
+        spawn Worker w2; awake w2;
+        spawn Worker w3; awake w3;
+        Task<Finding> h1 = w1 <- task { objective "claim one"; acceptance "a verdict"; } expires 100;
+        Task<Finding> h2 = w2 <- task { objective "claim two"; acceptance "a verdict"; } expires 100;
+        Task<Finding> h3 = w3 <- task { objective "claim three"; acceptance "a verdict"; } expires 100;
+        when (TaskCompleted c1 about h1) { emit Landed("one"); }
+        when (TaskCompleted c2 about h2) { emit Landed("two"); }
+        when (TaskCompleted c3 about h3) { emit Landed("three"); }
+      }
+    }
+    event Landed(text which);
+    spawn Lead lead; awake lead;
+  `;
+  const concurrentTestMode = {
+    provider: { kind: "static", text: "sound" },
+    // per-task latency injection, deliberately UNEQUAL: the calls therefore RESOLVE in a different order than
+    // they were ISSUED (claim three finishes first, claim two last). This is the case that separates a
+    // wall-clock-ordered journal from an issue-ordered one (§16.5) — replay must still reproduce the head.
+    // Overlap is the only way three latencies of 20/90/10ms finish in ~90ms rather than serializing to ~120ms.
+    providerReplies: [
+      { subject: "claim one", delayMs: 20, payload: { verdict: "one-ok" } },
+      { subject: "claim two", delayMs: 90, payload: { verdict: "two-ok" } },
+      { subject: "claim three", delayMs: 10, payload: { verdict: "three-ok" } },
+    ],
+  };
+
+  it("overlaps the worker-side oracle calls of concurrently-delivered background tasks (§16.1/§16.3a)", async () => {
+    const run = await adapter!.run({ source: concurrentSource, testMode: concurrentTestMode });
+
+    expect(run.ok).toBe(true);
+    expectGapFreeTicks(run.events);
+    // all three tasks completed and their delegator reactions fired.
+    expect(eventsOf(run.events, "TaskCompleted").length).toBe(3);
+    expect(eventsOf(run.events, "Landed").length).toBe(3);
+
+    // the honest concurrency signal: two-or-more provider oracle calls were simultaneously in flight.
+    const stats = await adapter!.oracleStats();
+    expect(stats.providerCalls).toBe(3);
+    expect(stats.maxInFlightProviderCalls).toBeGreaterThanOrEqual(2);
+  });
+
+  it("replays a concurrent multi-task run to the identical chain-head with zero oracle re-invocation (§16.5)", async () => {
+    const run = await adapter!.run({ source: concurrentSource, testMode: concurrentTestMode, record: true });
+
+    expect(run.ok).toBe(true);
+    expect(run.recording).toBeTruthy();
+    // sanity: the recorded run really did overlap (else this would not be testing concurrency).
+    const recStats = await adapter!.oracleStats();
+    expect(recStats.maxInFlightProviderCalls).toBeGreaterThanOrEqual(2);
+
+    const before = await adapter!.oracleStats();
+    const replay = await adapter!.replay(run.recording);
+    const after = await adapter!.oracleStats();
+
+    expect(replay.ok).toBe(true);
+    // chain-head equality IS the proof of replay-equivalence (§16.2/§16.5) — the concurrent interleave is a
+    // deterministic function of the journal, reproduced exactly, not a wall-clock race.
+    expect(replay.headHash).toBe(run.headHash);
+    // replay served every worker oracle call from the journal — nothing external was re-invoked.
+    expect(after.providerCalls).toBe(before.providerCalls);
+    expect(after.toolCalls).toBe(before.toolCalls);
+  });
+
+  it("preserves each per-task receipt chain (Sent -> Delivered -> Resolved -> TaskCompleted) under concurrency (§16.3a)", async () => {
+    const run = await adapter!.run({ source: concurrentSource, testMode: concurrentTestMode });
+
+    expect(run.ok).toBe(true);
+    expectGapFreeTicks(run.events);
+    // no correlation faulted or double-terminated under the concurrent interleave.
+    expect(run.events.some((e) => e.etype === "AgentCrashed")).toBe(false);
+    expect(run.events.some((e) => e.etype === "CompletionRefused")).toBe(false);
+
+    // each task's own receipt chain stays internally ordered, however the three interleave.
+    for (const h of ["h1", "h2", "h3"]) {
+      const chain = run.events.filter((e) => e.subject === h);
+      expectEventOrder(chain, ["Sent", "Delivered", "Resolved", "TaskCompleted"]);
+      // exactly one terminal per correlation (first-terminal-wins, §16.3a).
+      expect(chain.filter((e) => e.etype === "TaskCompleted").length).toBe(1);
+      const completed = requireEvent(run.events, "TaskCompleted", h);
+      expect(payloadObject(completed).result).toBeTruthy();
+    }
+  });
 });
