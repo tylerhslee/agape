@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Agape commit-msg hook — message-dependent rules (pre-commit runs before the
+# message exists, so these live here). See AGENTS.md. Offline, fast.
+set -euo pipefail
+
+msg_file="$1"
+first_line=$(sed -n '1p' "$msg_file")
+full_msg=$(cat "$msg_file")
+fail=0
+block() { printf 'commit-msg BLOCK [%s]: %s\n' "$1" "$2" >&2; fail=1; }
+
+names() { git diff --cached --name-only "$@"; }
+
+# Rule: VERSION.md is the release source of truth — it changes only in a release commit.
+if names --diff-filter=ACMR | grep -qx 'VERSION.md'; then
+  case "$first_line" in
+    "Release Agape"*) : ;;
+    *) block version "VERSION.md is staged but the message does not start with 'Release Agape'. Bump VERSION.md only in a release commit (see scripts/check-version.mjs)." ;;
+  esac
+fi
+
+# Rule: the conformance suite is the oracle. Deleting or MODIFYING an existing test
+# needs spec-grounded justification; ADDING new tests is free.
+if names --diff-filter=DM | grep -qE '^agape-conformance/tests/'; then
+  if ! printf '%s' "$full_msg" | grep -q '\[spec-justified:'; then
+    block spec-justified "commit deletes/modifies files under agape-conformance/tests/. Add a '[spec-justified: <reason + SPEC.md cite>]' trailer, or add NEW tests instead of changing existing ones."
+  fi
+fi
+
+# Rule: touching source / spec / tests ships with a CHANGELOG entry (path list kept
+# tight so CI/docs plumbing does not nag). Escape hatch: a [no-changelog] trailer.
+if names --diff-filter=ACMRD \
+     | grep -qE '^(agape-ts/src/|SPEC\.md$|agape-conformance/tests/)'; then
+  if ! names --diff-filter=ACMR | grep -qx 'CHANGELOG.md' \
+     && ! printf '%s' "$full_msg" | grep -q '\[no-changelog\]'; then
+    block changelog "source/spec/test changes need a CHANGELOG entry — add one under [Unreleased], or add a [no-changelog] trailer if genuinely exempt."
+  fi
+fi
+
+exit "$fail"

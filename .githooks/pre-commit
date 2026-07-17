@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# Agape pre-commit hook — provider-agnostic, fast, no network.
+# Enforces repo hygiene (see AGENTS.md). Wired per-clone via scripts/setup-hooks.sh
+# (git config core.hooksPath .githooks). Keep this <100 lines and offline.
+set -euo pipefail
+
+fail=0
+block() { printf 'pre-commit BLOCK [%s]: %s\n' "$1" "$2" >&2; fail=1; }
+
+# Staged paths that survive into the commit (added/copied/modified/renamed-to).
+mapfile -t staged < <(git diff --cached --name-only --diff-filter=ACMR)
+[ "${#staged[@]}" -eq 0 ] && exit 0
+
+for f in "${staged[@]}"; do
+  [ -z "$f" ] && continue
+
+  # Rule: never commit installed deps or build output.
+  case "$f" in
+    node_modules/*|*/node_modules/*)
+      block node_modules "'$f' is under node_modules/ (installed dep — never commit). Add it to .gitignore."
+      continue ;;
+    dist/*|*/dist/*)
+      block dist "'$f' is under dist/ (build output — never commit). Build artifacts are reproducible; ignore them."
+      continue ;;
+  esac
+
+  # .gitattributes decides text vs binary: text=set|auto -> content-checked; text=unset -> exempt binary.
+  attr=$(git check-attr text -- "$f" | sed 's/.*: //')
+  [ "$attr" = "unset" ] && continue
+
+  # NUL bytes: reliable detection via byte-count after stripping (grep NUL matching is not portable).
+  raw=$(git cat-file blob ":$f" | wc -c)
+  clean=$(git cat-file blob ":$f" | LC_ALL=C tr -d '\0' | wc -c)
+  if [ "$raw" != "$clean" ]; then
+    block nul-byte "'$f' contains NUL bytes but is tracked as text. Mark it binary in .gitattributes or don't commit it."
+    continue
+  fi
+
+  # CRLF: reject carriage returns in the working-tree text file. (Checked on the
+  # working copy, not the index, so it fires even where .gitattributes `eol=lf`
+  # would silently normalize CRLF away on staging — the point is to nudge the
+  # editor toward LF, which every repo here stores.)
+  if [ -f "$f" ] && LC_ALL=C grep -qU $'\r' "$f"; then
+    block crlf "'$f' has CRLF line endings; the repo is LF-only. Run: sed -i 's/\r\$//' '$f' (or set your editor to LF)."
+    continue
+  fi
+done
+
+exit "$fail"

@@ -22,6 +22,8 @@ jobs:
           node-version: "20"
       - name: Check VERSION.md against tracked references
         run: node scripts/check-version.mjs
+      - name: Check VERSION.md has a matching CHANGELOG.md heading
+        run: node scripts/check-changelog-version.mjs
 
   # ── the language: TypeScript compiler + runtime + the conformance suite ────
   agape-ts:
@@ -45,7 +47,9 @@ jobs:
 
       - name: Unit tests
         working-directory: agape-ts
-        run: npm test
+        # Emit a JSON report alongside the default one so the doc-drift gate can
+        # read the unit-test count without re-running the suite.
+        run: npm test -- --reporter=default --reporter=json --outputFile=../test-results/unit.json
 
       # The runner exits nonzero when any conformance test fails — the gate
       # that the language stays at full conformance at the toolchain's version.
@@ -67,7 +71,17 @@ jobs:
       # implemented (§15.5.6).
       - name: Runtime-contract conformance (agape-ts adapter)
         working-directory: agape-runtime-conformance
-        run: npm run test:agape-ts
+        # JSON report feeds the doc-drift gate the runtime-contract count.
+        run: npm run test:agape-ts -- --reporter=default --reporter=json --outputFile=../test-results/runtime.json
+
+      # Doc-drift gate: the counts written in agape-ts/CONFORMANCE.md and README.md
+      # must match what the suites above actually produced (results.json + the two
+      # JSON reports). Runs last so all artifacts exist.
+      - name: Doc counts in sync (CONFORMANCE.md / README.md)
+        env:
+          VITEST_JSON: test-results/unit.json
+          RUNTIME_JSON: test-results/runtime.json
+        run: node scripts/check-doc-counts.mjs
 
   # ── the conformance manifests stay in lockstep with the .ag sources ───────
   manifests:
