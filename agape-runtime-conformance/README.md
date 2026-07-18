@@ -25,7 +25,7 @@ npm run test:agape-ts
 # equivalent to: AGAPE_RUNTIME_ADAPTER=../agape-ts/src/runtime_adapter.ts npm test
 ```
 
-Current scorecard: **33 passed / 2 failed / 0 skipped** (see "Known agape-ts gaps" below).
+Current scorecard: **48 passed / 0 failed / 0 skipped** (all gaps closed).
 
 Adapter notes (see the headers of `agape-ts/src/runtime_adapter*.ts` for the full design):
 
@@ -47,16 +47,6 @@ Adapter notes (see the headers of `agape-ts/src/runtime_adapter*.ts` for the ful
   session-ledger ticks (`runtime_adapter_memory.ts`); the kernel `mem` substrate does not itself
   decompose artifacts. GateProfile bookkeeping, config resolution, and exactly-once ingress
   dedup (SPEC 15.5) are likewise implemented at the adapter's transport layer.
-
-### Known agape-ts gaps
-
-- `16_4` "raises MarginFloorViolation and prevents the sink": the kernel folds the `floor`
-  directive into the decide step (a below-floor margin abstains), so the sink is prevented but
-  no `MarginFloorViolation` fault event is ever appended (SPEC 13/16.6 describe a committed
-  decision faulting at the sink).
-- `16_8` "forms warm conformal prediction sets": the kernel's `conformal` rule is cold-start
-  only — it always abstains. There is no calibration-pool fitting, and `Decision.predictionSet`
-  is never produced (SPEC 15.5.6/16.8).
 
 ## Required Test-Mode Surface
 

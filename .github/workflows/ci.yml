@@ -65,10 +65,9 @@ jobs:
           npm ci --no-audit --no-fund || npm install --no-audit --no-fund
           npx vitest run
 
-      # Blocking run against the agape-ts adapter (35/35 pass). The former
-      # kernel gaps are closed: 16_4 MarginFloorViolation is enforced at the
-      # consequential sink (§16.6) and 16_8 warm conformal prediction sets are
-      # implemented (§15.5.6).
+      # Blocking run against the agape-ts adapter (48/48 pass). All kernel gaps
+      # are closed: 16_4 MarginFloorViolation is enforced at the consequential
+      # sink (§16.6) and 16_8 warm conformal prediction sets are implemented (§15.5.6).
       - name: Runtime-contract conformance (agape-ts adapter)
         working-directory: agape-runtime-conformance
         # JSON report feeds the doc-drift gate the runtime-contract count.
