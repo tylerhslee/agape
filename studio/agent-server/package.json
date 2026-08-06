@@ -2,7 +2,7 @@
   "name": "agape-studio-agent-server",
   "private": true,
   "type": "module",
-  "version": "1.0.0-beta.2026.7.16.1",
+  "version": "1.0.0-beta.2026.8.6.0",
   "description": "Somatic simulation of Agape Studio's agentic operators via live provider APIs — placeholder for the Agape + MCP backend.",
   "scripts": {
     "dev": "tsx server.ts",
@@ -10,13 +10,14 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "latest",
-    "openai": "latest",
     "@google/genai": "latest",
-    "better-sqlite3": "latest"
+    "better-sqlite3": "latest",
+    "openai": "latest"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "latest",
     "tsx": "latest",
-    "vitest": "^2.1.9",
-    "@types/better-sqlite3": "latest"
+    "vite": "^6.4.3",
+    "vitest": "^3.2.6"
   }
 }

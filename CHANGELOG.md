@@ -6,6 +6,46 @@ All notable changes to Agape are recorded here. The format follows
 suite, and the studio move in lockstep — a release is the whole bundle at one
 version.
 
+## [1.0.0-beta.2026.8.6.0] - 2026-08-06
+
+This beta adds the compiler-grounded Agentic Flow builder to Agape Studio and
+hardens the TypeScript fact-checker dogfood path. Studio can inspect the complete
+compiler-emitted topology while safely rewriting supported `.ag` properties without
+inventing execution edges or overwriting concurrent source changes.
+
+### Added
+
+- **Compiler-grounded Agentic Flow builder.** Studio combines editable,
+  source-backed constructs with the compiler graph, exposes agents, functions,
+  handlers, hooks, principals, prompts, gates, outputs, and validation context,
+  and labels compiler-derived topology as read-only truth.
+- **Safe property editing.** Literal model instructions, literal `say` templates,
+  and confidence thresholds can be edited from the canvas while preserving exact
+  interpolation tokens and rejecting unsupported or ill-typed changes.
+- **Fact-checker navigation and coverage.** The canvas supports focus, filtering,
+  and local drag layout. Public CI always exercises the repository-owned fact
+  checker, while an explicit environment-controlled test covers the larger
+  dogfood program's functions, handlers, hooks, principal, and compiler edges.
+
+### Security
+
+- **Fail-closed source saves.** Project paths remain confined to the attached
+  project; optimistic revisions and a per-file FIFO prevent lost updates; a
+  last-moment revision check catches external edits; every candidate is
+  compiler-checked before atomic replacement and cleaned up on failure.
+- **Audited dependency graph.** Shipped dependencies move to patched
+  `protobufjs` 7.6.5, Monaco 0.56, and DOMPurify 3.4.12; the contributor
+  toolchain moves to patched Vite 6.4.3 and Vitest 3.2.x while retaining the
+  documented Node 20 compatibility. Production and full npm audits are clean
+  across all four JavaScript packages.
+
+### Validation
+
+- **Studio flow coverage.** Backend safety/integration tests and web component
+  tests exercise the new flow surface. The broader unchanged release gates also
+  pass: production build, shipped-bundle smoke, packaged CLI verification, and
+  the existing Playwright application journeys.
+
 ## [1.0.0-beta.2026.7.16.1] - 2026-07-16
 
 Same-day patch over the second beta: concurrent §6c task delivery — overlapping worker execution with unchanged replay determinism, measured 2.78× on a 3-task workload.

@@ -2,7 +2,7 @@
 
 Date: 2026-06-30.
 
-Audited spec: `../SPEC.md` `v1.0.0-beta.2026.7.16.1`.
+Audited spec: `../SPEC.md` `v1.0.0-beta.2026.8.6.0`.
 
 Authority rule: this audit is derived from the finalized SPEC only. Existing runtimes, Studio behavior, Rust behavior, and prior implementation quirks are not sources of expected behavior.
 
@@ -12,7 +12,7 @@ The compiler/language conformance suite is now pointed at the finalized 6.30 spe
 
 ## Closed In This Pass
 
-- Updated conformance metadata and manifest generator version to `v1.0.0-beta.2026.7.16.1`.
+- Updated conformance metadata and manifest generator version to `v1.0.0-beta.2026.8.6.0`.
 - Removed old language forms from active `.ag` tests:
   - `case` branching;
   - `default:` arms;

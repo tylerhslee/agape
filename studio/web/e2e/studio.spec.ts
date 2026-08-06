@@ -44,7 +44,7 @@ test("ask a question → a verified answer is delivered", async ({ page }) => {
   await question.fill("is the earth round?");
   await runPanel.locator(".pj-run-btn").click();
 
-  // The Q&A panel shows a ✓-verified answer from agape whose f-string
+  // The Q&A panel shows a verified answer from agape whose f-string
   // interpolated the asked question.
   await expect(page.locator(".pj-verified")).toBeVisible({ timeout: 45_000 });
   await expect(page.locator(".pj-qa").getByText("is the earth round?").first()).toBeVisible();
@@ -53,4 +53,32 @@ test("ask a question → a verified answer is delivered", async ({ page }) => {
   // Under the hood, the ledger recorded the gate decision and the delivered reply.
   await expect(page.locator(".pj-spine").getByText("Decided", { exact: false }).first()).toBeVisible();
   await expect(page.locator(".pj-spine").getByText("Reply", { exact: false }).first()).toBeVisible();
+});
+
+// J11: exercise the shipped Monaco worker/import path and the editor save seam.
+test("open Code -> edit and save through Monaco", async ({ page }) => {
+  const browserErrors: string[] = [];
+  page.on("pageerror", (error) => browserErrors.push(error.message));
+
+  await page.goto("/");
+  await expect(page.locator(".agape-wordmark")).toContainText("Agape Studio");
+  await page.locator(".agent-quick button", { hasText: "Code" }).click();
+
+  const editor = page.locator(".monaco-editor");
+  await expect(editor).toBeVisible();
+  await expect(editor.locator(".view-lines")).toBeVisible();
+  const input = page.getByRole("textbox", { name: "Editor content" });
+  await input.focus();
+  await page.keyboard.press("Control+End");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("// monaco runtime smoke");
+  await expect(editor).toContainText("// monaco runtime smoke");
+  await page.keyboard.press("Control+s");
+
+  await expect.poll(async () => {
+    const response = await page.request.get("/project/file?rel=main.ag");
+    if (!response.ok()) return "";
+    return ((await response.json()) as { body?: string }).body || "";
+  }).toContain("// monaco runtime smoke");
+  expect(browserErrors).toEqual([]);
 });

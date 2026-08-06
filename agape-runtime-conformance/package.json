@@ -2,7 +2,7 @@
   "name": "agape-runtime-conformance",
   "private": true,
   "type": "module",
-  "version": "1.0.0-beta.2026.7.16.1",
+  "version": "1.0.0-beta.2026.8.6.0",
   "description": "Black-box TypeScript conformance tests for the Agape runtime contract in SPEC.md sections 16 and 17.",
   "scripts": {
     "test": "vitest run",
@@ -12,6 +12,7 @@
   "devDependencies": {
     "@types/node": "latest",
     "typescript": "^5.5.0",
-    "vitest": "^2.1.9"
+    "vite": "^6.4.3",
+    "vitest": "^3.2.6"
   }
 }

@@ -31,6 +31,7 @@ const AGENT_ORIGIN = `http://127.0.0.1:${process.env.AGENT_PORT || "8799"}`;
 // always calls same-origin "/project/...", "/agent/...", etc.
 // In production, `npm run build` emits dist/, which the Python backend serves.
 export default defineConfig({
+  resolve: { alias: { "monaco-editor/esm/vs/editor/editor.api": "monaco-editor/editor/editor.api" } },
   plugins: [react(), versionsModule()],
   server: {
     port: 5173,

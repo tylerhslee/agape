@@ -7,11 +7,11 @@ Playwright `e2e/`. Studio's surface is thin on purpose — most journeys bottom 
 
 ## Commands (verified green — WSL only; Windows tooling breaks here)
 ```sh
-cd agent-server && npm test          # 51 passed (unit + integration over a scaffolded project)
-cd web && npm test                   # 15 passed (components)
+cd agent-server && npm test          # 62 passed + 1 optional dogfood skip
+cd web && npm test                   # 27 passed (components)
 cd web && npm run build              # vite build -> dist/, clean
 bash ../scripts/studio-smoke.sh      # PASS: shipped bundle boots, detects project, runs a program
-cd web && npm run e2e                # 2 passed (Playwright drives the real served app + backend)
+cd web && npm run e2e                # 3 passed (Playwright drives the real served app + backend)
 ```
 A run is deterministic on the mock provider (byte-identical ledger, no API key), so
 integration and e2e assert exact outputs without flakiness.

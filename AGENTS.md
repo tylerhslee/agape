@@ -21,7 +21,7 @@ third**. A failing conformance test means the implementation is wrong until
 spec-grounded evidence proves the test wrong. Every bug fix starts by pinning a
 failing test/scenario. Every piece of released code is fully tested.
 
-## Full release gate matrix (run in order; all verified green at 1.0.0-beta.2026.7.16.1)
+## Full release gate matrix (run in order; all verified green at 1.0.0-beta.2026.8.6.0)
 ```sh
 node scripts/check-version.mjs                                    # -> version check ok
 cd agape-ts && npm run typecheck                                 # tsc --noEmit, clean
@@ -30,12 +30,12 @@ cd agape-ts && npx tsx conformance/run.mts                       # 217/217 (100%
 cd agape-conformance && python3 build_manifests.py --check       # ok: 217 tests, in sync
 cd agape-runtime-conformance && npm run test:agape-ts            # 48/48 (agape-ts adapter)
 cd agape-runtime-conformance && npm test                         # 48 skipped (adapterless, clean)
-cd studio/agent-server && npm test                               # 51 passed (unit + integration)
-cd studio/web && npm test                                        # 15 passed (components)
+cd studio/agent-server && npm test                               # 62 passed + 1 optional dogfood skip
+cd studio/web && npm test                                        # 27 passed (components)
 cd studio/web && npm run build                                   # vite build, clean
 bash scripts/studio-smoke.sh                                     # PASS (shipped bundle boots + runs)
 bash scripts/package.sh                                          # PASS + verifies the shipped CLI
-cd studio/web && npm run e2e                                     # 2 passed (Playwright, real app)
+cd studio/web && npm run e2e                                     # 3 passed (Playwright, real app)
 ```
 
 ## Lockstep releases

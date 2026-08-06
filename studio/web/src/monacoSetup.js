@@ -9,7 +9,7 @@
 // Imported for its side effects from main.jsx, before anything mounts an editor.
 import * as monaco from "monaco-editor";
 import { loader } from "@monaco-editor/react";
-import EditorWorker from "monaco-editor/esm/vs/editor/editor.worker?worker";
+import EditorWorker from "monaco-editor/editor/editor.worker?worker";
 
 // We only use a custom Monarch language (Agape) + markdown; neither needs a
 // language-service worker, so the base editor worker covers every request.

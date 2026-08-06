@@ -35,6 +35,7 @@ key — so integration/E2E tests assert *exact* outputs without flakiness.
 | J8 | No API key → studio still runs (mock), Claude errors gracefully | bundle smoke (offline); backend lazy-cognition |
 | J9 | `agape studio` from a packaged bundle serves the app | bundle smoke `studio-smoke.sh` |
 | J10 | Open a visual flow → edit a literal prompt/gate → compile-check and save; stale/unsafe edits leave source untouched | unit flow-model.test.ts; integration flow-server.integration.test.ts; web component FlowBuilder.test.jsx |
+| J11 | Open Code -> Monaco loads -> edit and save the attached .ag file | E2E open Code -> edit and save through Monaco |
 
 `(planned)` = not yet automated; tracked here so the gap is visible, not implied.
 
@@ -52,7 +53,7 @@ key — so integration/E2E tests assert *exact* outputs without flakiness.
 cd studio/agent-server && npm test     # unit + integration
 cd studio/web          && npm test     # components
 bash scripts/studio-smoke.sh           # bundle smoke (needs a built binary + web dist)
-cd studio/web && npm run e2e           # Playwright (planned)
+cd studio/web && npm run e2e           # 3 Playwright journeys
 ```
 
 CI (`.github/workflows/ci.yml`, `studio` job) runs unit + integration on every
