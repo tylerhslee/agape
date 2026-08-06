@@ -34,6 +34,7 @@ key — so integration/E2E tests assert *exact* outputs without flakiness.
 | J7 | Malicious path (`../../etc/passwd`) → refused | unit `safeProjectPath`; integration `refuses a path-traversal file read` |
 | J8 | No API key → studio still runs (mock), Claude errors gracefully | bundle smoke (offline); backend lazy-cognition |
 | J9 | `agape studio` from a packaged bundle serves the app | bundle smoke `studio-smoke.sh` |
+| J10 | Open a visual flow → edit a literal prompt/gate → compile-check and save; stale/unsafe edits leave source untouched | unit flow-model.test.ts; integration flow-server.integration.test.ts; web component FlowBuilder.test.jsx |
 
 `(planned)` = not yet automated; tracked here so the gap is visible, not implied.
 

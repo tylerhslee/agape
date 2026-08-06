@@ -5,8 +5,10 @@ import WorkBoard from "./missioncontrol/WorkBoard.jsx";
 import ItemDetail from "./missioncontrol/ItemDetail.jsx";
 import { itemsByStatus } from "./missioncontrol/store.js";
 import ProjectView from "./project/ProjectView.jsx";
-import StudioSurface, { StudioBuilder } from "./StudioSurface.jsx";
+import StudioSurface from "./StudioSurface.jsx";
 import * as project from "./project/projectApi.js";
+import FlowBuilder from "./project/FlowBuilder.jsx";
+import "./project/flowBuilder.css";
 import { STUDIO } from "virtual:agape-versions";
 import "./missioncontrol/missioncontrol.css";
 
@@ -189,7 +191,7 @@ export default function Shell({ info, infoError }) {
               />
               <div className="app-stage">
                 <div className="app-scroll">
-                  <StudioBuilder />
+                  <FlowBuilder info={info} onOpenCode={() => goProject("explorer")} />
                 </div>
               </div>
             </>

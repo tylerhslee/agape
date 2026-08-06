@@ -13,6 +13,8 @@ import { makeRunner } from "./runner.ts";
 import { Learner } from "./learner.ts";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { randomUUID } from "node:crypto";
+import { applyFlowChanges, buildFlowDocument, flowRevision, FlowEditError } from "./flow-model.ts";
 import { agentsAndPrompts, safeProjectPath as resolveSafe } from "./lib.ts";
 import { makeGrader, type Grader } from "./gate.ts";
 const pExecFile = promisify(execFile);
@@ -324,7 +326,7 @@ function send(res: http.ServerResponse, code: number, body: unknown): void {
     "content-type": "application/json",
     "access-control-allow-origin": "*",
     "access-control-allow-headers": "content-type",
-    "access-control-allow-methods": "POST, GET, OPTIONS",
+    "access-control-allow-methods": "POST, PUT, GET, OPTIONS",
   });
   res.end(JSON.stringify(body));
 }
@@ -731,6 +733,71 @@ async function runProjectFile(rel: string, prompts: Record<string, string>, live
   }
 }
 
+// Compile-check a flow edit before it can replace the attached source. The
+// candidate lives beside the original so imports/manifest discovery see the
+// same project, while the original remains byte-for-byte untouched on failure.
+class StaleFlowRevisionError extends Error {
+  constructor(readonly currentRevision: string) {
+    super("The Agape source changed while the edited flow was being checked.");
+  }
+}
+
+const flowSaveTails = new Map<string, Promise<void>>();
+
+async function serializeFlowSave<T>(full: string, save: () => Promise<T>): Promise<T> {
+  const previous = flowSaveTails.get(full) || Promise.resolve();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const tail = previous.catch(() => undefined).then(() => gate);
+  flowSaveTails.set(full, tail);
+  await previous.catch(() => undefined);
+  try {
+    return await save();
+  } finally {
+    release();
+    if (flowSaveTails.get(full) === tail) flowSaveTails.delete(full);
+  }
+}
+
+async function checkAndReplaceProjectFile(full: string, source: string, expectedRevision: string): Promise<void> {
+  const candidate = path.join(path.dirname(full), `.${path.basename(full, ".ag")}.flow-${randomUUID()}.ag`);
+  try {
+    fs.writeFileSync(candidate, source, "utf8");
+    const args = [AGAPE_TS_CLI, "check", candidate, "--json"];
+    const manifest = PROJECT && path.join(PROJECT, "agape.toml");
+    if (manifest && fs.existsSync(manifest)) args.push("--manifest", manifest);
+    await pExecFile(process.execPath, [TSX_CLI, ...args], { cwd: PROJECT || path.dirname(full), timeout: 60_000, maxBuffer: 5_000_000 });
+    const currentRevision = flowRevision(fs.readFileSync(full, "utf8"));
+    if (currentRevision !== expectedRevision) throw new StaleFlowRevisionError(currentRevision);
+    fs.renameSync(candidate, full);
+  } catch (error: any) {
+    if (error instanceof StaleFlowRevisionError) throw error;
+    const detail = String(error?.stderr || error?.stdout || error?.message || "Agape check rejected the edited source").trim();
+    throw new FlowEditError([{ severity: "error", code: "source_check_failed", message: detail.slice(0, 4000) }]);
+  } finally {
+    if (fs.existsSync(candidate)) fs.unlinkSync(candidate);
+  }
+}
+
+async function compilerGraphForProjectFile(full: string): Promise<any | undefined> {
+  try {
+    const result = await pExecFile(process.execPath, [TSX_CLI, AGAPE_TS_CLI, "graph", full, "--format", "json"], {
+      cwd: PROJECT || path.dirname(full),
+      timeout: 60_000,
+      maxBuffer: 20_000_000,
+    });
+    return JSON.parse(result.stdout);
+  } catch {
+    return undefined;
+  }
+}
+
+function flowDocumentWithCompilerGraph(rel: string, source: string, compilerGraph: any | undefined) {
+  const document = buildFlowDocument(rel, source, compilerGraph);
+  if (!compilerGraph) document.diagnostics.push({ severity: "warning", code: "compiler_graph_unavailable", message: "Compiler-derived topology is unavailable; no inferred execution edges are shown." });
+  return document;
+}
+
 function walkAg(dir: string, out: string[]): void {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
     const p = path.join(dir, e.name);
@@ -1002,6 +1069,37 @@ const server = http.createServer(async (req, res) => {
       const full = safeProjectPath(rel);
       if (!full || !fs.existsSync(full)) return send(res, 404, { error: "not a project .ag file" });
       return send(res, 200, { rel, body: fs.readFileSync(full, "utf8") });
+    }
+    if (req.method === "GET" && url === "/project/flow") {
+      const rel = new URL(req.url || "", "http://x").searchParams.get("rel") || "";
+      const full = safeProjectPath(rel);
+      if (!full || !fs.existsSync(full)) return send(res, 404, { error: "not a project .ag file", code: "flow_source_not_found" });
+      const source = fs.readFileSync(full, 'utf8');
+      const compilerGraph = await compilerGraphForProjectFile(full);
+      return send(res, 200, flowDocumentWithCompilerGraph(rel, source, compilerGraph));
+    }
+    if (req.method === "PUT" && url === "/project/flow") {
+      const rel = new URL(req.url || "", "http://x").searchParams.get("rel") || "";
+      const full = safeProjectPath(rel);
+      if (!full || !fs.existsSync(full)) return send(res, 404, { error: "not a project .ag file", code: "flow_source_not_found" });
+      const input = (await readJson(req)) || {};
+      return serializeFlowSave(full, async () => {
+        const current = fs.readFileSync(full, "utf8");
+        const currentRevision = flowRevision(current);
+        if (typeof input.revision !== "string" || input.revision !== currentRevision) {
+          return send(res, 409, { error: "The Agape source changed after this flow was loaded.", code: "stale_revision", currentRevision });
+        }
+        try {
+          const changed = applyFlowChanges(rel, current, input.changes);
+          await checkAndReplaceProjectFile(full, changed.source, currentRevision);
+          const compilerGraph = await compilerGraphForProjectFile(full);
+          return send(res, 200, flowDocumentWithCompilerGraph(rel, changed.source, compilerGraph));
+        } catch (error: any) {
+          if (error instanceof StaleFlowRevisionError) return send(res, 409, { error: error.message, code: "stale_revision", currentRevision: error.currentRevision });
+          if (error instanceof FlowEditError) return send(res, 422, { error: "Flow edit was not applied.", code: "invalid_flow_edit", diagnostics: error.diagnostics });
+          throw error;
+        }
+      });
     }
     if (req.method === "POST" && url === "/project/file") {
       const { rel, body } = (await readJson(req)) || {};
