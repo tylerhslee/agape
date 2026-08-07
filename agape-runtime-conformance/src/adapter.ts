@@ -207,7 +207,99 @@ export interface OracleStats {
   toolCalls: number;
   decompositionCalls: number;
   embeddingCalls: number;
-  [key: string]: number;
+  /** Required when named-memory scenarios are supported (SPEC 16.5). */
+  memoryDriverCalls?: number;
+  /** Mutating prepare/finalize/abort calls; replay must not increase this (SPEC 16.5). */
+  memoryMutationCalls?: number;
+  [key: string]: number | undefined;
+}
+
+export interface RuntimeIdentityContext {
+  projectSubject: string;
+  sessionLineageId: string;
+  sessionId: string;
+  conversationId: string;
+  user?: { issuer: string; subject: string; verified: true };
+}
+
+export interface NamedMemoryDescriptor {
+  name: string;
+  valueType: string;
+  modality: "opaque" | "episodic" | "semantic";
+  scopes: Array<"project" | "user">;
+  retention: "session" | "durable";
+}
+
+export type NamedMemoryStep =
+  | { id: string; operation: "store"; identity: string; value: unknown }
+  | { id: string; operation: "recall"; identity: string; query: string; cap?: number }
+  | { id: string; operation: "forget"; identity: string }
+  | { id: string; operation: "close" }
+  | {
+      id: string;
+      operation: "resume";
+      identity: string;
+      snapshotFrom: string;
+      tamper?: "program" | "manifest" | "ledger-head" | "session-lineage";
+    };
+
+export interface ScriptedRecallCandidate {
+  storeStepId: string;
+  cellId: string;
+  score: number;
+}
+
+export interface NamedMemoryScenarioInput {
+  name: string;
+  driver: { kind: "local" | "markdown"; topK?: number };
+  descriptor: NamedMemoryDescriptor;
+  identities: Record<string, RuntimeIdentityContext>;
+  steps: NamedMemoryStep[];
+  record?: boolean;
+  testMode?: {
+    recallCandidates?: Record<string, ScriptedRecallCandidate[]>;
+    loseFinalizeAckAfterLedger?: string[];
+  };
+}
+
+export interface ExactMemoryEnvelope {
+  value: unknown;
+  valueType: string;
+  cellId: string;
+  score: number;
+  originRef: string;
+  generation: number;
+  taint: "raw";
+}
+
+export interface NamedMemoryStepResult {
+  id: string;
+  ok: boolean;
+  resultType?: string;
+  values?: ExactMemoryEnvelope[];
+  generation?: number;
+  operationId?: string;
+  receipt?: LedgerEvent;
+  snapshot?: unknown;
+  error?: Diagnostic;
+}
+
+export interface NamedMemoryTraceEntry {
+  sequence: number;
+  kind: "driver" | "ledger";
+  stepId?: string;
+  operationId?: string;
+  action?: "prepare" | "finalize" | "abort" | "status" | "recall" | "close" | "resume";
+  etype?: string;
+}
+
+export interface NamedMemoryScenarioResult {
+  ok: boolean;
+  preflightError?: Diagnostic;
+  steps: NamedMemoryStepResult[];
+  events: LedgerEvent[];
+  trace: NamedMemoryTraceEntry[];
+  recording?: unknown;
 }
 
 export interface ReplayResult {
@@ -367,6 +459,7 @@ export interface RuntimeConformanceAdapter {
   resolveConfig(input: ConfigResolutionInput): Promise<ConfigResolutionResult>;
   multiRunScenario(input: MultiRunScenarioInput): Promise<MultiRunScenarioResult>;
   idempotencyScenario(input: IdempotencyScenarioInput): Promise<IdempotencyScenarioResult>;
+  namedMemoryScenario(input: NamedMemoryScenarioInput): Promise<NamedMemoryScenarioResult>;
   replay(recording: unknown): Promise<ReplayResult>;
   oracleStats(): Promise<OracleStats>;
   canonicalHash(events: LedgerEvent[]): Promise<string>;

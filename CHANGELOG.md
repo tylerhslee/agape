@@ -34,6 +34,10 @@ version.
   descriptor placement and clause order, closed qualifiers, persistable payloads,
   exact store and typed-recall checking, explicit-only writes, retained handles after
   forget, missing-user crash behavior, and standard-driver retention preflight.
+- **Qualified-memory runtime oracle.** Black-box adapter cases pin exact typed
+  empty recall, episodic origins, authenticated tuple isolation, deterministic
+  ranking, tuple-local generations, durable close/resume, lost-ack reconciliation,
+  and replay with no live memory-driver access or mutation.
 
 ## [1.0.0-beta.2026.8.6.0] - 2026-08-06
 

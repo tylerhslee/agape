@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { loadAdapter } from "../src/loader.js";
-import { inspectText, packetText, payloadObject, requireEvent, expectOriginTicks, totalMemoryCells } from "../src/assertions.js";
+import { inspectText, packetText, requireEvent, expectOriginTicks, totalMemoryCells } from "../src/assertions.js";
 import type { AgentRef } from "../src/adapter.js";
 
 const adapter = await loadAdapter();
@@ -15,23 +15,21 @@ suite("SPEC 16.7 memory envelope", () => {
     await adapter!.reset();
   });
 
-  it("records MemoryConsulted for every agent turn, including empty memory", async () => {
-    const a = agent("mem-empty");
+  it("does not consult memory on a turn with no explicit memory operation", async () => {
+    const a = agent("mem-explicit-only");
     const turn = await adapter!.agentRespond({
       agent: a,
-      task: "answer a simple greeting",
+      task: "answer a simple greeting without recalling memory",
       stimulus: { kind: "user", text: "hello" },
       testMode: { provider: { kind: "static", text: "hello" } },
     });
 
     expect(turn.ok).toBe(true);
-    expect(turn.memoryPacket.consulted).toBe(true);
-    expect(turn.memoryPacket.empty).toBe(true);
-
-    const event = requireEvent(turn.events.length ? turn.events : await adapter!.ledgerRead({ agent: a.instanceId }), "MemoryConsulted");
-    const payload = payloadObject(event);
-    expect(payload).toHaveProperty("counts");
-    expect(JSON.stringify(payload).toLowerCase()).toContain("query");
+    expect(turn.memoryPacket.consulted).toBe(false);
+    const events = turn.events.length
+      ? turn.events
+      : await adapter!.ledgerRead({ agent: a.instanceId });
+    expect(events.some((event) => event.etype === "MemoryConsulted")).toBe(false);
   });
 
   it("keeps memory private per agent instance", async () => {

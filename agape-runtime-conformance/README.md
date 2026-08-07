@@ -1,105 +1,84 @@
 # Agape Runtime Conformance
 
-This is the TypeScript black-box conformance suite for the Agape runtime contract in `../SPEC.md` version `v1.0.0-beta.2026.8.6.0`.
+This package is the transport-neutral black-box suite for the Agape runtime
+contract in [`../SPEC.md`](../SPEC.md), especially sections 10, 16, 16.5, 16.7,
+17.5, and 17.7. It does not import or assume the TypeScript, Rust, Studio, or
+any other runtime implementation.
 
-The tests are derived only from the spec, especially sections 16, 16.7, 16.8, 16.9, 17.5, and 17.6. They do not import or assume the Rust runtime, Studio runtime, or any existing implementation.
+## Running the suite
 
-## Running Against A Runtime
-
-An implementation provides an adapter module and points the suite at it:
+An implementation exports `default`, `adapter`, or `createAdapter()` and
+implements `RuntimeConformanceAdapter` from `src/adapter.ts`:
 
 ```sh
 AGAPE_RUNTIME_ADAPTER=/absolute/path/to/adapter.js npm test
 ```
 
-The adapter module must export either `default`, `adapter`, or `createAdapter()`. Its object must implement the `RuntimeConformanceAdapter` interface in `src/adapter.ts`.
-
-If `AGAPE_RUNTIME_ADAPTER` is not set, the tests are skipped. That keeps this package installable without blessing any implementation as the reference runtime.
-
-## Running Against agape-ts
-
-The agape-ts compiler/runtime ships an adapter at `../agape-ts/src/runtime_adapter.ts`:
+With no `AGAPE_RUNTIME_ADAPTER`, every test skips cleanly. The repository's
+TypeScript adapter can be exercised with:
 
 ```sh
 npm run test:agape-ts
-# equivalent to: AGAPE_RUNTIME_ADAPTER=../agape-ts/src/runtime_adapter.ts npm test
 ```
 
-Current scorecard: **48 passed / 0 failed / 0 skipped** (all gaps closed).
+The qualified named-memory cases are TDD oracles and are expected to remain red
+until the TypeScript runtime implements the current SPEC. Adapterless execution
+must remain clean.
 
-Adapter notes (see the headers of `agape-ts/src/runtime_adapter*.ts` for the full design):
+## Core named-memory test-mode contract
 
-- Programs execute on the real agape-ts kernel (parse, check, interp). This suite's embedded
-  sources predate the core-kernel spec strip, so the adapter first applies a transparent
-  source-level desugar (`runtime_adapter_desugar.ts`): `policy` declarations become inline gate
-  rules, gate arm blocks become `if (d.committed == V) { endorse ...; ... }` chains, `write tool`
-  declarations become `action` + manifest `[tools.*]`/`[actions.*]` wiring, `event<T>` reply
-  bindings become bare reply types, prompt binder `.body` becomes the kernel `.text`, f-string
-  `{x}` becomes `${x}`, `{ ... } retry(N)` is unrolled, and cognition-bearing top-level `when`
-  blocks are hoisted into a generated agent. Gate, taint, authority, scheduling, and ledger
-  semantics all come from the kernel, not the shim.
-- `canonicalHash` is the SPEC 16.2 SHA-256 chain over the six canonical fields.
-- `run(record: true)` journals every oracle answer (provider judge/structured/reply, tool
-  results); `replay` re-executes with journal-backed seams, so provider/tool/identity/prompt/
-  decomposition/embedding oracles are never re-invoked and the canonical head must reproduce.
-- The 16.7 memory envelope (artifact decomposition into summary/chunks/facts/triples/vectors,
-  experiences, corrections, context ranking) is adapter-level test-mode machinery over real
-  session-ledger ticks (`runtime_adapter_memory.ts`); the kernel `mem` substrate does not itself
-  decompose artifacts. GateProfile bookkeeping, config resolution, and exactly-once ingress
-  dedup (SPEC 15.5) are likewise implemented at the adapter's transport layer.
+`namedMemoryScenario` runs declared-memory operations against an adapter-owned
+ephemeral local or Markdown driver. Its inputs are semantic rather than
+implementation-specific:
 
-## Required Test-Mode Surface
+- one structural descriptor (`type`, `modality`, authenticated `scope`,
+  and `retention`);
+- immutable host identity contexts;
+- explicit store, recall, forget, close, and authenticated-resume steps;
+- optional deterministic retrieval candidates for score/id ordering; and
+- optional loss of one finalize acknowledgement after the ledger commit.
 
-The spec requires an implementation to ship a test mode. The adapter exposes that test mode in a transport-neutral way:
+The result exposes exact typed recall envelopes, public receipts, snapshots, and
+one ordered semantic trace of driver and ledger boundaries. The trace is not a
+storage API. It exists so conformance can prove prepare -> ledger decision ->
+finalize, reconciliation before later access, and zero driver mutation during
+recorded replay.
 
-- `health`, `run`, `check`, `ledgerRead`
-- `agentRespond`
-- `memoryIngest`, `memoryContext`, `memoryInspect`
-- `configRead`, `configWrite`
-- `recordExperience`, `recordUserCorrection`, `implementationLearningLoop`
-- `triggerExternalSource`, `validateLedgerTrace`
-- `seedProjection`, `projectionInspect`
-- `calibrationScenario`, `resolveConfig`
-- `multiRunScenario`, `idempotencyScenario`
-- `rebuildMemoryFromRecording`
-- `replay`, `oracleStats`, `canonicalHash`
+`oracleStats.memoryDriverCalls` and
+`oracleStats.memoryMutationCalls` are required for adapters implementing the
+named-memory profile. They make the SPEC 16.5 no-live-driver replay rule
+observable without exposing private durable contents.
 
-The runtime may implement these over HTTP, MCP, stdio, direct library calls, or any other transport. The conformance assertion is semantic, not transport-specific.
+## Explicit-only semantics
 
-`implementationLearningLoop` is deliberately deterministic. The suite passes a fixed first candidate source file that violates the spec in a known way; the runtime must check that exact source, store the diagnostic as decomposed experience, retrieve it on a later turn, and produce a corrected source. The test does not rely on making an LLM "happen" to write the same bad program.
+Agent turns do not consult, write, or forget memory merely because they occur.
+A `MemoryConsulted` receipt is required only for an explicit source recall or
+explicit host `memory.context` request. Named memory is always configured, and
+every operation remains bound to the owning concrete agent instance, handle,
+complete authenticated scope tuple, retention tier, and current generation.
 
-For learning conformance, a failed coding experience is not just an opaque transcript. The adapter must expose the stored decomposition:
+The core oracle covers:
 
-- raw diagnostic/check evidence
-- compact lesson summary
-- typed facts
-- graph triples
-- vector texts
-- ledger origin tick
+- exact `TYPE[]` misses and provider-free recall;
+- equal-value episodic writes with distinct evaluation origins;
+- tuple-local forget, repeated forget, and next-generation reopen;
+- project/user isolation and missing-user crash with no driver access;
+- descending score plus bytewise cell-id ordering before `top_k`;
+- local-driver durable preflight rejection;
+- Markdown durable close and authenticated resume;
+- wrong-lineage resume rejection;
+- lost-finalize-ack reconciliation by operation id; and
+- replay with identical ledger head, zero provider/memory-driver calls, and no
+  live durable mutation.
 
-## Current Coverage
+## Other adapter surfaces
 
-This first runtime suite covers the mandatory memory-envelope items enumerated in SPEC section 17.5:
+The suite also covers scheduler lifecycle, ledger traces and canonical hashing,
+task dispatch, attestation, fault recovery, replay, stochastic idempotency,
+projection diagnostics, and advertised calibration evidence.
 
-- mandatory `MemoryConsulted` on every agent turn, including empty memory
-- per-agent memory isolation
-- artifact ingestion into summary, chunks, facts, graph, vectors, and provenance
-- idempotent unchanged artifact ingestion
-- failure and success experience internalization
-- longitudinal implementation learning: failed check/run evidence must produce a descriptive diagnostic, be decomposed into memory, be retrieved on a later turn, and change the agent's next implementation attempt
-- user-correction precedence
-- memory provenance back to ledger ticks
-- replay without re-invoking provider/tool/decomposition/embedding oracles
-- no memory-to-action trust laundering
-
-It also covers runtime API health/version reporting, canonical ledger hashing excluding non-canonical fields, and the rule that `config.write` cannot set decision policy.
-
-Additional runtime sections are covered by dedicated files:
-
-- `16_1_scheduler_lifecycle.test.ts`: FIFO issue-order scheduling, synchronous subscription cascades, prompt liveness, agent generation stability.
-- `16_2_ledger_trace.test.ts`: gap-free ticks, `ledger.read`, canonical hash behavior, illegal lifecycle trace rejection.
-- `16_4_fault_recovery.test.ts`: schema `TypeMismatch`, retry behavior, contained crashes, failed principal decisions, margin-floor faults.
-- `16_5_replay_rebuild.test.ts`: replay without re-invoking provider/identity/tool/prompt/memory oracles, and memory rebuild from recording.
-- `16_7a_projection_conflict.test.ts`: projection staleness metadata and conflict projection.
-- `16_8_calibration_config.test.ts`: config precedence, derived `exposes_logprobs`, sampling fallback, warm conformal prediction sets, profile staling.
-- `15_5_stochastic_idempotency.test.ts`: multi-run observational-equivalence/stability checks and exactly-once idempotency.
+The repository currently carries explicit host artifact/decomposition and
+implementation-learning diagnostics for the TypeScript adapter. Those calls are
+advertised extension operations: they are not automatic properties of an Agape
+agent, and they do not permit memory to modify source-defined instructions,
+grants, dependencies, or authority.
