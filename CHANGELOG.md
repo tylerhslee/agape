@@ -32,15 +32,21 @@ version.
   reject undeclared wire fields, and derive opaque region keys isolated by
   retention, declared scope, session lineage, and stable agent
   instance.
+- **Local named-memory mutations are transactional and recoverable.** The
+  TypeScript runtime provides interpreter-independent prepare, finalize, abort,
+  status, and reconciliation primitives. Stores remain invisible until their
+  ledger commit is bound, operation retries are idempotent, lost acknowledgements
+  reconcile without duplicate cells, and session regions enforce opaque identity
+  isolation and generation-aware forget/reopen behavior.
 - **Recalled experience preserves typed outcomes and provenance.** Explicitly
   stored successful examples and rejected counterexamples retain their typed value
+  summaries and origin metadata across Local and Markdown drivers; recall remains
+  tainted and requires a fresh gate before consequential use.
 - **Runtime state is bound to authenticated identity.** Sessions require
   explicit nonblank identity dimensions; `Spawned` commits an exact stable
   instance ID before constructor effects; Local and Markdown memory isolate
   stable instances and opaque user subjects. CLI and Studio mint fresh lineages;
   authenticated durable resume remains pending.
-  summaries and origin metadata across Local and Markdown drivers; recall remains
-  tainted and requires a fresh gate before consequential use.
 - **Memory receipts are private and truthful.** Public ledger rows expose hashes,
   resolvable driver references, and actual cell/view deltas without memory plaintext
   or fabricated fact, graph, vector, or blob effects.
