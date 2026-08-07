@@ -261,7 +261,6 @@ export interface NamedMemorySession {
 
 export interface ScriptedRecallCandidate {
   storeOperationId: string;
-  cellId: string;
   score: number;
 }
 

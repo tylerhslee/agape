@@ -11,9 +11,9 @@ AGAPE_RUNTIME_ADAPTER=/absolute/path/to/adapter.js npm test
 npm run test:agape-ts
 ```
 
-With no `AGAPE_RUNTIME_ADAPTER`, all tests skip cleanly. The qualified
-named-memory cases are TDD oracles and remain red until the runtime implements
-the current SPEC.
+With no `AGAPE_RUNTIME_ADAPTER`, all 59 tests skip cleanly. The Agape TypeScript
+adapter passes 59/59, including the qualified named-memory lifecycle and replay
+cases.
 
 ## Named-memory test-mode contract
 
@@ -56,11 +56,14 @@ Agent turns do not consult memory merely because they occur. The core oracle
 covers exact typed misses, equal-value episodic origins, two-instance and
 project/user tuple isolation, tuple-local forget generations, missing-user crash
 with no memory seam access, score/id ordering before `top_k`, local durable
-preflight, Markdown close/resume with stable instance restoration, precise
-lineage-mismatch rejection, public-receipt privacy, lost-ack reconciliation, and
-seam-free replay.
+preflight, injected-key authenticated snapshot close/resume with stable instance
+restoration, precise lineage-mismatch rejection, public-receipt privacy, lost-ack
+reconciliation, and seam-free replay.
 
 The suite also carries scheduler, ledger, delegation, attestation, fault,
 calibration, and explicitly advertised extension diagnostics. Extension learning
 helpers do not define an Agape agent and cannot modify source-defined behavior or
 authority.
+
+These adapter tests do not establish host-persistent storage or the derived on-disk
+Markdown projection. Production source/package conformance remains release-blocking.

@@ -7,8 +7,8 @@ doc -> test -> build directive and release flow.
 ## Commands (verified green)
 ```sh
 npm run typecheck                       # tsc --noEmit -> clean
-npm test                                # 127/127 vitest (kernel, memory, certification, graph)
-npx tsx conformance/run.mts             # 217/217 (100%) against ../agape-conformance
+npm test                                # 232/232 vitest (kernel, memory, certification, graph)
+npx tsx conformance/run.mts             # 254/254 (100%) against ../agape-conformance
 npm run test:cert                       # certification.test.ts (golden ledger traces)
 npm run test:core                       # kernel + memory + certification only
 npm run hello                           # run examples/hello.ag on the mock provider
@@ -47,5 +47,5 @@ typecheck + `npm test` + `conformance/run.mts` before committing.
 **Ask first:** changing a kernel invariant, the ledger canonical-hash fields, or the
 provider/memory seam contracts.
 **NEVER:** weaken/delete a test to go green; make a change that reduces conformance
-below 217/217; let a model-derived value reach a sink without a committed decision +
+below 254/254; let a model-derived value reach a sink without a committed decision +
 endorsement; introduce a non-`assertCore` construct into the kernel grammar.

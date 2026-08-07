@@ -2,8 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   LocalTransactionalNamedMemoryJournal,
   LocalTransactionalNamedMemoryDriver,
-  MarkdownTransactionalNamedMemoryDriver,
+  DurableTransactionalNamedMemoryDriver,
   type NamedMemoryMutationContext,
+  type TransactionalNamedMemorySnapshot,
 } from "../src/named_memory_local.js";
 import {
   encodeExactValue,
@@ -149,6 +150,17 @@ describe("transactional Local named memory", () => {
     expect(driver.status("memory-operation-v1:" + "0".repeat(64))).toEqual({ status: "unknown" });
     expect(driver.reconcile("memory-operation-v1:" + "0".repeat(64))).toEqual({ status: "unknown" });
     expect(driver.recall({ descriptor: descriptor(), region: region() }).values).toEqual([]);
+    const abortedSnapshot = driver.snapshot();
+    const restoredAborted = new LocalTransactionalNamedMemoryDriver({
+      journal: new LocalTransactionalNamedMemoryJournal(abortedSnapshot),
+    });
+    expect(restoredAborted.status(aborted.operationId)).toEqual({ status: "unknown" });
+    const retriedAbort = restoredAborted.prepareStore(abortedRequest);
+    expect(retriedAbort.operationId).toBe(aborted.operationId);
+    expect(restoredAborted.status(retriedAbort.operationId)).toEqual({
+      status: "prepared",
+      stage: retriedAbort,
+    });
 
     const finalized = driver.prepareStore({
       ...mutation({ origin: { invocationCorrelation: "prompt:17", evaluationOrdinal: 2 } }),
@@ -446,9 +458,9 @@ describe("transactional Local named memory", () => {
       .not.toMatch(/project|alice|bob|idp/);
   });
 
-  it("restores exact durable state only through the explicit Markdown backend", () => {
+  it("restores exact durable state only through the explicit durable backend", () => {
     const durable = descriptor("durable");
-    const driver = new MarkdownTransactionalNamedMemoryDriver();
+    const driver = new DurableTransactionalNamedMemoryDriver();
     expect(driver.capabilities.retentions).toEqual(["durable"]);
     const stage = driver.prepareStore({
       ...mutation({ descriptor: durable }),
@@ -458,7 +470,7 @@ describe("transactional Local named memory", () => {
 
     const snapshot = driver.snapshot();
     expect(Object.isFrozen(snapshot)).toBe(true);
-    const restored = new MarkdownTransactionalNamedMemoryDriver({
+    const restored = new DurableTransactionalNamedMemoryDriver({
       journal: new LocalTransactionalNamedMemoryJournal(snapshot),
     });
     expect(restored.recall({
@@ -474,4 +486,190 @@ describe("transactional Local named memory", () => {
     expect(() => restored.recall({ descriptor: descriptor(), region: region() }))
       .toThrow(/durable retention only/);
   });
+  it("snapshots finalized journal identity so retries remain idempotent after restore", () => {
+
+    const durable = descriptor("durable");
+    const request = {
+      ...mutation({ descriptor: durable }),
+      value: { kind: "text" as const, v: "persist exactly once", trust: "graded" as const },
+    };
+    const driver = new DurableTransactionalNamedMemoryDriver();
+    const stage = driver.prepareStore(request);
+
+    expect(() => driver.snapshot()).toThrow(/prepared|active/i);
+    const receipt = driver.finalize(stage.operationId, binding);
+    const snapshot = driver.snapshot();
+    expect(snapshot).toMatchObject({
+      version: 1,
+      operations: [{
+        operationId: stage.operationId,
+        fingerprint: stage.operationId.slice("memory-operation-v1:".length),
+        status: "finalized",
+        stage,
+        receipt,
+      }],
+      evaluations: [{ operationId: stage.operationId }],
+    });
+    expect(Object.isFrozen(snapshot)).toBe(true);
+    expect(Object.isFrozen(snapshot.operations)).toBe(true);
+    expect(Object.isFrozen(snapshot.operations[0])).toBe(true);
+    expect(Object.isFrozen(snapshot.operations[0]!.receipt)).toBe(true);
+    expect(Object.isFrozen(snapshot.evaluations)).toBe(true);
+    expect(JSON.stringify(snapshot)).not.toContain("app.ag:12:7");
+    expect(JSON.stringify(snapshot)).not.toContain("prompt:17");
+    for (const secret of ["project://agape", "https://idp.example", "alice", "lineage-1", "session-1"]) {
+      expect(JSON.stringify(snapshot)).not.toContain(secret);
+    }
+
+    const restored = new DurableTransactionalNamedMemoryDriver({
+      journal: new LocalTransactionalNamedMemoryJournal(snapshot),
+    });
+    expect(restored.prepareStore(request)).toEqual(stage);
+    expect(restored.status(stage.operationId)).toEqual({ status: "finalized", receipt });
+    expect(restored.finalize(stage.operationId, binding)).toEqual(receipt);
+    expect(restored.recall({ descriptor: durable, region: region() }).cells).toHaveLength(1);
+    expect(() => restored.prepareStore({
+      ...request,
+      value: { kind: "text", v: "conflicting replay", trust: "graded" },
+    })).toThrow(/fingerprint|conflict|operation.*id/i);
+    expect(restored.recall({ descriptor: durable, region: region() }).cells).toHaveLength(1);
+  });
+
+  it("rejects malformed durable journal records instead of partially restoring them", () => {
+    const durable = descriptor("durable");
+    const driver = new DurableTransactionalNamedMemoryDriver();
+    const stage = driver.prepareStore({
+      ...mutation({ descriptor: durable }),
+      value: { kind: "text", v: "validated", trust: "settled" },
+    });
+    driver.finalize(stage.operationId, binding);
+    const snapshot = driver.snapshot();
+
+    const malformedRefs = structuredClone(snapshot);
+    malformedRefs.operations[0]!.stage.refs.region = "memory-region-v1:" + "0".repeat(64);
+    expect(() => new LocalTransactionalNamedMemoryJournal(malformedRefs))
+      .toThrow(/snapshot|reference|region/i);
+
+    const malformedEnvelope = structuredClone(snapshot);
+    malformedEnvelope.regions[0]!.cells[0]!.value.valueHash = "0".repeat(64);
+    expect(() => new LocalTransactionalNamedMemoryJournal(malformedEnvelope))
+      .toThrow(/snapshot|value|hash/i);
+
+    const wrongSchemaEnvelope = structuredClone(snapshot);
+    wrongSchemaEnvelope.regions[0]!.cells[0]!.value = encodeExactValue(
+      { kind: "bool", v: true, trust: "settled" },
+      { kind: "scalar", name: "bool" },
+    );
+    expect(() => new LocalTransactionalNamedMemoryJournal(wrongSchemaEnvelope))
+      .toThrow(/schema|value/i);
+
+    const hiddenArrayField = structuredClone(snapshot);
+    Object.defineProperty(hiddenArrayField.operations, "hidden", {
+      enumerable: false,
+      value: true,
+    });
+    expect(() => new LocalTransactionalNamedMemoryJournal(hiddenArrayField))
+      .toThrow(/array|dense|canonical/i);
+
+    const malformedEvaluation = structuredClone(snapshot);
+    malformedEvaluation.evaluations[0]!.operationId = "memory-operation-v1:" + "f".repeat(64);
+    expect(() => new LocalTransactionalNamedMemoryJournal(malformedEvaluation))
+      .toThrow(/snapshot|evaluation|operation/i);
+  });
+  it("preserves old evaluation identity after forget, reopen, snapshot, and restore", () => {
+    const durable = descriptor("durable");
+    const originalRequest = {
+      ...mutation({ descriptor: durable }),
+      value: { kind: "text" as const, v: "generation zero", trust: "settled" as const },
+    };
+    const driver = new DurableTransactionalNamedMemoryDriver();
+    const original = driver.prepareStore(originalRequest);
+    const originalReceipt = driver.finalize(original.operationId, { tick: 1, head: "replay-h1" });
+    const forget = driver.prepareForget({
+      ...mutation({
+        descriptor: durable,
+        origin: { invocationCorrelation: "prompt:17", evaluationOrdinal: 1 },
+      }),
+    });
+    driver.finalize(forget.operationId, { tick: 2, head: "replay-h2" });
+    const reopened = driver.prepareStore({
+      ...mutation({
+        descriptor: durable,
+        origin: { invocationCorrelation: "prompt:17", evaluationOrdinal: 2 },
+      }),
+      value: { kind: "text", v: "generation one", trust: "graded" },
+    });
+    driver.finalize(reopened.operationId, { tick: 3, head: "replay-h3" });
+
+    const restored = new DurableTransactionalNamedMemoryDriver({
+      journal: new LocalTransactionalNamedMemoryJournal(driver.snapshot()),
+    });
+    expect(restored.prepareStore(originalRequest)).toEqual(original);
+    expect(restored.status(original.operationId)).toEqual({
+      status: "finalized",
+      receipt: originalReceipt,
+    });
+    expect(restored.recall({ descriptor: durable, region: region() })).toMatchObject({
+      generation: 1,
+      state: "open",
+      cells: [{ operationId: reopened.operationId }],
+    });
+  });
+
+  it("rejects receipt-order corruption and non-canonical snapshot objects", () => {
+    const durable = descriptor("durable");
+    const driver = new DurableTransactionalNamedMemoryDriver();
+    const first = driver.prepareStore({
+      ...mutation({ descriptor: durable }),
+      value: { kind: "text", v: "first", trust: "settled" },
+    });
+    driver.finalize(first.operationId, { tick: 1, head: "order-h1" });
+    const forget = driver.prepareForget({
+      ...mutation({
+        descriptor: durable,
+        origin: { invocationCorrelation: "order", evaluationOrdinal: 1 },
+      }),
+    });
+    driver.finalize(forget.operationId, { tick: 2, head: "order-h2" });
+    const reopened = driver.prepareStore({
+      ...mutation({
+        descriptor: durable,
+        origin: { invocationCorrelation: "order", evaluationOrdinal: 2 },
+      }),
+      value: { kind: "text", v: "second", trust: "settled" },
+    });
+    driver.finalize(reopened.operationId, { tick: 3, head: "order-h3" });
+    const snapshot = driver.snapshot();
+
+    const reordered = structuredClone(snapshot);
+    const reopenedRecord = reordered.operations.find(
+      (operation) => operation.operationId === reopened.operationId,
+    )!;
+    reopenedRecord.receipt.ledger.tick = 0;
+    expect(() => new LocalTransactionalNamedMemoryJournal(reordered))
+      .toThrow(/replay|state|generation/i);
+
+    let accessorInvoked = false;
+    const accessor = structuredClone(snapshot);
+    Object.defineProperty(accessor, "version", {
+      enumerable: true,
+      get: () => {
+        accessorInvoked = true;
+        return 1;
+      },
+    });
+    expect(() => new LocalTransactionalNamedMemoryJournal(accessor)).toThrow(/accessor|canonical/i);
+    expect(accessorInvoked).toBe(false);
+
+    const sparse = structuredClone(snapshot);
+    delete sparse.operations[0];
+    expect(() => new LocalTransactionalNamedMemoryJournal(sparse)).toThrow(/dense|canonical/i);
+
+    const symbolRecord = structuredClone(snapshot) as TransactionalNamedMemorySnapshot & {
+      [key: symbol]: boolean;
+    };
+    symbolRecord[Symbol("hidden")] = true;
+    expect(() => new LocalTransactionalNamedMemoryJournal(symbolRecord)).toThrow(/symbol|canonical/i);
+  });
+
 });

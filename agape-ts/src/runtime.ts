@@ -1,6 +1,8 @@
 // Runtime core — values, judgment trust + ingress provenance (§13/§15.3.1), the provider seam (§8),
 // and the ledger (§7).
 
+import { types as utilTypes } from "node:util";
+
 import {
   canonicalLedgerEventJson,
   canonicalLedgerHead,
@@ -245,6 +247,123 @@ export interface LedgerEvent {
   readonly agent: string;
 }
 
+const LEDGER_EVENT_FIELDS = Object.freeze([
+  "tick", "latency_ms", "elapsed_ms", "etype", "subject", "payload", "corr", "agent",
+] as const);
+
+function ledgerRestoreError(reason: string): Error {
+  return new Error(`restored ledger ${reason}`);
+}
+
+function restoredEventArrayItems(events: unknown): unknown[] {
+  if (utilTypes.isProxy(events)) {
+    throw ledgerRestoreError("events must not be a Proxy");
+  }
+  if (!Array.isArray(events) || Object.getPrototypeOf(events) !== Array.prototype) {
+    throw ledgerRestoreError("events must be an ordinary array");
+  }
+  if (Object.getOwnPropertySymbols(events).length !== 0) {
+    throw ledgerRestoreError("events must not contain symbol properties");
+  }
+  const names = Object.getOwnPropertyNames(events);
+  const expected = Array.from({ length: events.length }, (_, index) => String(index));
+  if (names.length !== expected.length + 1 || !names.includes("length")
+    || expected.some((name) => !names.includes(name))) {
+    throw ledgerRestoreError("events must be dense and contain no extra properties");
+  }
+  return expected.map((name) => {
+    const descriptor = Object.getOwnPropertyDescriptor(events, name);
+    if (!descriptor || !("value" in descriptor) || !descriptor.enumerable) {
+      throw ledgerRestoreError(`events[${name}] must be an enumerable data property`);
+    }
+    return descriptor.value;
+  });
+}
+
+function restoredEventFields(source: unknown, index: number): Record<typeof LEDGER_EVENT_FIELDS[number], unknown> {
+  if (utilTypes.isProxy(source)) {
+    throw ledgerRestoreError(`event ${index} must not be a Proxy`);
+  }
+  if (source === null || typeof source !== "object" || Array.isArray(source)) {
+    throw ledgerRestoreError(`event ${index} must be a plain data record`);
+  }
+  const prototype = Object.getPrototypeOf(source);
+  if (prototype !== Object.prototype && prototype !== null) {
+    throw ledgerRestoreError(`event ${index} must be a plain data record`);
+  }
+  if (Object.getOwnPropertySymbols(source).length !== 0) {
+    throw ledgerRestoreError(`event ${index} must not contain symbol properties`);
+  }
+  const names = Object.getOwnPropertyNames(source);
+  if (names.length !== LEDGER_EVENT_FIELDS.length
+    || LEDGER_EVENT_FIELDS.some((name) => !names.includes(name))) {
+    throw ledgerRestoreError(`event ${index} must contain exactly the eight ledger fields`);
+  }
+  const fields = Object.create(null) as Record<typeof LEDGER_EVENT_FIELDS[number], unknown>;
+  for (const name of LEDGER_EVENT_FIELDS) {
+    const descriptor = Object.getOwnPropertyDescriptor(source, name);
+    if (!descriptor || !("value" in descriptor) || !descriptor.enumerable) {
+      throw ledgerRestoreError(`event ${index}.${name} must be an enumerable data property`);
+    }
+    fields[name] = descriptor.value;
+  }
+  return fields;
+}
+
+function assertExactLedgerPayload(value: unknown, path: string, ancestors: Set<object>): void {
+  if (utilTypes.isProxy(value)) {
+    throw ledgerRestoreError(`${path} must not contain Proxies`);
+  }
+  if (value === null || typeof value === "string" || typeof value === "boolean") return;
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) throw ledgerRestoreError(`${path} must contain only finite JSON numbers`);
+    return;
+  }
+  if (typeof value !== "object") throw ledgerRestoreError(`${path} must be defined JSON data`);
+  if (ancestors.has(value)) throw ledgerRestoreError(`${path} contains a cycle`);
+  ancestors.add(value);
+  try {
+    if (Array.isArray(value)) {
+      if (Object.getPrototypeOf(value) !== Array.prototype) {
+        throw ledgerRestoreError(`${path} must contain only ordinary arrays`);
+      }
+      if (Object.getOwnPropertySymbols(value).length !== 0) {
+        throw ledgerRestoreError(`${path} must not contain symbol properties`);
+      }
+      const names = Object.getOwnPropertyNames(value);
+      const expected = Array.from({ length: value.length }, (_, index) => String(index));
+      if (names.length !== expected.length + 1 || !names.includes("length")
+        || expected.some((name) => !names.includes(name))) {
+        throw ledgerRestoreError(`${path} arrays must be dense and contain no extra properties`);
+      }
+      for (const name of expected) {
+        const descriptor = Object.getOwnPropertyDescriptor(value, name);
+        if (!descriptor || !("value" in descriptor) || !descriptor.enumerable) {
+          throw ledgerRestoreError(`${path}[${name}] must be an enumerable data property`);
+        }
+        assertExactLedgerPayload(descriptor.value, `${path}[${name}]`, ancestors);
+      }
+      return;
+    }
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) {
+      throw ledgerRestoreError(`${path} must contain only plain JSON objects`);
+    }
+    if (Object.getOwnPropertySymbols(value).length !== 0) {
+      throw ledgerRestoreError(`${path} must not contain symbol properties`);
+    }
+    for (const name of Object.getOwnPropertyNames(value)) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, name);
+      if (!descriptor || !("value" in descriptor) || !descriptor.enumerable) {
+        throw ledgerRestoreError(`${path}.${name} must be an enumerable data property`);
+      }
+      assertExactLedgerPayload(descriptor.value, `${path}.${name}`, ancestors);
+    }
+  } finally {
+    ancestors.delete(value);
+  }
+}
+
 export class Ledger {
   #committedEvents: LedgerEvent[] = [];
   #visibleEvents: LedgerEvent[] = Object.freeze([] as LedgerEvent[]) as LedgerEvent[];
@@ -259,6 +378,58 @@ export class Ledger {
     this.lastMs = originMs;
   }
 
+  static restore(events: readonly LedgerEvent[], onEvent?: (event: LedgerEvent) => void): Ledger {
+    const sources = restoredEventArrayItems(events);
+    const now = Date.now();
+    const ledger = new Ledger(now, onEvent);
+    let priorElapsed = 0;
+    const restored = sources.map((source, index): LedgerEvent => {
+      const fields = restoredEventFields(source, index);
+      if (!Number.isSafeInteger(fields.tick) || (fields.tick as number) < 0 || fields.tick !== index) {
+        throw ledgerRestoreError("ticks are not contiguous safe nonnegative integers");
+      }
+      if (!Number.isSafeInteger(fields.latency_ms) || (fields.latency_ms as number) < 0
+        || !Number.isSafeInteger(fields.elapsed_ms) || (fields.elapsed_ms as number) < 0) {
+        throw ledgerRestoreError("timing metadata is invalid");
+      }
+      const latency = fields.latency_ms as number;
+      const elapsed = fields.elapsed_ms as number;
+      if (elapsed < priorElapsed) throw ledgerRestoreError("elapsed timing is not nondecreasing");
+      if (latency > elapsed) throw ledgerRestoreError("latency exceeds elapsed timing");
+      if (latency !== elapsed - priorElapsed) {
+        throw ledgerRestoreError("latency does not match elapsed timing delta");
+      }
+      if (typeof fields.etype !== "string" || typeof fields.subject !== "string"
+        || typeof fields.agent !== "string"
+        || !(fields.corr === null || typeof fields.corr === "string"
+          || (typeof fields.corr === "number" && Number.isFinite(fields.corr)))) {
+        throw ledgerRestoreError("event shape is invalid");
+      }
+      if (fields.payload === undefined) throw ledgerRestoreError("event payload must be present and defined");
+      assertExactLedgerPayload(fields.payload, `event ${index}.payload`, new Set<object>());
+      const payload = snapshotCanonicalPayload(fields.payload);
+      const event: LedgerEvent = Object.freeze({
+        tick: index,
+        latency_ms: latency,
+        elapsed_ms: elapsed,
+        etype: fields.etype,
+        subject: fields.subject,
+        payload,
+        corr: fields.corr,
+        agent: fields.agent,
+      });
+      canonicalLedgerEventJson(event);
+      priorElapsed = elapsed;
+      return event;
+    });
+    ledger.#committedEvents = restored;
+    ledger.#visibleEvents = Object.freeze(restored.slice()) as LedgerEvent[];
+    const elapsed = restored.at(-1)?.elapsed_ms ?? 0;
+    ledger.originMs = now - elapsed;
+    ledger.lastMs = now;
+    return ledger;
+  }
+
   append(
     etype: string,
     subject: string,
@@ -266,7 +437,7 @@ export class Ledger {
     agent?: string,
     corr?: string | number | null,
   ): LedgerEvent {
-    const now = Date.now();
+    const now = Math.max(Date.now(), this.lastMs);
     const ev: LedgerEvent = Object.freeze({
       tick: this.#committedEvents.length,
       latency_ms: Math.max(0, now - this.lastMs),

@@ -19,13 +19,13 @@ version.
 - **Memory regions are fully qualified in source.** Structural agent declarations use
   named `type`, `modality`, `scope`, and `retention` clauses. Stores preserve
   exact typed values, recall returns deeply tainted typed arrays without implicit
-  cognition, and durable regions use authenticated instance resumption and
-  recoverable ledger-bound mutations.
-- **Qualified memory executes as declared.** The TypeScript runtime allocates
-  direct and inherited descriptors as structural handles, freezes project/user
-  identity for each session, enforces driver retention capabilities before
-  execution, isolates authenticated scope tuples, and implements deterministic
-  generation-aware store, recall, and forget operations.
+  cognition, and the transactional runtime layer derives canonical region identity
+  for recoverable ledger-bound mutations.
+- **Qualified memory descriptors are resolved as declared.** The TypeScript compiler
+  and runtime allocate direct and inherited descriptors as structural handles, freeze
+  project/user identity for each session, enforce driver retention capabilities before
+  execution, and isolate authenticated scope tuples. The shipped interpreter's
+  source-operation path still requires migration onto the transactional coordinator.
 - **Named-memory persistence primitives are canonical.** The TypeScript runtime
   exposes interpreter-independent schema and descriptor hashes, exact typed-value
   envelopes that exclude trust and private provenance, decode recursively raw,
@@ -40,13 +40,22 @@ version.
   isolation and generation-aware forget/reopen behavior.
 - **Recalled experience preserves typed outcomes and provenance.** Explicitly
   stored successful examples and rejected counterexamples retain their typed value
-  summaries and origin metadata across Local and Markdown drivers; recall remains
-  tainted and requires a fresh gate before consequential use.
+  summaries and origin metadata in the canonical transactional journal; recall
+  remains tainted and requires a fresh gate before consequential use.
 - **Runtime state is bound to authenticated identity.** Sessions require
   explicit nonblank identity dimensions; `Spawned` commits an exact stable
-  instance ID before constructor effects; Local and Markdown memory isolate
-  stable instances and opaque user subjects. CLI and Studio mint fresh lineages;
-  authenticated durable resume remains pending.
+  instance ID before constructor effects, and named-memory sessions isolate stable
+  instances and opaque user subjects. CLI and Studio mint fresh lineages.
+- **Named-memory sessions have authenticated recovery infrastructure.** The
+  coordinator owns prepare, ledger commit, finalize, reconciliation, and deterministic
+  recall ordering. The adapter restores exact ledger history and stable instances from
+  authenticated snapshots under an injected host key, and replay serves recorded
+  outputs and acknowledgements without live memory seams.
+- **Production durable storage remains pending.** Authenticated snapshot resume is a
+  recovery primitive, not the configured `markdown` store. The interpreter's
+  source-memory operations still require coordinator integration; host-persistent key
+  management, a single-writer durable canonical store, and the derived on-disk Markdown
+  projection remain required before release.
 - **Memory receipts are private and truthful.** Public ledger rows expose hashes,
   resolvable driver references, and actual cell/view deltas without memory plaintext
   or fabricated fact, graph, vector, or blob effects.
@@ -70,10 +79,11 @@ version.
 
 ### Validation
 
-- **Production explicit-memory oracles.** Black-box CLI tests require a configured
-  memory driver, prove exact agent-instance and handle isolation, reject fabricated
-  Markdown modality effects or unresolvable refs, and distinguish immutable prompt
-  provenance from copied metadata in manually edited memory.
+- **Production explicit-memory release gates are defined.** Black-box CLI tests cover
+  configured memory, exact agent-instance and handle isolation, truthful Markdown
+  effects and resolvable references, and immutable origin provenance. The production
+  manifest keeps P04 and P11 partial and P05-P07 pending, so these cases remain
+  release-blocking until the shipped source and packaged CLI paths satisfy them.
 - **Qualified-memory language oracle.** The 254-case source suite pins structural
   descriptor placement and clause order, closed qualifiers, persistable payloads,
   exact store and typed-recall checking, explicit-only writes, retained handles after
@@ -85,8 +95,9 @@ version.
 - **Qualified-memory runtime oracle.** Black-box lifecycle cases pin resolved
   schemas and exact typed envelopes, concrete-instance/authenticated-tuple
   isolation, public-receipt privacy, deterministic ranking and generations,
-  fresh-runtime durable resume, normalized lost-ack reconciliation, and replayed
-  outputs/acknowledgements with no live memory-driver access or mutation.
+  injected-key authenticated snapshot resume, normalized lost-ack reconciliation,
+  and replayed outputs/acknowledgements with no live memory-driver access or
+  mutation. On-disk durability remains a separate production-path gate.
 
 ## [1.0.0-beta.2026.8.6.0] - 2026-08-06
 

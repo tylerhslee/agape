@@ -8,10 +8,13 @@ implementation. They drive a runtime exclusively through an adapter.
 
 ```sh
 npm run typecheck
-npm test                  # no adapter: every test skips cleanly
-npm run test:agape-ts     # implementation gate; named-memory cases are TDD-red
+npm test                  # 59 skipped (adapterless, clean)
+npm run test:agape-ts     # 59/59; named-memory cases green with agape-ts
 AGAPE_RUNTIME_ADAPTER=/abs/path/to/adapter.js npm test
 ```
+
+These results validate the adapter contract. Production source/package memory gates
+remain release-blocking and pending in `../agape-production-conformance`.
 
 ## Adapter contract
 
@@ -38,8 +41,10 @@ A reaction with no source or host memory operation has no `MemoryConsulted`
 ledger row. Qualified cases cover exact typed recall, concrete-instance and
 authenticated-tuple isolation, episodic origins, deterministic ranking,
 tuple-local generations, missing-subject crashes without seam access, retention
-preflight, public-receipt privacy, durable close/resume, binding rejection,
-ledger-bound reconciliation, and replayed outputs/acks with no live seams.
+preflight, public-receipt privacy, authenticated snapshot close/resume, binding
+rejection, ledger-bound reconciliation, and replayed outputs/acks with no live seams.
+Actual host persistence and the on-disk derived Markdown projection remain separate
+production-path gates.
 
 ## Boundaries
 

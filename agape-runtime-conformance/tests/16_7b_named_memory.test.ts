@@ -50,6 +50,21 @@ function publicReceiptsHide(events: unknown[], secrets: unknown[]) {
     ["Internalized", "MemoryConsulted", "Forgotten"].includes(String(e.etype))));
   for (const secret of secrets) expect(text).not.toContain(String(secret));
 }
+function bytewiseCompare(left: string, right: string): number {
+  const l = new TextEncoder().encode(left);
+  const r = new TextEncoder().encode(right);
+  const length = Math.min(l.length, r.length);
+  for (let i = 0; i < length; i += 1) {
+    if (l[i] !== r[i]) return l[i]! - r[i]!;
+  }
+  return l.length - r.length;
+}
+function canonicalCellIds(values: NonNullable<ReturnType<typeof op>["values"]>): string[] {
+  const ids = values.map((value) => value.cellId);
+  expect(ids.every((id) => typeof id === "string" && id.length > 0)).toBe(true);
+  expect(new Set(ids).size).toBe(ids.length);
+  return ids;
+}
 async function invoke(s: NamedMemorySession, invocationId: string, operations: any[], alias = "owner") {
   return adapter!.invokeNamedMemory({
     sessionHandle: s.sessionHandle,
@@ -86,8 +101,8 @@ suite("SPEC 10 / 16.1a / 16.5 / 16.7 qualified named memory", () => {
       program: prog({ descriptor: desc({ modality: "episodic" }) }),
       identity: alice, identityCapabilities: ["project"],
       testMode: { recallCandidates: { recall: [
-        { storeOperationId: "two", cellId: "cell-b", score: 0.8 },
-        { storeOperationId: "one", cellId: "cell-a", score: 0.8 },
+        { storeOperationId: "two", score: 0.8 },
+        { storeOperationId: "one", score: 0.8 },
       ] } },
     }));
     const r = await invoke(s, "invoke-two-evaluations", [
@@ -100,8 +115,14 @@ suite("SPEC 10 / 16.1a / 16.5 / 16.7 qualified named memory", () => {
     const values = op(r, "recall").values!;
     expect(values.map((x) => x.value)).toEqual([value, value]);
     expect(new Set(values.map((x) => x.originRef)).size).toBe(2);
-    expect(values.every((x) => JSON.stringify(x.schema) === JSON.stringify(schema)
-      && x.schemaHash === s.schemaHash && x.descriptorHash === s.descriptorHash && x.taint === "raw")).toBe(true);
+    const ids = canonicalCellIds(values);
+    expect(ids).toEqual([...ids].sort(bytewiseCompare));
+    for (const entry of values) {
+      expect(entry.schema).toEqual(schema);
+      expect(entry.schemaHash).toBe(s.schemaHash);
+      expect(entry.descriptorHash).toBe(s.descriptorHash);
+      expect(entry.taint).toBe("raw");
+    }
     for (const e of eventsOf(r.events, "Internalized")) {
       receiptHashes(e, s); expect(typeof payloadObject(e).value_hash).toBe("string");
     }
@@ -189,26 +210,39 @@ suite("SPEC 10 / 16.1a / 16.5 / 16.7 qualified named memory", () => {
 
   it("sorts score descending then id bytewise before top_k", async () => {
     const s = session(await adapter!.openNamedMemorySession({
-      name: "ranking", driverNamespace: "ranking", driver: { kind: "local", topK: 3 },
+      name: "ranking", driverNamespace: "ranking", driver: { kind: "local", topK: 4 },
       program: prog({ descriptor: desc({ modality: "semantic" }) }),
       identity: alice, identityCapabilities: ["project"],
-      testMode: { recallCandidates: { rank: [
-        { storeOperationId: "a", cellId: "cell-m", score: 0.7 },
-        { storeOperationId: "b", cellId: "cell-z", score: 0.9 },
-        { storeOperationId: "c", cellId: "cell-a", score: 0.9 },
-        { storeOperationId: "d", cellId: "cell-q", score: 0.99 },
-      ] } },
+      testMode: { recallCandidates: {
+        discover: ["a", "b", "c", "d"].map((storeOperationId) => ({ storeOperationId, score: 1 })),
+        rank: [
+          { storeOperationId: "a", score: 0.7 },
+          { storeOperationId: "b", score: 0.9 },
+          { storeOperationId: "c", score: 0.9 },
+          { storeOperationId: "d", score: 0.99 },
+        ],
+      } },
     }));
     const r = await invoke(s, "invoke-ranking", [
       ...["A", "B", "C", "D"].map((text, i) => ({
         id: text.toLowerCase(), site: "store-" + text, operation: "store", value: note(text, i),
       })),
-      { id: "rank", site: "rank", operation: "recall", query: "all" },
+      { id: "discover", site: "discover", operation: "recall", query: "all" },
+      { id: "rank", site: "rank", operation: "recall", query: "all", cap: 3 },
     ]);
-    expect(op(r, "rank").values?.map((x) => x.cellId)).toEqual(["cell-q", "cell-a", "cell-z"]);
-    expect(op(r, "rank").values?.map((x) => x.value)).toEqual([note("D", 3), note("C", 2), note("B", 1)]);
+    const discovered = op(r, "discover").values!;
+    const discoveredIds = canonicalCellIds(discovered);
+    expect(discoveredIds).toEqual([...discoveredIds].sort(bytewiseCompare));
+    const idByText = new Map(discovered.map((entry) => [(entry.value as { text: string }).text, entry.cellId]));
+    expect([...idByText.keys()].sort()).toEqual(["A", "B", "C", "D"]);
+    const tieIds = [idByText.get("B")!, idByText.get("C")!].sort(bytewiseCompare);
+    const expectedIds = [idByText.get("D")!, ...tieIds];
+    const ranked = op(r, "rank").values!;
+    expect(canonicalCellIds(ranked)).toEqual(expectedIds);
+    expect(ranked.map((x) => x.value)).toEqual(expectedIds.map((id) =>
+      discovered.find((entry) => entry.cellId === id)!.value));
     expect(payloadObject(op(r, "rank").receipt!)).toMatchObject({
-      cap: 3, hit_ids: ["cell-q", "cell-a", "cell-z"], scores: [0.99, 0.9, 0.9],
+      cap: 3, hit_ids: expectedIds, scores: [0.99, 0.9, 0.9],
     });
   });
 

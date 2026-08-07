@@ -17,7 +17,7 @@
 // - GateProfile bookkeeping and config resolution are adapter-level implementations of the SPEC
 //   16.8/17 rules; gate decisions inside calibrationScenario still come from real kernel runs.
 
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -35,6 +35,7 @@ import {
   canonicalLedgerHead,
   snapshotCanonicalPayload,
 } from "./ledger_hash.js";
+import { NamedMemoryAdapterRuntime } from "./runtime_adapter_named_memory.js";
 
 // ---------- conformance-facing shapes (structural mirror of agape-runtime-conformance/src/adapter.ts) ----------
 
@@ -320,6 +321,8 @@ interface Counters {
   promptArrivals: number;
   decompositionCalls: number;
   embeddingCalls: number;
+  memoryDriverCalls: number;
+  memoryMutationCalls: number;
   // §16.1/§16.3a concurrency observability: how many provider oracle calls are simultaneously in flight
   // (`inFlightProviderCalls`, live) and the high-water mark over a run (`maxInFlightProviderCalls`). A mark
   // ≥ 2 is direct evidence that two workers' oracle calls genuinely overlapped — the honest scheduler-level
@@ -331,6 +334,7 @@ interface Counters {
 const freshCounters = (): Counters => ({
   providerCalls: 0, toolCalls: 0, identityCalls: 0,
   promptArrivals: 0, decompositionCalls: 0, embeddingCalls: 0,
+  memoryDriverCalls: 0, memoryMutationCalls: 0,
   inFlightProviderCalls: 0, maxInFlightProviderCalls: 0,
 });
 
@@ -429,10 +433,13 @@ class AgapeTsConformanceAdapter {
   private profiles = new Map<string, GateProfile>();
   private seenIdempotencyKeys = new Set<string>();
   private runSeq = 0;
+  private readonly namedMemorySnapshotKey = randomBytes(32);
+  private namedMemory = new NamedMemoryAdapterRuntime(this.counters, this.namedMemorySnapshotKey);
 
   async reset(): Promise<void> {
     this.ledger = [];
     this.counters = freshCounters();
+    this.namedMemory = new NamedMemoryAdapterRuntime(this.counters, this.namedMemorySnapshotKey);
     this.envelope = new MemoryEnvelope();
     this.config = {};
     this.projections.clear();
@@ -694,12 +701,30 @@ class AgapeTsConformanceAdapter {
     return this.execute(input.source, (input.testMode ?? {}) as TestMode, { record: input.record, stochasticSeed: this.runSeq });
   }
 
-  async replay(recording: unknown): Promise<{ ok: boolean; head: number; headHash: string; events: LedgerEvent[] }> {
+  async replay(recording: unknown) {
+    const namedMemory = this.namedMemory.replay(recording);
+    if (namedMemory) return namedMemory;
     const rec = recording as Recording;
     if (!rec || rec.kind !== "agape-ts-recording") throw new Error("replay requires a recording produced by this adapter");
     const journalCopy: OracleJournal = JSON.parse(JSON.stringify(rec.journal)) as OracleJournal;
     const outcome = await this.execute(rec.source, rec.testMode ?? {}, { replayJournal: journalCopy, absorb: false });
     return { ok: outcome.ok, head: outcome.events.length, headHash: outcome.headHash, events: outcome.events };
+  }
+
+  async openNamedMemorySession(input: Parameters<NamedMemoryAdapterRuntime["open"]>[0]) {
+    return this.namedMemory.open(input);
+  }
+
+  async invokeNamedMemory(input: Parameters<NamedMemoryAdapterRuntime["invoke"]>[0]) {
+    return this.namedMemory.invoke(input);
+  }
+
+  async closeNamedMemorySession(input: Parameters<NamedMemoryAdapterRuntime["close"]>[0]) {
+    return this.namedMemory.close(input);
+  }
+
+  async resumeNamedMemorySession(input: Parameters<NamedMemoryAdapterRuntime["resume"]>[0]) {
+    return this.namedMemory.resume(input);
   }
 
   async oracleStats(): Promise<Record<string, number>> {

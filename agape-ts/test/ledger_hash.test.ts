@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { canonicalLedgerEventJson } from "../src/ledger_hash.js";
 import { Ledger, type LedgerEvent } from "../src/runtime.js";
 
@@ -191,4 +191,205 @@ describe("SPEC 16.2 canonical ledger SHA-256 chain", () => {
       '{"tick":0,"etype":"Booted","subject":"runtime","payload":null,"corr":null,"agent":""}',
     );
   });
+  const validRestoredEvent = (overrides: Partial<LedgerEvent> = {}): LedgerEvent => ({
+    tick: 0, latency_ms: 0, elapsed_ms: 0,
+    etype: "Booted", subject: "runtime", payload: null, corr: null, agent: "",
+    ...overrides,
+  });
+
+  it("restores exact immutable event metadata and continues at the next tick", () => {
+    const source: LedgerEvent[] = [
+      {
+        tick: 0, latency_ms: 11, elapsed_ms: 11,
+        etype: "Spawned", subject: "agent-1", payload: { b: 2, a: { nested: 1 } }, corr: null, agent: "agent-1",
+      },
+      {
+        tick: 1, latency_ms: 5, elapsed_ms: 16,
+        etype: "Internalized", subject: "memory-1", payload: { ok: true }, corr: "corr-1", agent: "agent-1",
+      },
+    ];
+    const observed: LedgerEvent[] = [];
+    const restored = Ledger.restore(source, (event) => observed.push(event));
+
+    expect(restored.events).toEqual(source);
+    expect(restored.events[0]).not.toBe(source[0]);
+    expect(Object.isFrozen(restored.events)).toBe(true);
+    expect(restored.events.every(Object.isFrozen)).toBe(true);
+    expect(observed).toEqual([]);
+    expect(restored.events[0]!.payload).not.toBe(source[0]!.payload);
+    expect(Object.isFrozen(restored.events[0]!.payload)).toBe(true);
+    expect(Object.isFrozen((restored.events[0]!.payload as { a: object }).a)).toBe(true);
+    (source[0]!.payload as { a: { nested: number } }).a.nested = 99;
+    expect(restored.events[0]!.payload).toEqual({ a: { nested: 1 }, b: 2 });
+
+    const equivalent = new Ledger(0);
+    equivalent.append("Spawned", "agent-1", { a: { nested: 1 }, b: 2 }, "agent-1", null);
+    equivalent.append("Internalized", "memory-1", { ok: true }, "agent-1", "corr-1");
+    expect(restored.head()).toBe(equivalent.head());
+
+    const appended = restored.append("Continued", "runtime");
+    expect(appended.tick).toBe(2);
+    expect(appended.elapsed_ms).toBeGreaterThanOrEqual(16);
+    expect(observed).toEqual([appended]);
+  });
+
+  it("rejects malformed restored ledger order and timing metadata", () => {
+    const valid = validRestoredEvent();
+    expect(() => Ledger.restore([{ ...valid, tick: 1 }])).toThrow("ticks are not contiguous");
+    expect(() => Ledger.restore([{ ...valid, elapsed_ms: -1 }])).toThrow("timing metadata is invalid");
+    expect(() => Ledger.restore([{ ...valid, latency_ms: 0.5 }])).toThrow("timing metadata is invalid");
+    expect(() => Ledger.restore([
+      validRestoredEvent({ latency_ms: 4, elapsed_ms: 4 }),
+      validRestoredEvent({ tick: 1, elapsed_ms: 3 }),
+    ])).toThrow("elapsed timing is not nondecreasing");
+    expect(() => Ledger.restore([{ ...valid, latency_ms: 2, elapsed_ms: 1 }]))
+      .toThrow("latency exceeds elapsed timing");
+    expect(() => Ledger.restore([
+      validRestoredEvent({ latency_ms: 10, elapsed_ms: 10 }),
+      validRestoredEvent({ tick: 1, latency_ms: 1, elapsed_ms: 20 }),
+    ])).toThrow("latency does not match elapsed timing delta");
+  });
+
+  it("rejects non-ordinary, sparse, accessor-backed, and decorated event arrays", () => {
+    const valid = validRestoredEvent();
+    const sparse = new Array<LedgerEvent>(1);
+    const custom = [valid];
+    Object.setPrototypeOf(custom, Object.create(Array.prototype));
+    const decorated = [valid] as LedgerEvent[] & { extra?: boolean };
+    decorated.extra = true;
+    const symbolic = [valid];
+    Object.defineProperty(symbolic, Symbol("hidden"), { value: true });
+    let reads = 0;
+    const accessor = [valid];
+    Object.defineProperty(accessor, "0", {
+      get() { reads += 1; return valid; }, enumerable: true, configurable: true,
+    });
+
+    expect(() => Ledger.restore({ 0: valid, length: 1 } as unknown as LedgerEvent[]))
+      .toThrow("ordinary array");
+    expect(() => Ledger.restore(custom)).toThrow("ordinary array");
+    expect(() => Ledger.restore(sparse)).toThrow("dense");
+    expect(() => Ledger.restore(decorated)).toThrow("dense");
+    expect(() => Ledger.restore(symbolic)).toThrow("symbol");
+    expect(() => Ledger.restore(accessor)).toThrow("enumerable data property");
+    expect(reads).toBe(0);
+  });
+
+  it("rejects Proxy containers before invoking reflective traps", () => {
+    const valid = validRestoredEvent();
+    let traps = 0;
+    const handler: ProxyHandler<object> = {
+      getPrototypeOf() { traps += 1; return Object.prototype; },
+      ownKeys(target) { traps += 1; return Reflect.ownKeys(target); },
+      getOwnPropertyDescriptor(target, property) {
+        traps += 1; return Reflect.getOwnPropertyDescriptor(target, property);
+      },
+    };
+    const arrayProxy = new Proxy([valid], handler as ProxyHandler<LedgerEvent[]>);
+    expect(() => Ledger.restore(arrayProxy)).toThrow("must not be a Proxy");
+    expect(traps).toBe(0);
+
+    const eventProxy = new Proxy(valid, handler as ProxyHandler<LedgerEvent>);
+    expect(() => Ledger.restore([eventProxy])).toThrow("must not be a Proxy");
+    expect(traps).toBe(0);
+
+    const nestedProxy = new Proxy({ safe: true }, handler);
+    expect(() => Ledger.restore([validRestoredEvent({ payload: { nested: nestedProxy } })]))
+      .toThrow("must not contain Proxies");
+    expect(traps).toBe(0);
+  });
+
+  it("validates exact plain eight-field records before reading any field", () => {
+    const valid = validRestoredEvent();
+    const { payload: _payload, ...missingPayload } = valid;
+    const extra = { ...valid, extra: true };
+    const hidden = { ...valid };
+    Object.defineProperty(hidden, "subject", { value: "runtime", enumerable: false });
+    const symbolic = { ...valid };
+    Object.defineProperty(symbolic, Symbol("hidden"), { value: true });
+    const polluted = Object.assign(Object.create({ polluted: true }), valid) as LedgerEvent;
+    let reads = 0;
+    const accessor = { ...valid };
+    Object.defineProperty(accessor, "tick", {
+      get() { reads += 1; return 0; }, enumerable: true, configurable: true,
+    });
+
+    expect(() => Ledger.restore([missingPayload as LedgerEvent])).toThrow("exactly the eight ledger fields");
+    expect(() => Ledger.restore([extra])).toThrow("exactly the eight ledger fields");
+    expect(() => Ledger.restore([hidden])).toThrow("enumerable data property");
+    expect(() => Ledger.restore([symbolic])).toThrow("symbol");
+    expect(() => Ledger.restore([polluted])).toThrow("plain data record");
+    expect(() => Ledger.restore([accessor])).toThrow("enumerable data property");
+    expect(reads).toBe(0);
+  });
+
+  it("rejects undefined, accessor, hidden, symbolic, cyclic, and custom-prototype payload data", () => {
+    const undefinedRoot = validRestoredEvent({ payload: undefined });
+    const undefinedMember = validRestoredEvent({ payload: { missing: undefined } });
+    const hiddenPayload = {};
+    Object.defineProperty(hiddenPayload, "hidden", { value: true, enumerable: false });
+    const symbolicPayload = {};
+    Object.defineProperty(symbolicPayload, Symbol("hidden"), { value: true });
+    const pollutedPayload = Object.create({ polluted: true }) as Record<string, unknown>;
+    pollutedPayload.safe = true;
+    const cyclic: { self?: unknown } = {};
+    cyclic.self = cyclic;
+    let reads = 0;
+    const accessorPayload = {};
+    Object.defineProperty(accessorPayload, "secret", {
+      get() { reads += 1; return "not-read"; }, enumerable: true, configurable: true,
+    });
+
+    expect(() => Ledger.restore([undefinedRoot])).toThrow("payload must be present and defined");
+    expect(() => Ledger.restore([undefinedMember])).toThrow("defined JSON data");
+    expect(() => Ledger.restore([validRestoredEvent({ payload: hiddenPayload })])).toThrow("enumerable data property");
+    expect(() => Ledger.restore([validRestoredEvent({ payload: symbolicPayload })])).toThrow("symbol");
+    expect(() => Ledger.restore([validRestoredEvent({ payload: pollutedPayload })])).toThrow("plain JSON objects");
+    expect(() => Ledger.restore([validRestoredEvent({ payload: cyclic })])).toThrow("cycle");
+    expect(() => Ledger.restore([validRestoredEvent({ payload: accessorPayload })])).toThrow("enumerable data property");
+    expect(reads).toBe(0);
+  });
+
+  it("rejects recursively tampered payload arrays without invoking accessors", () => {
+    const sparse = new Array<unknown>(1);
+    const decorated = [true] as unknown[] & { extra?: boolean };
+    decorated.extra = true;
+    const custom = [true];
+    Object.setPrototypeOf(custom, Object.create(Array.prototype));
+    let reads = 0;
+    const accessor = [true];
+    Object.defineProperty(accessor, "0", {
+      get() { reads += 1; return true; }, enumerable: true, configurable: true,
+    });
+
+    expect(() => Ledger.restore([validRestoredEvent({ payload: { nested: sparse } })])).toThrow("dense");
+    expect(() => Ledger.restore([validRestoredEvent({ payload: { nested: decorated } })])).toThrow("dense");
+    expect(() => Ledger.restore([validRestoredEvent({ payload: { nested: custom } })])).toThrow("ordinary arrays");
+    expect(() => Ledger.restore([validRestoredEvent({ payload: { nested: accessor } })]))
+      .toThrow("enumerable data property");
+    expect(reads).toBe(0);
+  });
+
+  it("anchors appended timing to hydration without replaying restored events", () => {
+    const clock = vi.spyOn(Date, "now")
+      .mockReturnValueOnce(1_000)
+      .mockReturnValueOnce(900)
+      .mockReturnValueOnce(1_025);
+    try {
+      const observed: LedgerEvent[] = [];
+      const restored = Ledger.restore([
+        validRestoredEvent({ latency_ms: 40, elapsed_ms: 40 }),
+      ], (event) => observed.push(event));
+      expect(observed).toEqual([]);
+
+      const duringRollback = restored.append("ClockRolledBack", "runtime");
+      expect(duringRollback).toMatchObject({ tick: 1, latency_ms: 0, elapsed_ms: 40 });
+      const afterRecovery = restored.append("Continued", "runtime");
+      expect(afterRecovery).toMatchObject({ tick: 2, latency_ms: 25, elapsed_ms: 65 });
+      expect(observed).toEqual([duringRollback, afterRecovery]);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
 });
