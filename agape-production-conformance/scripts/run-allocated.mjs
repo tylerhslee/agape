@@ -16,13 +16,17 @@ for (let index = 2; index < process.argv.length; index += 2) {
 const target = options.target ?? "source";
 const os = options.os ?? "linux";
 const lane = options.lane ?? "standard";
+const profile = options.profile ?? "core-agent";
 const listOnly = options.list === "true";
 if (!["source", "package"].includes(target)) throw new Error(`invalid target ${target}`);
 if (!["linux", "macos", "windows"].includes(os)) throw new Error(`invalid os ${os}`);
 if (!["standard", "slow", "full", "smoke"].includes(lane)) throw new Error(`invalid lane ${lane}`);
+const knownProfiles = new Set(manifest.profiles.map((entry) => entry.id));
+if (!knownProfiles.has(profile)) throw new Error(`invalid profile ${profile}`);
 
 const selected = [];
 for (const capability of manifest.capabilities) {
+  if (capability.profile !== profile) continue;
   const allocation = capability.allocations.find((entry) =>
     entry.target === target && entry.os === os && entry.lane === lane);
   if (!allocation) continue;
@@ -33,9 +37,9 @@ for (const capability of manifest.capabilities) {
     selected.push({ capability: capability.id, allocation: allocation.id, ...test });
   }
 }
-if (!selected.length) throw new Error(`no manifest allocations for ${target}/${os}/${lane}`);
+if (!selected.length) throw new Error(`no manifest allocations for ${profile}/${target}/${os}/${lane}`);
 if (listOnly) {
-  for (const test of selected) console.log(`${test.id}\t${test.file}\t${test.full_name}`);
+  for (const test of selected) console.log(`${profile}\t${test.id}\t${test.file}\t${test.full_name}`);
   process.exit(0);
 }
 
@@ -45,6 +49,7 @@ const env = {
   AGAPE_CONFORMANCE_TARGET: target,
   AGAPE_CONFORMANCE_OS: os,
   AGAPE_CONFORMANCE_LANE: lane,
+  AGAPE_CONFORMANCE_PROFILE: profile,
 };
 const invocations = [manifest.validation_test, ...selected];
 let failed = false;
@@ -53,7 +58,7 @@ try {
   for (const [index, test] of invocations.entries()) {
     const escapedName = test.full_name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const reportPath = join(reportDir, `${index}.json`);
-    console.log(`\n==> ${test.id} (${target}/${os}/${lane})`);
+    console.log(`\n==> ${test.id} (${profile}/${target}/${os}/${lane})`);
     const result = spawnSync(process.execPath, [
       vitest, "run", test.file,
       "--config", join(root, "vitest.config.ts"),

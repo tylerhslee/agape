@@ -56,9 +56,10 @@ describe("P04 production explicit-only typed recall", () => {
       && (payloadObject(event).closure_kind === "automatic_reaction"
         || payloadObject(event).write_source === "automatic_reaction"));
     expect.soft(automaticEvaluations, "P04: explicit recall must not imply an automatic memory write").toHaveLength(0);
-    const automaticWrites = events.filter((event) => event.etype === "Internalized"
-      && payloadObject(event).write_source === "automatic_reaction");
-    expect.soft(automaticWrites, "P04: only the fixture's explicit store may mutate memory").toHaveLength(0);
+    const internalized = events.filter((event) => event.etype === "Internalized");
+    expect.soft(internalized,
+      "P04: the explicit constructor store must be the only Internalized receipt; unmarked hidden writes are forbidden")
+      .toHaveLength(1);
 
     const recalled = explicitRecalls[0];
     if (recalled) {

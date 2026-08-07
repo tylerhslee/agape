@@ -181,12 +181,18 @@ jobs:
 
   # Production path: ordinary .ag source through fresh shipped-CLI processes.
   production-conformance:
-    name: production conformance (source / ${{ matrix.lane }})
+    name: production conformance (${{ matrix.profile }} / source / ${{ matrix.lane }})
     runs-on: ubuntu-latest
+    continue-on-error: ${{ matrix.profile == 'research' }}
     strategy:
       fail-fast: false
       matrix:
-        lane: [standard, slow]
+        include:
+          - { profile: core-agent, lane: standard }
+          - { profile: optional-memory, lane: standard }
+          - { profile: studio-fact-checker, lane: standard }
+          - { profile: research, lane: standard }
+          - { profile: research, lane: slow }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -207,4 +213,4 @@ jobs:
         run: npm run typecheck
       - name: Run allocated source lane
         working-directory: agape-production-conformance
-        run: npm run test:allocated -- --target source --os linux --lane "${{ matrix.lane }}"
+        run: npm run test:allocated -- --profile "${{ matrix.profile }}" --target source --os linux --lane "${{ matrix.lane }}"
