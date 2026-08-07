@@ -207,7 +207,185 @@ export interface OracleStats {
   toolCalls: number;
   decompositionCalls: number;
   embeddingCalls: number;
-  [key: string]: number;
+  /** Required when named-memory scenarios are supported (SPEC 16.5). */
+  memoryDriverCalls?: number;
+  /** Mutating prepare/finalize/abort calls; replay must not increase this (SPEC 16.5). */
+  memoryMutationCalls?: number;
+  [key: string]: number | undefined;
+}
+
+export interface RuntimeIdentityContext {
+  projectSubject: string;
+  sessionLineageId: string;
+  sessionId: string;
+  conversationId: string;
+  user?: { issuer: string; subject: string; verified: true };
+}
+
+export type PersistedSchema =
+  | { kind: "scalar"; scalar: "int" | "float" | "bool" | "text" | "null" }
+  | { kind: "enum"; name: string; variants: string[] }
+  | { kind: "array"; items: PersistedSchema }
+  | { kind: "struct"; name: string; fields: Record<string, PersistedSchema> };
+
+export interface NamedMemoryDescriptor {
+  name: string;
+  schema: PersistedSchema;
+  modality: "opaque" | "episodic" | "semantic";
+  scopes: Array<"project" | "user">;
+  retention: "session" | "durable";
+}
+
+export interface NamedMemoryProgram {
+  programId: string;
+  manifestId: string;
+  agentTemplate: string;
+  agentAliases: string[];
+  descriptor: NamedMemoryDescriptor;
+}
+
+export interface NamedMemoryAgentInstance {
+  alias: string;
+  template: string;
+  stableInstanceId: string;
+  spawnTick: number;
+}
+
+export interface NamedMemorySession {
+  sessionHandle: string;
+  runtimeInstanceId: string;
+  agents: Record<string, NamedMemoryAgentInstance>;
+  descriptorHash: string;
+  schemaHash: string;
+}
+
+export interface ScriptedRecallCandidate {
+  storeOperationId: string;
+  cellId: string;
+  score: number;
+}
+
+export interface NamedMemoryTestMode {
+  recallCandidates?: Record<string, ScriptedRecallCandidate[]>;
+  loseFinalizeAckAfterLedger?: string[];
+}
+
+export interface NamedMemoryOpenInput {
+  name: string;
+  driverNamespace: string;
+  driver: { kind: "local" | "markdown"; topK?: number };
+  program: NamedMemoryProgram;
+  identity: RuntimeIdentityContext;
+  identityCapabilities: Array<"project" | "user">;
+  record?: boolean;
+  testMode?: NamedMemoryTestMode;
+}
+
+export interface NamedMemorySessionStartResult {
+  ok: boolean;
+  session?: NamedMemorySession;
+  error?: Diagnostic;
+}
+
+export type NamedMemoryOperation =
+  | { id: string; site: string; operation: "store"; value: unknown }
+  | { id: string; site: string; operation: "recall"; query: string; cap?: number }
+  | { id: string; site: string; operation: "forget" };
+
+export interface ExactMemoryEnvelope {
+  value: unknown;
+  schema: PersistedSchema;
+  schemaHash: string;
+  descriptorHash: string;
+  cellId: string;
+  score: number;
+  originRef: string;
+  generation: number;
+  taint: "raw";
+}
+
+export interface NamedMemoryMutationAck {
+  operationId: string;
+  operation: "store" | "forget";
+  generation: number;
+  effects: Record<string, number | boolean | string>;
+  refs: string[];
+}
+
+export interface NamedMemoryOperationResult {
+  id: string;
+  ok: boolean;
+  resultType?: string;
+  values?: ExactMemoryEnvelope[];
+  generation?: number;
+  operationId?: string;
+  receipt?: LedgerEvent;
+  mutationAck?: NamedMemoryMutationAck;
+}
+
+export interface NamedMemoryInvocationFault {
+  code: "MissingScopeSubject" | "MemoryDriverFailure" | "TypeMismatch" | string;
+  scope?: "project" | "user";
+  message?: string;
+}
+
+export interface NamedMemoryTraceEntry {
+  /** Monotonic within the opened/resumed runtime session, across invocations. */
+  sequence: number;
+  phase: "prepare" | "ledger-commit" | "finalize" | "reconcile" | "recall" | "close" | "resume";
+  operationId?: string;
+  operationResultId?: string;
+  etype?: string;
+}
+
+export interface NamedMemoryInvocationResult {
+  ok: boolean;
+  invocationId: string;
+  agentInstanceId: string;
+  operations: NamedMemoryOperationResult[];
+  fault?: NamedMemoryInvocationFault;
+  events: LedgerEvent[];
+  trace: NamedMemoryTraceEntry[];
+}
+
+export interface NamedMemoryCloseResult {
+  ok: boolean;
+  destroyed: boolean;
+  closedSessionHandle: string;
+  closedRuntimeInstanceId: string;
+  agentInstanceIds: Record<string, string>;
+  headHash: string;
+  snapshot: unknown;
+  recording?: unknown;
+  invocations: NamedMemoryInvocationResult[];
+  mutationAcks: NamedMemoryMutationAck[];
+}
+
+export interface NamedMemoryResumeInput {
+  name: string;
+  driverNamespace: string;
+  driver: { kind: "markdown"; topK?: number };
+  program: NamedMemoryProgram;
+  identity: RuntimeIdentityContext;
+  identityCapabilities: Array<"project" | "user">;
+  snapshot: unknown;
+  record?: boolean;
+  testMode?: NamedMemoryTestMode;
+}
+
+export interface NamedMemoryResumeFault {
+  code: "SnapshotBindingMismatch" | "SnapshotAuthenticationFailed" | string;
+  binding?: "programId" | "manifestId" | "ledgerHead" | "sessionLineageId" | "projectSubject";
+  message?: string;
+}
+
+export interface NamedMemoryResumeResult extends NamedMemorySessionStartResult {
+  fault?: NamedMemoryResumeFault;
+}
+
+export interface NamedMemoryReplayResult {
+  invocations: NamedMemoryInvocationResult[];
+  mutationAcks: NamedMemoryMutationAck[];
 }
 
 export interface ReplayResult {
@@ -215,6 +393,7 @@ export interface ReplayResult {
   head: number;
   headHash: string;
   events: LedgerEvent[];
+  namedMemory?: NamedMemoryReplayResult;
 }
 
 export interface TraceValidationResult {
@@ -367,6 +546,15 @@ export interface RuntimeConformanceAdapter {
   resolveConfig(input: ConfigResolutionInput): Promise<ConfigResolutionResult>;
   multiRunScenario(input: MultiRunScenarioInput): Promise<MultiRunScenarioResult>;
   idempotencyScenario(input: IdempotencyScenarioInput): Promise<IdempotencyScenarioResult>;
+  openNamedMemorySession(input: NamedMemoryOpenInput): Promise<NamedMemorySessionStartResult>;
+  invokeNamedMemory(input: {
+    sessionHandle: string;
+    agentInstanceId: string;
+    invocationId: string;
+    operations: NamedMemoryOperation[];
+  }): Promise<NamedMemoryInvocationResult>;
+  closeNamedMemorySession(input: { sessionHandle: string }): Promise<NamedMemoryCloseResult>;
+  resumeNamedMemorySession(input: NamedMemoryResumeInput): Promise<NamedMemoryResumeResult>;
   replay(recording: unknown): Promise<ReplayResult>;
   oracleStats(): Promise<OracleStats>;
   canonicalHash(events: LedgerEvent[]): Promise<string>;

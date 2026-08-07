@@ -1,46 +1,54 @@
-# AGENTS.md — agape-runtime-conformance
+# AGENTS.md - agape-runtime-conformance
 
-Black-box conformance for the runtime **contract** (`../SPEC.md` §16, §16.7–16.9,
-§17.5–17.6). Tests are derived from the spec only and never import any implementation.
-They drive a runtime **exclusively through an adapter** — this is a pure black box.
+Black-box conformance for the runtime contract (`../SPEC.md` sections 10, 16,
+16.7-16.9, and 17.5-17.7). Tests are derived from the spec and never import an
+implementation. They drive a runtime exclusively through an adapter.
 
-## Commands (verified green)
+## Commands
+
 ```sh
-npm run test:agape-ts     # AGAPE_RUNTIME_ADAPTER=../agape-ts/src/runtime_adapter.ts vitest run -> 48/48
-npm test                  # no adapter set -> 48 skipped (clean; proves the harness is green)
-AGAPE_RUNTIME_ADAPTER=/abs/path/to/adapter.js npm test   # any other implementation
+npm run typecheck
+npm test                  # no adapter: every test skips cleanly
+npm run test:agape-ts     # implementation gate; named-memory cases are TDD-red
+AGAPE_RUNTIME_ADAPTER=/abs/path/to/adapter.js npm test
 ```
 
 ## Adapter contract
-- Point the suite at a runtime with `AGAPE_RUNTIME_ADAPTER`. The module exports
-  `default`, `adapter`, or `createAdapter()` and implements `RuntimeConformanceAdapter`
-  in `src/adapter.ts`.
-- With no `AGAPE_RUNTIME_ADAPTER`, **every test skips by design** — that keeps the package
-  installable without blessing any implementation as the reference runtime.
-- The agape-ts adapter lives at `../agape-ts/src/runtime_adapter.ts` (+ `_desugar`,
-  `_memory` helpers). Programs run on the real agape-ts kernel; gate/taint/authority/
-  scheduling/ledger semantics come from the kernel, not the shim.
-- Test-mode surface is transport-neutral (HTTP/MCP/stdio/direct all valid); the assertion
-  is semantic. `implementationLearningLoop` is deterministic: a fixed bad source must be
-  checked, stored as decomposed experience, retrieved later, and corrected.
 
-## Coverage (SPEC §17.5 mandatory items)
-Explicit `MemoryConsulted` for authored recall or `memoryContext`; `agentRespond`
-is memory-free; per-agent isolation; artifact decomposition
-(summary/chunks/facts/graph/vectors/provenance); idempotent unchanged ingestion; failure
-+ success experience internalization; longitudinal learning loop; user-correction
-precedence; provenance to ledger ticks; replay without re-invoking oracles; no
-memory-to-action trust laundering; canonical hashing excludes non-canonical fields;
-`config.write` cannot set decision policy.
+- The adapter module exports `default`, `adapter`, or `createAdapter()` and
+  implements `RuntimeConformanceAdapter` in `src/adapter.ts`.
+- With no adapter, every test skips by design.
+- Tests are transport-neutral: HTTP, MCP, stdio, and direct adapters are valid.
+- Named-memory tests use explicit open, invoke, close, and authenticated-resume
+  calls. One opened session fixes host identity context kappa. Invocations select
+  a concrete stable agent instance but cannot replace kappa.
+- Descriptor schemas are recursively resolved structural schemas. The adapter
+  reports consistent schema/descriptor hashes and exact typed recall envelopes.
+- Trace phases are normalized semantic boundaries. `prepare`, `finalize`, and
+  `reconcile` may be supplied by a physical driver or an equivalent
+  runtime-owned transactional adapter; tests do not require a particular API.
+- Close destroys the runtime session. Resume creates a fresh runtime instance from
+  a host-returned authenticated snapshot.
+- Artifact decomposition and `implementationLearningLoop` are advertised
+  extension diagnostics, not properties of agenthood or implicit memory.
+
+## Core explicit-memory coverage
+
+A reaction with no source or host memory operation has no `MemoryConsulted`
+ledger row. Qualified cases cover exact typed recall, concrete-instance and
+authenticated-tuple isolation, episodic origins, deterministic ranking,
+tuple-local generations, missing-subject crashes without seam access, retention
+preflight, public-receipt privacy, durable close/resume, binding rejection,
+ledger-bound reconciliation, and replayed outputs/acks with no live seams.
 
 ## Boundaries
-**Always:** exercise a runtime only through `RuntimeConformanceAdapter`; derive assertions
-from `SPEC.md`; keep `npm test` (adapterless) an all-skip clean run.
-**Ask first:** changing the adapter interface (`src/adapter.ts`) or a test's spec mapping.
-**NEVER:** import or assume a concrete runtime in a test; weaken/delete a test to pass;
-make the adapterless run anything other than an all-skip clean pass.
 
-## Stale doc to fix (NOT resolved here — report to owner)
-`README.md` line 28 still reads "33 passed / 2 failed / 0 skipped" with 16_4 / 16_8 listed
-as open gaps. The real run is **48/48** — those gaps are closed. `.github/workflows/ci.yml`
-(the agape-ts adapter step comment) similarly says "35/35". Both are stale.
+**Always:** exercise runtimes only through the adapter; derive assertions from
+`SPEC.md`; keep adapterless `npm test` all-skip and clean.
+
+**Ask first:** changing the adapter interface or a test's spec mapping.
+
+**NEVER:** import a concrete runtime in tests; make source operations choose
+authenticated identity; expose private values or raw identity in public receipts;
+or weaken authority, isolation, durable, or replay invariants to pass an
+implementation.

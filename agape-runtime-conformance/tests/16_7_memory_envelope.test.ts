@@ -15,24 +15,27 @@ suite("SPEC 16.7 memory envelope", () => {
     await adapter!.reset();
   });
 
-  it("keeps agent turns memory-free until memory.context is explicitly invoked", async () => {
-    const a = agent("mem-empty");
+  it("does not consult memory on a turn with no explicit memory operation", async () => {
+    const a = agent("mem-explicit-only");
     const turn = await adapter!.agentRespond({
       agent: a,
-      task: "answer a simple greeting",
+      task: "answer a simple greeting without recalling memory",
       stimulus: { kind: "user", text: "hello" },
       testMode: { provider: { kind: "static", text: "hello" } },
     });
 
     expect(turn.ok).toBe(true);
-    expect(turn.memoryPacket.consulted).toBe(false);
-    expect(turn.memoryPacket.empty).toBe(true);
+    const events = turn.events.length
+      ? turn.events
+      : await adapter!.ledgerRead({ agent: a.instanceId });
+    expect(events.some((event) => event.etype === "MemoryConsulted")).toBe(false);
 
-    expect(turn.events.filter((event) => event.etype === "MemoryConsulted")).toHaveLength(0);
-    const context = await adapter!.memoryContext({ agent: a, task: "answer a simple greeting" });
-    expect(context.consulted).toBe(true);
-    const event = requireEvent(await adapter!.ledgerRead({ agent: a.instanceId }), "MemoryConsulted");
-    const payload = payloadObject(event);
+    await adapter!.memoryContext({ agent: a, task: "explicitly recall greeting context" });
+    const consultation = requireEvent(
+      await adapter!.ledgerRead({ agent: a.instanceId }),
+      "MemoryConsulted",
+    );
+    const payload = payloadObject(consultation);
     expect(payload).toHaveProperty("counts");
     expect(JSON.stringify(payload).toLowerCase()).toContain("query");
   });
@@ -171,11 +174,17 @@ suite("SPEC 16.7 memory envelope", () => {
   it("does not let memory recall launder trust into a consequential sink", async () => {
     const result = await adapter!.check({
       source: `
-        action Publish(text body);
+        action Publish(text[] body);
         agent A grants { perform Publish } {
+          mem note {
+            type text;
+            modality opaque;
+            scope project;
+            retention session;
+          }
           on awake {
-            mem note <- "remembered draft";
-            text recalled = note -> "draft";
+            note <- "remembered draft";
+            text[] recalled = note -> "draft";
             perform Publish(recalled);
           }
         }
