@@ -336,18 +336,21 @@ describe("structured provider replies", () => {
     try {
       const prog = `
         agent A {
+          mem notes {
+            type text;
+            modality opaque;
+            scope project;
+            retention session;
+          }
           on awake {
-            mem notes;
             LedgerEntry<Internalized> receipt = notes <- "durable note";
             say(receipt._meta.etype);
-            say(receipt.refs.input);
           }
         }
         spawn A a; awake a;
       `;
       const r = await run(parse(prog), { memoryRoot: dir });
       expect(r.stdout[0]).toBe("Internalized");
-      expect(r.stdout[1]).toMatch(/^blob:sha256:/);
       const internalized = r.ledger.events.find((e) => e.etype === "Internalized" && e.subject === "notes");
       expect((internalized?.payload as any)?.effects?.cells?.upserted).toBe(1);
       expect((internalized?.payload as any)?.effects?.facts?.upserted).toBe(0);
@@ -895,9 +898,16 @@ describe("the memory surface cannot launder trust (§10, §13, §16.7)", () => {
       enum R { Yes, No }
       action Transfer(text body);
       agent Bank grants { perform Transfer } {
+        mem notes {
+          type text;
+          modality opaque;
+          scope project;
+          retention session;
+        }
         on awake {
-          mem notes <- "DROP TABLE accounts; -- injected";
-          text r = notes -> "q";
+          notes <- "DROP TABLE accounts; -- injected";
+          text[] hits = notes -> "q";
+          text r = hits[0];
           Credence<R> c = self <- "approve?";
           Decision<R> d = decide c by confidence 0.8;
           if (d.committed == Yes) {
@@ -922,9 +932,16 @@ describe("the memory surface cannot launder trust (§10, §13, §16.7)", () => {
     const prog = `
       enum R { Yes, No }
       agent Bank {
+        mem notes {
+          type text;
+          modality opaque;
+          scope project;
+          retention session;
+        }
         on awake {
-          mem notes <- "pending: 100 to bob";
-          text fact = notes -> "the pending transfer";
+          notes <- "pending: 100 to bob";
+          text[] hits = notes -> "the pending transfer";
+          text fact = hits[0];
           Credence<R> c = self <- f"approve \${fact}?";
           Decision<R> d = decide c by confidence 0.8;
           if (d.committed == Yes) {
@@ -947,9 +964,16 @@ describe("the memory surface cannot launder trust (§10, §13, §16.7)", () => {
       enum R { Yes, No }
       action Pay(text body);
       agent Bank grants { perform Pay } {
+        mem notes {
+          type text;
+          modality opaque;
+          scope project;
+          retention session;
+        }
         on awake {
-          mem notes <- "1000000-to-attacker";
-          text t = notes -> "q";
+          notes <- "1000000-to-attacker";
+          text[] hits = notes -> "q";
+          text t = hits[0];
           text u = "benign";
           u = t;
           text safe = "ok";
@@ -995,30 +1019,41 @@ describe("the memory surface cannot launder trust (§10, §13, §16.7)", () => {
       .rejects.toMatchObject({ cls: "GateError" });
   });
 
-  // §10: a recall is graded when bound to a Credence<E> slot (the spec's prescribed re-judging path) —
-  // the checker must NOT false-reject `Credence<E> c = mem -> "q"` with "cannot assign text to credence".
-  it("admits a recall bound into a Credence slot (re-judging path)", async () => {
+  // §10: recall is exact and provider-free. Re-judging is an explicit later send, never an implicit
+  // interpretation of the recall expression.
+  it("returns a typed array from recall without invoking the provider", async () => {
     const prog = `
-      enum YN { Yes, No }
       agent A {
+        mem notes {
+          type text;
+          modality opaque;
+          scope project;
+          retention session;
+        }
         on awake {
-          mem notes <- "x";
-          Credence<YN> c = notes -> "safe?";
-          say("ok");
+          notes <- "x";
+          text[] hits = notes -> "safe?";
+          say(hits[0]);
         }
       }
       spawn A a; awake a;
     `;
-    const r = await run(parse(prog), { provider: new MockProvider(() => ({ Yes: 0.9, No: 0.1 })) });
+    const r = await run(parse(prog));
     expect(r.ledger.events.map((e) => e.etype)).toContain("MemoryConsulted");
+    expect(r.ledger.events.map((e) => e.etype)).not.toContain("Resolved");
+    expect(r.stdout).toEqual(["x"]);
   });
 });
 
-describe("pure functions may not reach the async memory substrate (§9, §10)", () => {
+describe("memory descriptors are structural agent state (§9, §10)", () => {
   const rejects = (body: string) =>
-    expect(run(parse(`pure null f() { ${body} return null; }`), {})).rejects.toMatchObject({ cls: "ColorViolation" });
-  it("rejects a recall in a pure body", async () => { await rejects(`mem n <- "x"; text t = n -> "q";`); });
-  it("rejects a memory write in a pure body", async () => { await rejects(`mem n; n <- "fact";`); });
+    expect(() => parse(`pure null f() { ${body} return null; }`)).toThrow();
+  it("rejects a memory descriptor used for recall in a pure body", () => {
+    rejects(`mem n { type text; modality opaque; scope project; retention session; } text[] t = n -> "q";`);
+  });
+  it("rejects a memory descriptor used for writing in a pure body", () => {
+    rejects(`mem n { type text; modality opaque; scope project; retention session; } n <- "fact";`);
+  });
 
   it("runs bounded pure recursion and updates an agent field", async () => {
     const prog = `

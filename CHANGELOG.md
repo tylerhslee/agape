@@ -34,6 +34,10 @@ version.
   resolvable driver references, and actual cell/view deltas without memory plaintext
   or fabricated fact, graph, vector, or blob effects.
 - **Calibration evidence is profile-scoped.** Core gates record truthful methods and
+- **Memory-derived cognition stays private in the ledger.** Explicit sends may
+  use recalled values as provider input, while canonical `Sent`, `Resolved`,
+  and mismatch receipts replace memory-derived prompt/result plaintext with
+  deterministic protected envelopes.
   scores; the Studio Fact Checker profile preserves raw-logprob evidence and exposes
   it through the authorized, non-enumerable `calibration.evidence.inspect` operation.
 

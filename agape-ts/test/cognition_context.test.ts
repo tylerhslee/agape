@@ -85,16 +85,23 @@ describe("provider-neutral cognition context", () => {
     });
   });
 
-  it("passes protected recall content and provenance as data while keeping the public consult plaintext-free", async () => {
+  it("passes recalled content only through an explicit send while keeping the consult receipt plaintext-free", async () => {
     const provider = new ContextProvider();
     const fact = "cobalt-key resolves to cobalt-answer";
     const result = await run(parse(`
       enum Answer { Correct, Wrong }
 
       agent Rememberer {
-        mem facts <- "${fact}";
+        mem facts {
+          type text;
+          modality opaque;
+          scope project;
+          retention session;
+        }
         on awake {
-          Credence<Answer> answer = facts -> "what does cobalt-key resolve to?";
+          facts <- "${fact}";
+          text[] hits = facts -> "what does cobalt-key resolve to?";
+          Credence<Answer> answer = self <- f"answer from recalled facts: \${hits}";
         }
       }
 
@@ -104,17 +111,9 @@ describe("provider-neutral cognition context", () => {
 
     expect(provider.judgments).toHaveLength(1);
     const context = provider.judgments[0]!.context!;
-    const recalled = context.data.find((segment) => segment.kind === "recalled_memory");
-    expect(recalled).toMatchObject({
-      kind: "recalled_memory",
-      query: "what does cobalt-key resolve to?",
-      hits: [expect.objectContaining({
-        cell_id: "local:1",
-        content: expect.stringContaining(fact),
-        content_hash: expect.any(String),
-        origin_ref: expect.stringMatching(/^sha256:/),
-      })],
-    });
+    const stimulus = context.data.find((segment) => segment.kind === "stimulus");
+    expect(stimulus).toMatchObject({ kind: "stimulus", content: expect.stringContaining(fact) });
+    expect(context.data.find((segment) => segment.kind === "recalled_memory")).toBeUndefined();
 
     const consultation = result.ledger.events.find((event) =>
       event.etype === "MemoryConsulted"
@@ -122,9 +121,23 @@ describe("provider-neutral cognition context", () => {
     expect(consultation).toBeTruthy();
     expect(JSON.stringify(consultation?.payload)).not.toContain(fact);
     const resolved = result.ledger.events.find((event) => event.etype === "Resolved");
-    expect(resolved?.payload).toMatchObject({ kind: "credence", gate_scores: expect.any(Object) });
+    expect(resolved?.payload).toMatchObject({ kind: "credence", scores: expect.any(Object) });
     expect(resolved?.payload).not.toHaveProperty("evidence_ref");
     expect(JSON.stringify(resolved?.payload)).not.toContain(fact);
+    expect(JSON.stringify(result.ledger.events)).not.toContain(fact);
+    const sent = result.ledger.events.find((event) => event.etype === "Sent");
+    const sentPrompt = (sent?.payload as Record<string, unknown>)?.prompt;
+    expect(sentPrompt).toMatchObject({
+      content_hash: expect.any(String),
+      protected_ref: expect.stringMatching(/^blob:sha256:/),
+      redaction_policy_hash: expect.any(String),
+    });
+    expect((resolved?.payload as Record<string, unknown>)?.prompt).toEqual(sentPrompt);
+    expect((resolved?.payload as Record<string, unknown>)?.reply).toMatchObject({
+      content_hash: expect.any(String),
+      protected_ref: expect.stringMatching(/^blob:sha256:/),
+      redaction_policy_hash: expect.any(String),
+    });
   });
   it("preserves typed outcome labels and provenance for recalled counterexamples", async () => {
     const provider = new ContextProvider();
@@ -157,12 +170,20 @@ describe("provider-neutral cognition context", () => {
       },
     });
 
-    await run(parse(`
+    const result = await run(parse(`
       enum Usefulness { Useful, NotUseful }
+      enum Outcome { Accepted, Rejected }
+      struct DraftMemory { outcome: Outcome, draft: text }
       agent Reviewer {
-        mem examples;
+        mem examples {
+          type DraftMemory;
+          modality episodic;
+          scope project;
+          retention session;
+        }
         on awake {
-          Credence<Usefulness> result = examples -> "find prior rejected drafts";
+          DraftMemory[] hits = examples -> "find prior rejected drafts";
+          Credence<Usefulness> result = self <- f"judge recalled counterexamples: \${hits}";
         }
       }
       spawn Reviewer reviewer;
@@ -174,19 +195,12 @@ describe("provider-neutral cognition context", () => {
     });
 
     const context = provider.judgments[0]!.context!;
-    const recalled = context.data.find((segment) => segment.kind === "recalled_memory");
-    expect(recalled).toMatchObject({
-      hits: [expect.objectContaining({
-        value: expect.objectContaining({
-          kind: "struct",
-          type: "DraftMemory",
-          fields: expect.objectContaining({
-            outcome: expect.objectContaining({ variant: "Rejected" }),
-          }),
-        }),
-        provenance: { attester: "review-ledger", prompt_name: "review-result" },
-      })],
-    });
+    const stimulus = context.data.find((segment) => segment.kind === "stimulus");
+    expect(stimulus).toMatchObject({ kind: "stimulus", content: expect.stringContaining("counterexample draft") });
+    expect(stimulus).toMatchObject({ content: expect.stringContaining("Rejected") });
+    expect(context.data.find((segment) => segment.kind === "recalled_memory")).toBeUndefined();
+    expect(JSON.stringify(result.ledger.events)).not.toContain("counterexample draft");
+    expect(JSON.stringify(result.ledger.events)).not.toContain("Rejected");
   });
 
 });

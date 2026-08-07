@@ -8,7 +8,7 @@ export type IngressProvenance = "internal" | "external_unscreened" | "external_s
 export type Variant = string;
 export type Committed = Variant | "abstained";
 
-type ValueIngress = { ingress?: IngressProvenance };
+type ValueIngress = { ingress?: IngressProvenance; privateMemory?: true };
 
 export type Value =
   | ({ kind: "text"; v: string; trust: Trust } & ValueIngress)

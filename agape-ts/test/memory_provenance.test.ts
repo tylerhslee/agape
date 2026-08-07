@@ -21,6 +21,7 @@ import { MemoryRuntimeDriver } from "../src/memory_runtime.js";
 class RecordingMemory implements MemoryDriver {
   writes: MemoryWriteRequest[] = [];
 
+  readonly capabilities = { retentions: ["session"] as const };
   async declare(_scope: MemoryScope): Promise<void> {}
 
   async internalize(req: MemoryWriteRequest): Promise<MemoryReceipt> {
@@ -55,9 +56,14 @@ describe("memory-cell provenance threading", () => {
     const prog = `
       prompt text question;
       agent A {
+        mem notes {
+          type text;
+          modality opaque;
+          scope project;
+          retention session;
+        }
         when (Prompt p about question) {
-          mem notes;
-          notes <- p.text;
+          notes <- "the deploy step is npm run deploy";
           text r = self <- f"note this down: \${p.text}";
         }
       }
@@ -79,9 +85,14 @@ describe("memory-cell provenance threading", () => {
     const prog = `
       prompt text question;
       agent A {
+        mem notes {
+          type text;
+          modality opaque;
+          scope project;
+          retention session;
+        }
         when (Prompt p about question) {
-          mem notes;
-          notes <- p.text;
+          notes <- "hello";
         }
       }
       spawn A a; awake a;
@@ -99,8 +110,14 @@ describe("memory-cell provenance threading", () => {
     const memory = new RecordingMemory();
     const prog = `
       agent A {
+        mem notes {
+          type text;
+          modality opaque;
+          scope project;
+          retention session;
+        }
         on awake {
-          mem notes <- "a boot-time note with no prompt behind it";
+          notes <- "a boot-time note with no prompt behind it";
           notes <- "an explicit store, still promptless";
         }
       }
@@ -119,8 +136,13 @@ describe("memory-cell provenance threading", () => {
     const prog = `
       prompt text question;
       agent Worker {
+        mem log {
+          type text;
+          modality episodic;
+          scope project;
+          retention session;
+        }
         on assigned {
-          mem log;
           log <- "worker finding";
           complete "done";
         }
@@ -152,8 +174,13 @@ describe("memory-cell provenance threading", () => {
       const prog = `
         prompt text question;
         agent A {
+          mem notes {
+            type text;
+            modality opaque;
+            scope project;
+            retention durable;
+          }
           when (Prompt p about question) {
-            mem notes;
             notes <- "the deploy command is npm run deploy";
           }
         }
@@ -162,20 +189,20 @@ describe("memory-cell provenance threading", () => {
       await run(parse(prog), {
         memoryRoot: dir,
         provider: new MockProvider(() => ({})),
-        manifest: { provider: { backend: "mock" }, memory: { driver: "markdown" } },
+        manifest: { provider: { backend: "mock" }, project: { name: "demo" }, memory: { driver: "markdown" } },
         promptInputs: [{ name: "question", value: "remember the deploy command", attestation: { attester: "local-user" } }],
       });
 
-      const topic = await readFile(join(dir, ".agape", "memory", "scopes", "default", "a", "notes.md"), "utf8");
+      const topic = await readFile(join(dir, ".agape", "memory", "scopes", "demo", "a", "notes.md"), "utf8");
       expect(topic).toContain("the deploy command is npm run deploy");
       expect(topic).toContain('"provenance"');
       expect(topic).toContain('"attester": "local-user"');
       expect(topic).toContain('"prompt_name": "question"');
 
-      // Recall surfaces the same provenance on the candidate, through the runtime rerank.
-      const runtime = new MemoryRuntimeDriver(new MarkdownMemoryDriver({ path: join(dir, ".agape", "memory") }));
-      const consulted = await runtime.consult({
-        scope: { agent: "a", mem: "notes" },
+      // The configured substrate preserves provenance on exact recalled candidates.
+      const driver = new MarkdownMemoryDriver({ path: join(dir, ".agape", "memory") });
+      const consulted = await driver.consult({
+        scope: { project: "demo", agent: "a", mem: "notes" },
         query: "deploy command",
         topK: 1,
       });

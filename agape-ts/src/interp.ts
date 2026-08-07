@@ -2386,6 +2386,31 @@ class Interpreter {
     return out;
   }
 
+  private containsPrivateMemory(value: Value): boolean {
+    if (value.privateMemory) return true;
+    if (value.kind === "array") return value.items.some((item) => this.containsPrivateMemory(item));
+    if (value.kind === "struct") return [...value.fields.values()].some((item) => this.containsPrivateMemory(item));
+    if (value.kind === "endorsement") return this.containsPrivateMemory(value.subject);
+    return false;
+  }
+
+  private protectedEnvelope(content: string): Record<string, string> {
+    const contentHash = createHash("sha256").update(content, "utf8").digest("hex");
+    return {
+      content_hash: contentHash,
+      protected_ref: this.blobRef({ kind: "protected-cognition", content_hash: contentHash }),
+      redaction_policy_hash: sha256({ policy: "protected-cognition-v1" }),
+    };
+  }
+
+  private receiptContent(content: string, protect: boolean): string | Record<string, string> {
+    return protect ? this.protectedEnvelope(content) : content;
+  }
+
+  private receiptValue<T>(value: T, protect: boolean): T | Record<string, string> {
+    return protect ? this.protectedEnvelope(stableJson(value)) : value;
+  }
+
   private blobRef(parts: Record<string, unknown>): string {
     return `blob:sha256:${sha256(parts)}`;
   }
@@ -2590,10 +2615,12 @@ class Interpreter {
     const taskInfo = this.taskSpecOf(msgVal);
     if (taskInfo) return this.evalTaskSend(e, dest, taskInfo, scope, expected, bindName);
     const prompt = render(msgVal);
+    const promptSources = this.promptSources(e.message, scope);
+    const protectCognition = promptSources.some((value) => this.containsPrivateMemory(value));
     // §6: a typed binding `T s = d <- …` gives the produced send its subject `s`; an unbound send is
     // subjected at the destination.
     const subj = bindName ?? destName;
-    this.ledger.append("Sent", subj, { to: destName, prompt }, scope.currentAgent()?.name);
+    this.ledger.append("Sent", subj, { to: destName, prompt: this.receiptContent(prompt, protectCognition) }, scope.currentAgent()?.name);
     // §6: a send to a NON-awake agent has no mailbox — the chain stalls at `Sent` (never `Delivered`); loss is
     // the ABSENCE of Delivered, not an event. A send with an `expires N` lifetime that elapses undelivered
     // appends an `Expired` tombstone instead. A send to `self` (own cognition) always delivers.
@@ -2624,20 +2651,18 @@ class Interpreter {
       const { scores } = await this.inResolutionOrder(
         this.provider.judge(prompt, expected.enumName, variants, cognitionContext),
         ({ scores: resolvedScores }) => {
-          const sources = this.promptSources(e.message, scope);
-          const resolvedValue: Value = { kind: "credence", enumName: expected.enumName, scores: resolvedScores, trust: "graded", derivedFrom: sources, ingress: ingressJoin(sources) };
+          const resolvedValue: Value = { kind: "credence", enumName: expected.enumName, scores: resolvedScores, trust: "graded", derivedFrom: promptSources, ingress: ingressJoin(promptSources) };
           this.ledger.append("Resolved", subj, {
             kind: "credence",
-            prompt,
-            reply: valueSummary(resolvedValue),
+            prompt: this.receiptContent(prompt, protectCognition),
+            reply: this.receiptValue(valueSummary(resolvedValue), protectCognition),
             enum: expected.enumName,
             rule: undefined,
             ...scoreSummary(resolvedScores),
           }, scope.currentAgent()?.name);
         },
       );
-      const sources = this.promptSources(e.message, scope);
-      const value: Value = { kind: "credence", enumName: expected.enumName, scores, trust: "graded", derivedFrom: sources, ingress: ingressJoin(sources) };
+      const value: Value = { kind: "credence", enumName: expected.enumName, scores, trust: "graded", derivedFrom: promptSources, ingress: ingressJoin(promptSources) };
       // §13 dependency scope: record which in-scope values fed this credence's prompt, so a later
       // `endorse subject by (decide c)` can confirm the decision is ABOUT the subject (see evalGate).
       return value;
@@ -2686,7 +2711,7 @@ class Interpreter {
         if ("parse" in outcome) {
           this.ledger.append("TypeMismatch", subj, {
             schema,
-            raw: outcome.text,
+            raw: this.receiptValue(outcome.text, protectCognition),
             error: (outcome.parse as Error).message,
           }, scope.currentAgent()?.name);
           throw new TypeMismatchError(`the model's text reply for '${subj}' was not valid JSON for the declared type ${typeLabel(structuredType)}: ${(outcome.parse as Error).message}; the send faults (§8/§16.6)`);
@@ -2697,16 +2722,16 @@ class Interpreter {
         } catch (err) {
           this.ledger.append("TypeMismatch", subj, {
             schema,
-            raw,
+            raw: this.receiptValue(raw, protectCognition),
             error: (err as Error).message,
           }, scope.currentAgent()?.name);
           throw new TypeMismatchError(`the model's structured reply for '${subj}' violated the declared type ${typeLabel(structuredType)}: ${(err as Error).message}; the send faults (§8/§16.6)`);
         }
         this.ledger.append("Resolved", subj, {
           kind: "structured",
-          prompt,
+          prompt: this.receiptContent(prompt, protectCognition),
           schema,
-          reply: valueSummary(value),
+          reply: this.receiptValue(valueSummary(value), protectCognition),
         }, scope.currentAgent()?.name);
       });
       return value;
@@ -2714,7 +2739,11 @@ class Interpreter {
     let value: Value = { kind: "null", trust: "raw" };
     await this.inResolutionOrder(this.provider.reply(prompt, cognitionContext), async (reply) => {
       value = { kind: "text", v: reply, trust: "raw" };
-      this.ledger.append("Resolved", subj, { kind: "reply", prompt, reply: valueSummary(value) }, scope.currentAgent()?.name);
+      this.ledger.append("Resolved", subj, {
+        kind: "reply",
+        prompt: this.receiptContent(prompt, protectCognition),
+        reply: this.receiptValue(valueSummary(value), protectCognition),
+      }, scope.currentAgent()?.name);
     });
     return value;
   }
@@ -2884,9 +2913,9 @@ class Interpreter {
     }, agent?.name);
     const items = sourceHits.flatMap((hit, index) => {
       const value = hit.value ?? region.writes[index];
-      return value ? [this.withTrust(value, "raw")] : [];
+      return value ? [this.withTrust(value, "raw", true)] : [];
     });
-    return { kind: "array", items, trust: "raw" };
+    return { kind: "array", items, trust: "raw", privateMemory: true };
   }
 
   // E-Query (§10, §16.7): a deterministic read of the facts table / relationship graph / the ledger
@@ -3141,14 +3170,16 @@ class Interpreter {
     return raw;
   }
 
-  private withTrust(v: Value, trust: Trust): Value {
+  private withTrust(v: Value, trust: Trust, privateMemory = false): Value {
+    const marker = privateMemory ? { privateMemory: true as const } : {};
     if (v.kind === "struct") {
-      const fields = new Map([...v.fields].map(([k, val]) => [k, this.withTrust(val, trust)]));
-      return { ...v, fields, trust };
+      const fields = new Map([...v.fields].map(([k, val]) => [k, this.withTrust(val, trust, privateMemory)]));
+      return { ...v, ...marker, fields, trust };
     }
-    if (v.kind === "array") return { ...v, items: v.items.map((item) => this.withTrust(item, trust)), trust };
-    if (v.kind === "credence" || v.kind === "decision" || v.kind === "endorsement") return v;
-    return { ...v, trust } as Value;
+    if (v.kind === "array") return { ...v, ...marker, items: v.items.map((item) => this.withTrust(item, trust, privateMemory)), trust };
+    if (v.kind === "endorsement") return { ...v, ...marker, subject: this.withTrust(v.subject, v.subject.trust, privateMemory) };
+    if (v.kind === "credence" || v.kind === "decision") return { ...v, ...marker };
+    return { ...v, ...marker, trust } as Value;
   }
 
   private withIngress(v: Value, ingress: IngressProvenance): Value {

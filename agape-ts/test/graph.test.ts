@@ -159,10 +159,15 @@ prompt text request;
 enum Notice { Notify, Ignore }
 event Held(text reason);
 agent Notifier {
-  mem notes;
+  mem notes {
+    type text;
+    modality opaque;
+    scope project;
+    retention session;
+  }
   when (Prompt p about request) {
     notes <- p.text;
-    text past = notes -> "similar requests";
+    text[] past = notes -> "similar requests";
     emit Held("seen");
   }
   when (Held h) {
@@ -204,15 +209,21 @@ awake a;
   });
 });
 
-describe("graph: memory declared inside a live body", () => {
+describe("graph: qualified structural memory", () => {
   const g = graphOf(`
 enum Verdict { Grounded, Ungrounded }
 action Publish(text body);
 agent Librarian grants { perform Publish } {
+  mem notes {
+    type text;
+    modality opaque;
+    scope project;
+    retention session;
+  }
   on awake {
-    mem notes <- "alpha";
+    notes <- "alpha";
     notes <- "beta";
-    text context = notes -> "query";
+    text[] context = notes -> "query";
     text answer = self <- f"use \${context}";
     Credence<Verdict> c = self <- f"grounded: \${answer}";
     Decision<Verdict> d = decide c by confidence 0.8;
@@ -226,7 +237,7 @@ spawn Librarian lib;
 awake lib;
 `);
 
-  it("does not misdraw body-local mem writes as unresolved sends", () => {
+  it("does not misdraw qualified memory writes as unresolved sends", () => {
     expect(node(g, "mem:lib/notes")?.kind).toBe("mem");
     expect(g.nodes.some((n) => n.id === "agent:?notes")).toBe(false);
     expect(edges(g, "store").length).toBe(2);

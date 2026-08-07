@@ -45,24 +45,30 @@ describe("Agape core certification suite", () => {
     try {
       await withAgapeRun(`
         agent A {
+          mem notes {
+            type text;
+            modality opaque;
+            scope project;
+            retention durable;
+          }
           on awake {
-            mem notes <- "remember that certification writes project markdown";
+            notes <- "remember that certification writes project markdown";
           }
         }
         spawn A a;
         awake a;
       `, {
         memoryRoot: dir,
-        manifest: { provider: { backend: "mock" }, memory: { driver: "markdown" } },
+        manifest: { provider: { backend: "mock" }, project: { name: "demo" }, memory: { driver: "markdown" } },
       }, (run) => {
         const internalized = requireEvent(run, "Internalized");
         const payload = assertPayloadObject(internalized);
-        expect(payload.policy).toMatchObject({ driver: "markdown", memory_runtime: "agape-default" });
+        expect(payload.policy).toMatchObject({ driver: "markdown", format: "markdown" });
       });
 
       await expect(readFile(join(dir, ".agape", "memory", "MEMORY.md"), "utf8"))
-        .resolves.toContain("default/a/notes");
-      await expect(readFile(join(dir, ".agape", "memory", "scopes", "default", "a", "notes.md"), "utf8"))
+        .resolves.toContain("demo/a/notes");
+      await expect(readFile(join(dir, ".agape", "memory", "scopes", "demo", "a", "notes.md"), "utf8"))
         .resolves.toContain("certification writes project markdown");
     } finally {
       await rm(dir, { recursive: true, force: true });

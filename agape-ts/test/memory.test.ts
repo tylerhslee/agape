@@ -16,9 +16,9 @@ import {
 } from "../src/memory.js";
 import { createMemoryDriver } from "../src/config.js";
 import { MarkdownMemoryDriver } from "../src/memory_markdown.js";
-import { MemoryRuntimeDriver } from "../src/memory_runtime.js";
 
 class RecordingMemory implements MemoryDriver {
+  readonly capabilities = { retentions: ["session"] as const };
   declared: MemoryScope[] = [];
   writes: MemoryWriteRequest[] = [];
   consults: MemoryConsultRequest[] = [];
@@ -35,7 +35,12 @@ class RecordingMemory implements MemoryDriver {
   async consult(req: MemoryConsultRequest): Promise<MemoryConsultResult> {
     this.consults.push(req);
     return {
-      hits: [{ id: "hit-1", memory: "from driver", score: 0.8 }],
+      hits: [{
+        id: "hit-1",
+        memory: "from driver",
+        score: 0.8,
+        value: { kind: "text", v: "from driver", trust: "settled" },
+      }],
       recalled: "from driver",
       candidates: [{ id: "hit-1", memory: "from driver", score: 0.8 }],
     };
@@ -51,9 +56,15 @@ describe("pluggable memory substrate", () => {
     const memory = new RecordingMemory();
     const program = parse(`
       agent A {
+        mem notes {
+          type text;
+          modality opaque;
+          scope project;
+          retention session;
+        }
         on awake {
-          mem notes <- "local write";
-          text got = notes -> "q";
+          notes <- "local write";
+          text[] got = notes -> "q";
           say(got);
         }
       }
@@ -63,9 +74,10 @@ describe("pluggable memory substrate", () => {
 
     const result = await run(program, { memory, manifest: { provider: { backend: "mock" }, project: { name: "demo" } } });
 
-    expect(result.stdout).toEqual(["from driver"]);
-    expect(memory.declared).toEqual([{ project: "demo", agent: "a", mem: "notes" }]);
-    expect(memory.writes[0]?.scope).toEqual({ project: "demo", agent: "a", mem: "notes" });
+    expect(result.stdout.join(" ")).toContain("from driver");
+    expect(memory.declared).toHaveLength(2);
+    expect(memory.declared.every((scope) => scope.project === "demo" && scope.agent === "a" && scope.mem === "notes")).toBe(true);
+    expect(memory.writes[0]?.scope).toMatchObject({ project: "demo", agent: "a", mem: "notes" });
     expect(memory.consults[0]?.query).toBe("q");
     const internalized = result.ledger.events.find((e) => e.etype === "Internalized");
     expect((internalized?.payload as any)?.refs?.driver_event).toBe("driver-write-1");
@@ -173,18 +185,23 @@ describe("markdown memory adapter", () => {
     }
   });
 
-  it("wraps the default configured markdown substrate with the Agape memory runtime", () => {
+  it("returns the configured markdown substrate without implicit cognition wrappers", () => {
     const memory = createMemoryDriver({ provider: { backend: "mock" }, memory: { driver: "markdown" } });
-    expect(memory).toBeInstanceOf(MemoryRuntimeDriver);
-    expect((memory as MemoryRuntimeDriver).substrate).toBeInstanceOf(MarkdownMemoryDriver);
+    expect(memory).toBeInstanceOf(MarkdownMemoryDriver);
   });
   it("uses project-rooted markdown memory when configured for raw run()", async () => {
     const dir = await mkdtemp(join(tmpdir(), "agape-run-md-memory-"));
     try {
       const program = parse(`
         agent A {
+          mem notes {
+            type text;
+            modality opaque;
+            scope project;
+            retention durable;
+          }
           on awake {
-            mem notes <- "default markdown write";
+            notes <- "default markdown write";
           }
         }
         spawn A a;
@@ -243,11 +260,11 @@ describe("markdown memory adapter", () => {
   });
 });
 
-describe("default memory runtime", () => {
-  it("classifies useful memories and suppresses obvious duplicate writes", async () => {
+describe("direct configured memory substrate", () => {
+  it("preserves every explicit write without hidden classification or deduplication", async () => {
     const dir = await mkdtemp(join(tmpdir(), "agape-runtime-memory-"));
     try {
-      const runtime = new MemoryRuntimeDriver(new MarkdownMemoryDriver({ path: dir, top_k: 10 }));
+      const driver = new MarkdownMemoryDriver({ path: dir, top_k: 10 });
       const scope = { project: "league", agent: "advisor", mem: "notes" };
       const write: MemoryWriteRequest = {
         scope,
@@ -257,13 +274,13 @@ describe("default memory runtime", () => {
         metadata: { source: "store" },
       };
 
-      const first = await runtime.internalize(write);
-      const second = await runtime.internalize(write);
-      const consulted = await runtime.consult({ scope, query: "waiver advice risk preference", topK: 1 });
+      const first = await driver.internalize(write);
+      const second = await driver.internalize(write);
+      const consulted = await driver.consult({ scope, query: "waiver advice risk preference", topK: 1 });
 
       expect(first.status).toBe("APPENDED");
-      expect(second.status).toBe("DEDUPED");
-      expect(consulted.hits[0]?.metadata).toMatchObject({ memory_kind: "preference" });
+      expect(second.status).toBe("APPENDED");
+      expect(consulted.hits[0]?.metadata).not.toHaveProperty("memory_kind");
       expect(consulted.recalled).toContain("conservative waiver advice");
       expect(consulted.recalled).not.toContain("```json");
     } finally {
@@ -271,11 +288,11 @@ describe("default memory runtime", () => {
     }
   });
 
-  it("treats every runtime internalize call as an explicit write regardless of source label", async () => {
+  it("treats every driver internalize call as an explicit write regardless of source label", async () => {
     const dir = await mkdtemp(join(tmpdir(), "agape-runtime-memory-"));
     try {
-      const runtime = new MemoryRuntimeDriver(new MarkdownMemoryDriver({ path: dir }));
-      const receipt = await runtime.internalize({
+      const driver = new MarkdownMemoryDriver({ path: dir });
+      const receipt = await driver.internalize({
         scope: { project: "demo", agent: "a", mem: "notes" },
         value: { kind: "text", v: "ok", trust: "raw" },
         memory: "ok",
