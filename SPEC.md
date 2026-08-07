@@ -165,7 +165,7 @@ Trust records a value's cognition-provenance. Agape uses three levels (§13, §1
 - **graded** — the credence tier: a quantified judgment, a `Credence<E>` (a
 constrained distribution over a closed enum's variants, §3). More structured than **raw**
 — the model has been forced to commit to a fixed set of outcomes — but not yet
-committed by a gate. Recalled memory also defaults to **graded** (§10).
+committed by a gate. Recalled memory is always deeply **raw** (§10).
 - **settled** — a value carrying no un-endorsed cognition: a sealed `Decision`, an
 `Endorsement` of an exact subject value, a constant, or external data at an ingress
 boundary (`prompt`, sensor, or wired result-event payload, §5b, §6b).
@@ -222,6 +222,7 @@ judgment trust (§13).
 | `endorse memo by d`                  | no¹    | `settled`            | joins subject      | single    | `Endorsement<text>` |
 | `alice decide c by r`                | yes    | `settled`            | joins inputs       | 1 or 2¹   | `Decision<Verdict>` |
 | `Credence<E> c = peer <- "…?"`       | yes    | `graded`             | joins prompt expr  | lifecycle | `Credence<E>`    |
+| `T[] hits = m -> "…"`                 | yes    | `raw`                | joins query expr   | single    | `T[]`            |
 | `perform Search(q) expires 5` (wired, §6b) | yes | `settled` (⊔ args) | external unless screened | act+pair+result | `text` |
 | `double(3)` (pure)                   | no     | `settled`            | `internal`         | no        | `int`            |
 
@@ -278,7 +279,7 @@ values and instances are lowercase.
 - **Operators (multi-char first):** `<-  ->  |>  &&  ||  >=  <=  ==  !=  { } ( ) [ ] ; , . : =
   +  -  *  /  <  >  !`
 - **The two arrows:** `<-` is the one communication/write arrow (send a message, write a
-  `mem`, §6, §10); `->` is the memory-recall operator (`mem -> "query"`, §10). `->` is **not**
+  `mem`, §6, §10); `->` is the memory-recall operator (`NAME -> "query"`, §10). `->` is **not**
   a `LexError` — it lexes as an operator, and the checker rejects it on a non-`mem` left-hand
   side as a `TypeError` (§10).
 
@@ -294,7 +295,7 @@ principal                                 // accountable identity (§3, §13)
 when if else return                       // control / reactive
 decide endorse perform emit               // gate collapse / subject endorsement / action perform / event emit
 select from where                         // the ledger query (§10)
-mem forget                                // private-memory handle + seams (§10): `mem m <- v` / `m -> q` / `forget m`
+mem forget                                // private-memory declaration + seams (§10): `mem m { ... }` / `m <- v` / `m -> q` / `forget m`
 quorum independent dependent              // graded fusion + dependence declaration (§12)
 task complete fail cancel                 // delegation: the task literal + task verbs (§6c)
 true false abstained                      // bool literals + the abstained-decision sentinel (§3, §13)
@@ -311,7 +312,10 @@ ordinary identifiers, and a declaration may not use one where it would collide w
 (query projection), `expires` (send-lifetime clause, §6; also the `perform`-binding lifetime, §6b),
 `confidence` / `margin` / `conformal` /
 `floor` / `readiness` (rule clauses, recognized positionally after `by`, §13), `objective` /
-`acceptance` / `scope` (task-literal clauses, recognized only inside `task { … }`, §6c). `Error` (a prelude
+`acceptance` / `scope` (task-literal clauses, recognized only inside `task { … }`, §6c),
+`type` / `modality` / `scope` / `retention` (memory-descriptor clauses, recognized only
+inside `mem NAME { … }`), and `opaque` / `episodic` / `semantic` / `project` / `user` /
+`session` / `durable` (closed clause values in a memory descriptor). `Error` (a prelude
 identifier) doubles as the only permitted user-event supertype in `event Foo(..) : Error;` (§9).
 
 **Prelude identifiers** (selected; the full set is defined in §9, not the grammar): the types
@@ -332,10 +336,17 @@ and the explicit terminator:
 ```agape
 // a line comment; every statement ends in ;
 agent Notes {
+  mem log {
+    type text;
+    modality opaque;
+    scope project;
+    retention session;
+  }
+
   on awake {
-    mem log <- "the first note";                     // <- writes into a mem region
-    text hit = log -> "what was noted?";             // -> recalls (always tainted)
-    Credence<bool> b = self <- f"useful? ${hit}";    // an f-string interpolates ${expr}
+    log <- "the first note";                         // <- writes into the declared region
+    text[] hits = log -> "what was noted?";           // -> recalls typed, tainted values
+    Credence<bool> b = self <- f"useful? ${hits}";   // cognition remains an explicit send
     Decision<bool> d = decide b by confidence 0.75;  // Number literals: 0.75, 42
     if (d.committed == true) { say("kept"); } else { say("dropped"); }
   }
@@ -1305,7 +1316,7 @@ spawn Auditor a; awake a;
 ```
 
 `**say(x)`** prints its argument; it is not a ledger operation. Private-memory internalization is
-spelled with the memory write seam, `mem <- value` (§10), not a prelude `store()` call.
+spelled with the memory write seam, `NAME <- value` (§10), not a prelude `store()` call.
 
 ---
 
@@ -1329,31 +1340,120 @@ usable state. Archival blob storage is runtime-configured and durable: `refs` in
 or `Forgotten` payload point to recoverable blob bytes by hash, even if a runtime later moves old
 bytes to cold storage.
 
-### The `mem` handle — store, recall, forget
+### The `mem` handle — declare, store, recall, forget
 
-A `mem` is a handle into an agent's private memory. Its surface is two seams plus a tombstone:
+A `mem` is a statically qualified handle into an agent's private memory. Every
+declaration names the accepted payload type, storage modality, authenticated scope,
+and retention class:
 
 ```agape
-mem notes <- "nothing published yet";            // declare + store
-notes <- "the earth is an oblate spheroid";      // STORE more into the region (`<-`)
-text t = notes -> "what shape is earth?";        // RECALL (`->`) — ALWAYS tainted
-forget notes;                                    // audit-preserving tombstone
+agent Chatbot {
+  mem episodes {
+    type VerificationOutcome;
+    modality episodic;
+    scope project, user;
+    retention durable;
+  }
+
+  when (VerificationCompleted completed) {
+    episodes <- completed.outcome;                  // STORE (`<-`)
+    VerificationOutcome[] hits =
+      episodes -> "recent rejected drafts";       // typed, deeply tainted recall
+    text summary = self <- f"Summarize: ${hits}";  // cognition is an explicit send
+  }
+}
 ```
 
-- `**mem NAME [<- EXPR];**` declares a private-memory handle, optionally initializing it; the handle
-  has type `mem`.
+- `**mem NAME { type TYPE; modality MODALITY; scope SCOPE[, SCOPE]*;
+  retention RETENTION; }**` declares a private-memory handle. The four named
+  clauses are required exactly once. Clause order is not significant; the order
+  above is canonical. A descriptor is a direct structural member of an agent body,
+  appears exactly once per handle name in that agent, and is not legal at top level
+  or inside a constructor, handler, function, branch, or retry block. A declaration
+  performs no read or write.
 - `**NAME <- EXPR**` (an established `mem` on the left) **stores**: it internalizes the value across
-  the region's live views. The same `<-` arrow as a send, disambiguated by the left-hand type — an
+  the region's live views. `EXPR` must be assignable to the declaration's `TYPE`.
+  The same `<-` arrow as a send is disambiguated by the left-hand type — an
   *agent* on the left thinks (provider), a *mem* on the left stores. If the expression is bound, it
   returns a `LedgerEntry<Internalized>` receipt.
-- `**NAME -> "query"**` **recalls**: a cognition-mediated retrieval that draws across canonical cells and all available materialized views
-  and fuses them. `->` requires a `mem` on the left; `->` on any non-`mem` left-hand side (e.g.
+- `**NAME -> "query"**` **recalls** the deterministically ranked canonical
+  matches as `TYPE[]`, where `TYPE` is the region's declared payload type.
+  It does not invoke cognition or synthesize prose. `->` requires a `mem` on
+  the left; `->` on any non-`mem` left-hand side (for example
   `self -> "x"`) is a **`TypeError`**.
 - `**forget NAME;**` removes the region's active private-memory data by the runtime's cascade policy
   and appends a `Forgotten` event. The live fact/graph/vector views stop returning the forgotten data;
   the historical ledger record remains. If a runtime tombstones rather than deletes a modality, the
   `Forgotten` payload must say `tombstoned`, not `deleted`. `redact` is a separate operation, not the
   default `forget`.
+
+A descriptor survives `forget`. Forget resolves the current authenticated scope
+tuple, closes only that tuple's current monotonically identified generation, and
+leaves other tuples unchanged. A later store through the same handle and tuple starts
+the next generation. Recall of a forgotten tuple returns `[]` until that store
+succeeds. Every tuple begins with an open generation `0`, even before its first
+store. Forgetting an empty open generation closes it and appends a truthful no-effect
+`Forgotten` receipt. Forgetting an already closed generation is also idempotent: it
+appends a receipt marked `already_forgotten` without changing the generation. The
+next successful store opens exactly the next generation.
+
+The accepted modality vocabulary is closed:
+
+- `**episodic**` retains each successful write as an independently addressable,
+  ordered episode with its origin. It does not collapse distinct origins into one
+  canonical episode.
+- `**semantic**` retains typed knowledge cells for semantic retrieval and explicit
+  derivation. A driver may index or deduplicate an identical typed value, but must
+  report that operation truthfully and preserve every origin that supports the cell.
+- `**opaque**` retains the exact typed value without episodic or semantic
+  interpretation and is not eligible for a modality-specific consolidation policy.
+
+Every modality preserves the exact evaluated typed value in its canonical cell.
+Generated prose, embeddings, chunks, summaries, or indexes are projections and may
+not replace that value. Modality never causes implicit storage, recall, instruction
+injection, authority, or behavior change. Identifiers such as `profile` and
+`episodes` have no intrinsic behavior.
+
+The accepted scope vocabulary is `**project**` and `**user**`. The listed scopes are
+additional dimensions of the owning concrete agent instance; they never replace
+agent-instance isolation. `project` binds to the authenticated project identity of
+the runtime session. `user` binds to the verified application-user subject in the
+host-owned invocation context κ. A declared Agape `Principal` or a prompt attester
+does not become that user unless the host identity seam verifies the same subject.
+Sends, emitted events, delegated tasks, and retries propagate κ only through
+runtime-authenticated correlation metadata; copying an identity into an ordinary
+payload does not propagate it. User-supplied text and editable memory metadata cannot
+establish either binding. A missing identity capability for a declared scope is a
+`ConfigError` before execution. An operation whose κ lacks a required subject is an
+auditable authority fault: it performs no driver access or memory mutation and the
+ordinary `AgentCrashed` path records the failed invocation. Multiple scope names form
+one tuple and recall matches the entire tuple. A scope name may appear only once.
+
+The accepted retention vocabulary is `**session**` and `**durable**`. `session`
+keeps explicit-memory cells only for the lifetime of the runtime session. `durable`
+requires cells to survive successful close and restart. The configured driver must
+advertise every retention used by the program before execution. `local` and `mock`
+advertise `session` only. `markdown` advertises `durable` plus a separate
+in-process `session` tier that never writes to disk and clears on close. A program
+mixing retention classes requires one configured driver that advertises both; an
+unsatisfied declaration is a `ConfigError`. Both classes use explicit operations and
+ledger receipts. Neither is working memory: agent fields, local variables, mailboxes,
+pending tasks, and provider-turn context remain ordinary agent/session state.
+`working` is not a memory modality.
+
+`TYPE` governs both stores and recall. It must be a persistable scalar
+(`int`, `float`, `bool`, `text`, or `null`), enum, struct, or array whose
+elements and fields are persistable. Agent references, `Principal`, `mem`,
+`Task<T>`, `Credence<T>`, `Decision<T>`, `Endorsement<T>`,
+`LedgerEntry<T>`, rules, events, actions, receipts, and other capability or
+authority-bearing values are not persistable memory payload types. Canonical storage
+contains the declared schema plus a reversible encoding that decodes to the exact
+evaluated `TYPE` value; preserving source-literal spelling is not required.
+
+The legacy declarations `mem NAME;` and `mem NAME <- EXPR;` are diagnostic forms,
+not qualified memory declarations. A checker reports `TypeError` with the migration
+form `mem NAME { type TYPE; modality MODALITY; scope SCOPE; retention RETENTION; }`.
+`mem<T>` is not Agape syntax.
 
 An `Internalized` payload contains no plaintext memory value. For an explicit
 source store it records a protected value hash/ref, the memory region, source operation,
@@ -1363,13 +1463,22 @@ store operation and the driver effects it materialized.
 
 ### A recall is ALWAYS tainted
 
-A recall is taint-equivalent to a send reply (`->` on the trust axis behaves exactly like `<-`): the
-result is `graded` when bound to a `Credence<E>` slot, else `raw` `text`. Memory is **agentic** — it
-stores anything, and nothing leaves it `settled`, so there is no laundering path: a recalled value
-must be **re-decided and endorsed** before it reaches a consequential sink. This reuses the §13
-send-taint rule wholesale; there is no store-side trust enforcement. Because memory quality bears only
-on usefulness and never on safety (a recall is re-gated regardless), the runtime is free to tune the
-substrate — backends, chunking, fidelity, budget (§16.7) — without affecting any guarantee.
+A recall returns `TYPE[]`. A miss returns an empty array and does not call a
+provider. Multiple hits are ordered by descending recorded retrieval score, then by
+ascending canonical cell id under bytewise comparison; the returned array and the
+`MemoryConsulted` receipt use the same order. Source recall returns at most the
+`[memory].top_k` final hit cap (§17); a host `memory.context` request may ask for a
+smaller cap but never a larger one. The retrieval algorithm, version, and effective
+cap are part of the replay identity.
+
+Every returned element is a freshly decoded clone of its canonical value with trust
+recursively set to `raw` at the container, field, and leaf levels and with its origin
+reference preserved. The array itself is raw. Direct assignment of recall to `text`,
+`Credence<E>`, or any type other than `TYPE[]` is a `TypeError`.
+Summarization, fusion, or judgment requires an explicit subsequent send containing
+the recalled values. That send uses the ordinary taint, schema, gate, endorsement,
+and replay rules. Recall never restores persisted authority because authority-bearing
+payload types cannot be declared.
 
 ### The ledger is not memory
 
@@ -1541,7 +1650,7 @@ A value's trust records its cognition-provenance: `settled ⊑ graded ⊑ raw` (
 
 - a bare send reply, before it is bound to a `Credence`, → `raw`.
 - a send bound to a `Credence<E>` slot → `graded` (a graded judgment), for any destination; a
-recalled memory value is always tainted (`graded`/`raw`, §10).
+recalled memory value is always deeply `raw` (§10).
 - `decide c by r` → a sealed `Decision<E>` carrying `.decision_id`, `.committed` (a variant of `E`,
 or `abstained`), `.basis`, and `.margin`, with a `Decided(...)` ledger record. A `Decision` guides
 branching but is not itself an endorsed subject.
@@ -1926,7 +2035,8 @@ query; multi-handler firing is registration-order; a message trace is a prefix o
 (`TaskCompleted`/`TaskFailed`/`TaskCancelled`/`Expired`, §6c) and a late `complete`/`fail`
 after a tombstone is refused (`CompletionRefused`); every explicit memory write carries a
 provenance backpointer, memory is isolated by agent instance, and recalled values remain tainted
-(§16.7); all three dependencies journal their oracle results to the ledger for replay
+(§16.7); the four declared nondeterministic dependencies—provider, identity,
+world, and memory—journal their results to the private recording for replay
 (§15.4.2); replay re-serves recorded dependency results and never re-invokes a wired
 effector; the margin floor `m`
 is enforced at the consequential sink.
@@ -1981,8 +2091,9 @@ reach a declared dependency, such as a principal-prefixed `p decide c by r`; a r
 - `Endorsement<T>` is the first-class recorded proof that a decision was applied to an exact
 subject value; it is the proof object checked at consequential sinks.
 - Authority is a property of the agent context (its `grants`).
-- The three external dependencies (provider, identity, world) are the only sources of dynamic
-non-determinism, modeled as oracle relations (§15.4.2).
+- The four external dependencies (provider, identity, world, and memory) are the only sources of
+dynamic non-determinism, modeled as journaled oracle relations (§15.4.2). A memory recall reaches
+the memory dependency but never reaches the provider implicitly.
 
 ## 15.1 Notation
 
@@ -2018,11 +2129,12 @@ config     ::= "{" directive* "}"                             // colon-free `key
 directive  ::= Ident operand*
 operand    ::= Ident | String | Int | Float
 params     ::= "(" (type Ident ("," type Ident)*)? ")"
-abody      ::= extend | on | stmt
+abody      ::= extend | on | memdecl | stmt
 extend     ::= "extend" Ident args ";"
 on         ::= "on" ("awake"|"sleep"|"crash"|"assigned"|"cancelled") block    // task hooks are `when` sugar (§6c)
 
-type       ::= "int"|"float"|"bool"|"text"|"null" | "event" "<" type ">"
+type       ::= typebase ("[" "]")*                   // suffix arrays; T[] is canonical
+typebase   ::= "int"|"float"|"bool"|"text"|"null" | "event" "<" type ">"
              | "array" "<" type ">"                     // collection (query results, fan-out source)
              | "Credence" "<" type ">"                  // graded judgment over enum
              | "Decision" "<" type ">"                  // a gate's committed outcome
@@ -2031,7 +2143,7 @@ type       ::= "int"|"float"|"bool"|"text"|"null" | "event" "<" type ">"
              | Ident                                     // enum/struct/agent/action names, incl. Principal, mem
 
 stmt       ::= vardecl | assign | spawn | prompt | principal | depdecl
-             | instruction | memdecl | forget            // system prompt (§5); private-memory handle + tombstone (§10)
+             | instruction | forget | legacy_memdecl     // system prompt; memory migration/tombstone (§5, §10)
              | "awake" Ident ";" | "sleep" Ident ";"
              | "emit" Ident "(" [expr ("," expr)*] ")" ";"     // plain event; args match fields positionally
              | "perform" qname "(" [expr ("," expr)*] ")" ";"  // user or reserved action; args match fields positionally
@@ -2049,8 +2161,13 @@ spawn      ::= "spawn" Ident Ident args? ";"            // statement sugar: allo
 spawnexpr  ::= "spawn" Ident args?                         // allocate + construct, yield typed reference
 prompt     ::= "prompt" type Ident ";"
 instruction ::= "instruction" String ";"                // compile-time system prompt; global or agent-scoped (§5)
-memdecl    ::= "mem" Ident ("<-" expr)? ";"             // declare a private-memory handle, optionally initialized (§10)
-forget     ::= "forget" Ident ";"                       // tombstone a `mem` handle; consumes it (§10)
+memdecl    ::= "mem" Ident "{" memclause* "}"           // structural agent-body region descriptor (§10)
+memclause  ::= "type" type ";"
+             | "modality" Ident ";"
+             | "scope" Ident ("," Ident)* ";"
+             | "retention" Ident ";"
+legacy_memdecl ::= "mem" Ident ("<-" expr)? ";"            // diagnostic production only: TypeError (§10)
+forget     ::= "forget" Ident ";"                       // tombstone current scope generation; descriptor remains (§10)
 principal  ::= "principal" Ident config? ";"            // identity backend binds principal names
 depdecl    ::= ("independent"|"dependent") Ident ("," Ident)* ";"
 when       ::= "when" "(" type Ident? ("about" expr)? ")" ("if" "(" expr ")")? block
@@ -2152,9 +2269,23 @@ result_event(A) = E from reserved prelude mapping or manifest    Γ ⊢ n : Int 
 ────────────────────────────────────────────  (T-Decide-Governed / GATE, async)
 Γ ⊢ p decide e about Q(req) by r : Decision<E> ! A · settled
 
-Γ ⊢ m : mem    Γ ⊢ q : Text ! c_q · t_q · ι_q
-────────────────────────────────────────────  (T-Recall)
-Γ ⊢ m -> q : T_reply ! A · raw · ι_q      // graded when context-bound to Credence<E>
+complete(D)    closed_values(D)    unique_clauses_and_scopes(D)
+persistable(D.type)    m fresh in direct agent body
+────────────────────────────────────────────  (T-Mem-Decl)
+Γ ⊢ mem m { D } ok    Γ' = Γ[m ↦ Mem<D.type,D.modality,D.scopes,D.retention>]
+
+Γ(m) = Mem<T,modality,scopes,retention>    persistable(T)
+Γ ⊢ v : T ! c_v · t_v · ι_v
+────────────────────────────────────────────  (T-Mem-Store)
+Γ ⊢ m <- v : LedgerEntry<Internalized> ! A · settled · ι_v
+
+Γ(m) = Mem<T,modality,scopes,retention>    Γ ⊢ q : text ! c_q · t_q · ι_q
+────────────────────────────────────────────  (T-Mem-Recall)
+Γ ⊢ m -> q : T[] ! A · raw · ι_q
+
+Γ(m) = Mem<T,modality,scopes,retention>
+────────────────────────────────────────────  (T-Mem-Forget)
+Γ ⊢ forget m; ok ! A
 
 Γ ⊢ a : T · _ · ι_a    Γ ⊢ d : Decision<E> · settled    a ∈ scope(d)    committed-narrowed(d)
 ────────────────────────────────────────────  (T-Endorse / GATE)
@@ -2186,8 +2317,8 @@ its agent-template type is expected (including arrays and fan-out).
 `T-Decide-Governed` rejects a missing principal prefix, zero or multiple `about` clauses, an
 unknown/non-governable qname, wrong request type, non-settled request, or configured-principal
 mismatch. The request expression is evaluated exactly once and its typed value, qname, and canonical
-hash enter the pending request; later substitution is impossible. `T-Recall` is an async provider
-judgment over the retrieved packet and query, not a query-only classifier (§16.7).
+hash enter the pending request; later substitution is impossible. `T-Mem-Recall` is an async
+memory-dependency operation returning deeply raw `T[]`; it performs no provider call or cognition (§16.7).
 
 The GATE rules (`T-Decide`, `T-Decide-Principal`, `T-Decide-Governed`) are the only routes from `Credence` to `Decision`;
 `T-Endorse` is the only route from a `Decision` to a settled `Endorsement` of a subject, and is
@@ -2437,17 +2568,55 @@ Sent(corr) ∈ S   ¬Delivered(corr)   lifetime(corr) elapsed
 ⟨…|S| … ⟩ → ⟨…| append(S, Expired(corr)) | … ⟩
 
 // STORE - explicit source operation; commit only actual canonical cells/materialized views:
-(mu',effects,refs) = prepare_internalize(mu,m,protected(v))
-ir = Internalized({write_source:explicit_store,value_hash:H(v),
-                   value_ref:protected_ref(v),effects,refs})
+κ resolves scopes(m)
+generation = writable_generation(mu,m,κ)  // current open generation, or next after a closed one
+origin = operation_origin(invocation_correlation,evaluation_ordinal)
+op = operation_id(site,m,κ,generation,origin,H(schema(T)),H(v))
+(stage,effects,refs) = prepare_internalize(mu,m,κ,op,descriptor(m),encode_exact_T(v))
+ir = Internalized({write_source:explicit_store,operation_id:op,generation,
+                   descriptor_hash:H(descriptor(m)),schema_hash:H(schema(T)),
+                   scope_hash:H(κ|scopes(m)),value_hash:H(v),value_ref:protected_ref(v),effects,refs})
+(mu',S') = commit_memory_transaction(mu,S,stage,ir)
 -------------------------------------------------------------  (E-Store)
-<...|mu|S|m <- v> -> atomic<...|mu'|append(S,ir)>
+<...|κ|mu|S|m <- v> -> <...|κ|mu'|S'>
 
-prepare_internalize fails(reason)
+prepare_internalize or commit_memory_transaction fails before ledger commit (reason)
 -------------------------------------------------------------  (E-Store-Failure)
-<...|mu|S|m <- v> -> fault
+<...|mu|S|m <- v> -> fault(reason)
 // Failure commits no cell, delta, ref, or Internalized. Non-materialized facts/graph/chunks/embeddings
 // report zero; a successful receipt reports only before/after effects that actually committed.
+
+κ resolves scopes(m)    consult(mu,m,κ,q,cap) = ranked[(id,score,encoded,origin)]
+ordered = sort(ranked, score descending, id bytewise ascending)
+vals = deep_raw(decode_exact_T(ordered))
+mc = MemoryConsulted({region:m,generation,descriptor_hash,schema_hash,scope_hash:H(κ|scopes(m)),
+                      query_hash:H(q),cap,hit_ids,hit_hashes,scores,origins})
+-------------------------------------------------------------  (E-Mem-Recall)
+<...|κ|mu|S|m -> q> -> <...|κ|mu|append(S,mc)|vals>
+// A miss uses ranked=[] and vals=[]; consultation invokes no provider.
+
+κ resolves scopes(m)    generation_state(mu,m,κ)=(current_generation,status)
+origin = operation_origin(invocation_correlation,evaluation_ordinal)
+op = operation_id(site,m,κ,current_generation,origin,"forget")
+prepare_forget(mu,m,κ,op,current_generation,status)=(stage,effects,refs,already_forgotten)
+fr = Forgotten({region:m,operation_id:op,generation:current_generation,scope_hash:H(κ|scopes(m)),
+                effects,refs,already_forgotten})
+(mu',S') = commit_memory_transaction(mu,S,stage,fr)
+-------------------------------------------------------------  (E-Mem-Forget)
+<...|κ|mu|S|forget m> -> <...|κ|mu'|S'>
+// The descriptor remains. Empty/already-closed generations produce the §10 idempotent receipt.
+// The next successful store for the tuple uses generation+1.
+
+scope_resolution(κ,m) fails(reason)
+-------------------------------------------------------------  (E-Mem-Scope-Failure)
+<...|κ|mu|S|memory_operation(m)> -> <...|κ|mu|S|fault(reason)>
+// No driver access or memory mutation occurs.
+
+driver operation fails before ledger commit (reason)
+-------------------------------------------------------------  (E-Memory-Driver-Failure)
+<...|κ|mu|S|memory_operation(m)> -> <...|κ|mu|S|fault(reason)>
+// No Internalized, MemoryConsulted, or Forgotten success receipt is appended.
+// The ordinary crash rule appends the single AgentCrashed row for either fault.
 
 // EMIT:
 ─────────────────────────────────────────────────────────────  (E-Emit)
@@ -2506,7 +2675,7 @@ For a terminal ledger `S`, the observable outcome `obs(S)` is the subsequence of
 events: performed actions, decisions (`Decided`), subject endorsements (`Endorsed`), principal
 decisions (`PrincipalDecision`/`FailedPrincipalDecision`), `Contradiction`s, wired-effector results, and top-level
 bindings of bounded type. It excludes the incidental trace: send `Resolved` reply payloads
-(the wording), `say` output, internalized memory text, the `ToolStarted`/`ToolResolved`
+(the wording), `say` output, private internalized memory values, the `ToolStarted`/`ToolResolved`
 replay-journal pair (§6b), tainted result-event
 payloads not yet gated, graded `Credence` distributions no gate committed, and raw
 raw typed replies that never reach a committed event.
@@ -2774,9 +2943,18 @@ assigned, monotonic, gap-free (§7).
 
 A spawned agent receives an addressable instance reference. Sleep, re-awake, and a
 contained crash preserve that instance's ordinary state; a later spawn allocates a
-new instance. The core language requires private-memory isolation when memory is
-used, but does not prescribe durable runtime ids, migration, import, leases, or
-storage path encodings in this beta. Those are future runtime-extension concerns.
+new instance. Each runtime session belongs to a host-authenticated session lineage.
+An agent's stable instance id is the domain-separated hash of the project subject,
+session-lineage id, and its recorded `Spawned` tick. That id is part of every
+qualified memory key and replay identity; it is never derived from an editable name.
+
+A fresh session lineage allocates fresh instances. An explicit resume restores the
+ledger, agent references/state, spawn-tick allocation, and lineage id from one
+authenticated runtime snapshot, so restored agents retain the same stable instance
+ids and can address their durable regions. Session-retained regions additionally key
+on the current `sessionId` and are empty after close or restart; durable regions do
+not. A runtime that advertises `durable` must support authenticated snapshot resume
+or an equivalent host mapping that restores the exact stable instance ids. Storage
 
 ### 16.2 The ledger journal — serialization, hashing, ticks
 
@@ -2865,11 +3043,14 @@ A task-send routes like any send; what changes is who resolves it and what lands
 - **Status projection.** "One status per task" is a ledger projection — a `select … from ledger`
   fold over the correlation — maintained like any projection (§16.7a), never a stored event.
 
-### 16.4 The seam protocol - provider, identity, world
+### 16.4 The seam protocol - provider, identity, world, memory
 
 External provider, identity, and world calls are ordinary journaled oracles. Each
 call appends its normal opening event, invokes the configured seam, journals the
 result needed to replay it, and appends its closing event.
+Memory is the fourth external dependency. Read-only consultations use the same
+journal/replay discipline; mutating operations additionally use the recoverable
+transaction protocol in §16.7.
 
 - A typed provider reply must conform to its declared schema. A Credence reply
   records the connector method and the truthful normalized gate scores used by
@@ -2887,10 +3068,18 @@ result needed to replay it, and appends its closing event.
 
 A recording journals oracle results and nondeterministic external inputs in issue
 order. Given the same source, configuration, and recording, replay serves each
-provider, identity, and world result from the journal without invoking an external
-seam and regenerates the identical ledger and chain head. Memory and Studio
-calibration profiles include the additional recording material declared by their
-advertised capabilities.
+provider, identity, world, and memory result from the journal without invoking an
+external seam and regenerates the identical ledger and chain head.
+
+For memory, the private recording contains the resolved-scope hash, request and
+operation ids, descriptor and schema hashes, ordered exact typed recall envelopes,
+retrieval scores and origin refs, and write/forget driver acknowledgements. Public
+ledger receipts remain plaintext-free. Replay performs no external memory-driver or
+provider call for recall, does not mutate live durable memory, and returns the
+journaled arrays and acknowledgements in their recorded order. Rebuilding a memory
+substrate is a separate explicit operation that applies recorded mutations
+idempotently to a clean driver. Studio calibration profiles include any additional
+recording material declared by their advertised capabilities.
 
 ### 16.6 Fault and recovery
 
@@ -2932,29 +3121,59 @@ Every runtime session is constructed with a memory driver supplied by the manife
 `ConfigError`. Each agent instance has an isolated private-memory scope, and a source `mem`
 handle names a region in that scope. Memory consultation, write evaluation, internalization,
 and forgetting occur only when source or the host explicitly invokes the corresponding operation.
+Before execution the driver advertises supported modalities, retentions, authenticated
+scope dimensions, reversible exact-value encoding, and idempotent mutation/reconciliation.
+Every structural descriptor and its recursively resolved schema are hashed into the
+program identity; an unsupported capability or incompatible durable schema is a
+`ConfigError`, never a best-effort downgrade.
 
-When source executes `mem <- value`, the runtime commits the configured canonical
+Every memory operation carries a deterministic operation id, descriptor/schema hash,
+resolved-scope hash, and generation. A mutating operation id also includes an
+operation origin derived from the authenticated handler/top-level invocation
+correlation and that invocation's source-evaluation ordinal. Distinct evaluations at
+the same source site therefore remain distinct episodic origins. An automatic
+transport retry or lost-ack reconciliation of one evaluation reuses its operation id.
+
+A mutating driver provides idempotent prepare/finalize/abort/status primitives, or an
+equivalent runtime-owned transactional adapter. Prepare durably stages an invisible
+mutation and returns immutable effects/refs. The runtime then appends the matching
+`Internalized` or `Forgotten` row as the commit decision, finalizes the staged
+mutation, and only then exposes it through the live projection or returns success.
+Failure before the ledger commit aborts the stage and commits no canonical cell,
+live projection change, or success receipt. After the ledger commit the operation is
+logically committed: a lost acknowledgement or interrupted finalization is not
+reported as a new failure and must be reconciled by operation id before recall,
+close, resume, or retry can proceed.
+
+When source executes `NAME <- value` for a declared memory handle, the runtime commits the configured canonical
 cell(s) and appends `Internalized`. Its public receipt identifies the owning agent
 address/instance where available, memory region, value hash/ref, source operation,
 actual modality effects, and resolvable substrate refs. Effects describe only state
 that actually changed. A markdown-only runtime, for example, reports no graph or
 embedding update it did not materialize.
 
-When source executes `mem -> query`, the runtime consults only that handle's
-instance-scoped cells and appends `MemoryConsulted` for that explicit recall. The
+When source executes `NAME -> query`, the runtime consults only that handle's
+instance-scoped cells and appends `MemoryConsulted` for that explicit recall. The returned typed array
 returned value remains tainted. A receipt may expose safe ids, hashes, scores, and
 origin refs; it must not make private plaintext public merely to satisfy an audit.
 
-When source executes `forget mem`, the runtime appends `Forgotten` and truthfully
+When source executes `forget NAME`, the runtime appends `Forgotten` and truthfully
 records its configured tombstone, archive, redaction, or deletion effects. Historical
 ledger evidence remains auditable. A memory driver must preserve isolation, taint,
 and any provenance it advertises across its own restart/recall/archive operations.
 
-A configured driver may offer explicit opt-in retrieval, reflection, compression,
-ranking, or episode-selection policies. Such policies must be named and auditable,
-and preserve source-defined authority and active behavior. Hand-edited memory bytes
-are external input unless a configured import protocol verifies them; copied metadata
-cannot authenticate an origin, correction, or authority.
+A configured driver may create named, auditable retrieval indexes and derived
+projections, but never replace or mutate the canonical typed value. Opaque memory
+receives no semantic classification, reflection, or content deduplication. Episodic
+writes are never content-deduplicated. Semantic memory may share one canonical cell
+only for exact schema-and-value equality while preserving and reporting every
+supporting origin; heuristic near-duplicate suppression is nonconformant.
+
+Hand-edited Markdown and other substrate bytes are external input until a configured
+import protocol validates their schema, value, scope, and provenance. Copied metadata
+cannot authenticate an origin, correction, or authority. Legacy prose/summary cells
+that lack a reversible canonical envelope produce a `ConfigError` with reason
+`memory migration required`; they are never silently promoted to exact typed memory.
 
 Memory guides cognition through recalled values. Recalled values remain tainted and
 pass through the ordinary decision, endorsement, and sink rules before consequential
@@ -3112,11 +3331,7 @@ advertised = []
 driver = "markdown"
 path = ".agape/memory"
 entrypoint = "MEMORY.md"
-classify = true
-dedupe = true
-dedupe_threshold = 0.9
 recall_pool = 40
-reflect = false
 archive_on_forget = true
 domain_terms = ["waiver", "roster"]
 ```
@@ -3282,53 +3497,51 @@ Memory bindings — substrate selection:
 
 - Every runtime session receives one memory driver through `[memory].driver` or explicit host
   injection (§16.7, §17.7). A missing or blank binding is a `ConfigError`.
-- `driver = "markdown"` selects scoped, user-editable markdown files under the project.
-  `driver = "local"` (alias `"mock"`) selects a process-local substrate for tests and replay
-  fixtures. An unrecognized driver is a `ConfigError`. Every driver preserves recalled-value taint
-  (§10).
+- Both standard drivers advertise the closed `opaque`, `episodic`, and `semantic`
+  modalities, the authenticated `project` and `user` scope dimensions, reversible
+  exact-value encoding, and the transaction/reconciliation protocol of §16.7.
+- `driver = "markdown"` selects a durable exact-value store with a derived Markdown
+  index/projection. Editing that projection does not edit canonical memory; imports use the
+  validated protocol of §16.7. It also provides an in-process session tier that never writes
+  to disk and clears on close. Durable use requires the resumable stable-instance contract
+  of §16.1a.
+- `driver = "local"` (alias `"mock"`) selects a process-local session-only substrate for
+  tests and replay fixtures; it rejects `retention durable`. An unrecognized driver is a
+  `ConfigError`. Every driver preserves deep recalled-value taint and advertises its
+  capabilities before execution (§10).
 
 Markdown-substrate keys (`driver = "markdown"`):
 
 - `path` (string, default `".agape/memory"`; accepted aliases `root`, `directory`) is the memory
   root. A relative path resolves against the project root; a leading `~` expands to the user home;
-  the placeholders `{project}`, `{agent}`, and `{mem}` substitute the sanitized scope segments.
+  the placeholders `{project}`, `{lineage}`, `{agent}`, `{mem}`, `{user}`, and
+  `{generation}` substitute domain-separated opaque hash segments, never raw authenticated
+  subjects. Regardless of the display path template, the canonical layout partitions by stable
+  agent instance, complete declared scope tuple, retention tier, and generation.
 - `entrypoint` (string, default `"MEMORY.md"`) names the index file at the memory root (a `.md`
   suffix is appended if missing).
 - `index_lines` (int, default 200, clamped 1–10000) and `index_bytes` (int, default 25600, clamped
   1024–10000000) budget how much of the entrypoint index a consult reads as recall candidates.
-- `top_k` (int, default 10, clamped 1–1000) is the substrate's default hit count when a consult does
-  not specify one. Through the composed memory runtime the recall depth is the runtime's own default
-  (10) — the runtime always specifies its pool size — so `top_k` matters only to hosts consulting
-  the substrate directly.
+- `top_k` (int, default 10, clamped 1–1000) is the normative final hit cap for source
+  recall and the maximum a host `memory.context` request may obtain. The exact returned
+  count may be lower because of a smaller host request, fewer matches, or isolation and
+  generation filtering.
 - `archive_on_forget` (bool, default `true`): `forget` copies the topic file's prior contents to
   `.archive/<scope>-<timestamp>.md` under the memory root before tombstoning; `false` discards
   without an archive. The `Forgotten` effects counters must report archived vs deleted accordingly
   (§10).
 
-Memory-runtime policy keys apply to explicit writes over every substrate:
+Memory retrieval policy keys apply to derived indexes only:
 
-- `classify` (bool, default `true`) classifies each explicitly stored cell into a kind
-  (`preference | fact | procedure | decision | interaction | note`) with tags and a signal score,
-  recorded in cell metadata and the receipt's `policy.classification`. `false` records kind
-  `note` with reason `classification_disabled`.
-- `dedupe` (bool, default `true`) and `dedupe_threshold` (float, default 0.9, clamped 0.5–1.0)
-  suppress near-duplicate explicit writes: the runtime consults the substrate and computes lexical
-  term-overlap similarity against the candidates; a qualifying hit records
-  `driver_status = "DEDUPED"` and refs `duplicate_of`/`duplicate_score`.
-- `recall_pool` (int, default 4× the requested depth, clamped to at least that depth and at most
-  5000) sizes the substrate over-fetch pool that recall re-ranks (query-term overlap, domain-term
-  match, kind match against the query's profile, a verbatim-query bonus, and an order tiebreak)
-  before trimming to the requested depth.
-- `domain_terms` (string array, or one comma-separated string) is domain vocabulary that expands
-  recall queries and boosts re-ranking.
-- `reflect` (bool, default `false`) opts in provider-assisted reflection: before a surviving episode
-  is stored, the session provider rewrites it as a short first-person memory; classification re-runs
-  on the reflected prose, and the cell metadata records `memory_reflection` and
-  `reflected_from_hash` (the raw episode's canonical hash) for provenance. The receipt's policy
-  records the outcome: `reflected`, `empty_fallback_raw` (the provider returned nothing — the raw
-  episode is stored), or `failed_fallback_raw` (the provider call failed — the raw episode is
-  stored). Reflection requires a provider handle; without one the write path is unchanged and the
-  deterministic recollection template is stored (§16.7).
+- `recall_pool` (int, default 4× `top_k`, clamped to at least `top_k` and at most 5000)
+  sizes the substrate over-fetch pool before deterministic final ordering and trimming.
+- `domain_terms` (string array, or one comma-separated string) expands queries and may affect
+  recorded retrieval score. The ranking algorithm and version are part of replay identity.
+
+No manifest key may classify, reflect, rewrite, or heuristically suppress an explicit
+canonical write. A program that wants a derived summary or judgment recalls typed
+values and performs an explicit agent send; storing that result is another explicit,
+typed memory operation.
 
 *Reserved substrate keys (non-normative).* `facts_driver`, `graph_driver`,
 `vector_driver`, `blob_store`, `indexing`, `background_reindex`,
@@ -3422,6 +3635,35 @@ supplying **tool handlers** to the session constructor, keyed by `[tools.*]` cat
 ```ts
 createSession(program, { manifest, toolHandlers: { web_search: async (call) => … } })
 ```
+
+A host also supplies the immutable identity context κ used by qualified memory
+scopes:
+
+```ts
+interface RuntimeIdentityContext {
+  projectSubject: string;      // stable verified deployment/project subject
+  sessionLineageId: string;    // stable only across authenticated snapshot resume
+  sessionId: string;           // runtime-issued; never prompt supplied
+  conversationId: string;      // propagation/audit correlation
+  user?: { issuer: string; subject: string; verified: true };
+}
+createSession(program, { manifest, runtimeIdentity: κ, resume, toolHandlers: { ... } })
+```
+
+The optional `resume` is an authenticated runtime snapshot bound to the program,
+manifest, ledger head, and session lineage (§16.1a). A restart supplies a fresh
+`sessionId`; it preserves `sessionLineageId` only when that snapshot is accepted.
+A fresh start supplies a new lineage.
+
+The host identity seam, not Agape source, constructs κ. Prompt text, attester labels,
+cookies exposed as ordinary data, editable metadata, remembered values, and API keys
+cannot establish its subjects. Ingress establishes κ; nested sends, emitted-event
+cascades, delegated/background tasks and their results, retries, and crash hooks
+inherit the initiating κ through runtime-only correlation metadata. A task retains
+that context after its submitting handler exits. Conflicting contexts fail closed.
+A declared user-scoped operation requires κ.user; the raw issuer/subject is not
+written to public ledger events, which identify only the missing or ambiguous scope
+dimension and a protected scope hash.
 
 A handler receives one call context and returns the effector's reply:
 

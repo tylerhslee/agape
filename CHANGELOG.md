@@ -15,6 +15,11 @@ version.
 - **Runtime memory is configured and explicitly accessed.** Every runtime session
   receives a memory driver, while source and host operations control every memory
   consultation, write, and forget.
+- **Memory regions are fully qualified in source.** Structural agent declarations use
+  named `type`, `modality`, `scope`, and `retention` clauses. Stores preserve
+  exact typed values, recall returns deeply tainted typed arrays without implicit
+  cognition, and durable regions use authenticated instance resumption and
+  recoverable ledger-bound mutations.
 - **Calibration evidence is profile-scoped.** Core gates record truthful methods and
   scores; the Studio Fact Checker profile preserves raw-logprob evidence and exposes
   it through the authorized, non-enumerable `calibration.evidence.inspect` operation.
