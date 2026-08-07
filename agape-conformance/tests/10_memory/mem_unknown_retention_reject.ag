@@ -1,0 +1,14 @@
+//! id:        mem_unknown_retention_reject
+//! section:   10_memory
+//! expect:    reject
+//! error:     TypeError
+//! spec:      §10 (the closed retention vocabulary is session and durable)
+//! ---
+agent A {
+  mem notes {
+    type text;
+    modality opaque;
+    scope project;
+    retention forever;
+  }
+}

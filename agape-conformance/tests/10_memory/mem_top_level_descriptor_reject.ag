@@ -1,0 +1,12 @@
+//! id:        mem_top_level_descriptor_reject
+//! section:   10_memory
+//! expect:    reject
+//! error:     ParseError
+//! spec:      §10, §15.2 (a qualified descriptor is structural agent state and is not a top-level declaration)
+//! ---
+mem notes {
+  type text;
+  modality opaque;
+  scope project;
+  retention session;
+}

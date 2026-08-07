@@ -1,12 +1,18 @@
 //! id:        mem_forget_records_tombstone
 //! section:   10_memory
 //! expect:    accept
-//! contains:  Forgotten
-//! spec:      §10 (forget appends an audit-preserving Forgotten tombstone event)
+//! contains:  Forgotten(notes)
+//! spec:      §10 (forget appends a truthful Forgotten receipt for the resolved tuple generation)
 //! ---
 agent A {
+  mem notes {
+    type text;
+    modality opaque;
+    scope project;
+    retention session;
+  }
   on awake {
-    mem notes <- "ephemeral";
+    notes <- "ephemeral";
     forget notes;
   }
 }

@@ -1,0 +1,14 @@
+//! id:        mem_duplicate_scope_reject
+//! section:   10_memory
+//! expect:    reject
+//! error:     TypeError
+//! spec:      §10 (a scope dimension may appear only once in the descriptor tuple)
+//! ---
+agent A {
+  mem notes {
+    type text;
+    modality opaque;
+    scope project, project;
+    retention session;
+  }
+}

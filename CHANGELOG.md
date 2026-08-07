@@ -14,19 +14,34 @@ version.
   source-defined entities; learning is an advertised adaptation capability.
 - **Runtime memory is configured and explicitly accessed.** Every runtime session
   receives a memory driver, while source and host operations control every memory
-  consultation, write, and forget.
-  Provider replies and adapter `agent.respond` turns no longer create or consult
-  hidden memory.
+  consultation, write, and forget. Provider replies and adapter `agent.respond`
+  turns do not create or consult hidden memory.
+- **Memory regions are fully qualified in source.** Structural agent declarations use
+  named `type`, `modality`, `scope`, and `retention` clauses. Stores preserve
+  exact typed values, recall returns deeply tainted typed arrays without implicit
+  cognition, and durable regions use authenticated instance resumption and
+  recoverable ledger-bound mutations.
 - **Recalled experience preserves typed outcomes and provenance.** Explicitly
   stored successful examples and rejected counterexamples retain their typed value
   summaries and origin metadata across Local and Markdown drivers; recall remains
+  tainted and requires a fresh gate before consequential use.
 - **Memory receipts are private and truthful.** Public ledger rows expose hashes,
   resolvable driver references, and actual cell/view deltas without memory plaintext
   or fabricated fact, graph, vector, or blob effects.
-  tainted and requires a fresh gate before consequential use.
 - **Calibration evidence is profile-scoped.** Core gates record truthful methods and
   scores; the Studio Fact Checker profile preserves raw-logprob evidence and exposes
   it through the authorized, non-enumerable `calibration.evidence.inspect` operation.
+
+### Validation
+
+- **Production explicit-memory oracles.** Black-box CLI tests require a configured
+  memory driver, prove exact agent-instance and handle isolation, reject fabricated
+  Markdown modality effects or unresolvable refs, and distinguish immutable prompt
+  provenance from copied metadata in manually edited memory.
+- **Qualified-memory language oracle.** The 241-case source suite pins structural
+  descriptor placement and clause order, closed qualifiers, persistable payloads,
+  exact store and typed-recall checking, explicit-only writes, retained handles after
+  forget, missing-user crash behavior, and standard-driver retention preflight.
 
 ## [1.0.0-beta.2026.8.6.0] - 2026-08-06
 

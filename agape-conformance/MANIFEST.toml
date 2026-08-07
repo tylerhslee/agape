@@ -296,6 +296,15 @@ error = "TypeError"
 spec = "§3 (actions are not self-declaring; perform of an undeclared type is a TypeError)"
 
 [[test]]
+id = "fn_local_memory_descriptor_reject"
+section = "04_functions"
+path = "tests/04_functions/fn_local_memory_descriptor_reject.ag"
+expect = "reject"
+error = "ParseError"
+spec = "§9, §10, §15.2 (a qualified memory descriptor is structural agent state and cannot be declared inside a function)"
+note = "pure code cannot acquire a handler-local memory capability; move the descriptor to the direct agent body"
+
+[[test]]
 id = "fn_pure_calls_async_reject"
 section = "04_functions"
 path = "tests/04_functions/fn_pure_calls_async_reject.ag"
@@ -340,14 +349,6 @@ path = "tests/04_functions/fn_pure_reaches_seam_reject.ag"
 expect = "reject"
 error = "ColorViolation"
 spec = "§1 Axis A, §4 (a pure fn may not reach the provider via `<-`)"
-
-[[test]]
-id = "fn_pure_store_reject"
-section = "04_functions"
-path = "tests/04_functions/fn_pure_store_reject.ag"
-expect = "reject"
-error = "ColorViolation"
-spec = "§9, §10 (a mem write reaches the provider-backed memory substrate to internalize, so a pure function may not store)"
 
 [[test]]
 id = "fn_reject_nonterminal_return"
@@ -1142,6 +1143,75 @@ expect = "accept"
 spec = "§9 (Contradiction extends Error; when (Error e) catches it by subtype)"
 
 [[test]]
+id = "mem_authority_payload_reject"
+section = "10_memory"
+path = "tests/10_memory/mem_authority_payload_reject.ag"
+expect = "reject"
+error = "TypeError"
+spec = "§10 (an Endorsement wrapper is authority-bearing and cannot be a persistent memory payload type)"
+
+[[test]]
+id = "mem_clause_order_accept"
+section = "10_memory"
+path = "tests/10_memory/mem_clause_order_accept.ag"
+expect = "accept"
+contains = ["Internalized(notes)", "MemoryConsulted(notes)"]
+order = ["Internalized(notes)", "MemoryConsulted(notes)"]
+spec = "§10, §15.3 (descriptor clause order is insignificant)"
+
+[[test]]
+id = "mem_descriptor_typed_store_recall_accept"
+section = "10_memory"
+path = "tests/10_memory/mem_descriptor_typed_store_recall_accept.ag"
+expect = "accept"
+contains = ["Internalized(episodes)", "MemoryConsulted(episodes)"]
+order = ["Internalized(episodes)", "MemoryConsulted(episodes)"]
+spec = "§10, §15.3 (the descriptor type governs both exact stores and TYPE[] recall)"
+
+[[test]]
+id = "mem_duplicate_clause_reject"
+section = "10_memory"
+path = "tests/10_memory/mem_duplicate_clause_reject.ag"
+expect = "reject"
+error = "TypeError"
+spec = "§10, §15.3 (a descriptor clause may appear only once)"
+
+[[test]]
+id = "mem_duplicate_name_reject"
+section = "10_memory"
+path = "tests/10_memory/mem_duplicate_name_reject.ag"
+expect = "reject"
+error = "TypeError"
+spec = "§10, §15.3 (one structural descriptor is permitted per handle name in an agent)"
+
+[[test]]
+id = "mem_duplicate_scope_reject"
+section = "10_memory"
+path = "tests/10_memory/mem_duplicate_scope_reject.ag"
+expect = "reject"
+error = "TypeError"
+spec = "§10 (a scope dimension may appear only once in the descriptor tuple)"
+
+[[test]]
+id = "mem_empty_typed_recall_accept"
+section = "10_memory"
+path = "tests/10_memory/mem_empty_typed_recall_accept.ag"
+expect = "accept"
+contains = ["MemoryConsulted(notes)"]
+absent = ["Sent", "Delivered", "Resolved"]
+spec = "§10 (recall against an empty typed region is well-typed, records consultation, and invokes no provider)"
+note = "exact [] payload semantics are asserted by the runtime-contract suite"
+
+[[test]]
+id = "mem_episodic_equal_writes_receipts_accept"
+section = "10_memory"
+path = "tests/10_memory/mem_episodic_equal_writes_receipts_accept.ag"
+expect = "accept"
+ledger = ["Spawned(a)", "AgentAwake(a)", "Internalized(episodes)", "Internalized(episodes)", "MemoryConsulted(episodes)"]
+spec = "§10, §16.7 (each explicit episodic store evaluation records its own successful Internalized receipt)"
+note = "distinct canonical episodes/origins for equal values are asserted by the runtime-contract suite"
+
+[[test]]
 id = "mem_expr_query_no_ledger_event"
 section = "10_memory"
 path = "tests/10_memory/mem_expr_query_no_ledger_event.ag"
@@ -1154,15 +1224,32 @@ id = "mem_forget_accept"
 section = "10_memory"
 path = "tests/10_memory/mem_forget_accept.ag"
 expect = "accept"
-spec = "§10 (`forget` drops a memory handle — an audit-preserving tombstone)"
+spec = "§10 (forget closes only the current scope tuple generation while the structural descriptor survives)"
 
 [[test]]
 id = "mem_forget_records_tombstone"
 section = "10_memory"
 path = "tests/10_memory/mem_forget_records_tombstone.ag"
 expect = "accept"
-contains = ["Forgotten"]
-spec = "§10 (forget appends an audit-preserving Forgotten tombstone event)"
+contains = ["Forgotten(notes)"]
+spec = "§10 (forget appends a truthful Forgotten receipt for the resolved tuple generation)"
+
+[[test]]
+id = "mem_forget_reopen_operations_accept"
+section = "10_memory"
+path = "tests/10_memory/mem_forget_reopen_operations_accept.ag"
+expect = "accept"
+ledger = ["Spawned(a)", "AgentAwake(a)", "Internalized(notes)", "Forgotten(notes)", "MemoryConsulted(notes)", "Internalized(notes)", "MemoryConsulted(notes)"]
+spec = "§10, §16.7 (the structural descriptor remains usable for recall and a later store after forget)"
+note = "exact closed-generation misses and generation+1 isolation are asserted by the runtime-contract suite"
+
+[[test]]
+id = "mem_generic_syntax_reject"
+section = "10_memory"
+path = "tests/10_memory/mem_generic_syntax_reject.ag"
+expect = "reject"
+error = "ParseError"
+spec = "§10, §15.2 (mem<T> is not Agape syntax; payload type is a named descriptor clause)"
 
 [[test]]
 id = "mem_ledger_recall_reject"
@@ -1173,12 +1260,53 @@ error = "TypeError"
 spec = "§10 (the ledger is not private memory; `->` recall requires a `mem` handle, never `ledger`)"
 
 [[test]]
-id = "mem_recall_after_forget_reject"
+id = "mem_legacy_direct_reject"
 section = "10_memory"
-path = "tests/10_memory/mem_recall_after_forget_reject.ag"
+path = "tests/10_memory/mem_legacy_direct_reject.ag"
 expect = "reject"
 error = "TypeError"
-spec = "§10 (forget consumes the mem handle; the region is unrecallable going forward)"
+spec = "§10 (legacy unqualified declarations receive the qualified-descriptor migration diagnostic)"
+
+[[test]]
+id = "mem_legacy_local_initialized_reject"
+section = "10_memory"
+path = "tests/10_memory/mem_legacy_local_initialized_reject.ag"
+expect = "reject"
+error = "TypeError"
+spec = "§10 (legacy handler-local initialized declarations receive the hoist-and-qualify migration diagnostic)"
+
+[[test]]
+id = "mem_local_descriptor_reject"
+section = "10_memory"
+path = "tests/10_memory/mem_local_descriptor_reject.ag"
+expect = "reject"
+error = "ParseError"
+spec = "§10, §15.2 (a qualified descriptor is a direct agent-body declaration, never handler-local)"
+
+[[test]]
+id = "mem_missing_clause_reject"
+section = "10_memory"
+path = "tests/10_memory/mem_missing_clause_reject.ag"
+expect = "reject"
+error = "TypeError"
+spec = "§10, §15.3 (type, modality, scope, and retention are each required exactly once)"
+
+[[test]]
+id = "mem_modalities_names_no_magic_accept"
+section = "10_memory"
+path = "tests/10_memory/mem_modalities_names_no_magic_accept.ag"
+expect = "accept"
+ledger = ["Spawned(a)", "AgentAwake(a)", "Internalized(profile)", "Internalized(episodes)", "Internalized(literal)", "MemoryConsulted(profile)", "MemoryConsulted(episodes)", "MemoryConsulted(literal)"]
+spec = "§10 (opaque, episodic, and semantic are declared policies; handle names have no intrinsic semantics)"
+
+[[test]]
+id = "mem_recall_after_forget_empty"
+section = "10_memory"
+path = "tests/10_memory/mem_recall_after_forget_empty.ag"
+expect = "accept"
+contains = ["Forgotten(notes)", "MemoryConsulted(notes)"]
+order = ["Forgotten(notes)", "MemoryConsulted(notes)"]
+spec = "§10 (a descriptor survives forget and recall of its closed tuple returns an empty typed array)"
 
 [[test]]
 id = "mem_recall_requires_mem_reject"
@@ -1194,7 +1322,15 @@ section = "10_memory"
 path = "tests/10_memory/mem_recall_taint_perform_reject.ag"
 expect = "reject"
 error = "TaintViolation"
-spec = "§10, §13, §16.7 (a value recalled from private memory is subjective/graded and cannot drive a consequential sink without a gate)"
+spec = "§10, §13, §16.7 (the exact typed recall array is deeply raw and cannot drive a consequential sink without a gate)"
+
+[[test]]
+id = "mem_recall_wrong_binding_reject"
+section = "10_memory"
+path = "tests/10_memory/mem_recall_wrong_binding_reject.ag"
+expect = "reject"
+error = "TypeError"
+spec = "§10, §15.3 (typed recall returns TYPE[] and cannot bind directly to text or Credence)"
 
 [[test]]
 id = "mem_select_boolean_ops_ok"
@@ -1208,22 +1344,75 @@ id = "mem_store_internalizes_ok"
 section = "10_memory"
 path = "tests/10_memory/mem_store_internalizes_ok.ag"
 expect = "accept"
-spec = "§10, §16.7 (mem <- value explicitly internalizes a value into the selected private-memory region)"
+spec = "§10 (an explicit write stores a value assignable to the structural descriptor type)"
 
 [[test]]
 id = "mem_store_records_internalized"
 section = "10_memory"
 path = "tests/10_memory/mem_store_records_internalized.ag"
 expect = "accept"
-contains = ["Internalized"]
-spec = "§10, §15.4.2 (a mem write internalizes the value across the region views and records Internalized)"
+contains = ["Internalized(notes)"]
+spec = "§10, §15.4.2 (a successful explicit typed write records Internalized)"
+
+[[test]]
+id = "mem_store_type_mismatch_reject"
+section = "10_memory"
+path = "tests/10_memory/mem_store_type_mismatch_reject.ag"
+expect = "reject"
+error = "TypeError"
+spec = "§10, §15.3 (every stored expression must be assignable to the descriptor payload type)"
+
+[[test]]
+id = "mem_top_level_descriptor_reject"
+section = "10_memory"
+path = "tests/10_memory/mem_top_level_descriptor_reject.ag"
+expect = "reject"
+error = "ParseError"
+spec = "§10, §15.2 (a qualified descriptor is structural agent state and is not a top-level declaration)"
+
+[[test]]
+id = "mem_unknown_modality_reject"
+section = "10_memory"
+path = "tests/10_memory/mem_unknown_modality_reject.ag"
+expect = "reject"
+error = "TypeError"
+spec = "§10 (the closed modality vocabulary is opaque, episodic, and semantic; working state is not memory)"
+
+[[test]]
+id = "mem_unknown_retention_reject"
+section = "10_memory"
+path = "tests/10_memory/mem_unknown_retention_reject.ag"
+expect = "reject"
+error = "TypeError"
+spec = "§10 (the closed retention vocabulary is session and durable)"
+
+[[test]]
+id = "mem_unknown_scope_reject"
+section = "10_memory"
+path = "tests/10_memory/mem_unknown_scope_reject.ag"
+expect = "reject"
+error = "TypeError"
+spec = "§10 (the closed authenticated scope vocabulary is project and user)"
+
+[[test]]
+id = "mem_user_scope_missing_subject_crashes"
+section = "10_memory"
+path = "tests/10_memory/mem_user_scope_missing_subject_crashes.ag"
+expect = "accept"
+contains = ["AgentCrashed(a)"]
+absent = ["Internalized(notes)"]
+manifest = ["memory.driver=local"]
+spec = "§10, §16.7 (a user-scoped operation without κ.user follows the auditable crash path without a successful memory mutation)"
+note = "runtime-contract instrumentation separately proves that the driver was not accessed"
 
 [[test]]
 id = "mem_write_recall_accept"
 section = "10_memory"
 path = "tests/10_memory/mem_write_recall_accept.ag"
 expect = "accept"
-spec = "§10 (a `mem` handle into private memory: write with `<-`, recall with `->`)"
+contains = ["Internalized(notes)", "MemoryConsulted(notes)"]
+order = ["Internalized(notes)", "MemoryConsulted(notes)"]
+spec = "§10 (a qualified typed handle stores with <- and recalls a deeply raw TYPE[] with ->)"
 
 [[test]]
 id = "ctrl_credence_in_if_reject"
@@ -1581,6 +1770,23 @@ manifest = ["policy.threshold=0.5"]
 spec = "§17.1, §17.2 (decision rules live in source, not the manifest; config cannot set gate thresholds)"
 
 [[test]]
+id = "cfg_memory_durable_local_reject"
+section = "16_config"
+path = "tests/16_config/cfg_memory_durable_local_reject.ag"
+expect = "reject"
+error = "ConfigError"
+manifest = ["memory.driver=local"]
+spec = "§10, §16.7, §17.1 (local/mock advertises session retention only and rejects a durable descriptor before execution)"
+
+[[test]]
+id = "cfg_memory_markdown_mixed_retention_accept"
+section = "16_config"
+path = "tests/16_config/cfg_memory_markdown_mixed_retention_accept.ag"
+expect = "accept"
+manifest = ["memory.driver=markdown"]
+spec = "§10, §16.7, §17.1 (markdown advertises both durable exact storage and an in-process session tier)"
+
+[[test]]
 id = "cfg_missing_principal_binding_reject"
 section = "16_config"
 path = "tests/16_config/cfg_missing_principal_binding_reject.ag"
@@ -1595,6 +1801,15 @@ path = "tests/16_config/cfg_missing_prompt_binding_reject.ag"
 expect = "reject"
 error = "ConfigError"
 spec = "§17.1 (each prompt declaration resolves to a manifest binding; an unbound declared dependency is ALWAYS a ConfigError, not a late runtime lookup — no opt-in flag)"
+
+[[test]]
+id = "cfg_no_implicit_internalization"
+section = "16_config"
+path = "tests/16_config/cfg_no_implicit_internalization.ag"
+expect = "accept"
+absent = ["Internalized"]
+spec = "§10, §16.7 (an agent send does not implicitly consult or write private memory)"
+note = "source or an explicit host memory operation must name every consultation and mutation"
 
 [[test]]
 id = "cfg_reply_memory_is_explicit"

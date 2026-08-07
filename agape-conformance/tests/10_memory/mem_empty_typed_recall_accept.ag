@@ -1,0 +1,21 @@
+//! id:        mem_empty_typed_recall_accept
+//! section:   10_memory
+//! expect:    accept
+//! contains:  MemoryConsulted(notes)
+//! absent:    Sent; Delivered; Resolved
+//! spec:      §10 (recall against an empty typed region is well-typed, records consultation, and invokes no provider)
+//! note:      exact [] payload semantics are asserted by the runtime-contract suite
+//! ---
+agent A {
+  mem notes {
+    type text;
+    modality opaque;
+    scope project;
+    retention session;
+  }
+  on awake {
+    text[] hits = notes -> "nothing stored";
+    say(hits);
+  }
+}
+spawn A a; awake a;

@@ -1,0 +1,20 @@
+//! id:        mem_duplicate_name_reject
+//! section:   10_memory
+//! expect:    reject
+//! error:     TypeError
+//! spec:      §10, §15.3 (one structural descriptor is permitted per handle name in an agent)
+//! ---
+agent A {
+  mem notes {
+    type text;
+    modality opaque;
+    scope project;
+    retention session;
+  }
+  mem notes {
+    type text;
+    modality episodic;
+    scope project;
+    retention session;
+  }
+}

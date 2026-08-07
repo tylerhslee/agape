@@ -1,11 +1,17 @@
 //! id:        mem_forget_accept
 //! section:   10_memory
 //! expect:    accept
-//! spec:      §10 (`forget` drops a memory handle — an audit-preserving tombstone)
+//! spec:      §10 (forget closes only the current scope tuple generation while the structural descriptor survives)
 //! ---
 agent A {
+  mem notes {
+    type text;
+    modality opaque;
+    scope project;
+    retention session;
+  }
   on awake {
-    mem notes <- "ephemeral";
+    notes <- "ephemeral";
     forget notes;
   }
 }

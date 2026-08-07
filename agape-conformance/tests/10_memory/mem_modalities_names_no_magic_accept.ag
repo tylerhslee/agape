@@ -1,0 +1,36 @@
+//! id:        mem_modalities_names_no_magic_accept
+//! section:   10_memory
+//! expect:    accept
+//! ledger:    Spawned(a); AgentAwake(a); Internalized(profile); Internalized(episodes); Internalized(literal); MemoryConsulted(profile); MemoryConsulted(episodes); MemoryConsulted(literal)
+//! spec:      §10 (opaque, episodic, and semantic are declared policies; handle names have no intrinsic semantics)
+//! ---
+agent A {
+  mem profile {
+    type text;
+    modality episodic;
+    scope project;
+    retention session;
+  }
+  mem episodes {
+    type text;
+    modality semantic;
+    scope project;
+    retention session;
+  }
+  mem literal {
+    type text;
+    modality opaque;
+    scope project;
+    retention session;
+  }
+  on awake {
+    profile <- "episode despite the name";
+    episodes <- "semantic value despite the name";
+    literal <- "verbatim typed value";
+    text[] profile_hits = profile -> "episode";
+    text[] episode_hits = episodes -> "semantic";
+    text[] literal_hits = literal -> "verbatim";
+    say(profile_hits); say(episode_hits); say(literal_hits);
+  }
+}
+spawn A a; awake a;

@@ -1,0 +1,11 @@
+//! id:        cfg_no_implicit_internalization
+//! section:   16_config
+//! expect:    accept
+//! absent:    Internalized
+//! spec:      §10, §16.7 (an agent send does not implicitly consult or write private memory)
+//! note:      source or an explicit host memory operation must name every consultation and mutation
+//! ---
+agent A {
+  on awake { text r = self <- "what happened today?"; }
+}
+spawn A a; awake a;

@@ -1,0 +1,22 @@
+//! id:        mem_recall_after_forget_empty
+//! section:   10_memory
+//! expect:    accept
+//! contains:  Forgotten(notes); MemoryConsulted(notes)
+//! order:     Forgotten(notes); MemoryConsulted(notes)
+//! spec:      §10 (a descriptor survives forget and recall of its closed tuple returns an empty typed array)
+//! ---
+agent A {
+  mem notes {
+    type text;
+    modality opaque;
+    scope project;
+    retention session;
+  }
+  on awake {
+    notes <- "ephemeral";
+    forget notes;
+    text[] hits = notes -> "anything?";
+    say(hits);
+  }
+}
+spawn A a; awake a;

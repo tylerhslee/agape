@@ -1,0 +1,11 @@
+agent Rememberer {
+  on awake {
+    mem notes;
+    text recalled = notes -> "{{QUERY}}";
+    self <- f"Recalled memory with its origin context: ${recalled}";
+    forget notes;
+  }
+}
+
+spawn Rememberer remembered_agent;
+awake remembered_agent;

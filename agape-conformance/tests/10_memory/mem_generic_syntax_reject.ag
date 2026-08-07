@@ -1,0 +1,9 @@
+//! id:        mem_generic_syntax_reject
+//! section:   10_memory
+//! expect:    reject
+//! error:     ParseError
+//! spec:      §10, §15.2 (mem<T> is not Agape syntax; payload type is a named descriptor clause)
+//! ---
+agent A {
+  mem<text> notes;
+}

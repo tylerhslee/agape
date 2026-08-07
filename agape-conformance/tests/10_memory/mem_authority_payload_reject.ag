@@ -1,0 +1,14 @@
+//! id:        mem_authority_payload_reject
+//! section:   10_memory
+//! expect:    reject
+//! error:     TypeError
+//! spec:      §10 (an Endorsement wrapper is authority-bearing and cannot be a persistent memory payload type)
+//! ---
+agent A {
+  mem approvals {
+    type Endorsement<text>;
+    modality opaque;
+    scope project;
+    retention session;
+  }
+}
