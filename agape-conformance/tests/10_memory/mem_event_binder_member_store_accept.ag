@@ -1,0 +1,18 @@
+//! id:        mem_event_binder_member_store_accept
+//! section:   10_memory
+//! expect:    accept
+//! spec:      §3, §5, §7, §10, §15.3 (a typed event-binder member retains its exact type at a mem store)
+//! ---
+struct Note { body: text }
+event NoteReady(Note note);
+agent A {
+  mem notes {
+    type Note;
+    modality episodic;
+    scope project;
+    retention session;
+  }
+  when (NoteReady ready) { notes <- ready.note; }
+}
+spawn A a; awake a;
+emit NoteReady(Note { body: "verified" });

@@ -1,0 +1,22 @@
+//! id:        mem_inherited_descriptor_access_accept
+//! section:   10_memory
+//! expect:    accept
+//! spec:      §5, §10, §15.3 (a child inherits its parent's structural mem handles)
+//! ---
+agent Base {
+  mem notes {
+    type text;
+    modality opaque;
+    scope project;
+    retention session;
+  }
+}
+agent Child {
+  extend Base();
+  on awake {
+    notes <- "inherited";
+    text[] hits = notes -> "query";
+    say(hits);
+  }
+}
+spawn Child child; awake child;

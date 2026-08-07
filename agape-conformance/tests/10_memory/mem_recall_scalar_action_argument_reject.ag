@@ -1,0 +1,17 @@
+//! id:        mem_recall_scalar_action_argument_reject
+//! section:   10_memory
+//! expect:    reject
+//! error:     TypeError
+//! spec:      §3, §6b, §10, §15.3 (TYPE[] recall is not assignable to a scalar action parameter)
+//! ---
+action Save(text value);
+agent A grants { perform Save } {
+  mem notes {
+    type text;
+    modality opaque;
+    scope project;
+    retention session;
+  }
+  on awake { perform Save(notes -> "query"); }
+}
+spawn A a; awake a;

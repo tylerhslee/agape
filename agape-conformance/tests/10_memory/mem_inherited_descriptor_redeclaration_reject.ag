@@ -1,0 +1,23 @@
+//! id:        mem_inherited_descriptor_redeclaration_reject
+//! section:   10_memory
+//! expect:    reject
+//! error:     TypeError
+//! spec:      §5, §10, §15.3 (an inherited structural mem handle cannot be redeclared by the child)
+//! ---
+agent Base {
+  mem notes {
+    type text;
+    modality opaque;
+    scope project;
+    retention session;
+  }
+}
+agent Child {
+  extend Base();
+  mem notes {
+    type text;
+    modality episodic;
+    scope project;
+    retention durable;
+  }
+}
