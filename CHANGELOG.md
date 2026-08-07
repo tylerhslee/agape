@@ -26,6 +26,11 @@ version.
   identity for each session, enforces driver retention capabilities before
   execution, isolates authenticated scope tuples, and implements deterministic
   generation-aware store, recall, and forget operations.
+- **Named-memory persistence primitives are canonical.** The TypeScript runtime
+  exposes interpreter-independent schema and descriptor hashes, exact typed-value
+  envelopes that exclude trust and private provenance, and opaque region keys
+  isolated by retention, declared scope, session lineage, and stable agent
+  instance.
 - **Recalled experience preserves typed outcomes and provenance.** Explicitly
   stored successful examples and rejected counterexamples retain their typed value
   summaries and origin metadata across Local and Markdown drivers; recall remains
