@@ -144,6 +144,32 @@ deterministic derivation, not incidental provider formatting.
 
 ## 4. Memory adaptation, provenance, and precedence
 
+### 4.0 Four distinct adaptation mechanisms
+
+The runtime deliberately distinguishes four mechanisms that are often conflated as
+"learning":
+
+1. **Working state** is the bounded, reaction-local typed context assembled from the active
+   task, stimulus, tool results, and recalled packets. It may be discarded at the reaction
+   boundary. It is not a memory cell, a behavior version, or an authority source.
+2. **Episodic memory** is a durable, provenance-tagged record that can later be retrieved as
+   tainted data. `store` and `recall` provide this mechanism only. They can make a prior
+   episode available to cognition; they do not themselves alter competence, behavior,
+   instructions, grants, dependencies, evaluator, or model parameters.
+3. **Consolidation** is the governed creation of a candidate `BehaviorArtifact` from declared
+   evidence. It is a proposal, not a live update: candidate behavior is inert until isolated
+   evaluation and principal-gated promotion. The old artifact remains available for rollback.
+4. **Policy or model adaptation** changes learned parameters, a training policy, or a
+   provider/model binding. It is not a `mem` write and is outside the v1 `std.behavior`
+   activation surface. A future standard surface for it must be separately specified as a
+   restricted deployment operation with its own authority, dataset provenance, evaluator,
+   budget, promotion, rollback, and replay obligations.
+
+An implementation may use compression, retrieval, reflection, distillation, or online
+optimization internally, but it may not report one mechanism as another. In particular, a
+successful recall is not evidence of a durable capability increase, and a successful
+consolidation/evaluation is not evidence that a parameter update occurred.
+
 Canonical cells, summaries, semantic chunks, facts, and relationship triples are logical
 memory records. **A semantic chunk may exist without an embedding.** Vector/embedding records
 exist only when an embedding was actually materialized. Receipts report actual modality
@@ -282,6 +308,18 @@ versions, evaluator-policy hash, public and protected holdout manifest hashes, s
 inputs/refs, metrics, failures, security results, and replay evidence. Natural-language
 summaries cannot substitute for machine-readable results, and an evaluation for another
 candidate or policy hash is unusable.
+
+The evaluator identity includes its immutable version and configuration hash. An evaluation
+uses protected held-out evidence whenever the declared deployment policy provides it. If the
+policy cannot use a holdout, it must instead name a declared counterfactual or baseline
+comparison, identify the missing holdout as a limitation, and record why that evidence class
+is permitted. In either case it records a bounded resource budget (tokens, elapsed time,
+tool/experiment spend, and any materialized external cost), the authority that granted it,
+and the consumed budget. A candidate must not choose any of these fields.
+
+Promotion evidence reports both outcome reliability against its declared evaluator/baseline
+and marginal cost. These are experiment metrics, not proof of general autonomy, learning,
+or consciousness.
 
 ### 5.3 Principal-gated activation
 
