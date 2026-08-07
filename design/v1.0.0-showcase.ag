@@ -28,7 +28,13 @@ agent Answerer {
 // Agent 2 — fact-checks every draft; only a verified answer is delivered, and it keeps a
 // private-memory note of what it has settled.
 agent Checker grants { perform Reply } {
-  mem settled <- "nothing published yet";              // §10 — private memory, distinct from the ledger
+  mem settled {
+    type text;
+    modality episodic;
+    scope project;
+    retention session;
+  }
+  settled <- "nothing published yet";                  // §10 — explicit private-memory store
 
   when (Draft d) {
     // A graded judgment, read from the model's own token probabilities (§3, §8).
@@ -47,8 +53,9 @@ agent Checker grants { perform Reply } {
   // A later question RECALLS what we settled. A recall is ALWAYS tainted (§10), so the recalled
   // note must be re-gated before it can act; a stale note is forgotten (an audit-preserving tombstone).
   when (Prompt p about question) {
-    text prior = settled -> "what have we already published?";   // tainted
-    Credence<bool> reusable = self <- f"is this prior answer still correct? {prior}";
+    text[] prior = settled -> "what have we already published?"; // deeply tainted
+    text recalled = prior[0];
+    Credence<bool> reusable = self <- f"is this prior answer still correct? {recalled}";
     endorse (reusable by conformal 0.1) {
       true:  emit Event("prior answer still holds");
       false: forget settled;                           // tombstone the stale region

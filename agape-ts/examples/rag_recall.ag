@@ -1,13 +1,13 @@
 // rag_recall.ag — hello world for Agape's built-in RAG loop.
 //
-// Agape's memory IS a retrieval-augmented system: `store` internalizes each value across the
-// region's three views (fact table, relationship graph, vector store) via cognition, and
-// recall (`mem -> "query"`) is a cognition-mediated retrieval FUSED across those views.
+// Agape's memory can back retrieval-augmented systems: each explicit store preserves an exact
+// typed value, and recall (`mem -> "query"`) returns deterministic typed matches without
+// invoking cognition. A configured semantic substrate may materialize additional retrieval views.
 // The kernel twist vs ordinary RAG: a recall is ALWAYS tainted — retrieved knowledge can
 // inform an answer, but nothing acts on the world until the answer is re-judged, decided,
 // and endorsed. Retrieval can never launder trust.
 //
-//   store ×3 ─► [facts | graph | vectors] ─► recall (tainted) ─► generate (tainted)
+//   store ×3 ─► exact typed region ─► recall (tainted) ─► generate (tainted)
 //                                             └► judge ─► decide ─► endorse ─► sink
 
 enum Verdict { Grounded, Ungrounded }
@@ -16,17 +16,24 @@ event  Answered(text note);
 action Publish(text body);        // the consequential sink
 
 agent Librarian grants { perform Publish } {
+  mem notes {
+    type text;
+    modality semantic;
+    scope project;
+    retention session;
+  }
+
   on awake {
     // INGEST — three private marker writes. These are deliberately arbitrary demo facts,
     // not facts about Agape, so a live provider has to rely on the recalled context.
     // Watch the Internalized events on the ledger.
-    mem notes <- "Private marker: Project Violet's launch code is SABLE-47.";
+    notes <- "Private marker: Project Violet's launch code is SABLE-47.";
     notes <- "Private marker: the companion phrase for SABLE-47 is north-window.";
     notes <- "Private marker: the verified answer should pair SABLE-47 with north-window.";
 
     // RETRIEVE — the RAG query; fused across the three views, and TAINTED by design
     // (the MemoryConsulted event is the retrieval trace).
-    text context = notes -> "which launch code and phrase belong together?";
+    text[] context = notes -> "which launch code and phrase belong together?";
 
     // AUGMENTED GENERATION — draft an answer grounded in the retrieved context (still tainted).
     text answer = self <- f"answer in one sentence using this context: ${context}";

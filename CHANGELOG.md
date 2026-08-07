@@ -33,6 +33,10 @@ version.
 - **Memory receipts are private and truthful.** Public ledger rows expose hashes,
   resolvable driver references, and actual cell/view deltas without memory plaintext
   or fabricated fact, graph, vector, or blob effects.
+- **Private-memory derivation remains private.** Assignment, indexing, interpolation,
+  nesting, slicing, function and pipeline returns, operators, fusion, provider
+  replies, tools, events, and task terminals preserve private provenance; public
+  ledger content is hash/ref protected and private connector faults are sanitized.
 - **Calibration evidence is profile-scoped.** Core gates record truthful methods and
 - **Memory-derived cognition stays private in the ledger.** Explicit sends may
   use recalled values as provider input, while canonical `Sent`, `Resolved`,

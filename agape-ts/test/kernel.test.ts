@@ -345,12 +345,14 @@ describe("structured provider replies", () => {
           on awake {
             LedgerEntry<Internalized> receipt = notes <- "durable note";
             say(receipt._meta.etype);
+            say(receipt.refs.input);
           }
         }
         spawn A a; awake a;
       `;
       const r = await run(parse(prog), { memoryRoot: dir });
       expect(r.stdout[0]).toBe("Internalized");
+      expect(r.stdout[1]).toMatch(/^blob:sha256:/);
       const internalized = r.ledger.events.find((e) => e.etype === "Internalized" && e.subject === "notes");
       expect((internalized?.payload as any)?.effects?.cells?.upserted).toBe(1);
       expect((internalized?.payload as any)?.effects?.facts?.upserted).toBe(0);

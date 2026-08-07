@@ -12,7 +12,13 @@ action IssueCredit(int amount, text reason);
 policy Support { threshold 0.85 margin 0.05 floor 0.15 }
 
 agent SupportDesk grants { perform Reply, perform IssueCredit } {
-  mem notes <- "no cases yet";
+  mem notes {
+    type text;
+    modality episodic;
+    scope project;
+    retention session;
+  }
+  notes <- "no cases yet";
 
   when (Prompt p about request) {
     emit Case(p);
@@ -47,8 +53,9 @@ Literal JSON braces stay literal:
       default: perform Reply("I need a human review.");
     } defer to alice;
 
-    text prior = notes -> "recent cases";
-    say(prior);
+    text[] prior = notes -> "recent cases";
+    text recent = prior[0];
+    say(recent);
   }
 }
 
