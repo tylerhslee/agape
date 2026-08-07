@@ -143,6 +143,7 @@ export interface AgentDecl extends Node {
   grants: Grant[] | "all"; // [] = default-deny; "all" = grants { * }
   params: Field[]; // constructor params `agent Boss(Worker hand)` — bound at spawn (E-Spawn §15.4.2)
   fields: Field[];
+  mems: MemoryDescriptor[];
   hooks: OnHook[];
   whens: WhenStmt[];
   instructions: string[];
@@ -158,6 +159,18 @@ export type Grant =
   | { cap: "perform"; name: string }
   | { cap: "reach"; name: string }
   | { cap: "use"; name: string };
+
+// A qualified private-memory region is structural agent state, not an executable statement.
+export interface MemoryDescriptor extends Node {
+  kind: "memdesc";
+  name: string;
+  clauses: MemoryClause[];
+}
+export type MemoryClause =
+  | { kind: "type"; type: TypeRef }
+  | { kind: "modality"; value: string }
+  | { kind: "scope"; values: string[] }
+  | { kind: "retention"; value: string };
 
 // ---- Statements ----
 export type Stmt =

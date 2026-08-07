@@ -89,6 +89,7 @@ function assertCore(p: A.Program): void {
       case "agent":
         if (d.ifaces && d.ifaces.length) bad("an `agent : Interface` implements-clause");
         d.fields.forEach((f) => walkType(f.type));
+        d.mems.forEach((m) => m.clauses.forEach((c) => { if (c.kind === "type") walkType(c.type); }));
         d.ctor.forEach(walkStmt);
         d.hooks.forEach((h) => h.body.forEach(walkStmt));
         d.whens.forEach((w) => { if (w.about) walkExpr(w.about); if (w.guard) walkExpr(w.guard); w.body.forEach(walkStmt); });
@@ -502,6 +503,7 @@ class Parser {
     if (this.at("grants")) grants = this.parseGrants();
     this.eat("{");
     const fields: A.Field[] = [];
+    const mems: A.MemoryDescriptor[] = [];
     const hooks: A.OnHook[] = [];
     const whens: A.WhenStmt[] = [];
     const instructions: string[] = [];
@@ -509,6 +511,7 @@ class Parser {
     let extendsClause: { name: string; args: A.Expr[] } | undefined;
     while (!this.at("}") && !this.at("eof")) {
       if (this.at("on")) hooks.push(this.parseOnHook());
+      else if (this.at("mem") && this.peek(1).type === "ident" && this.peek(2).type === "{") mems.push(this.parseMemoryDescriptor());
       else if (this.at("when")) whens.push(this.parseWhen());
       else if (this.at("extend")) {
         // extend ::= "extend" modpath args ";"  — subtractive inheritance (§5/§13); the base may be a
@@ -531,7 +534,42 @@ class Parser {
       }
     }
     this.eat("}");
-    return { kind: "agent", name, grants, params, fields, hooks, whens, instructions, ctor, extends: extendsClause, ifaces, pos };
+    return { kind: "agent", name, grants, params, fields, mems, hooks, whens, instructions, ctor, extends: extendsClause, ifaces, pos };
+  }
+
+  private parseMemoryDescriptor(): A.MemoryDescriptor {
+    const pos = this.eat("mem").pos;
+    const name = this.eat("ident").value;
+    const clauses: A.MemoryClause[] = [];
+    this.eat("{");
+    while (!this.at("}") && !this.at("eof")) {
+      if (this.atIdent("type")) {
+        this.next();
+        clauses.push({ kind: "type", type: this.parseType() });
+        this.eat(";");
+      } else if (this.atIdent("modality")) {
+        this.next();
+        clauses.push({ kind: "modality", value: this.eat("ident").value });
+        this.eat(";");
+      } else if (this.atIdent("scope")) {
+        this.next();
+        const values = [this.eat("ident").value];
+        while (this.at(",")) {
+          this.next();
+          values.push(this.eat("ident").value);
+        }
+        clauses.push({ kind: "scope", values });
+        this.eat(";");
+      } else if (this.atIdent("retention")) {
+        this.next();
+        clauses.push({ kind: "retention", value: this.eat("ident").value });
+        this.eat(";");
+      } else {
+        this.err("expected memory descriptor clause type/modality/scope/retention");
+      }
+    }
+    this.eat("}");
+    return { kind: "memdesc", name, clauses, pos };
   }
 
   // an implemented-interface name in an `agent : Iface, …` clause (§19.5). A `modpath` in the grammar, but

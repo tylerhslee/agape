@@ -49,6 +49,8 @@ const BUILTIN_EVENTS = new Set(["Event", "Error", "TaskProgress"]);
 
 class Scope {
   vars = new Map<string, Cls>();
+  exact = new Map<string, A.TypeRef>();
+  memories = new Map<string, A.TypeRef>();
   // `mem` handles that `forget` has consumed — recall through a forgotten handle is a TypeError (§10).
   forgotten = new Set<string>();
   // PROVENANCE for the §13 dependency-scope check. `tainted` names a binding whose value came from a
@@ -102,6 +104,20 @@ class Scope {
     return this.vars.get(name) ?? this.parent?.get(name);
   }
   set(name: string, c: Cls) { this.vars.set(name, c); }
+  setExact(name: string, t: A.TypeRef) { this.exact.set(name, t); }
+  getExact(name: string): A.TypeRef | undefined {
+    return this.exact.get(name) ?? this.parent?.getExact(name);
+  }
+  setMemory(name: string, t: A.TypeRef) {
+    this.memories.set(name, t);
+    this.set(name, "mem");
+  }
+  getMemory(name: string): A.TypeRef | undefined {
+    return this.memories.get(name) ?? this.parent?.getMemory(name);
+  }
+  hasMemory(name: string): boolean {
+    return this.memories.has(name) || (this.parent?.hasMemory(name) ?? false);
+  }
   isForgotten(name: string): boolean {
     return this.forgotten.has(name) || (this.parent?.isForgotten(name) ?? false);
   }
@@ -869,6 +885,38 @@ function conflicts(a: Cls, b: Cls): boolean {
   return true;
 }
 
+function typeRefLabel(t: A.TypeRef): string {
+  switch (t.kind) {
+    case "scalar": return t.name;
+    case "mem": return "mem";
+    case "array": return `${typeRefLabel(t.inner)}[]`;
+    case "credence": return `Credence<${t.enumName}>`;
+    case "decision": return `Decision<${t.enumName}>`;
+    case "endorsement": return `Endorsement<${typeRefLabel(t.inner)}>`;
+    case "task": return `Task<${typeRefLabel(t.inner)}>`;
+    case "event": return `event<${typeRefLabel(t.inner)}>`;
+    case "named": return t.name;
+  }
+}
+
+function exactAssignable(want: A.TypeRef, got: A.TypeRef): boolean {
+  if (want.kind === "scalar" && got.kind === "scalar") {
+    return want.name === got.name || (want.name === "float" && got.name === "int");
+  }
+  if (want.kind !== got.kind) return false;
+  switch (want.kind) {
+    case "array": return got.kind === "array" && exactAssignable(want.inner, got.inner);
+    case "named": return got.kind === "named" && want.name === got.name;
+    case "credence": return got.kind === "credence" && want.enumName === got.enumName;
+    case "decision": return got.kind === "decision" && want.enumName === got.enumName;
+    case "endorsement": return got.kind === "endorsement" && exactAssignable(want.inner, got.inner);
+    case "task": return got.kind === "task" && exactAssignable(want.inner, got.inner);
+    case "mem": return true;
+    case "event": return got.kind === "event" && exactAssignable(want.inner, got.inner);
+    default: return false;
+  }
+}
+
 class Checker {
   constructor(private d: Decls, private implementedIfaces: Set<string> = new Set(), private manifest?: Manifest) {}
 
@@ -898,6 +946,7 @@ class Checker {
         case "agent":
           for (const f of d.params) this.checkTypeRef(f.type);
           for (const f of d.fields) this.checkTypeRef(f.type);
+          for (const m of d.mems) for (const c of m.clauses) if (c.kind === "type") this.checkTypeRef(c.type);
           for (const h of d.hooks) this.walkStmts(h.body);
           for (const w of d.whens) this.walkStmts(w.body);
           this.walkStmts(d.ctor);
@@ -1017,8 +1066,70 @@ class Checker {
     // an unknown name — leave unchecked (conservative; never a false reject).
   }
 
-  checkAgent(a: A.AgentDecl): void {
+  private checkMemoryDescriptors(a: A.AgentDecl): Map<string, A.TypeRef> {
+    const out = new Map<string, A.TypeRef>();
+    const memberNames = new Set([...a.params.map((f) => f.name), ...a.fields.map((f) => f.name)]);
+    for (const m of a.mems) {
+      if (out.has(m.name) || memberNames.has(m.name)) {
+        throw typeError(`agent ''${a.name}'': memory descriptor ''${m.name}'' is not fresh`);
+      }
+      const kinds = ["type", "modality", "scope", "retention"] as const;
+      for (const kind of kinds) {
+        const count = m.clauses.filter((c) => c.kind === kind).length;
+        if (count !== 1) {
+          throw typeError(`memory ''${m.name}'' requires exactly one ${kind} clause`);
+        }
+      }
+      const type = (m.clauses.find((c): c is Extract<A.MemoryClause, { kind: "type" }> => c.kind === "type"))!.type;
+      const modality = (m.clauses.find((c): c is Extract<A.MemoryClause, { kind: "modality" }> => c.kind === "modality"))!.value;
+      const scopes = (m.clauses.find((c): c is Extract<A.MemoryClause, { kind: "scope" }> => c.kind === "scope"))!.values;
+      const retention = (m.clauses.find((c): c is Extract<A.MemoryClause, { kind: "retention" }> => c.kind === "retention"))!.value;
+      if (!["opaque", "episodic", "semantic"].includes(modality)) {
+        throw typeError(`memory ''${m.name}'': unknown modality ''${modality}''`);
+      }
+      if (!["session", "durable"].includes(retention)) {
+        throw typeError(`memory ''${m.name}'': unknown retention ''${retention}''`);
+      }
+      const seenScopes = new Set<string>();
+      for (const scope of scopes) {
+        if (!["project", "user"].includes(scope)) {
+          throw typeError(`memory ''${m.name}'': unknown scope ''${scope}''`);
+        }
+        if (seenScopes.has(scope)) {
+          throw typeError(`memory ''${m.name}'': scope ''${scope}'' appears more than once`);
+        }
+        seenScopes.add(scope);
+      }
+      if (!this.isPersistable(type)) {
+        throw typeError(`memory ''${m.name}'': payload type ${typeRefLabel(type)} is not persistable`);
+      }
+      out.set(m.name, type);
+    }
+    return out;
+  }
+
+  private isPersistable(t: A.TypeRef, visiting = new Set<string>()): boolean {
+    if (t.kind === "scalar") return true;
+    if (t.kind === "array") return this.isPersistable(t.inner, visiting);
+    if (t.kind !== "named") return false;
+    if (this.d.enums.has(t.name)) return true;
+    const struct = this.d.structs.get(t.name);
+    if (!struct || this.d.agents.has(t.name) || this.d.actions.has(t.name) || this.d.events.has(t.name)) return false;
+    if (visiting.has(t.name)) return true;
+    const next = new Set(visiting);
+    next.add(t.name);
+    return struct.fields.every((f) => this.isPersistable(f.type, next));
+  }
+
+  private agentScope(memories: Map<string, A.TypeRef>): Scope {
+    const scope = new Scope();
+    for (const [name, type] of memories) scope.setMemory(name, type);
+    return scope;
+  }
+
     // §6b/§13: grants are exactly `perform` and `reach`. The legacy `use` class parses (for a clean
+  checkAgent(a: A.AgentDecl): void {
+    const memories = this.checkMemoryDescriptors(a);
     // diagnostic) but names no power — tools left the language; observation is wired in the manifest.
     if (Array.isArray(a.grants)) {
       for (const g of a.grants) {
@@ -1028,9 +1139,10 @@ class Checker {
       }
     }
     if (a.extends) this.checkSubtractiveGrants(a);
-    for (const h of a.hooks) { this.checkBody(h.body, new Scope()); this.checkDeferenceFlow(h.body, new Scope()); }
+    this.checkBody(a.ctor, this.agentScope(memories));
+    for (const h of a.hooks) { this.checkBody(h.body, this.agentScope(memories)); this.checkDeferenceFlow(h.body, new Scope()); }
     for (const w of a.whens) {
-      const s = new Scope();
+      const s = this.agentScope(memories);
       if (w.binder) s.set(w.binder, "unknown"); // the matched event payload
       this.checkBody(w.body, s);
       this.checkDeferenceFlow(w.body, new Scope());
@@ -1392,6 +1504,10 @@ class Checker {
       case "var": {
         if (s.init) {
           const got = this.infer(s.init, scope, s.type);
+          const exact = this.inferExact(s.init, scope);
+          if (exact && !exactAssignable(s.type, exact)) {
+            throw typeError(`'${s.name}': cannot assign ${typeRefLabel(exact)} to ${typeRefLabel(s.type)}`);
+          }
           const want = declClass(s.type);
           if (conflicts(want, got)) {
             throw typeError(`'${s.name}': cannot assign ${got} to ${want}`);
@@ -1411,6 +1527,7 @@ class Checker {
           if (srcType) scope.setAgentType(s.name, srcType);
         }
         scope.set(s.name, declClass(s.type));
+        scope.setExact(s.name, s.type);
         if (s.type.kind === "credence" || s.type.kind === "decision") scope.setEnumName(s.name, s.type.enumName);
         // remember the originating `decide` for a Decision binding (any binding form, typed or not), so the
         // §20.3 deference check can ask whether the decision endorsing a consequential path is principal-driven.
@@ -1455,17 +1572,15 @@ class Checker {
       }
       case "dispatch": return this.checkDispatch(s, scope);
       case "memdecl": {
-        if (s.init) this.infer(s.init, scope);
-        scope.set(s.name, "mem"); // the handle has type `mem` (§10)
-        return;
+        throw typeError(`legacy memory declaration must migrate to 'mem ${s.name} { type TYPE; modality MODALITY; scope SCOPE; retention RETENTION; }'`);
       }
       case "forget": {
         // `forget` requires a `mem` handle; it consumes it (recall afterward is a TypeError, §10).
+        if (!scope.hasMemory(s.name)) throw typeError(`'forget ${s.name}': forget requires a qualified memory descriptor`);
         const c = scope.get(s.name);
         if (c !== undefined && c !== "unknown" && c !== "mem") {
           throw typeError(`'forget ${s.name}': forget requires a mem handle, not ${c}`);
         }
-        scope.forget(s.name);
         return;
       }
       case "depdecl": {
@@ -1808,6 +1923,42 @@ class Checker {
     return found;
   }
 
+  private inferExact(e: A.Expr, scope: Scope): A.TypeRef | undefined {
+    switch (e.kind) {
+      case "int": return { kind: "scalar", name: "int" };
+      case "float": return { kind: "scalar", name: "float" };
+      case "bool": return { kind: "scalar", name: "bool" };
+      case "string": case "fstring": case "mdimport": return { kind: "scalar", name: "text" };
+      case "null": return { kind: "scalar", name: "null" };
+      case "ident": return scope.getExact(e.name);
+      case "structlit": return e.typeName ? { kind: "named", name: e.typeName, typeArgs: e.typeArgs } : undefined;
+      case "arraylit": {
+        if (e.items.length === 0) return undefined;
+        const inner = this.inferExact(e.items[0]!, scope);
+        if (!inner || e.items.slice(1).some((item) => {
+          const t = this.inferExact(item, scope);
+          return !t || !exactAssignable(inner, t) || !exactAssignable(t, inner);
+        })) return undefined;
+        return { kind: "array", inner };
+      }
+      case "index": {
+        const t = this.inferExact(e.obj, scope);
+        return t?.kind === "array" ? t.inner : undefined;
+      }
+      case "member": {
+        const t = this.inferExact(e.obj, scope);
+        if (t?.kind !== "named") return undefined;
+        return this.d.structs.get(t.name)?.fields.find((f) => f.name === e.field)?.type;
+      }
+      case "recall": {
+        if (e.mem.kind !== "ident") return undefined;
+        const t = scope.getMemory(e.mem.name);
+        return t ? { kind: "array", inner: t } : undefined;
+      }
+      default: return undefined;
+    }
+  }
+
   // ---- expression type inference (coarse; default unknown) ----
   // `expected` is the declared/target type of the binding this expression initializes (when known); it
   // lets a `recall` be graded into a `Credence<E>` slot exactly as the interpreter does (§10), so the
@@ -1835,7 +1986,20 @@ class Checker {
         if (this.isVariant(e.name)) return "enum";
         return "unknown";
       }
-      case "send": return "unknown"; // a send is credence (when bound) or raw text — don't over-constrain
+      case "send": {
+        if (e.dest.kind === "ident") {
+          const memoryType = scope.getMemory(e.dest.name);
+          if (memoryType) {
+            this.infer(e.message, scope);
+            const got = this.inferExact(e.message, scope);
+            if (got && !exactAssignable(memoryType, got)) {
+              throw typeError(`memory '${e.dest.name}': cannot store ${typeRefLabel(got)} in ${typeRefLabel(memoryType)}`);
+            }
+            return "unknown";
+          }
+        }
+        return "unknown";
+      }
       case "recall": {
         // `->` recall requires a `mem` handle on the left (§10): a non-`mem` LHS is a TypeError, and a
         // handle that `forget` has consumed is no longer recallable (also a TypeError).

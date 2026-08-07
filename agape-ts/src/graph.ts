@@ -179,6 +179,22 @@ export function buildGraph(program: A.Program, programName = ""): ProgramGraph {
       },
     });
     if (!decl) continue;
+    for (const m of decl.mems) {
+      const type = m.clauses.find((c): c is Extract<A.MemoryClause, { kind: "type" }> => c.kind === "type");
+      const modality = m.clauses.find((c): c is Extract<A.MemoryClause, { kind: "modality" }> => c.kind === "modality");
+      const scopes = m.clauses.find((c): c is Extract<A.MemoryClause, { kind: "scope" }> => c.kind === "scope");
+      const retention = m.clauses.find((c): c is Extract<A.MemoryClause, { kind: "retention" }> => c.kind === "retention");
+      addNode({
+        id: `mem:${inst.name}/${m.name}`, kind: "mem", label: m.name,
+        parent: `agent:${inst.name}`, line: line(m),
+        meta: {
+          type: type ? typeLabel(type.type) : undefined,
+          modality: modality?.value,
+          scope: scopes?.values,
+          retention: retention?.value,
+        },
+      });
+    }
     addMemNodes(inst, decl.ctor);
     for (const h of decl.hooks) addMemNodes(inst, h.body);
     for (const w of decl.whens) addMemNodes(inst, w.body);
