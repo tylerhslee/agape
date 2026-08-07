@@ -1,0 +1,9 @@
+agent RawWorker {
+  on awake {
+    text bound = self <- "{{BOUND_PROMPT}}";
+    self <- "{{UNBOUND_PROMPT}}";
+  }
+}
+
+spawn RawWorker raw_worker;
+awake raw_worker;

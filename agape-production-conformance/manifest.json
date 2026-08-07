@@ -1,0 +1,109 @@
+{
+  "schema_version": 2,
+  "pending_is_failure": true,
+  "validation_test": { "id": "MANIFEST.validate", "file": "tests/production/manifest_inventory.test.ts", "full_name": "production conformance manifest [MANIFEST.validate] validates schema, ownership, references, and allocations" },
+  "capabilities": [
+    {
+      "id": "P01", "capability": "source_instruction_composition", "status": "partial", "required": true,
+      "fixtures": [
+        { "id": "P01.instructions-fixture", "path": "fixtures/production/p01/instructions.ag.tmpl", "status": "implemented" },
+        { "id": "P01.task-fixture", "path": "fixtures/production/p01/task.ag.tmpl", "status": "implemented" }
+      ],
+      "tests": [
+        { "id": "P01.instructions", "file": "tests/production/p01_instruction_delivery.test.ts", "full_name": "P01 production instruction and task composition [P01.instructions] delivers global and inherited source instructions in one ordered logical list", "fixture_ids": ["P01.instructions-fixture"], "execution": "fresh_cli_process" },
+        { "id": "P01.task-data", "file": "tests/production/p01_instruction_delivery.test.ts", "full_name": "P01 production instruction and task composition [P01.task-data] keeps delegated objective and acceptance as typed data behind the worker instruction list", "fixture_ids": ["P01.task-fixture"], "execution": "fresh_cli_process" },
+        { "id": "P01.windows-cmd", "file": "tests/production/windows_cmd.test.ts", "full_name": "production CLI Windows shim [P01.windows-cmd] quotes paths with spaces and rejects cmd.exe metacharacters", "fixture_ids": [], "execution": "unit" },
+        { "id": "P01.coverage", "file": "tests/production/manifest_inventory.test.ts", "full_name": "production conformance manifest [P01.coverage] required capability coverage", "fixture_ids": [], "execution": "coverage_gate" }
+      ],
+      "allocations": [
+        { "id": "P01.source.linux.standard", "target": "source", "os": "linux", "lane": "standard", "fresh_process": true, "test_ids": ["P01.instructions", "P01.task-data", "P01.windows-cmd", "P01.coverage"] },
+        { "id": "P01.package.linux.full", "target": "package", "os": "linux", "lane": "full", "fresh_process": true, "test_ids": ["P01.instructions", "P01.task-data", "P01.coverage"] },
+        { "id": "P01.package.macos.full", "target": "package", "os": "macos", "lane": "full", "fresh_process": true, "test_ids": ["P01.instructions", "P01.task-data", "P01.coverage"] },
+        { "id": "P01.package.windows.full", "target": "package", "os": "windows", "lane": "full", "fresh_process": true, "test_ids": ["P01.instructions", "P01.task-data", "P01.windows-cmd", "P01.coverage"] }
+      ]
+    },
+    {
+      "id": "P02", "capability": "complete_reaction_memory_envelope", "status": "partial", "required": true,
+      "fixtures": [{ "id": "P02.credence-fixture", "path": "fixtures/production/p02-p03/credence.ag.tmpl", "status": "implemented" }],
+      "tests": [
+        { "id": "P02.awake-credence", "file": "tests/production/p02_p03_memory_envelope.test.ts", "full_name": "P02/P03 production reaction memory envelope [P02.awake-credence] wraps a Credence-producing awake reaction with one consult and one write evaluation", "fixture_ids": ["P02.credence-fixture"], "execution": "fresh_cli_process" },
+        { "id": "P02.coverage", "file": "tests/production/manifest_inventory.test.ts", "full_name": "production conformance manifest [P02.coverage] required capability coverage", "fixture_ids": [], "execution": "coverage_gate" }
+      ],
+      "allocations": [
+        { "id": "P02.source.linux.standard", "target": "source", "os": "linux", "lane": "standard", "fresh_process": true, "test_ids": ["P02.awake-credence", "P02.coverage"] },
+        { "id": "P02.package.linux.full", "target": "package", "os": "linux", "lane": "full", "fresh_process": true, "test_ids": ["P02.awake-credence", "P02.coverage"] },
+        { "id": "P02.package.macos.full", "target": "package", "os": "macos", "lane": "full", "fresh_process": true, "test_ids": ["P02.awake-credence", "P02.coverage"] },
+        { "id": "P02.package.windows.full", "target": "package", "os": "windows", "lane": "full", "fresh_process": true, "test_ids": ["P02.awake-credence", "P02.coverage"] }
+      ]
+    },
+    {
+      "id": "P03", "capability": "provider_reaction_shape_matrix", "status": "partial", "required": true,
+      "fixtures": [
+        { "id": "P03.raw-fixture", "path": "fixtures/production/p02-p03/raw.ag.tmpl", "status": "implemented" },
+        { "id": "P03.structured-fixture", "path": "fixtures/production/p02-p03/structured.ag.tmpl", "status": "implemented" },
+        { "id": "P03.no-provider-fixture", "path": "fixtures/production/p02-p03/no-provider.ag.tmpl", "status": "implemented" },
+        { "id": "P03.credence-fixture", "path": null, "status": "planned" }
+      ],
+      "tests": [
+        { "id": "P03.raw", "file": "tests/production/p02_p03_memory_envelope.test.ts", "full_name": "P02/P03 production reaction memory envelope [P03.raw] wraps bound and unbound raw provider replies in one automatic envelope", "fixture_ids": ["P03.raw-fixture"], "execution": "fresh_cli_process" },
+        { "id": "P03.structured", "file": "tests/production/p02_p03_memory_envelope.test.ts", "full_name": "P02/P03 production reaction memory envelope [P03.structured] wraps a nested structured provider reply and classifies its raw trust truthfully", "fixture_ids": ["P03.structured-fixture"], "execution": "fresh_cli_process" },
+        { "id": "P03.no-provider", "file": "tests/production/p02_p03_memory_envelope.test.ts", "full_name": "P02/P03 production reaction memory envelope [P03.no-provider] runs the full envelope for a deterministic reaction with zero provider calls", "fixture_ids": ["P03.no-provider-fixture"], "execution": "fresh_cli_process" },
+        { "id": "P03.coverage", "file": "tests/production/manifest_inventory.test.ts", "full_name": "production conformance manifest [P03.coverage] required capability coverage", "fixture_ids": [], "execution": "coverage_gate" }
+      ],
+      "allocations": [
+        { "id": "P03.source.linux.standard", "target": "source", "os": "linux", "lane": "standard", "fresh_process": true, "test_ids": ["P03.raw", "P03.structured", "P03.no-provider", "P03.coverage"] },
+        { "id": "P03.package.linux.full", "target": "package", "os": "linux", "lane": "full", "fresh_process": true, "test_ids": ["P03.raw", "P03.structured", "P03.no-provider", "P03.coverage"] },
+        { "id": "P03.package.macos.full", "target": "package", "os": "macos", "lane": "full", "fresh_process": true, "test_ids": ["P03.raw", "P03.structured", "P03.no-provider", "P03.coverage"] },
+        { "id": "P03.package.windows.full", "target": "package", "os": "windows", "lane": "full", "fresh_process": true, "test_ids": ["P03.raw", "P03.structured", "P03.no-provider", "P03.coverage"] }
+      ]
+    },
+    {
+      "id": "P04", "capability": "typed_recall_protected_context", "status": "partial", "required": true,
+      "fixtures": [{ "id": "P04.typed-recall-fixture", "path": "fixtures/production/p04/typed_recall.ag.tmpl", "status": "implemented" }],
+      "tests": [
+        { "id": "P04.typed-recall", "file": "tests/production/p04_typed_recall.test.ts", "full_name": "P04 production typed recall [P04.typed-recall] judges protected retrieved content and provenance in one process and one agent", "fixture_ids": ["P04.typed-recall-fixture"], "execution": "fresh_cli_process" },
+        { "id": "P04.coverage", "file": "tests/production/manifest_inventory.test.ts", "full_name": "production conformance manifest [P04.coverage] required capability coverage", "fixture_ids": [], "execution": "coverage_gate" }
+      ],
+      "allocations": [{ "id": "P04.source.linux.standard", "target": "source", "os": "linux", "lane": "standard", "fresh_process": true, "test_ids": ["P04.typed-recall", "P04.coverage"] }]
+    },
+    { "id": "P05", "capability": "markdown_identity_isolation", "status": "required_pending", "required": true, "fixtures": [{ "id": "P05.fixture", "path": null, "status": "planned" }], "tests": [{ "id": "P05.coverage", "file": "tests/production/manifest_inventory.test.ts", "full_name": "production conformance manifest [P05.coverage] required capability coverage", "fixture_ids": [], "execution": "coverage_gate" }], "allocations": [
+      { "id": "P05.source.linux.standard", "target": "source", "os": "linux", "lane": "standard", "fresh_process": true, "test_ids": ["P05.coverage"] },
+      { "id": "P05.package.linux.full", "target": "package", "os": "linux", "lane": "full", "fresh_process": true, "test_ids": ["P05.coverage"] }, { "id": "P05.package.macos.full", "target": "package", "os": "macos", "lane": "full", "fresh_process": true, "test_ids": ["P05.coverage"] }, { "id": "P05.package.windows.full", "target": "package", "os": "windows", "lane": "full", "fresh_process": true, "test_ids": ["P05.coverage"] }] },
+    { "id": "P06", "capability": "truthful_modality_receipts", "status": "required_pending", "required": true, "fixtures": [{ "id": "P06.fixture", "path": null, "status": "planned" }], "tests": [{ "id": "P06.coverage", "file": "tests/production/manifest_inventory.test.ts", "full_name": "production conformance manifest [P06.coverage] required capability coverage", "fixture_ids": [], "execution": "coverage_gate" }], "allocations": [{ "id": "P06.source.linux.standard", "target": "source", "os": "linux", "lane": "standard", "fresh_process": true, "test_ids": ["P06.coverage"] }] },
+    { "id": "P07", "capability": "immutable_origin_provenance", "status": "required_pending", "required": true, "fixtures": [{ "id": "P07.fixture", "path": null, "status": "planned" }], "tests": [{ "id": "P07.coverage", "file": "tests/production/manifest_inventory.test.ts", "full_name": "production conformance manifest [P07.coverage] required capability coverage", "fixture_ids": [], "execution": "coverage_gate" }], "allocations": [{ "id": "P07.source.linux.standard", "target": "source", "os": "linux", "lane": "standard", "fresh_process": true, "test_ids": ["P07.coverage"] }] },
+    { "id": "P08", "capability": "serialized_atomic_reactions", "status": "required_pending", "required": true, "fixtures": [{ "id": "P08.fixture", "path": null, "status": "planned" }], "tests": [{ "id": "P08.coverage", "file": "tests/production/manifest_inventory.test.ts", "full_name": "production conformance manifest [P08.coverage] required capability coverage", "fixture_ids": [], "execution": "coverage_gate" }], "allocations": [{ "id": "P08.source.linux.standard", "target": "source", "os": "linux", "lane": "standard", "fresh_process": true, "test_ids": ["P08.coverage"] }] },
+    { "id": "P09", "capability": "durable_restart_and_replay", "status": "required_pending", "required": true, "fixtures": [{ "id": "P09.fixture", "path": null, "status": "planned" }], "tests": [{ "id": "P09.coverage", "file": "tests/production/manifest_inventory.test.ts", "full_name": "production conformance manifest [P09.coverage] required capability coverage", "fixture_ids": [], "execution": "coverage_gate" }], "allocations": [
+      { "id": "P09.source.linux.standard", "target": "source", "os": "linux", "lane": "standard", "fresh_process": true, "test_ids": ["P09.coverage"] },
+      { "id": "P09.package.linux.full", "target": "package", "os": "linux", "lane": "full", "fresh_process": true, "test_ids": ["P09.coverage"] }, { "id": "P09.package.macos.full", "target": "package", "os": "macos", "lane": "full", "fresh_process": true, "test_ids": ["P09.coverage"] }, { "id": "P09.package.windows.full", "target": "package", "os": "windows", "lane": "full", "fresh_process": true, "test_ids": ["P09.coverage"] }] },
+    { "id": "P10", "capability": "verified_correction_precedence", "status": "required_pending", "required": true, "fixtures": [{ "id": "P10.fixture", "path": null, "status": "planned" }], "tests": [{ "id": "P10.coverage", "file": "tests/production/manifest_inventory.test.ts", "full_name": "production conformance manifest [P10.coverage] required capability coverage", "fixture_ids": [], "execution": "coverage_gate" }], "allocations": [{ "id": "P10.source.linux.standard", "target": "source", "os": "linux", "lane": "standard", "fresh_process": true, "test_ids": ["P10.coverage"] }] },
+    {
+      "id": "P11", "capability": "protected_judgment_evidence", "status": "partial", "required": true,
+      "fixtures": [{ "id": "P11.evidence-fixture", "path": "fixtures/production/p11/evidence.ag.tmpl", "status": "implemented" }],
+      "tests": [
+        { "id": "P11.sequence-evidence", "file": "tests/production/p11_logprob_evidence.test.ts", "full_name": "P11 production JudgmentEvidence [P11.sequence-evidence] links public gate arithmetic to protected complete multi-token sequences", "fixture_ids": ["P11.evidence-fixture"], "execution": "fresh_cli_process" },
+        { "id": "P11.record-replay", "file": "tests/production/p11_logprob_evidence.test.ts", "full_name": "P11 production JudgmentEvidence [P11.record-replay] keeps the protected recording opaque and replays without calls or durable mutation", "fixture_ids": ["P11.evidence-fixture"], "execution": "fresh_cli_process" },
+        { "id": "P11.principal-resolution", "file": "tests/production/p11_logprob_evidence.test.ts", "full_name": "P11 production JudgmentEvidence [P11.principal-resolution] requires principal-bound lossless resolution through the real protected-content transport", "fixture_ids": ["P11.evidence-fixture"], "execution": "coverage_gate" },
+        { "id": "P11.coverage", "file": "tests/production/manifest_inventory.test.ts", "full_name": "production conformance manifest [P11.coverage] required capability coverage", "fixture_ids": [], "execution": "coverage_gate" }
+      ],
+      "allocations": [
+        { "id": "P11.source.linux.standard", "target": "source", "os": "linux", "lane": "standard", "fresh_process": true, "test_ids": ["P11.sequence-evidence", "P11.record-replay", "P11.principal-resolution", "P11.coverage"] },
+        { "id": "P11.package.linux.full", "target": "package", "os": "linux", "lane": "full", "fresh_process": true, "test_ids": ["P11.sequence-evidence", "P11.record-replay", "P11.principal-resolution", "P11.coverage"] },
+        { "id": "P11.package.macos.full", "target": "package", "os": "macos", "lane": "full", "fresh_process": true, "test_ids": ["P11.sequence-evidence", "P11.record-replay", "P11.principal-resolution", "P11.coverage"] },
+        { "id": "P11.package.windows.full", "target": "package", "os": "windows", "lane": "full", "fresh_process": true, "test_ids": ["P11.sequence-evidence", "P11.record-replay", "P11.principal-resolution", "P11.coverage"] }
+      ]
+    },
+    { "id": "P12", "capability": "causal_bounded_adaptation", "status": "required_pending", "required": true, "fixtures": [{ "id": "P12.fixture", "path": null, "status": "planned" }], "tests": [{ "id": "P12.coverage", "file": "tests/production/manifest_inventory.test.ts", "full_name": "production conformance manifest [P12.coverage] required capability coverage", "fixture_ids": [], "execution": "coverage_gate" }], "allocations": [{ "id": "P12.source.linux.slow", "target": "source", "os": "linux", "lane": "slow", "fresh_process": true, "test_ids": ["P12.coverage"] }] },
+    { "id": "P13", "capability": "governed_behavior_transitions", "status": "required_pending", "required": true, "fixtures": [{ "id": "P13.fixture", "path": null, "status": "planned" }], "tests": [{ "id": "P13.coverage", "file": "tests/production/manifest_inventory.test.ts", "full_name": "production conformance manifest [P13.coverage] required capability coverage", "fixture_ids": [], "execution": "coverage_gate" }], "allocations": [
+      { "id": "P13.source.linux.standard", "target": "source", "os": "linux", "lane": "standard", "fresh_process": true, "test_ids": ["P13.coverage"] },
+      { "id": "P13.package.linux.smoke", "target": "package", "os": "linux", "lane": "smoke", "fresh_process": true, "test_ids": ["P13.coverage"] }, { "id": "P13.package.macos.smoke", "target": "package", "os": "macos", "lane": "smoke", "fresh_process": true, "test_ids": ["P13.coverage"] }, { "id": "P13.package.windows.smoke", "target": "package", "os": "windows", "lane": "smoke", "fresh_process": true, "test_ids": ["P13.coverage"] }] },
+    { "id": "P14", "capability": "adversarial_behavior_evaluation", "status": "required_pending", "required": true, "fixtures": [{ "id": "P14.fixture", "path": null, "status": "planned" }], "tests": [{ "id": "P14.coverage", "file": "tests/production/manifest_inventory.test.ts", "full_name": "production conformance manifest [P14.coverage] required capability coverage", "fixture_ids": [], "execution": "coverage_gate" }], "allocations": [
+      { "id": "P14.source.linux.standard", "target": "source", "os": "linux", "lane": "standard", "fresh_process": true, "test_ids": ["P14.coverage"] },
+      { "id": "P14.package.linux.full", "target": "package", "os": "linux", "lane": "full", "fresh_process": true, "test_ids": ["P14.coverage"] }] },
+    { "id": "P15", "capability": "durable_runtime_identity_import", "status": "required_pending", "required": true, "fixtures": [{ "id": "P15.fixture", "path": null, "status": "planned" }], "tests": [{ "id": "P15.coverage", "file": "tests/production/manifest_inventory.test.ts", "full_name": "production conformance manifest [P15.coverage] required capability coverage", "fixture_ids": [], "execution": "coverage_gate" }], "allocations": [
+      { "id": "P15.source.linux.standard", "target": "source", "os": "linux", "lane": "standard", "fresh_process": true, "test_ids": ["P15.coverage"] },
+      { "id": "P15.package.linux.full", "target": "package", "os": "linux", "lane": "full", "fresh_process": true, "test_ids": ["P15.coverage"] }, { "id": "P15.package.macos.full", "target": "package", "os": "macos", "lane": "full", "fresh_process": true, "test_ids": ["P15.coverage"] }, { "id": "P15.package.windows.full", "target": "package", "os": "windows", "lane": "full", "fresh_process": true, "test_ids": ["P15.coverage"] }] },
+    { "id": "P16", "capability": "private_evidence_retention_export", "status": "required_pending", "required": true, "fixtures": [{ "id": "P16.fixture", "path": null, "status": "planned" }], "tests": [{ "id": "P16.coverage", "file": "tests/production/manifest_inventory.test.ts", "full_name": "production conformance manifest [P16.coverage] required capability coverage", "fixture_ids": [], "execution": "coverage_gate" }], "allocations": [
+      { "id": "P16.source.linux.standard", "target": "source", "os": "linux", "lane": "standard", "fresh_process": true, "test_ids": ["P16.coverage"] },
+      { "id": "P16.package.linux.full", "target": "package", "os": "linux", "lane": "full", "fresh_process": true, "test_ids": ["P16.coverage"] }, { "id": "P16.package.macos.full", "target": "package", "os": "macos", "lane": "full", "fresh_process": true, "test_ids": ["P16.coverage"] }, { "id": "P16.package.windows.full", "target": "package", "os": "windows", "lane": "full", "fresh_process": true, "test_ids": ["P16.coverage"] }] }
+  ]
+}

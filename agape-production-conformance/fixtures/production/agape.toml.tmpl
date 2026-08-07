@@ -1,0 +1,18 @@
+[project]
+name = "{{PROJECT}}"
+entry = "main.ag"
+
+[provider]
+backend = "openai"
+model = "agape-loopback-conformance"
+exposes_logprobs = true
+sampling_fallback = false
+
+[memory]
+driver = "markdown"
+path = ".agape/memory"
+entrypoint = "MEMORY.md"
+auto_memory = true
+classify = true
+dedupe = true
+top_k = 10

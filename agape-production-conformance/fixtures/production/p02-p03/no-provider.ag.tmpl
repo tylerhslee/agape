@@ -1,0 +1,9 @@
+agent LocalWorker {
+  on awake {
+    int sum = 20 + 22;
+    say(sum);
+  }
+}
+
+spawn LocalWorker local_worker;
+awake local_worker;

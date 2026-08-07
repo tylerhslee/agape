@@ -5,6 +5,7 @@ on:
     branches: ["**"]
   pull_request:
     branches: [main]
+  workflow_call: {}
 
 # Cancel superseded runs on the same ref.
 concurrency:
@@ -177,3 +178,33 @@ jobs:
           name: playwright-report
           path: studio/web/playwright-report
           if-no-files-found: ignore
+
+  # Production path: ordinary .ag source through fresh shipped-CLI processes.
+  production-conformance:
+    name: production conformance (source / ${{ matrix.lane }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        lane: [standard, slow]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: |
+            agape-ts/package-lock.json
+            agape-production-conformance/package-lock.json
+      - name: Install source runtime
+        working-directory: agape-ts
+        run: npm ci --no-audit --no-fund
+      - name: Install production-conformance runner
+        working-directory: agape-production-conformance
+        run: npm ci --no-audit --no-fund
+      - name: Typecheck production-conformance runner
+        working-directory: agape-production-conformance
+        run: npm run typecheck
+      - name: Run allocated source lane
+        working-directory: agape-production-conformance
+        run: npm run test:allocated -- --target source --os linux --lane "${{ matrix.lane }}"

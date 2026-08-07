@@ -1,0 +1,11 @@
+struct NestedValue { value: text }
+struct NestedReply { result: NestedValue }
+
+agent StructuredWorker {
+  on awake {
+    NestedReply reply = self <- "{{PROMPT}}";
+  }
+}
+
+spawn StructuredWorker structured_worker;
+awake structured_worker;

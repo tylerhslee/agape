@@ -1,0 +1,28 @@
+instruction "{{GLOBAL_INSTRUCTION}}";
+
+enum Verdict { Approve, Reject }
+struct Reply { body: text }
+
+agent Parent {
+  instruction "{{PARENT_INSTRUCTION}}";
+}
+
+agent Child {
+  extend Parent();
+  instruction "{{CHILD_INSTRUCTION}}";
+  on awake {
+    text raw = self <- "{{RAW_PROMPT}} {{DATA_INJECTION}}";
+    Reply structured = self <- "{{STRUCTURED_PROMPT}}";
+    Credence<Verdict> graded = self <- "{{CREDENCE_PROMPT}}";
+  }
+}
+
+agent Sibling {
+  instruction "{{SIBLING_INSTRUCTION}}";
+  on awake { text other = self <- "{{SIBLING_PROMPT}}"; }
+}
+
+spawn Child child;
+spawn Sibling sibling;
+awake child;
+awake sibling;

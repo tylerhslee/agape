@@ -1,0 +1,12 @@
+enum Answer { Correct, Wrong }
+
+agent Rememberer {
+  mem facts <- "{{FACT}}";
+  on awake {
+    Credence<Answer> answer = facts -> "{{QUERY}}";
+    Decision<Answer> decision = decide answer by confidence 0.5;
+  }
+}
+
+spawn Rememberer stable_agent;
+awake stable_agent;

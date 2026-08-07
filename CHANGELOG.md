@@ -8,6 +8,13 @@ version.
 
 ## [Unreleased]
 
+### Added
+
+- **Executable production-conformance release gate.** A manifest-owned P01-P16
+  black-box suite now selects individual fresh-process tests for source CI and
+  extracted Linux, macOS, and Windows bundles, including protected evidence,
+  memory-envelope, instruction, typed-recall, and replay requirements.
+
 ### Changed
 
 - **Autonomous agents are defined as foundational language semantics.** The

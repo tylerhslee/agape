@@ -1,0 +1,11 @@
+enum Verdict { Approve, Reject }
+
+agent Auditor {
+  on awake {
+    Credence<Verdict> evidence = self <- "{{PROMPT}}";
+    Decision<Verdict> decision = decide evidence by confidence 0.5 margin 0.03 floor 0.015;
+  }
+}
+
+spawn Auditor auditor;
+awake auditor;

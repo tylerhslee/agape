@@ -1,0 +1,10 @@
+enum Verdict { Approve, Reject }
+
+agent Judge {
+  on awake {
+    Credence<Verdict> result = self <- "{{PROMPT}}";
+  }
+}
+
+spawn Judge judge;
+awake judge;

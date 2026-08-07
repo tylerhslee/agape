@@ -1,0 +1,24 @@
+instruction "{{GLOBAL_INSTRUCTION}}";
+
+agent Worker {
+  instruction "{{WORKER_INSTRUCTION}}";
+  on assigned {
+    text answer = self <- "{{WORKER_PROMPT}}";
+    complete answer;
+  }
+}
+
+agent Lead grants { reach Worker } {
+  on awake {
+    spawn Worker worker;
+    awake worker;
+    text result = worker <- task {
+      objective "{{TASK_OBJECTIVE}}";
+      acceptance "{{TASK_ACCEPTANCE}}";
+    } expires 10;
+    say(result);
+  }
+}
+
+spawn Lead lead;
+awake lead;
