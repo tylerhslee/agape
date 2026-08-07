@@ -1,0 +1,17 @@
+//! id:        mem_recall_scalar_event_argument_reject
+//! section:   10_memory
+//! expect:    reject
+//! error:     TypeError
+//! spec:      §3, §7, §10, §15.3 (TYPE[] recall is not assignable to a scalar event parameter)
+//! ---
+event Result(text value);
+agent A {
+  mem notes {
+    type text;
+    modality opaque;
+    scope project;
+    retention session;
+  }
+  on awake { emit Result(notes -> "query"); }
+}
+spawn A a; awake a;

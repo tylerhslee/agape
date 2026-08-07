@@ -1,0 +1,20 @@
+//! id:        mem_store_struct_field_type_mismatch_reject
+//! section:   10_memory
+//! expect:    reject
+//! error:     TypeError
+//! spec:      §3, §10, §15.3 (struct field expressions and stored values must satisfy their declared types)
+//! ---
+struct Note { body: text }
+agent A {
+  mem notes {
+    type Note;
+    modality opaque;
+    scope project;
+    retention session;
+  }
+  on awake {
+    Note invalid = Note { body: 42 };
+    notes <- invalid;
+  }
+}
+spawn A a; awake a;

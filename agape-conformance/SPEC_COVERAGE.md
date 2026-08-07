@@ -40,4 +40,4 @@ Status meanings:
 | 17 Configuration | covered | Manifest binding errors, connector fallback fixtures, decision-rules-not-in-manifest, and dependency binding requirements. Config precedence execution is `runtime-suite`. |
 | 18 Deployment | out-of-scope | Deployment packaging/reporting is not compiler behavior. |
 
-Current language suite index: `241` tests (`146` accept, `95` reject).
+Current language suite index: `253` tests (`148` accept, `105` reject).

@@ -1,0 +1,17 @@
+//! id:        mem_store_function_result_type_mismatch_reject
+//! section:   10_memory
+//! expect:    reject
+//! error:     TypeError
+//! spec:      §4, §10, §15.3 (a function result stored through a mem handle must be assignable to its payload type)
+//! ---
+pure int make_count() { return 42; }
+agent A {
+  mem notes {
+    type text;
+    modality opaque;
+    scope project;
+    retention session;
+  }
+  on awake { notes <- make_count(); }
+}
+spawn A a; awake a;

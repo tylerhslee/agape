@@ -1212,6 +1212,21 @@ spec = "§10, §16.7 (each explicit episodic store evaluation records its own su
 note = "distinct canonical episodes/origins for equal values are asserted by the runtime-contract suite"
 
 [[test]]
+id = "mem_event_binder_member_store_accept"
+section = "10_memory"
+path = "tests/10_memory/mem_event_binder_member_store_accept.ag"
+expect = "accept"
+spec = "§3, §5, §7, §10, §15.3 (a typed event-binder member retains its exact type at a mem store)"
+
+[[test]]
+id = "mem_event_binder_member_store_mismatch_reject"
+section = "10_memory"
+path = "tests/10_memory/mem_event_binder_member_store_mismatch_reject.ag"
+expect = "reject"
+error = "TypeError"
+spec = "§3, §5, §7, §10, §15.3 (a typed event-binder member must match the mem payload type)"
+
+[[test]]
 id = "mem_expr_query_no_ledger_event"
 section = "10_memory"
 path = "tests/10_memory/mem_expr_query_no_ledger_event.ag"
@@ -1252,6 +1267,21 @@ error = "ParseError"
 spec = "§10, §15.2 (mem<T> is not Agape syntax; payload type is a named descriptor clause)"
 
 [[test]]
+id = "mem_inherited_descriptor_access_accept"
+section = "10_memory"
+path = "tests/10_memory/mem_inherited_descriptor_access_accept.ag"
+expect = "accept"
+spec = "§5, §10, §15.3 (a child inherits its parent's structural mem handles)"
+
+[[test]]
+id = "mem_inherited_descriptor_redeclaration_reject"
+section = "10_memory"
+path = "tests/10_memory/mem_inherited_descriptor_redeclaration_reject.ag"
+expect = "reject"
+error = "TypeError"
+spec = "§5, §10, §15.3 (an inherited structural mem handle cannot be redeclared by the child)"
+
+[[test]]
 id = "mem_ledger_recall_reject"
 section = "10_memory"
 path = "tests/10_memory/mem_ledger_recall_reject.ag"
@@ -1284,6 +1314,14 @@ error = "ParseError"
 spec = "§10, §15.2 (a qualified descriptor is a direct agent-body declaration, never handler-local)"
 
 [[test]]
+id = "mem_local_shadow_not_store_reject"
+section = "10_memory"
+path = "tests/10_memory/mem_local_shadow_not_store_reject.ag"
+expect = "reject"
+error = "TypeError"
+spec = "§3, §10, §15.3 (arrow disambiguation follows the nearest binding's type, not a shadowed mem handle)"
+
+[[test]]
 id = "mem_missing_clause_reject"
 section = "10_memory"
 path = "tests/10_memory/mem_missing_clause_reject.ag"
@@ -1309,6 +1347,22 @@ order = ["Forgotten(notes)", "MemoryConsulted(notes)"]
 spec = "§10 (a descriptor survives forget and recall of its closed tuple returns an empty typed array)"
 
 [[test]]
+id = "mem_recall_later_scalar_assignment_reject"
+section = "10_memory"
+path = "tests/10_memory/mem_recall_later_scalar_assignment_reject.ag"
+expect = "reject"
+error = "TypeError"
+spec = "§3, §10, §15.3 (recall has TYPE[] independently of assignment position)"
+
+[[test]]
+id = "mem_recall_non_text_query_reject"
+section = "10_memory"
+path = "tests/10_memory/mem_recall_non_text_query_reject.ag"
+expect = "reject"
+error = "TypeError"
+spec = "§10, §15.3 (the recall query operand is text)"
+
+[[test]]
 id = "mem_recall_requires_mem_reject"
 section = "10_memory"
 path = "tests/10_memory/mem_recall_requires_mem_reject.ag"
@@ -1317,12 +1371,36 @@ error = "TypeError"
 spec = "§10 (`->` recall requires a `mem` handle on the left; a non-`mem` LHS is a TypeError)"
 
 [[test]]
+id = "mem_recall_scalar_action_argument_reject"
+section = "10_memory"
+path = "tests/10_memory/mem_recall_scalar_action_argument_reject.ag"
+expect = "reject"
+error = "TypeError"
+spec = "§3, §6b, §10, §15.3 (TYPE[] recall is not assignable to a scalar action parameter)"
+
+[[test]]
+id = "mem_recall_scalar_event_argument_reject"
+section = "10_memory"
+path = "tests/10_memory/mem_recall_scalar_event_argument_reject.ag"
+expect = "reject"
+error = "TypeError"
+spec = "§3, §7, §10, §15.3 (TYPE[] recall is not assignable to a scalar event parameter)"
+
+[[test]]
 id = "mem_recall_taint_perform_reject"
 section = "10_memory"
 path = "tests/10_memory/mem_recall_taint_perform_reject.ag"
 expect = "reject"
 error = "TaintViolation"
 spec = "§10, §13, §16.7 (the exact typed recall array is deeply raw and cannot drive a consequential sink without a gate)"
+
+[[test]]
+id = "mem_recall_undeclared_handle_reject"
+section = "10_memory"
+path = "tests/10_memory/mem_recall_undeclared_handle_reject.ag"
+expect = "reject"
+error = "TypeError"
+spec = "§10, §15.3 (`->` recall requires an established mem handle on the left)"
 
 [[test]]
 id = "mem_recall_wrong_binding_reject"
@@ -1340,6 +1418,14 @@ expect = "accept"
 spec = "§10 (select where conditions support comparison operators combined by boolean connectives)"
 
 [[test]]
+id = "mem_store_function_result_type_mismatch_reject"
+section = "10_memory"
+path = "tests/10_memory/mem_store_function_result_type_mismatch_reject.ag"
+expect = "reject"
+error = "TypeError"
+spec = "§4, §10, §15.3 (a function result stored through a mem handle must be assignable to its payload type)"
+
+[[test]]
 id = "mem_store_internalizes_ok"
 section = "10_memory"
 path = "tests/10_memory/mem_store_internalizes_ok.ag"
@@ -1353,6 +1439,14 @@ path = "tests/10_memory/mem_store_records_internalized.ag"
 expect = "accept"
 contains = ["Internalized(notes)"]
 spec = "§10, §15.4.2 (a successful explicit typed write records Internalized)"
+
+[[test]]
+id = "mem_store_struct_field_type_mismatch_reject"
+section = "10_memory"
+path = "tests/10_memory/mem_store_struct_field_type_mismatch_reject.ag"
+expect = "reject"
+error = "TypeError"
+spec = "§3, §10, §15.3 (struct field expressions and stored values must satisfy their declared types)"
 
 [[test]]
 id = "mem_store_type_mismatch_reject"

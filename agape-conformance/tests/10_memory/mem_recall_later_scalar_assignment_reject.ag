@@ -1,0 +1,19 @@
+//! id:        mem_recall_later_scalar_assignment_reject
+//! section:   10_memory
+//! expect:    reject
+//! error:     TypeError
+//! spec:      §3, §10, §15.3 (recall has TYPE[] independently of assignment position)
+//! ---
+agent A {
+  mem notes {
+    type text;
+    modality opaque;
+    scope project;
+    retention session;
+  }
+  on awake {
+    text result;
+    result = notes -> "query";
+  }
+}
+spawn A a; awake a;

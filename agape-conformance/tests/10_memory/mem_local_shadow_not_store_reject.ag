@@ -1,0 +1,19 @@
+//! id:        mem_local_shadow_not_store_reject
+//! section:   10_memory
+//! expect:    reject
+//! error:     TypeError
+//! spec:      §3, §10, §15.3 (arrow disambiguation follows the nearest binding's type, not a shadowed mem handle)
+//! ---
+agent A {
+  mem notes {
+    type text;
+    modality opaque;
+    scope project;
+    retention session;
+  }
+  on awake {
+    int notes = 1;
+    notes <- "not a memory store";
+  }
+}
+spawn A a; awake a;

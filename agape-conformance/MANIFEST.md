@@ -1,6 +1,6 @@
 # Agape v1.0.0-beta.2026.8.6.0 — Conformance Test Index
 
-**242 tests** — accept: 147, reject: 95
+**254 tests** — accept: 149, reject: 105
 
 A conformant implementation must satisfy every `accept`/`reject` test (rejects with the declared error class; accepts matching any asserted spine).
 
@@ -210,24 +210,36 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 | `mem_duplicate_scope_reject` | reject | TypeError | §10 (a scope dimension may appear only once in the descriptor tuple) |
 | `mem_empty_typed_recall_accept` | accept | — | §10 (recall against an empty typed region is well-typed, records consultation, and invokes no provider) |
 | `mem_episodic_equal_writes_receipts_accept` | accept | — | §10, §16.7 (each explicit episodic store evaluation records its own successful Internalized receipt) |
+| `mem_event_binder_member_store_accept` | accept | — | §3, §5, §7, §10, §15.3 (a typed event-binder member retains its exact type at a mem store) |
+| `mem_event_binder_member_store_mismatch_reject` | reject | TypeError | §3, §5, §7, §10, §15.3 (a typed event-binder member must match the mem payload type) |
 | `mem_expr_query_no_ledger_event` | accept | — | §10 (query expression form yields a value and appends no QueryResult event) |
 | `mem_forget_accept` | accept | — | §10 (forget closes only the current scope tuple generation while the structural descriptor survives) |
 | `mem_forget_records_tombstone` | accept | — | §10 (forget appends a truthful Forgotten receipt for the resolved tuple generation) |
 | `mem_forget_reopen_operations_accept` | accept | — | §10, §16.7 (the structural descriptor remains usable for recall and a later store after forget) |
 | `mem_generic_syntax_reject` | reject | ParseError | §10, §15.2 (mem<T> is not Agape syntax; payload type is a named descriptor clause) |
+| `mem_inherited_descriptor_access_accept` | accept | — | §5, §10, §15.3 (a child inherits its parent's structural mem handles) |
+| `mem_inherited_descriptor_redeclaration_reject` | reject | TypeError | §5, §10, §15.3 (an inherited structural mem handle cannot be redeclared by the child) |
 | `mem_ledger_recall_reject` | reject | TypeError | §10 (the ledger is not private memory; `->` recall requires a `mem` handle, never `ledger`) |
 | `mem_legacy_direct_reject` | reject | TypeError | §10 (legacy unqualified declarations receive the qualified-descriptor migration diagnostic) |
 | `mem_legacy_local_initialized_reject` | reject | TypeError | §10 (legacy handler-local initialized declarations receive the hoist-and-qualify migration diagnostic) |
 | `mem_local_descriptor_reject` | reject | ParseError | §10, §15.2 (a qualified descriptor is a direct agent-body declaration, never handler-local) |
+| `mem_local_shadow_not_store_reject` | reject | TypeError | §3, §10, §15.3 (arrow disambiguation follows the nearest binding's type, not a shadowed mem handle) |
 | `mem_missing_clause_reject` | reject | TypeError | §10, §15.3 (type, modality, scope, and retention are each required exactly once) |
 | `mem_modalities_names_no_magic_accept` | accept | — | §10 (opaque, episodic, and semantic are declared policies; handle names have no intrinsic semantics) |
 | `mem_recall_after_forget_empty` | accept | — | §10 (a descriptor survives forget and recall of its closed tuple returns an empty typed array) |
+| `mem_recall_later_scalar_assignment_reject` | reject | TypeError | §3, §10, §15.3 (recall has TYPE[] independently of assignment position) |
+| `mem_recall_non_text_query_reject` | reject | TypeError | §10, §15.3 (the recall query operand is text) |
 | `mem_recall_requires_mem_reject` | reject | TypeError | §10 (`->` recall requires a `mem` handle on the left; a non-`mem` LHS is a TypeError) |
+| `mem_recall_scalar_action_argument_reject` | reject | TypeError | §3, §6b, §10, §15.3 (TYPE[] recall is not assignable to a scalar action parameter) |
+| `mem_recall_scalar_event_argument_reject` | reject | TypeError | §3, §7, §10, §15.3 (TYPE[] recall is not assignable to a scalar event parameter) |
 | `mem_recall_taint_perform_reject` | reject | TaintViolation | §10, §13, §16.7 (the exact typed recall array is deeply raw and cannot drive a consequential sink without a gate) |
+| `mem_recall_undeclared_handle_reject` | reject | TypeError | §10, §15.3 (`->` recall requires an established mem handle on the left) |
 | `mem_recall_wrong_binding_reject` | reject | TypeError | §10, §15.3 (typed recall returns TYPE[] and cannot bind directly to text or Credence) |
 | `mem_select_boolean_ops_ok` | accept | — | §10 (select where conditions support comparison operators combined by boolean connectives) |
+| `mem_store_function_result_type_mismatch_reject` | reject | TypeError | §4, §10, §15.3 (a function result stored through a mem handle must be assignable to its payload type) |
 | `mem_store_internalizes_ok` | accept | — | §10 (an explicit write stores a value assignable to the structural descriptor type) |
 | `mem_store_records_internalized` | accept | — | §10, §15.4.2 (a successful explicit typed write records Internalized) |
+| `mem_store_struct_field_type_mismatch_reject` | reject | TypeError | §3, §10, §15.3 (struct field expressions and stored values must satisfy their declared types) |
 | `mem_store_type_mismatch_reject` | reject | TypeError | §10, §15.3 (every stored expression must be assignable to the descriptor payload type) |
 | `mem_top_level_descriptor_reject` | reject | ParseError | §10, §15.2 (a qualified descriptor is structural agent state and is not a top-level declaration) |
 | `mem_unknown_modality_reject` | reject | TypeError | §10 (the closed modality vocabulary is opaque, episodic, and semantic; working state is not memory) |

@@ -1,0 +1,10 @@
+//! id:        mem_recall_undeclared_handle_reject
+//! section:   10_memory
+//! expect:    reject
+//! error:     TypeError
+//! spec:      §10, §15.3 (`->` recall requires an established mem handle on the left)
+//! ---
+agent A {
+  on awake { text[] hits = missing -> "query"; }
+}
+spawn A a; awake a;
