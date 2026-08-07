@@ -53,9 +53,10 @@ function connectorFault(err: unknown): { status?: number; message: string; deter
   return { status, message, deterministic };
 }
 
-// §6c task-send state, correlated by the delegator-side binding name (the corr subject).
+// §6c task-send state: the source subject remains human-readable while corr uniquely identifies an invocation.
 interface TaskState {
-  corr: string;
+  subject: string;
+  corr: number;
   dest: string;
   delegator?: string;
   scope: string[];      // the action names an ENDORSED task enables on the worker (§6c, §13)
@@ -71,6 +72,7 @@ interface TaskState {
   // The delegating reaction's prompt provenance: a background delivery drains AFTER the
   // originating async context has ended, so the task carries it and restores it at delivery.
   provenance?: MemoryProvenance;
+  subscriptionOwner?: object;
 }
 const taskTerminal = (t: TaskState): boolean =>
   t.status === "completed" || t.status === "failed" || t.status === "cancelled" || t.status === "expired";
@@ -557,10 +559,11 @@ class Interpreter {
   // `about <subj>` filter, and the `if (guard)` predicate — in registration order, before the next statement.
   // `scope` present = a BLOCK-LOCAL `when` hoisted at its handler-scope entry (§16.3): the handler body
   // fires with that captured scope as parent, so a task handle bound in the hook is visible to `about h`.
-  private subscriptions: { inst?: AgentInstance; when: A.WhenStmt; scope?: Scope }[] = []; // inst absent = a top-level `when`
+  private subscriptions: { inst?: AgentInstance; when: A.WhenStmt; scope?: Scope; owner?: object }[] = []; // inst absent = a top-level `when`
+  // Scope-local subscriptions leave with their owning block; persistent top-level/agent declarations have no owner.
   // §6c task runtime state: every delegation by correlation, the queued background deliveries, and the
   // ACTIVE task per worker instance (set for the duration of its task handler).
-  private tasks = new Map<string, TaskState>();
+  private tasks = new Map<number, TaskState>();
   private pendingDeliveries: TaskState[] = [];
   private globalInstructions: string[] = [];
   // The stimulus tick for the currently executing reaction. Explicit recall receipts use this correlation;
@@ -577,6 +580,7 @@ class Interpreter {
   // origin (heartbeat ticks, spawn/awake hooks) leave the store empty and the key absent.
   private promptProvenanceALS = new AsyncLocalStorage<MemoryProvenance>();
   private drainingTasks = false;
+  private ownerDrainALS = new AsyncLocalStorage<boolean>();
   private dispatchDepth = 0; // reentrancy guard: a handler's appends cascade, but bounded (events are finite).
   // §3: the set of declared `principal NAME;` names, so evalGate can recognize the suite's `decide c by p`
   // form — the parser records `by p` as a {policy} rule (it cannot tell principal from policy context-free),
@@ -588,7 +592,7 @@ class Interpreter {
   private fileConformalAlpha?: number;
   private prompts = new Map<string, A.PromptDecl>();
   // §6: sends that EXPIRED before their destination was awake — refused (DeliveryRefused) if it later awakes.
-  private pendingExpired: { dest: string; subj: string }[] = [];
+  private pendingExpired: { dest: string; subj: string; corr: string | number }[] = [];
   // §16.1: seam calls can be in flight concurrently, but their observable close events are applied in
   // issue order so replay is independent of wall-clock promise resolution order.
   private resolutionTail: Promise<void> = Promise.resolve();
@@ -599,7 +603,9 @@ class Interpreter {
   // appends is a deterministic function of submission order, independent of wall-clock oracle timing. This
   // makes the batch's chain head reproducible on replay (§16.5) while its worker oracle calls overlap.
   private turnChain: Promise<void> = Promise.resolve();
+  private promptTurnChain: Promise<void> = Promise.resolve();
   private turnFiberALS = new AsyncLocalStorage<{ held: (() => void) | null }>();
+  private subscriptionScopeALS = new AsyncLocalStorage<object | undefined>();
   // §19.2 module resolution (erased from the linker): a bound bare name (selective import) → its
   // qualified name, and every companion module's simple decl names, so a bare name in a companion
   // agent's body resolves within that module (`emit Glitch` inside `m` → `m.Glitch`).
@@ -738,11 +744,19 @@ class Interpreter {
   }
 
   async sendPrompt(input: PromptInput): Promise<RunResult> {
-    await this.start();
-    await this.deliverPrompt(input);
-    await this.drainTasks();
-    await this.sweepExpiredTasks();
-    return this.snapshot();
+    const previous = this.promptTurnChain;
+    let release!: () => void;
+    this.promptTurnChain = new Promise<void>((resolve) => { release = resolve; });
+    await previous;
+    try {
+      await this.start();
+      await this.deliverPrompt(input);
+      await this.drainTasks();
+      await this.sweepExpiredTasks();
+      return this.snapshot();
+    } finally {
+      release();
+    }
   }
 
   snapshot(): RunResult {
@@ -850,7 +864,9 @@ class Interpreter {
         // binding an attempt makes persists.
         for (let attempt = 0; attempt < s.n; attempt++) {
           try {
-            for (const st of s.body) await this.execStmt(st, scope);
+            await this.withScopeWhens(s.body, scope, scope.currentAgent(), async () => {
+              for (const st of s.body) await this.execStmt(st, scope);
+            });
             return; // the attempt succeeded
           } catch (err) {
             if (!(err instanceof TypeMismatchError)) throw err; // only a TypeMismatch is retryable
@@ -879,14 +895,15 @@ class Interpreter {
         const v = await this.evalExpr(s.value, scope);
         if (taskTerminal(t)) {
           // §6c/§15.4.2: after a tombstone (cancel/expiry) the first terminal won — refuse and discard.
-          this.ledger.append("CompletionRefused", t.corr, undefined, inst.name);
+          const refusalCorr = this.ledger.events.length;
+          this.ledger.append("CompletionRefused", t.subject, { original_corr: t.corr }, inst.name, refusalCorr);
           throw new TaskDoneSignal();
         }
         t.status = "completed";
         t.result = v;
-        this.ledger.append("Resolved", t.corr, { task: true, result: this.publicLedgerValue(v) }, inst.name);
-        this.ledger.append("TaskCompleted", t.corr, { result: this.publicLedgerValue(v) }, inst.name);
-        await this.fireSubscriptions("TaskCompleted", t.corr, new Map([["result", v]]));
+        this.ledger.append("Resolved", t.subject, { task: true, result: this.publicLedgerValue(v) }, inst.name, t.corr);
+        this.ledger.append("TaskCompleted", t.subject, { result: this.publicLedgerValue(v) }, inst.name, t.corr);
+        await this.fireSubscriptions("TaskCompleted", t.subject, new Map([["result", v]]), t.corr);
         throw new TaskDoneSignal();
       }
       case "fail": {
@@ -897,14 +914,15 @@ class Interpreter {
         const v = await this.evalExpr(s.reason, scope);
         if (v.kind !== "text") throw typeError("`fail` requires a text reason (§6c)");
         if (taskTerminal(t)) {
-          this.ledger.append("CompletionRefused", t.corr, undefined, inst.name);
+          const refusalCorr = this.ledger.events.length;
+          this.ledger.append("CompletionRefused", t.subject, { original_corr: t.corr }, inst.name, refusalCorr);
           throw new TaskDoneSignal();
         }
         t.status = "failed";
         t.reason = v.v;
         t.reasonPrivate = this.containsPrivateMemory(v);
-        this.ledger.append("TaskFailed", t.corr, { reason: this.publicLedgerText(v) }, inst.name);
-        await this.fireSubscriptions("TaskFailed", t.corr, new Map([["reason", v]]));
+        this.ledger.append("TaskFailed", t.subject, { reason: this.publicLedgerText(v) }, inst.name, t.corr);
+        await this.fireSubscriptions("TaskFailed", t.subject, new Map([["reason", v]]), t.corr);
         throw new TaskDoneSignal();
       }
       case "cancel": {
@@ -916,8 +934,8 @@ class Interpreter {
         const t = this.tasks.get(hv.corr);
         if (!t || taskTerminal(t)) return;
         t.status = "cancelled";
-        this.ledger.append("TaskCancelled", t.corr, undefined, scope.currentAgent()?.name);
-        await this.fireSubscriptions("TaskCancelled", t.corr, new Map());
+        this.ledger.append("TaskCancelled", t.subject, undefined, scope.currentAgent()?.name, t.corr);
+        await this.fireSubscriptions("TaskCancelled", t.subject, new Map(), t.corr);
         if (t.delivered) {
           const worker = this.instances.get(t.dest);
           if (worker) await this.runHook(worker, "cancelled");
@@ -932,8 +950,8 @@ class Interpreter {
           const t = this.activeTaskALS.getStore();
           if (!t || !inst) throw typeError("TaskProgress is emittable only inside a task handler — it correlates to the active task (§6c)");
           const note = s.args[0] ? await this.evalExpr(s.args[0], scope) : settledText("");
-          this.ledger.append("TaskProgress", t.corr, { note: this.publicLedgerText(note) }, inst.name);
-          await this.fireSubscriptions("TaskProgress", t.corr, new Map([["note", note]]));
+          this.ledger.append("TaskProgress", t.subject, { note: this.publicLedgerText(note) }, inst.name, t.corr);
+          await this.fireSubscriptions("TaskProgress", t.subject, new Map([["note", note]]), t.corr);
           return;
         }
         // §19.2: the etype is the FULLY-QUALIFIED event name — a bare event in a companion agent's body
@@ -989,7 +1007,9 @@ class Interpreter {
           const n = this.committedNarrowingOf(s.cond, scope);
           if (n) inner.set(n.name, this.narrow(n.value, true));
         }
-        for (const st of branch) await this.execStmt(st, inner);
+        await this.withScopeWhens(branch, inner, scope.currentAgent(), async () => {
+          for (const st of branch) await this.execStmt(st, inner);
+        });
         return;
       }
       case "dispatch": return this.execDispatch(s, scope);
@@ -1128,7 +1148,10 @@ class Interpreter {
     // Spawned is already committed; constructor effects and faults follow it.
     const ctorScope = new Scope(undefined, inst);
     try {
-      for (const st of this.ctorOf(inst)) await this.execStmt(st, ctorScope);
+      const ctor = this.ctorOf(inst);
+      await this.subscriptionScopeALS.run(undefined, () => this.withScopeWhens(ctor, ctorScope, inst, async () => {
+        for (const st of ctor) await this.execStmt(st, ctorScope);
+      }));
       inst.constructed = true;
     } catch (err) {
       this.ledger.append("AgentCrashed", instanceId, {
@@ -1170,7 +1193,10 @@ class Interpreter {
     }
     // §6: any send that EXPIRED before this agent was awake is refused on its (late) awakening — a late
     // delivery attempt records DeliveryRefused (not Delivered), and it is not an Error.
-    for (const p of this.pendingExpired) if (p.dest === name) this.ledger.append("DeliveryRefused", p.subj, undefined, name);
+    for (const p of this.pendingExpired) if (p.dest === name) {
+      const refusalCorr = this.ledger.events.length;
+      this.ledger.append("DeliveryRefused", p.subj, { original_corr: p.corr }, name, refusalCorr);
+    }
     this.pendingExpired = this.pendingExpired.filter((p) => p.dest !== name);
     // §5b: the prompt sensor is opened once at program start (see `run`), because the sensor opens from the
     // DECLARATION, not from an agent's awakening or subscription. Awakening only starts this agent's own
@@ -1190,27 +1216,61 @@ class Interpreter {
     const hook = inst.decl.hooks.find((h) => h.event === event);
     if (!hook) return;
     const scope = new Scope(undefined, inst);
-    // §16.3: a block's `when` subscriptions are HOISTED at scope entry, with the hook scope captured so
-    // an `about h` filter can see bindings the hook makes (e.g. a Task<T> handle).
-    this.registerBlockWhens(hook.body, scope, inst);
-    for (const st of hook.body) await this.execStmt(st, scope);
+    await this.subscriptionScopeALS.run(undefined, () => this.withScopeWhens(hook.body, scope, inst, async () => {
+      for (const st of hook.body) await this.execStmt(st, scope);
+    }));
   }
 
-  // hoist the `when` statements of a handler block (including nested if/when bodies) as subscriptions
-  // carrying the block scope. Registered once per when-statement object (a re-awake does not duplicate).
-  private registerBlockWhens(stmts: A.Stmt[], scope: Scope, inst?: AgentInstance): void {
-    for (const st of stmts) {
-      if (st.kind === "when") {
-        if (!this.subscriptions.some((s) => s.when === st)) this.subscriptions.push({ inst, when: st, scope });
-        this.registerBlockWhens(st.body, scope, inst);
-      } else if (st.kind === "if") {
-        this.registerBlockWhens(st.then, scope, inst);
-        if (st.else) this.registerBlockWhens(st.else, scope, inst);
-      }
+  // Enter only the lexical block actually being executed. Nested if/when bodies acquire
+  // their own owners when entered, so an untaken branch has no live subscription.
+  private registerScopeWhens(stmts: A.Stmt[], scope: Scope, inst: AgentInstance | undefined, owner: object): void {
+    for (const st of stmts) if (st.kind === "when") this.subscriptions.push({ inst, when: st, scope, owner });
+  }
+
+  private unregisterScopeWhens(owner: object): void {
+    this.subscriptions = this.subscriptions.filter((subscription) => subscription.owner !== owner);
+  }
+
+  private async closeScopeWhens(owner: object): Promise<void> {
+    try {
+      await this.drainOwnedTasks(owner);
+      await this.sweepExpiredTasks(owner);
+    } finally {
+      this.unregisterScopeWhens(owner);
+    }
+  }
+
+  private async withScopeWhens<T>(stmts: A.Stmt[], scope: Scope, inst: AgentInstance | undefined, run: () => Promise<T>): Promise<T> {
+    if (!stmts.some((st) => st.kind === "when")) return run();
+    const owner = {};
+    this.registerScopeWhens(stmts, scope, inst, owner);
+    try {
+      const result = await this.subscriptionScopeALS.run(owner, run);
+      await this.closeScopeWhens(owner);
+      return result;
+    } catch (err) {
+      if (err instanceof TaskDoneSignal) await this.closeScopeWhens(owner);
+      else this.unregisterScopeWhens(owner);
+      throw err;
     }
   }
 
   // ---- §6c the task runtime (§16.3a) ----
+  private async drainOwnedTasks(owner: object): Promise<void> {
+    const concurrent = !this.drainingTasks && this.ownerDrainALS.getStore() !== true;
+    await this.ownerDrainALS.run(true, async () => {
+      while (true) {
+        const owned = this.pendingDeliveries.filter((task) => task.subscriptionOwner === owner);
+        if (owned.length === 0) return;
+        this.pendingDeliveries = this.pendingDeliveries.filter((task) => task.subscriptionOwner !== owner);
+        if (concurrent) {
+          await Promise.all(owned.map((task) => this.runTurnFiber(() => this.deliverTask(task))));
+        } else {
+          for (const task of owned) await this.deliverTask(task);
+        }
+      }
+    });
+  }
 
   // deliver every queued background task, in submission order; a delivery may enqueue more.
   private async drainTasks(): Promise<void> {
@@ -1234,12 +1294,13 @@ class Interpreter {
 
   // the quiescence sweep: any still-open task (sent or delivered) expires — its mandatory lifetime is
   // the guaranteed terminal (§6c). First terminal wins: a completed/failed/cancelled task is untouched.
-  private async sweepExpiredTasks(): Promise<void> {
+  private async sweepExpiredTasks(owner?: object): Promise<void> {
     for (const t of this.tasks.values()) {
+      if (owner !== undefined && t.subscriptionOwner !== owner) continue;
       if (!taskTerminal(t)) {
         t.status = "expired";
-        this.ledger.append("Expired", t.corr, { to: t.dest, task: true }, t.delegator);
-        await this.fireSubscriptions("Expired", t.corr, new Map());
+        this.ledger.append("Expired", t.subject, { to: t.dest, task: true }, t.delegator, t.corr);
+        await this.fireSubscriptions("Expired", t.subject, new Map(), t.corr);
       }
     }
   }
@@ -1253,18 +1314,19 @@ class Interpreter {
     if (!inst?.awake) return;    // no mailbox: stays a stalled prefix; the expiry sweep will tombstone it
     t.status = "delivered";
     t.delivered = true;
-    const deliveredEvent = this.ledger.append("Delivered", t.corr, { to: t.dest, task: true }, t.delegator);
-    await this.fireSubscriptions("Delivered", t.corr, new Map());
+    const deliveredEvent = this.ledger.append("Delivered", t.subject, { to: t.dest, task: true }, t.delegator, t.corr);
+    await this.fireSubscriptions("Delivered", t.subject, new Map(), t.corr);
     const hook = inst.decl.hooks.find((h) => h.event === "assigned");
     if (!hook) return; // no completing handler is not an error — expiry backstops it (§6c)
     const hscope = new Scope(undefined, inst);
     // run the handler inside this task's async context; nested delegation nests the context, and
     // concurrent deliveries to the same agent each keep their own active task (no clobbering).
     try {
-      const runHandler = () => this.reactionEventALS.run(deliveredEvent.tick, () => this.activeTaskALS.run(t, async () => {
-        this.registerBlockWhens(hook.body, hscope, inst);
-        for (const st of hook.body) await this.execStmt(st, hscope);
-      }));
+      const runHandler = () => this.reactionEventALS.run(deliveredEvent.tick, () => this.subscriptionScopeALS.run(undefined, () => this.activeTaskALS.run(t, async () => {
+        await this.withScopeWhens(hook.body, hscope, inst, async () => {
+          for (const st of hook.body) await this.execStmt(st, hscope);
+        });
+      })));
       // restore the delegating reaction's prompt provenance (captured at the task-send).
       await (t.provenance ? this.promptProvenanceALS.run(t.provenance, runHandler) : runHandler());
     } catch (err) {
@@ -1315,7 +1377,12 @@ class Interpreter {
   // about the held subject), and the `if (guard)` predicate. The bound event evaluates to a struct exposing its
   // payload fields (`p.msg`, `q.body`). A snapshot is taken so a handler that awakes a NEW agent does not fire
   // that agent's fresh subscriptions for the CURRENT event; cascades from the handler's own appends still do.
-  private async fireSubscriptions(evEtype: string, evSubject: string, fields: Map<string, Value>): Promise<void> {
+  private async fireSubscriptions(
+    evEtype: string,
+    evSubject: string,
+    fields: Map<string, Value>,
+    evCorr: string | number | null = null,
+  ): Promise<void> {
     if (this.dispatchDepth > 64) return; // reentrancy backstop (a program that self-emits the event it handles)
     const subs = [...this.subscriptions];
     this.dispatchDepth++;
@@ -1330,13 +1397,13 @@ class Interpreter {
           // A hoisted subscription's subject expression may not be resolvable yet (§16.3 hoists a block's
           // `when`s BEFORE its statements run — e.g. `about h` before the handle binds). An unresolvable
           // subject simply cannot match this event; it resolves for later events once bound.
-          let aboutName: string | undefined;
+          let about: { kind: "subject"; value: string } | { kind: "corr"; value: number };
           try {
-            aboutName = await this.eventAboutName(sub.when.about, hscope);
+            about = await this.eventAboutTarget(sub.when.about, hscope);
           } catch {
             continue;
           }
-          if (aboutName !== evSubject) continue;
+          if (about.kind === "corr" ? about.value !== evCorr : about.value !== evSubject) continue;
         }
         if (sub.when.binder) hscope.set(sub.when.binder, { kind: "struct", typeName: evEtype, fields, trust: "graded", ingress: ingressJoin([...fields.values()]) });
         if (sub.when.guard) {
@@ -1349,7 +1416,9 @@ class Interpreter {
         // mirrors the awake-hook (execAwake) and task-handler (deliverTask) crash paths — without it, a
         // reaction crash escaped `run()` entirely, bypassing the program's `on crash`.
         try {
-          for (const st of sub.when.body) await this.execStmt(st, hscope);
+          await this.subscriptionScopeALS.run(sub.owner, () => this.withScopeWhens(sub.when.body, hscope, sub.inst, async () => {
+            for (const st of sub.when.body) await this.execStmt(st, hscope);
+          }));
         } catch (err) {
           if (!(err instanceof CrashError)) throw err;
           if (sub.inst) {
@@ -1363,10 +1432,11 @@ class Interpreter {
     }
   }
 
-  private async eventAboutName(e: A.Expr, scope: Scope): Promise<string> {
-    if (e.kind === "ident" && this.prompts.has(e.name)) return e.name;
+  private async eventAboutTarget(e: A.Expr, scope: Scope): Promise<{ kind: "subject"; value: string } | { kind: "corr"; value: number }> {
+    if (e.kind === "ident" && this.prompts.has(e.name)) return { kind: "subject", value: e.name };
     const av = await this.evalExpr(e, scope);
-    return av.kind === "agentref" ? av.name : render(av);
+    if (av.kind === "taskref") return { kind: "corr", value: av.corr };
+    return { kind: "subject", value: av.kind === "agentref" ? av.name : render(av) };
   }
 
   // §9 subtype matching: a subscription's declared event type against an appended event's type.
@@ -1432,8 +1502,8 @@ class Interpreter {
     if (active && agent) {
       const bare = name.includes(".") ? name.split(".").pop()! : name;
       if (!active.endorsed || !(active.scope.includes(name) || active.scope.includes(bare))) {
-        this.ledger.append("TaskScopeViolation", agent.name, { action: name, task: active.corr }, agent.name);
-        throw new CrashError(`task-scope violation: agent '${agent.name}' cannot perform '${name}' — the active assigned task '${active.corr}' ${!active.endorsed ? "is not endorsed" : `does not name '${name}' in its scope`}; the action is refused (§6c/§13/§16.6)`);
+        this.ledger.append("TaskScopeViolation", agent.name, { action: name, task: active.subject }, agent.name, active.corr);
+        throw new CrashError(`task-scope violation: agent '${agent.name}' cannot perform '${name}' — the active assigned task '${active.subject}' ${!active.endorsed ? "is not endorsed" : `does not name '${name}' in its scope`}; the action is refused (§6c/§13/§16.6)`);
       }
     }
     const argValues: Value[] = [];
@@ -1474,8 +1544,8 @@ class Interpreter {
     if (active && agent) {
       const bare = name.includes(".") ? name.split(".").pop()! : name;
       if (!active.endorsed || !(active.scope.includes(name) || active.scope.includes(bare))) {
-        this.ledger.append("TaskScopeViolation", agent.name, { action: name, task: active.corr }, agent.name);
-        throw new CrashError(`task-scope violation: agent '${agent.name}' cannot perform '${name}' — the active assigned task '${active.corr}' ${!active.endorsed ? "is not endorsed" : `does not name '${name}' in its scope`}; the action is refused (§6c/§13/§16.6)`);
+        this.ledger.append("TaskScopeViolation", agent.name, { action: name, task: active.subject }, agent.name, active.corr);
+        throw new CrashError(`task-scope violation: agent '${agent.name}' cannot perform '${name}' — the active assigned task '${active.subject}' ${!active.endorsed ? "is not endorsed" : `does not name '${name}' in its scope`}; the action is refused (§6c/§13/§16.6)`);
       }
     }
     if (e.expires === undefined) throw typeError("a result-bound `perform` requires `expires` (§6b/§6c)");
@@ -1558,7 +1628,8 @@ class Interpreter {
       payload: this.receiptContent(payload, privateArgs),
     };
     const resultIngress = resultEvent ? this.ingressForEvent(resultEvent) : "external_unscreened";
-    this.ledger.append("ToolStarted", catalogKey, startedPayload, agent?.name);
+    const corr = this.ledger.events.length;
+    this.ledger.append("ToolStarted", catalogKey, startedPayload, agent?.name, corr);
     return this.inResolutionOrder(
       this.effectorResult(catalogKey, args, binding, payload)
         .catch((err) => {
@@ -1570,7 +1641,7 @@ class Interpreter {
         })
         .then((resolved) => this.privateDerived(this.withIngress(resolved, resultIngress), args)),
       (resolved) => {
-        this.ledger.append("ToolResolved", catalogKey, { ...startedPayload, result: this.publicLedgerValue(resolved) }, agent?.name);
+        this.ledger.append("ToolResolved", catalogKey, { ...startedPayload, result: this.publicLedgerValue(resolved) }, agent?.name, corr);
       },
     );
   }
@@ -1727,7 +1798,9 @@ class Interpreter {
   private async runArm(binder: string | undefined, bound: Value, body: A.Stmt[], scope: Scope): Promise<void> {
     const inner = new Scope(scope);
     if (binder) inner.set(binder, bound);
-    for (const st of body) await this.execStmt(st, inner);
+    await this.withScopeWhens(body, inner, scope.currentAgent(), async () => {
+      for (const st of body) await this.execStmt(st, inner);
+    });
   }
 
   // §20.1: does an endorse arm reach a REVERSIBLE consequential sink — a `perform` of a `reversible action`,
@@ -2027,11 +2100,11 @@ class Interpreter {
     // §13 attestation protocol — DEFER: appending the durable pending-decision receipt BEFORE the
     // ruling is resolved. Its tick is the correlation id `corr` that the notifying action, the attested
     // response, and the resulting PrincipalDecision / FailedPrincipalDecision all reference.
-    const pending = this.ledger.append("PendingPrincipalDecision", who, { credence: cred.enumName, ...scoreSummary(cred.scores) }, agent);
-    const corr = pending.tick;
+    const corr = this.ledger.events.length;
+    const pending = this.ledger.append("PendingPrincipalDecision", who, { credence: cred.enumName, ...scoreSummary(cred.scores) }, agent, corr);
     const failed = (kind: string, extra: Record<string, unknown>, att?: PrincipalAttestation) => {
       const attestation = localAttestation(kind, { principal: who, credence: cred.enumName, ...extra }, att);
-      const ev = this.ledger.append("FailedPrincipalDecision", who, { credence: cred.enumName, ...extra, ...scoreSummary(cred.scores), pending: corr, attestation }, agent);
+      const ev = this.ledger.append("FailedPrincipalDecision", who, { credence: cred.enumName, ...extra, ...scoreSummary(cred.scores), pending: corr, attestation }, agent, corr);
       return { committed: "abstained" as Committed, margin, basis: "Principal", principalEvent: ev.tick };
     };
     // apply one attestation (pre-supplied by the harness/UI, or returned live by the consult seam):
@@ -2051,7 +2124,7 @@ class Interpreter {
         return failed("principal-attester-mismatch", { decision, attester_verification: check.label, resolved_attester: check.resolved ?? null }, att);
       }
       const attestation = localAttestation("principal-decision", { principal: who, credence: cred.enumName, decision, scores: cred.scores }, { ...att, attester_verification: check.label });
-      const ev = this.ledger.append("PrincipalDecision", who, { credence: cred.enumName, decision, ...scoreSummary(cred.scores), pending: corr, attestation }, agent);
+      const ev = this.ledger.append("PrincipalDecision", who, { credence: cred.enumName, decision, ...scoreSummary(cred.scores), pending: corr, attestation }, agent, corr);
       return { committed: decision as Committed, margin, basis: "Principal", principalEvent: ev.tick };
     };
     const attested = this.principalAttestations.find((a) => a.principal === who);
@@ -2292,10 +2365,12 @@ class Interpreter {
     else if (base.length) local.fanoutPath = base;
     fn.params.forEach((p, i) => { if (i < args.length) local.set(p.name, args[i]!); });
     let ret: Value = { kind: "null", trust: "settled" };
-    for (const st of fn.body) {
-      if (st.kind === "return") { ret = st.value ? await this.evalExpr(st.value, local) : ret; break; }
-      await this.execStmt(st, local);
-    }
+    await this.withScopeWhens(fn.body, local, local.currentAgent(), async () => {
+      for (const st of fn.body) {
+        if (st.kind === "return") { ret = st.value ? await this.evalExpr(st.value, local) : ret; break; }
+        await this.execStmt(st, local);
+      }
+    });
     return this.privateDerived(ret, args);
   }
 
@@ -2787,7 +2862,8 @@ class Interpreter {
     // §6: a typed binding `T s = d <- …` gives the produced send its subject `s`; an unbound send is
     // subjected at the destination.
     const subj = bindName ?? destName;
-    this.ledger.append("Sent", subj, { to: destName, prompt: this.receiptContent(prompt, protectCognition) }, scope.currentAgent()?.name);
+    const corr = this.ledger.events.length;
+    this.ledger.append("Sent", subj, { to: destName, prompt: this.receiptContent(prompt, protectCognition) }, scope.currentAgent()?.name, corr);
     // §6: a send to a NON-awake agent has no mailbox — the chain stalls at `Sent` (never `Delivered`); loss is
     // the ABSENCE of Delivered, not an event. A send with an `expires N` lifetime that elapses undelivered
     // appends an `Expired` tombstone instead. A send to `self` (own cognition) always delivers.
@@ -2795,13 +2871,13 @@ class Interpreter {
     const toSelf = destName === scope.currentAgent()?.name;
     if (destInst && !destInst.awake && !toSelf) {
       if (e.expires !== undefined) {
-        this.ledger.append("Expired", subj, { to: destName }, scope.currentAgent()?.name);
-        this.pendingExpired.push({ dest: destName, subj }); // refused if the dest later awakes (§6)
+        this.ledger.append("Expired", subj, { to: destName }, scope.currentAgent()?.name, corr);
+        this.pendingExpired.push({ dest: destName, subj, corr }); // refused if the dest later awakes (§6)
       }
       return { kind: "text", v: "", trust: "raw" }; // an undelivered orphan reply
     }
     const cognitionContext = this.cognitionContext(destInst ?? scope.currentAgent(), prompt);
-    this.ledger.append("Delivered", subj, { to: destName }, scope.currentAgent()?.name);
+    this.ledger.append("Delivered", subj, { to: destName }, scope.currentAgent()?.name, corr);
     this.checkProviderIngress(msgVal, prompt, scope, subj);
     // §5/§8/§16.6 provider faults: `empty` = an unrecoverable seam failure → the agent crashes (contained);
     // `schema_violation` = a structured typed reply that fails its schema → a TypeMismatch that FAULTS the
@@ -2809,7 +2885,7 @@ class Interpreter {
     const fault = (this.provider as { fault?: string }).fault;
     if (fault === "empty") throw new CrashError(`the provider returned no completion for the send '${subj}' to '${destName}' (empty seam result); an unrecoverable seam failure crashes the agent (§5/§16.6)`);
     if (fault === "schema_violation" && expected && expected.kind !== "credence") {
-      this.ledger.append("TypeMismatch", subj, undefined, scope.currentAgent()?.name);
+      this.ledger.append("TypeMismatch", subj, undefined, scope.currentAgent()?.name, corr);
       throw new TypeMismatchError(`the model's structured reply for '${subj}' did not match the declared type ${typeLabel(expected)} (schema violation); the send faults (§8/§16.6)`);
     }
     if (expected?.kind === "credence") {
@@ -2824,9 +2900,8 @@ class Interpreter {
             prompt: this.receiptContent(prompt, protectCognition),
             reply: this.receiptValue(valueSummary(resolvedValue), protectCognition),
             enum: expected.enumName,
-            rule: undefined,
             ...scoreSummary(resolvedScores),
-          }, scope.currentAgent()?.name);
+          }, scope.currentAgent()?.name, corr);
         },
       );
       const value = this.privateDerived<Value>({ kind: "credence", enumName: expected.enumName, scores, trust: "graded", derivedFrom: promptSources, ingress: ingressJoin(promptSources) }, [msgVal, ...promptSources]);
@@ -2881,7 +2956,7 @@ class Interpreter {
             schema,
             raw: this.receiptValue(outcome.text, protectCognition),
             error: (outcome.parse as Error).message,
-          }, scope.currentAgent()?.name);
+          }, scope.currentAgent()?.name, corr);
           const reason = `the model's text reply for '${subj}' was not valid JSON for the declared type ${typeLabel(structuredType)}: ${(outcome.parse as Error).message}; the send faults (§8/§16.6)`;
           throw new TypeMismatchError(protectCognition ? this.privateFaultReason(reason) : reason);
         }
@@ -2893,7 +2968,7 @@ class Interpreter {
             schema,
             raw: this.receiptValue(raw, protectCognition),
             error: (err as Error).message,
-          }, scope.currentAgent()?.name);
+          }, scope.currentAgent()?.name, corr);
           const reason = `the model's structured reply for '${subj}' violated the declared type ${typeLabel(structuredType)}: ${(err as Error).message}; the send faults (§8/§16.6)`;
           throw new TypeMismatchError(protectCognition ? this.privateFaultReason(reason) : reason);
         }
@@ -2902,7 +2977,7 @@ class Interpreter {
           prompt: this.receiptContent(prompt, protectCognition),
           schema,
           reply: this.receiptValue(valueSummary(value), protectCognition),
-        }, scope.currentAgent()?.name);
+        }, scope.currentAgent()?.name, corr);
       });
       return value;
     }
@@ -2913,7 +2988,7 @@ class Interpreter {
         kind: "reply",
         prompt: this.receiptContent(prompt, protectCognition),
         reply: this.receiptValue(valueSummary(value), protectCognition),
-      }, scope.currentAgent()?.name);
+      }, scope.currentAgent()?.name, corr);
     });
     return value;
   }
@@ -2958,43 +3033,45 @@ class Interpreter {
       throw taintViolation("a scoped task grants perform authority and must be ENDORSED — send an Endorsement<TaskSpec> constructed inside a committed branch (§6c, §13)");
     }
     const foreground = expected.kind !== "task";
-    const corr = bindName ?? dest.name;
+    const subject = bindName ?? dest.name;
+    const corr = this.ledger.events.length;
     const t: TaskState = {
-      corr, dest: dest.name, delegator: agent?.name,
+      subject, corr, dest: dest.name, delegator: agent?.name,
       scope: info.scope, endorsed: info.endorsed, foreground, objective: info.objective, acceptance: info.acceptance,
       status: "sent", delivered: false,
       provenance: this.promptProvenanceALS.getStore(),
+      subscriptionOwner: this.subscriptionScopeALS.getStore(),
     };
     this.tasks.set(corr, t);
-    this.ledger.append("Sent", corr, { to: dest.name, task: true }, agent?.name);
-    await this.fireSubscriptions("Sent", corr, new Map()); // ≡ TaskSubmitted (alias, §6c)
+    this.ledger.append("Sent", subject, { to: dest.name, task: true }, agent?.name, corr);
+    await this.fireSubscriptions("Sent", subject, new Map(), corr); // ≡ TaskSubmitted (alias, §6c)
     if (foreground) {
       const inst = this.instances.get(dest.name);
       if (!inst?.awake) {
         // no mailbox and the delegator is waiting: the mandatory lifetime converts the silence into a
         // tombstone, and the tombstone faults the awaiting invocation (§6c, §16.6).
         t.status = "expired";
-        this.ledger.append("Expired", corr, { to: dest.name, task: true }, agent?.name);
-        await this.fireSubscriptions("Expired", corr, new Map());
-        throw new CrashError(`delegated task '${corr}' to '${dest.name}' expired undelivered (the worker was not awake); the foreground delegation faults the delegator (§6c/§16.6)`);
+        this.ledger.append("Expired", subject, { to: dest.name, task: true }, agent?.name, corr);
+        await this.fireSubscriptions("Expired", subject, new Map(), corr);
+        throw new CrashError(`delegated task '${subject}' to '${dest.name}' expired undelivered (the worker was not awake); the foreground delegation faults the delegator (§6c/§16.6)`);
       }
       await this.deliverTask(t);
       if (t.status === "completed") return this.foregroundResult(t.result!);
       if (!taskTerminal(t)) {
         // the handler returned without a terminal — the lifetime elapses with nothing to wait for.
         t.status = "expired";
-        this.ledger.append("Expired", corr, { to: dest.name, task: true }, agent?.name);
-        await this.fireSubscriptions("Expired", corr, new Map());
+        this.ledger.append("Expired", subject, { to: dest.name, task: true }, agent?.name, corr);
+        await this.fireSubscriptions("Expired", subject, new Map(), corr);
       }
       // failed / cancelled / expired — fault the awaiting invocation (§16.6). The failure reason is the
       // correlated TaskFailed(reason) row (§6c); include it so the delegator's crash names WHY.
       const why = t.status === "failed" && t.reason
         ? `: ${t.reasonPrivate ? this.privateFaultReason(t.reason) : t.reason}`
         : "";
-      throw new CrashError(`delegated task '${corr}' to '${dest.name}' ${t.status}${why}; the foreground delegation faults the delegator (§6c/§16.6)`);
+      throw new CrashError(`delegated task '${subject}' to '${dest.name}' ${t.status}${why}; the foreground delegation faults the delegator (§6c/§16.6)`);
     }
     this.pendingDeliveries.push(t);
-    return { kind: "taskref", corr, trust: "settled" };
+    return { kind: "taskref", subject, corr, trust: "settled" };
   }
 
   // §6c: a delegated result is RAW by default — it is the worker's cognition until the delegator gates

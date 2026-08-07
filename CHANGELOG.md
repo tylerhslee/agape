@@ -63,6 +63,10 @@ version.
 - **Calibration evidence is profile-scoped.** Core gates record truthful methods and
   scores; the Studio Fact Checker profile preserves raw-logprob evidence and exposes
   it through the authorized, non-enumerable `calibration.evidence.inspect` operation.
+- **Ledger commitments are canonical and replay-stable.** Runtime events commit an
+  immutable six-field SHA-256 chain, lifecycle operations use unique opening-event
+  correlations, adapter rebasing preserves protocol references, and concurrent
+  scope-local task delivery remains deterministic without cross-scope subscriptions.
 
 ### Validation
 

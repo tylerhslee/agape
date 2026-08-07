@@ -1,6 +1,12 @@
 // Runtime core — values, judgment trust + ingress provenance (§13/§15.3.1), the provider seam (§8),
 // and the ledger (§7).
 
+import {
+  canonicalLedgerEventJson,
+  canonicalLedgerHead,
+  snapshotCanonicalPayload,
+} from "./ledger_hash.js";
+
 // ---- Trust lattice: settled ⊑ graded ⊑ raw ----
 export type Trust = "settled" | "graded" | "raw";
 export type IngressProvenance = "internal" | "external_unscreened" | "external_screened";
@@ -66,7 +72,7 @@ export type Value =
     } & ValueIngress)
   | ({ kind: "agentref"; name: string; agentType: string; trust: "settled" } & ValueIngress)
   | ({ kind: "memref"; name: string; trust: "settled" } & ValueIngress) // a handle into private memory (§10)
-  | ({ kind: "taskref"; corr: string; trust: "settled" } & ValueIngress) // a background-task handle Task<T> (§6c)
+  | ({ kind: "taskref"; subject: string; corr: number; trust: "settled" } & ValueIngress) // a background-task handle Task<T> (§6c)
   // a record value (§3). `taskScope` is set only on a TaskSpec built by a task literal carrying a
   // `scope { perform … }` clause (§6c) — the action names the endorsed task enables on the worker.
   | ({ kind: "struct"; typeName?: string; fields: Map<string, Value>; trust: Trust; taskScope?: string[] } & ValueIngress)
@@ -147,7 +153,7 @@ export function render(v: Value): string {
     case "null": return "null";
     case "enumval": return v.variant;
     case "endorsement": return render(v.subject);
-    case "taskref": return v.corr; // the correlation subject — what `when (… about h)` filters on (§6c)
+    case "taskref": return v.subject; // source label for rendering; `about h` matches the handle corr (§6c)
     // arrays render one item per line: interpolated collections (a rolling window, query results)
     // read as prose in a prompt block, not as debug syntax.
     case "array": return v.items.map(render).join("\n");
@@ -228,53 +234,60 @@ function mockStructured(schema: StructuredSchema): unknown {
 
 // ---- The ledger (append-only, totally ordered within the runtime) ----
 export interface LedgerEvent {
-  tick: number;
+  readonly tick: number;
   // Runtime inspection metadata, deliberately excluded from head(): `tick` is the canonical ledger order.
-  latency_ms: number;
-  elapsed_ms: number;
-  etype: string;
-  subject: string;
-  payload?: unknown;
-  agent?: string;
+  readonly latency_ms: number;
+  readonly elapsed_ms: number;
+  readonly etype: string;
+  readonly subject: string;
+  readonly payload: unknown;
+  readonly corr: string | number | null;
+  readonly agent: string;
 }
 
 export class Ledger {
-  readonly events: LedgerEvent[] = [];
+  #committedEvents: LedgerEvent[] = [];
+  #visibleEvents: LedgerEvent[] = Object.freeze([] as LedgerEvent[]) as LedgerEvent[];
   private lastMs: number;
 
-  // §17.7 host embedding: an optional live observer, invoked once per append in tick order, immediately
-  // AFTER the event is committed to `events`. A read-only sink for embedding UIs (Studio timeline, a
-  // streaming fact-checker); an exception it throws is swallowed so a faulty observer never corrupts the
-  // run — the append has already committed.
+  get events(): LedgerEvent[] {
+    return this.#visibleEvents;
+  }
+
+  // The observer sees the already-committed immutable event; observer failure is contained.
   constructor(private originMs = Date.now(), private onEvent?: (event: LedgerEvent) => void) {
     this.lastMs = originMs;
   }
 
-  append(etype: string, subject: string, payload?: unknown, agent?: string): LedgerEvent {
+  append(
+    etype: string,
+    subject: string,
+    payload?: unknown,
+    agent?: string,
+    corr?: string | number | null,
+  ): LedgerEvent {
     const now = Date.now();
-    const ev: LedgerEvent = {
-      tick: this.events.length,
+    const ev: LedgerEvent = Object.freeze({
+      tick: this.#committedEvents.length,
       latency_ms: Math.max(0, now - this.lastMs),
       elapsed_ms: Math.max(0, now - this.originMs),
       etype,
       subject,
-      payload,
-      agent,
-    };
+      payload: snapshotCanonicalPayload(payload) ?? null,
+      corr: corr ?? null,
+      agent: agent ?? "",
+    });
+    canonicalLedgerEventJson(ev);
     this.lastMs = now;
-    this.events.push(ev);
+    this.#committedEvents.push(ev);
+    this.#visibleEvents = Object.freeze(this.#committedEvents.slice()) as LedgerEvent[];
     if (this.onEvent) {
-      try { this.onEvent(ev); } catch { /* observation is best-effort; a faulty observer never corrupts the run */ }
+      try { this.onEvent(ev); } catch { /* observation is best-effort */ }
     }
     return ev;
   }
-  // a simple content hash of the canonical fields (a stand-in for the §16.2 SHA-256 chain).
+
   head(): string {
-    let h = 0;
-    for (const e of this.events) {
-      const s = `${e.tick}|${e.etype}|${e.subject}|${JSON.stringify(e.payload ?? null)}|${e.agent ?? ""}`;
-      for (let i = 0; i < s.length; i++) h = (Math.imul(h, 31) + s.charCodeAt(i)) | 0;
-    }
-    return (h >>> 0).toString(16).padStart(8, "0");
+    return canonicalLedgerHead(this.#committedEvents);
   }
 }

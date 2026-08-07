@@ -30,6 +30,11 @@ import type { Manifest } from "./config.js";
 import type { ToolHandler } from "./tool_adapters.js";
 import { desugarLegacySurface } from "./runtime_adapter_desugar.js";
 import { MemoryEnvelope, sha256Hex, type EnvelopeCell, type EnvelopeOp } from "./runtime_adapter_memory.js";
+import {
+  CANONICAL_LEDGER_VERSION,
+  canonicalLedgerHead,
+  snapshotCanonicalPayload,
+} from "./ledger_hash.js";
 
 // ---------- conformance-facing shapes (structural mirror of agape-runtime-conformance/src/adapter.ts) ----------
 
@@ -38,7 +43,7 @@ interface LedgerEvent {
   etype: string;
   subject: string;
   payload?: unknown;
-  corr?: string | null;
+  corr?: string | number | null;
   agent: string;
   ts?: number;
   [key: string]: unknown;
@@ -303,19 +308,7 @@ function canonicalJson(v: unknown): string {
 }
 
 function canonicalChainHead(events: LedgerEvent[]): string {
-  let head = "";
-  for (const e of events) {
-    const canonical = {
-      tick: e.tick,
-      etype: e.etype,
-      subject: e.subject,
-      payload: e.payload ?? null,
-      corr: e.corr ?? null,
-      agent: e.agent ?? "",
-    };
-    head = createHash("sha256").update(head + canonicalJson(canonical), "utf8").digest("hex");
-  }
-  return head;
+  return canonicalLedgerHead(events);
 }
 
 // ---------- counters ----------
@@ -341,19 +334,16 @@ const freshCounters = (): Counters => ({
   inFlightProviderCalls: 0, maxInFlightProviderCalls: 0,
 });
 
-// ---------- lifecycle correlation for the conformance event shape ----------
-
-const CORRELATED = new Set(["Sent", "Delivered", "Resolved", "Expired", "ToolStarted", "ToolResolved"]);
 
 function toConformanceEvent(e: KernelLedgerEvent): LedgerEvent {
-  return {
+  return Object.freeze({
     tick: e.tick,
     etype: e.etype,
     subject: e.subject,
-    payload: e.payload,
-    corr: CORRELATED.has(e.etype) ? e.subject : null,
+    payload: snapshotCanonicalPayload(e.payload),
+    corr: e.corr ?? null,
     agent: e.agent ?? "",
-  };
+  });
 }
 
 // ---------- trace validity (SPEC 16.2): the message lifecycle state machine ----------
@@ -452,22 +442,92 @@ class AgapeTsConformanceAdapter {
     this.runSeq = 0;
   }
 
-  private appendGlobal(etype: string, subject: string, payload?: unknown, agent?: string): LedgerEvent {
-    const ev: LedgerEvent = {
+  private appendGlobal(
+    etype: string,
+    subject: string,
+    payload?: unknown,
+    agent?: string,
+    corr?: string | number | null,
+  ): LedgerEvent {
+    const ev: LedgerEvent = Object.freeze({
       tick: this.ledger.length,
       etype,
       subject,
-      payload,
-      corr: null,
+      payload: snapshotCanonicalPayload(payload) ?? null,
+      corr: corr ?? null,
       agent: agent ?? "",
-    };
+    });
     this.ledger.push(ev);
     return ev;
   }
 
+  private rebaseRunPayload(event: LedgerEvent, offset: number): unknown {
+    const rebaseRuntimeValues = (value: unknown): unknown => {
+      if (value === null || typeof value !== "object") return value;
+      if (Array.isArray(value)) return value.map(rebaseRuntimeValues);
+      const record = value as Record<string, unknown>;
+      const out: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
+      for (const [key, member] of Object.entries(record)) {
+        out[key] = rebaseRuntimeValues(member);
+      }
+      if (record.kind === "decision") {
+        if (typeof record.decision_id === "number") out.decision_id = record.decision_id + offset;
+        if (typeof record.principal_event === "number") out.principal_event = record.principal_event + offset;
+      } else if (record.kind === "endorsement") {
+        if (typeof record.decision_id === "number") out.decision_id = record.decision_id + offset;
+      } else if (record.kind === "taskref" && typeof record.corr === "number") {
+        out.corr = record.corr + offset;
+      }
+      return out;
+    };
+    const payload = rebaseRuntimeValues(event.payload);
+    if (payload === null || typeof payload !== "object" || Array.isArray(payload)) return payload;
+    const root = payload as Record<string, unknown>;
+    const rebaseRoot = (key: string) => {
+      if (typeof root[key] === "number") root[key] = (root[key] as number) + offset;
+    };
+    switch (event.etype) {
+      case "PrincipalDecision":
+      case "FailedPrincipalDecision":
+        rebaseRoot("pending");
+        break;
+      case "Decided":
+        rebaseRoot("decision_id");
+        rebaseRoot("principal_event");
+        break;
+      case "Endorsed": {
+        const decision = root.decision;
+        if (decision !== null && typeof decision === "object" && !Array.isArray(decision)) {
+          const protocol = decision as Record<string, unknown>;
+          if (typeof protocol.decision_id === "number") protocol.decision_id += offset;
+          if (typeof protocol.principal_event === "number") protocol.principal_event += offset;
+        }
+        break;
+      }
+      case "AgentCrashed":
+        rebaseRoot("stimulus_or_corr");
+        break;
+      case "DeliveryRefused":
+      case "CompletionRefused":
+        rebaseRoot("original_corr");
+        break;
+      case "TaskScopeViolation":
+        rebaseRoot("task");
+        break;
+    }
+    return payload;
+  }
+
   private absorbRunEvents(events: LedgerEvent[]): void {
     const offset = this.ledger.length;
-    for (const e of events) this.ledger.push({ ...e, tick: offset + e.tick });
+    for (const e of events) {
+      this.ledger.push(Object.freeze({
+        ...e,
+        tick: offset + e.tick,
+        payload: snapshotCanonicalPayload(this.rebaseRunPayload(e, offset)) ?? null,
+        corr: typeof e.corr === "number" ? e.corr + offset : e.corr,
+      }));
+    }
   }
 
   // ---- health / config ----
@@ -480,7 +540,7 @@ class AgapeTsConformanceAdapter {
       languageSpecVersion: `v${pkg.version}`,
       conformanceSuiteVersion: `v${pkg.version}`,
       memorySchemaVersion: "1",
-      canonicalLedgerVersion: "sha256-chain-v1",
+      canonicalLedgerVersion: CANONICAL_LEDGER_VERSION,
       ledgerHead: this.ledger.length,
       provider: { status: "mock", backend: "mock" },
     };
