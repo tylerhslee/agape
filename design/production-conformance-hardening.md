@@ -19,8 +19,8 @@ ordinary project + manifest + configured connectors
                         configured durable state, and replay output
 ```
 
-The profiles below are separate claims. Passing one must not imply another profile
-is present.
+The core profile includes configured memory with explicit access. Studio calibration
+and research are separately advertised claims.
 
 ## 1. Core-agent profile - beta release blocking
 
@@ -39,14 +39,13 @@ This is the smallest mandatory production matrix for every shipped runtime:
    cross-instance concurrency remains deterministic at the ledger boundary.
 
 The existing language and runtime conformance suites remain the oracle for grammar
-and fast diagnostics. A small black-box CLI matrix supplements them; it does not
-require memory, raw logprobs, embeddings, behavior patches, import, or deployment
-transitions.
+and fast diagnostics. A small black-box CLI matrix supplements them. It requires a
+configured memory driver and explicit memory-operation coverage; raw logprobs,
+behavior patches, import, and deployment transitions remain outside core.
 
-## 2. Shipped optional-memory profile
+## 2. Core explicit-memory matrix
 
-A runtime advertising configured mem persistence must pass this additional profile
-for each shipped driver:
+Every shipped runtime must pass this matrix for each shipped driver:
 
 1. Explicit mem store produces a receipt and modifies only the configured substrate;
    every non-zero modality count/ref resolves to actual durable state.
@@ -61,9 +60,8 @@ for each shipped driver:
 5. Restart/replay assertions are required only when the selected memory driver
    advertises those features.
 
-This profile must never assert that every reaction automatically consulted, wrote,
-ranked, or learned from memory. A source program with no mem operation has no such
-obligation.
+The matrix asserts that reactions consult, write, rank, or retain memory only through
+an explicit source or host memory operation.
 
 ## 3. Studio Fact Checker profile
 
@@ -117,8 +115,8 @@ release gate:
 | Former item | New disposition |
 |---|---|
 | P01 | Core-agent instruction test, narrowed to source semantics |
-| P02-P03 | Remove automatic-envelope claims; retain ordinary send tests in core and explicit stores in optional memory |
-| P04-P07 | Optional-memory profile |
+| P02-P03 | Core ordinary-send tests with configured memory and zero implicit memory operations |
+| P04-P07 | Core explicit-memory matrix |
 | P08 | Split core same-instance scheduling from optional persistence atomicity |
 | P09 | Core ledger replay; memory restart/replay only when advertised |
 | P10 | Research/policy experiment, not language semantics |

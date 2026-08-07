@@ -1,24 +1,20 @@
-# Autonomous agents and optional learning
+# Autonomous agents and learning capabilities
 
-Status: **accepted beta framing; experimental learning work is not a beta runtime
-requirement** (2026-08-06).
+Status: **accepted beta design** (2026-08-06).
 
-Agape is a language for inspectable, gated, replayable agent systems. This document
-separates what makes an entity an agent from optional mechanisms that can make a
-particular deployment adaptive. `SPEC.md` and the applicable conformance profile
-remain the oracle.
+Agape is a language for inspectable, gated, replayable agent systems. `SPEC.md` and
+the applicable conformance profiles remain the oracle.
 
-## 1. Agenthood is independent of learning
+## 1. Agenthood
 
 An Agape agent is a first-class, typed, addressable instance with a constructor,
 typed state, a mailbox, and explicit `spawn`, `awake`, `sleep`, crash, and task
 lifecycle. It has bounded authority declared by grants, an append-only ledger, and
-source-settled instructions. It may use private memory, but it need not.
+source-settled instructions.
 
-A local no-provider reaction is fully agentic when it runs under this lifecycle and
-authority model. Agenthood does not require a vector store, an automatic memory
-search, an auto-write policy, a learning loop, model-weight updates, or a
-self-modifying behavior artifact.
+Every runtime session is configured with a private-memory driver. Source accesses
+memory through explicit handles and operations. Provider use, memory access, and
+learning loops do not determine whether an instance is an agent.
 
 An instance continues through sleep, re-awake, and a contained crash while its
 ordinary state and ledgered identity remain available. A later `spawn` creates a new
@@ -38,14 +34,14 @@ active source, expand authority, authenticate itself, make a value settled, or b
 a decision, endorsement, or sink check. Connector wire formats may vary, but must
 preserve this semantic separation without an extra hidden instruction layer.
 
-## 3. Optional explicit memory
+## 3. Explicit memory
 
-`mem <- value`, `mem -> query`, and `forget mem` are explicit source operations.
-An agent that declares no memory handle need not consult, rank, write, or retain
-memory. An ordinary reaction never receives a hidden automatic consultation or an
-automatic learning write merely because it occurred.
+Every runtime session is supplied a memory driver through manifest configuration or
+host injection. `mem <- value`, `mem -> query`, and `forget mem` are explicit
+source operations. Reactions without a memory operation perform no memory
+consultation or write.
 
-When a memory feature is configured and source uses it:
+When source uses a memory operation:
 
 - memory is scoped to the owning agent instance and cannot create cross-agent mutable
   subjective state;
@@ -58,9 +54,9 @@ When a memory feature is configured and source uses it:
 - a substrate may be markdown, an index, or another backend without changing taint,
   isolation, or authority semantics.
 
-Automatic retrieval, reflection, compression, ranking, and episode selection may be
-offered as an explicitly selected memory profile. Such a profile must expose policy
-and receipts, but is not a precondition for agenthood.
+A configured driver may provide retrieval, reflection, compression, ranking, and
+episode-selection policies within explicit memory operations. These policies expose
+their configuration and receipts and preserve source-defined authority.
 
 ## 4. Optional calibration
 
@@ -105,13 +101,12 @@ changes live source, grants, provider binding, evaluator, or model parameters.
 ## 7. Conformance profiles
 
 - **Core agent profile:** lifecycle, addressability, source instructions, grants,
-  gating, ledger ordering, and replay.
-- **Shipped optional-memory profile:** explicit store/recall/forget, taint,
-  isolation, truthful substrate receipts, and provenance for a configured driver.
-- **Studio Fact Checker profile:** provider integration and optional calibrated
+  gating, ledger ordering, replay, required runtime memory configuration, explicit
+  store/recall/forget, taint, isolation, truthful substrate receipts, and provenance.
+- **Studio Fact Checker profile:** provider integration and advertised calibrated
   logprob evidence used by that product.
 - **Research profile:** causal adaptation, artifact evaluation, behavior evolution,
   and adversarial tests. It is non-blocking until specified and shipped.
 
-A minimal Agape runtime can therefore be a conformant agent runtime, while a
-memory- or calibration-enabled runtime makes only the additional claims it proves.
+Every conformant runtime supplies and proves its configured memory driver. Calibration
+and research profiles make only the additional claims they advertise.

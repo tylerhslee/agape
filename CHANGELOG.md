@@ -10,16 +10,14 @@ version.
 
 ### Changed
 
-- **Agenthood and learning are now explicitly separated.** Beta agent semantics
-  are lifecycle, addressability, source-settled instructions, private capability
-  state, bounded authority, ledger inspection, and replay. Explicit memory and
-  calibration remain optional profiles; behavior evolution remains research work.
-- **Production conformance is profile-based.** Core-agent, shipped optional-memory,
-  Studio Fact Checker, and non-blocking research claims are separate. The future
-  P01-P16 backlog is not a beta-wide release gate.
-
-  must consume this shared contract rather than introducing product-specific
-  agent behavior.
+- **Agent semantics are lifecycle- and authority-defined.** Agents are addressable
+  source-defined entities; learning is an advertised adaptation capability.
+- **Runtime memory is configured and explicitly accessed.** Every runtime session
+  receives a memory driver, while source and host operations control every memory
+  consultation, write, and forget.
+- **Calibration evidence is profile-scoped.** Core gates record truthful methods and
+  scores; the Studio Fact Checker profile additionally preserves and exposes
+  authorized raw-logprob evidence.
 
 ## [1.0.0-beta.2026.8.6.0] - 2026-08-06
 

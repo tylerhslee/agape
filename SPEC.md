@@ -571,10 +571,11 @@ and may not `perform` (every `perform` is async, §6b).
 ## 5. Agents
 An **agent** is a first-class, addressable typed instance with a constructor,
 mailbox/lifecycle, source-settled instructions, private capability state, and
-bounded authority enforced by grants and the gate. It is agentic whether or not it
-uses a provider or a memory handle. Learning, automatic retrieval, calibration
-profiles, and behavior evolution are optional capabilities; none silently changes
-an agent's active source, grants, dependencies, or authority.
+bounded authority enforced by grants and the gate. Every runtime supplies a
+configured private-memory substrate. Source accesses that substrate through explicit
+memory operations. Learning is an advertised adaptation capability over recorded
+experience. Active source, grants, dependencies, and authority change only through
+operations defined by the language.
 
 
 ### Declaration (template)
@@ -1252,9 +1253,6 @@ enum Basis { Threshold, Conformal, Calibrated, Principal } // how a Decision was
 type Principal                                             // an accountable identity — a declared dependency (§3)
 type TaskSpec                                              // a delegated-task payload built by `task { … }` (§6c); fields: .objective (text), .acceptance (text); trust = join of its fields
 type Task<T>                                               // a settled background-task handle (§6c): correlates `when (… about h)` and `cancel h`
-type JudgmentEvidence                                      // exact bounded provider evidence and score derivation (§16.8)
-type ProtectedDisclosureRequest                              // exact protected resolve/inspect/export subject (§16.8)
-enum DisclosureVerdict { Approve, Reject }                   // principal ruling over protected disclosure
 // Rule is the gate's PARAMETER, not a type: `confidence θ [margin δ] [floor m]` | `conformal [α] [readiness N] [floor m]`  (§3, §13)
 // abstained — the prelude sentinel value of Decision.committed when the gate did not commit (§3, §13)
 
@@ -1361,9 +1359,8 @@ forget notes;                                    // audit-preserving tombstone
 An `Internalized` payload contains no plaintext memory value. For an explicit
 source store it records a protected value hash/ref, the memory region, source operation,
 actual modality deltas, and resolvable substrate refs. A field is absent or zero when
-the configured driver did not produce that view. The receipt is an audit of the
-explicit operation, not a claim that the whole reaction learned or that competence
-changed.
+the configured driver did not produce that view. The receipt records the explicit
+store operation and the driver effects it materialized.
 
 ### A recall is ALWAYS tainted
 
@@ -1650,44 +1647,43 @@ if (d.committed == Faithful) {
 A `decide` may be written **without endorsing** — bound to a `Decision` value — to defer subject
 endorsement or to record an abstention. Branching itself is never skipped. A `Decision` (no subject)
 may guide branching and `emit`, but **cannot drive a consequential sink**; only an `endorse`'s
-settled subject, constructed inside a committed branch, reaches a sink. `Decision`/`Decided` carry an
-immutable `evidence_ref` to the exact `JudgmentEvidence`; `Endorsed` repeats that identity (§16.8).
+settled subject, constructed inside a committed branch, reaches a sink. `Decision` and `Decided`
+record the truthful connector method and gate scores used by the gate.
 
 ### Decision and Endorsement — the settled values and their fields
 
 A `Decision<E>` exposes read-only `.decision_id` (the `Decided` tick), `.committed` (variant or
-`abstained`), `.basis`, `.margin`, `.evidence_ref`, `.principal_event` (`null` unless identity was
-reached), and `.principal_request` (`null` unless a pending request was created). The canonical
-`Decided` row additionally declares credence/rule/profile ids, winner/runner-up, threshold,
-minimum-margin/floor, arithmetic, and those same evidence/principal fields. Basis is `Principal` only
+`abstained`), `.basis`, `.margin`, `.principal_event` (`null` unless identity was reached), and
+`.principal_request` (`null` unless a pending request was created). The canonical `Decided` row
+additionally declares credence/rule/profile ids, winner/runner-up, threshold, minimum-margin/floor,
+arithmetic, and those same principal fields. Basis is `Principal` only
 for a returned principal ruling; a prefixed rule commit retains its rule basis and null principal
 fields. Verification status lives on the referenced principal event: only `verified` may label a
 gate or satisfy a governed operation, so basis alone is never authority.
 
 An `Endorsement<T>` is the settled subject: it carries `e.subject:T`, coerces to `T` at a sink,
-exposes `T`'s fields, and adds `.decision_id`, `.committed`, `.basis`, `.margin`, `.evidence_ref`,
+exposes `T`'s fields, and adds `.decision_id`, `.committed`, `.basis`, `.margin`,
 `.principal_event`, and `.principal_request`. Its canonical row is
-`Endorsed { subject_hash, decision_id, variant, evidence_ref, principal_event,
-principal_request }`. These fields must equal the referenced decision; none is caller-supplied. The
-`.decision_id` joins the `Endorsed` and `Decided` rows, while evidence/principal fields provide the
-non-circular governed-operation proof (§13). A gate value carries no `_meta`; query the row for tick
+`Endorsed { subject_hash, decision_id, variant, principal_event, principal_request }`. These fields
+must equal the referenced decision; none is caller-supplied. The `.decision_id` joins the
+`Endorsed` and `Decided` rows, while principal fields provide the non-circular governed-operation
+proof (§13). A gate value carries no `_meta`; query the row for tick
 and chain position. Where a field of `T`
 collides with a reserved metadata accessor, the metadata name wins and the shadowed field is reached
 through `e.subject` (e.g. `e.subject.committed`). This is Agape's reflection surface over gate
 metadata, not general structural `typeof`.
 
-- `**decide c by R**` appends the complete `Decided` schema above with `evidence_ref` from `c`
-  and null principal fields. It is color-`S` when the credence is in hand.
+- `**decide c by R**` appends the complete `Decided` schema above with null principal fields.
+  It is color-`S` when the credence is in hand.
 - `**p decide c by R**` runs the rule first. A rule commit appends the same row with the rule basis
   and does not contact `p`. On abstention it appends the complete `PendingPrincipalDecision` request
   below, consults identity, appends `PrincipalDecision` or `FailedPrincipalDecision`, then appends
-  `Decided` with the exact evidence/request/event linkage. Any returned ruling has basis
+  `Decided` with the exact request/event linkage. Any returned ruling has basis
   `Principal` and records its verification status on the principal event; only a verified ruling
   may label calibration or satisfy a governed operation. Failure remains `abstained`. The
   expression is color-`A`.
 - `**endorse subject by d**` requires `d` to be flow-narrowed by an explicit committed-variant test
-such as `if (d.committed == V)`; it records the complete evidence/principal-linked `Endorsed`
-row above and
+such as `if (d.committed == V)`; it records the complete principal-linked `Endorsed` row above and
 returns `Endorsement<T>`. In the `else`/abstained branch (`d.committed == abstained`) no
 endorsement may be constructed, so the subject cannot reach a sink unless it is independently
 judgment-settled (for example, a literal or external ingress value with no un-endorsed model
@@ -1738,10 +1734,9 @@ actions, receipts, correlation).
   final `Decided` — is on the ledger, so the deferral-to-decision path replays deterministically from
   the recorded attested rulings (§16.5) and never re-consults the human.
 
-The pending receipt makes autonomy's supervised phase (§13, cold start) auditable rather than
-implicit: a fresh gate's every deferral is a ledgered `PendingPrincipalDecision`, each grounded
-ruling is the labelled case that earns later autonomy, and the human's accountability is bound to a
-verified identity, not asserted by an unforgeable name in source (§3).
+Each deferred gate decision appends a `PendingPrincipalDecision`. Each verified ruling is correlated
+with that pending decision, may supply a label to an advertised calibration profile, and binds the
+principal's accountability to a verified identity (§3).
 
 #### Exact, non-circular principal proof for governed operations
 
@@ -1766,12 +1761,9 @@ other than the operation's configured principal is rejected.
 A principal-prefixed expression whose ordinary rule commits never produces governed proof and retains its rule
 basis. A governed request endorsement `e` is admitted only if: `d.basis == Principal`; the referenced
 principal event is verified and matches `d.principal_request`, evidence, ruled variant, and pending
-`corr`; `e.decision_id == d.decision_id`, `e.evidence_ref == d.evidence_ref`, and
-`H(e.subject) == subject_hash`; and the principal event's governed-operation/request hashes equal the
-canonical sink request. Behavior transitions bind exact artifact/evaluation/evaluator/deployment/
-scope/expected-state hashes. Protected resolve, inspect, or export binds requester, operation, scope,
-exact content hashes, redaction policy, destination, purpose, and expiry head. Any mismatch, absence,
-rule basis, or reuse for another request fails before transition or disclosure.
+`corr`; `e.decision_id == d.decision_id`; `H(e.subject) == subject_hash`; and the principal event's
+governed-operation/request hashes equal the canonical sink request. Any mismatch, absence, rule basis,
+or reuse for another request fails before the governed action.
 
 ### The rule selects the basis; the gate stays uniform
 
@@ -1785,45 +1777,25 @@ commit); the inline keyword `confidence θ` and the threshold basis are the same
 `Decided` event pins which rule, profile, and (if any) principal settled it, so a recalibration or
 identity-backend change does not change how an earlier run replays.
 
-**GateProfile — empirical authority, not source syntax.** Source declares the decision intent
-(label space, rule, readiness, margin/floor). The runtime records the empirical evidence that makes
-autonomous use legitimate in ledgered **GateProfiles**: the provider/model, schema hash,
+**Advertised calibration profiles.** Source declares the decision intent: label space, rule,
+readiness, margin, and floor. A runtime may advertise a calibration profile for that decision
+pathway. Its ledgered `GateProfile` records the provider/model, schema hash,
 prompt-template hash, score function, calibration examples, calibration ledger head, fitted
-parameters/quantile, metrics, and status (`active`, `stale`, `retired`). A profile is a projection of
-ledger events such as labelled outcomes, principal decisions, profile activation, and profile staling;
-it is not normally written in `.ag` source. Replaying an old run uses the profile recorded in that
-run's `Decided` event. Future runs may not silently reuse a stale or incompatible profile.
+parameters/quantile, metrics, and status (`active`, `stale`, `retired`). The profile is a
+projection of labelled outcomes, verified principal decisions, activation, and staling events.
 
-**Autonomy is earned from ledgered labels.** Gates are expected to mature in phases:
+**Readiness and labels.** A conformal gate with an advertised profile uses compatible ledgered
+decisions and recorded outcomes as calibration data. Below the rule's `readiness` minimum it
+cannot commit; a principal-prefixed `decide` routes those cases to the principal. At or above
+readiness, the gate commits only for a singleton prediction set and otherwise abstains. Verified
+principal rulings may label their correlated judgments. A declined, unavailable, or unverified
+ruling contributes no label. Each label references its judgment's ledger id.
 
-- **Cold** — no compatible profile or too few labels. Consequential cases fail closed: only
-  explicitly low-risk/obvious threshold decisions may proceed, and ambiguous or high-stakes cases
-  route to the gate's `principal` prefix (or stay `abstained` if none). Those principal decisions become labels.
-- **Warm** — enough compatible labels for conformal coverage. The gate forms a prediction set and
-  commits iff the set is singleton; otherwise it abstains and accumulates more labels.
-- **Mature** — enough labels and a stable distribution for calibrated expected-loss decisions. The
-  active profile maps score vectors to calibrated probabilities; if the expected loss of acting is
-  below the cost/policy of deferral, the gate may commit, otherwise it abstains. Mature gates may
-  still defer; "mature" means autonomous when justified, not autonomous always.
-
-**The supervised-to-autonomous bootstrap.** A conformal gate guarantees nothing without data, and
-its data is the ledger itself — its own past decisions and their recorded outcomes. Below the rule's
-`readiness` minimum of labelled cases the gate cannot commit, so a principal-prefixed `decide`
-(`p decide c by r`) routes those cases to `p`. Those principal decisions become the first labelled
-cases; once enough accrue the gate commits autonomously, escalating thereafter only genuinely
-ambiguous (non-singleton) cases. Only an actual ruling labels its judgment: a declined or
-unavailable consult (`FailedPrincipalDecision`) contributes **no** label — a refusal to rule is not
-evidence, so it never enters the gate's calibration set. A fresh gate/decision pathway is thus human-supervised by construction and earns
-autonomy as it accumulates grounded labels. A recorded outcome that labels a judgment references that
-judgment's ledger id, so the judgment↔label join stays auditable on the ledger rather than in untyped
-host state.
-
-**Profile invalidation.** A profile is valid only for the source and runtime conditions it records:
-same rule, enum/schema, prompt-template hash, provider/model, score function, calibration pool, and
-drift status. Changing any of those conditions, observing coverage drift, discovering bad labels, or
-materially changing the task distribution records a stale/retired profile. This never rewrites
-history: prior gate decisions remain replay-valid because they record the profile they used. It only
-prevents future decisions from treating old evidence as current.
+**Profile validity.** A profile is valid for the rule, enum/schema, prompt-template hash,
+provider/model, score function, calibration pool, and drift status it records. A change to those
+conditions, coverage drift, a bad label, or a material task-distribution change stales or retires
+the profile for future decisions. Earlier decisions remain replay-bound to the profile recorded
+when they were made.
 
 ### The consequential-action rule
 
@@ -1864,7 +1836,7 @@ Extending the consequential-action rule (§15.3.3):
   relevance.
 - **Deference requirement.** A consequential path with no `principal` prefix and no compatible mature
   profile is a compile error unless the rule explicitly declares a non-human cold-start strategy.
-  Autonomy is earned via labels; a local fallback action does not substitute for labels.
+  A local fallback action supplies no calibration label.
 - **Distribution-source check** (config-aware, §16). A consequential gate needs a distribution: a
   provider with logprobs → ok; without, but with the sampling fallback configured → ok (warn on
   cost); with neither → **warning**, conformal degrades to pure deferral. The fallback is
@@ -1953,12 +1925,11 @@ subscriptions are prospective and hoisted (never retroactive), and history is re
 query; multi-handler firing is registration-order; a message trace is a prefix of
 `Sent→Delivered→Resolved`; a task-send additionally lands exactly one terminal task record
 (`TaskCompleted`/`TaskFailed`/`TaskCancelled`/`Expired`, §6c) and a late `complete`/`fail`
-after a tombstone is refused (`CompletionRefused`); every memory write carries a provenance backpointer; each agent
-instance's private memory is isolated and is consulted-then-internalized on every reaction (the
-mandatory envelope, §16.7), and recall cannot launder trust; all three
-dependencies journal their oracle results to the ledger for replay (§15.4.2); replay
-re-serves recorded dependency results (including memory decomposition/embedding) and never
-re-invokes a wired effector; the margin floor `m`
+after a tombstone is refused (`CompletionRefused`); every explicit memory write carries a
+provenance backpointer, memory is isolated by agent instance, and recalled values remain tainted
+(§16.7); all three dependencies journal their oracle results to the ledger for replay
+(§15.4.2); replay re-serves recorded dependency results and never re-invokes a wired
+effector; the margin floor `m`
 is enforced at the consequential sink.
 
 The invariants, exercised — default-deny authority, the one legal trust path, human escalation,
@@ -2344,9 +2315,8 @@ ingress screen is also replay-bound: its input bytes, verdict, normalized output
 ingress provenance (`external_screened` on accept, no ordinary delivery on reject) are recorded at
 the boundary that invoked it. Gate collapses are journaled as `Decided`, whether they commit or
 abstain. Replay never re-invokes an oracle, endpoint, or screen: it serves each from the recording
-in order — a wired effector is replayed as its recorded result, not re-run. Read-only replay
-verification regenerates the identical source chain/head; a materialized forensic replay has a new
-runtime and ledger and proves equality with its reconstructed-source projection hash (§16.5).
+in order — a wired effector is replayed as its recorded result, not re-run. The same source,
+configuration, and recording regenerate the identical ledger and chain head (§16.5).
 
 **Task-send dynamics (§6c).** A task-send is an ordinary send whose `Resolved` is produced by
 the recipient's `complete` statement rather than by `think`; `complete e` appends `Resolved`
@@ -2358,7 +2328,7 @@ A foreground (result-bound) delegation whose terminal is `TaskFailed`/`Expired`/
 faults the awaiting invocation (the contained-crash path, §5 — `AgentCrashed`). All task rows
 are ordinary ledger events: replay folds them deterministically like every other record.
 
-### 15.4.2a The ledger as an audit log — consensus, forking, forensics
+### 15.4.2a The ledger as an audit log — consensus
 
 The ledger is a hash-linked, append-only log (a Merkle-style commitment), so immutability
 and auditability hold by construction. This is the transparency half of a blockchain; the
@@ -2366,7 +2336,7 @@ consensus half is absent: a single Agape runtime is the authority that assigns t
 consensus is pure overhead. Consensus becomes load-bearing only at one boundary — multiple
 mutually-distrusting runtimes sharing one ledger — and is therefore an optional
 distributed-ledger layer, never the core. (This is distinct from `quorum`, §12, which is
-single-runtime evidence fusion, not multi-node agreement.) Counterfactual/forensic replay
+single-runtime evidence fusion, not multi-node agreement.) Counterfactual replay
 (Jefferson's *Time Warp*, 1985) and fork/merge are scoped to an optional Multi-verse
 library.
 
@@ -2374,7 +2344,7 @@ library.
 // DECIDE (rule only) — local gate collapse; no oracle; sealed ledgered Decision value:
 v' = collapse(eval(c), r)        // singleton prediction set ⇒ that variant; else `abstained`
 id = tick(S)
-S' = append(S, Decided(subject(c), { decision_id:id, credence:c, evidence_ref:evidence(c), rule:r, committed:v', basis, winner, runner_up, threshold, minimum_margin, floor, margin, arithmetic }))
+S' = append(S, Decided(subject(c), { decision_id:id, credence:c, rule:r, committed:v', basis, winner, runner_up, threshold, minimum_margin, floor, margin, arithmetic }))
 ─────────────────────────────────────────────  (E-Decide)
 ⟨…|S| decide c by r ⟩ → Decision{decision_id:id, committed:v', …}, ledger S'
 
@@ -2390,8 +2360,8 @@ v' = collapse(eval(c), r)
                    ruled_variant, attestation})); id=tick(S₁); v''=ruled_variant; b=Principal
 (consult declines/unavailable/mismatch) ⇒ pe=tick(S₀); S₁=append(S₀, FailedPrincipalDecision({corr,
                    request_hash:req.request_hash, reason})); id=tick(S₁); v''=abstained; b=basis(r)
-S₂=append(S₁, Decided({decision_id:id, credence:c, evidence_ref:evidence(c), rule:r, committed:v'',
-                      basis:b, principal_event:pe, principal_request:req.request_hash, arithmetic,…}))
+S₂=append(S₁, Decided({decision_id:id, credence:c, rule:r, committed:v'', basis:b,
+                      principal_event:pe, principal_request:req.request_hash, arithmetic,…}))
 ─────────────────────────────────────────────  (E-Decide-Principal)
 ⟨…|Ψ|S| p decide c by r; k⟩ → ⟨…|Ψ'|S₂|Decision{decision_id:id, committed:v'', basis:b,
                                                 principal_event:pe, principal_request:req.request_hash,…};k⟩
@@ -2402,7 +2372,7 @@ corr=tick(S); preq=principal_request(p,c,r,corr,{operation:Q,request_hash:H(reqv
 S₀=append(S,PendingPrincipalDecision(preq)); consult(preq)⇝ruling
 verified_exact(ruling,p,preq) ⇒ pe=tick(S₀); S₁=append(S₀,PrincipalDecision(ruling));
  id=tick(S₁); S₂=append(S₁,Decided({decision_id:id,basis:Principal,principal_event:pe,
- principal_request:preq.request_hash,evidence_ref:evidence(c),committed:ruling.variant,…}))
+ principal_request:preq.request_hash,committed:ruling.variant,…}))
 otherwise ⇒ append FailedPrincipalDecision; Decided(committed:abstained); no governed proof
 ─────────────────────────────────────────────  (E-Decide-Governed)
 ⟨…|Ψ|S|p decide c about Q(req) by r;k⟩ → ⟨…|Ψ'|S₂|Decision{…,governed_operation:Q,
@@ -2411,11 +2381,10 @@ otherwise ⇒ append FailedPrincipalDecision; Decided(committed:abstained); no g
 // ENDORSE — apply an existing committed Decision to an exact subject; synchronous; single event; → Endorsement value:
 d = eval(decision) ; v' = d.committed ; require v' ≠ abstained ∧ subject ∈ scope(d)
 ev = Endorsed({subject_hash:H(subject),decision_id:d.decision_id,variant:v',
-                        evidence_ref:d.evidence_ref,principal_event:d.principal_event,
-                        principal_request:d.principal_request})
+               principal_event:d.principal_event,principal_request:d.principal_request})
 ─────────────────────────────────────────────  (E-Endorse)
 ⟨…|S|endorse subject by decision⟩ → append(S,ev),Endorsement{subject,decision_id:d.decision_id,
- evidence_ref:d.evidence_ref,principal_event:d.principal_event,principal_request:d.principal_request,…}
+ principal_event:d.principal_event,principal_request:d.principal_request,…}
 // There is no abstained endorsement; abstinence is represented by the Decision's `Decided` event.
 
 // SPAWN EXPRESSION - evaluation context receives one newly allocated address:
@@ -2663,9 +2632,9 @@ from the gate's own labeled decisions on the ledger:
 
 The gate **commits iff `|Cα(x)| = 1`**, else **abstains** (a non-singleton set is the principled
 "ambiguous" signal over three-plus variants, where a scalar threshold has none). The operating
-cutoff `1 − q̂` is *derived* to achieve `α`; nobody sets it. **Cold start:** below the rule's
-`readiness` minimum of labelled cases the quantile is uncertified, so the gate abstains/defers to a
-principal (§13); those rulings are the first labels — the supervised→autonomous bootstrap.
+cutoff `1 − q̂` is *derived* to achieve `α`; nobody sets it. Below the rule's `readiness`
+minimum of labelled cases the quantile is uncertified, so the gate abstains or defers to a
+principal (§13). An advertised calibration profile may use verified correlated rulings as labels.
 
 **(B) The margin — a stability property, and the clarification of `δ` vs `m`.** The margin `g`
 governs a *different* property from coverage: run-to-run **stability**. By the oracle model (O,
@@ -2705,9 +2674,9 @@ and an `Endorsement` can only be constructed from a committed-narrowed
 `Decision` (so an `abstained` decision cannot reach a sink), with the runtime margin floor
 `margin ≥ m` checked there; equivalently, varying the model's raw judgments
 changes no world-effect except through a gate (Lemma 1, §15.5). **(T4) Reproducibility up to
-`≈`** — state is a function of the ledger plus recorded oracle results; read-only replay
-regenerates the source head, while materialized forensic replay has a distinct head and an equal
-reconstructed-source projection hash (§16.5); inter-agent message content is derived, not stored.
+`≈`** — state is a function of the ledger plus recorded oracle results; replay with the same
+source, configuration, and recording regenerates the identical ledger and chain head (§16.5);
+inter-agent message content is derived, not stored.
 **(T5) Pure seam safety** — no `pure` function reaches a declared dependency. Technique for
 T1/T2/T5: progress+preservation. T3 is Lemma 1 (two-run bisimulation, §15.7); T4 is the
 Stability theorem (§15.5.5), modulo O/NI of §15.7.
@@ -2885,8 +2854,8 @@ A task-send routes like any send; what changes is who resolves it and what lands
   its dependency calls (§16.1, §12). Scheduling is a runtime freedom, and the determinism obligation
   is **unchanged** — concurrency is achieved the same way as fan-out (§16.1, §16.5): every ledger
   append still commits in a deterministic **issue order**, and every oracle result is journaled, so
-  read-only replay regenerates the source head and materialized replay regenerates an equal source
-  projection (T4, §16.5), both with zero oracle re-invocation. The
+  replay regenerates the identical ledger and chain head with zero oracle re-invocation (T4,
+  §16.5). The
   ordering invariants this pins are **per-task**: each correlation's receipt chain
   (`Sent → Delivered → Resolved → TaskCompleted`, or its `TaskFailed`/`Expired`/`TaskCancelled`
   terminal) stays internally ordered, and the first-terminal-wins rule holds per correlation. The
@@ -2897,116 +2866,32 @@ A task-send routes like any send; what changes is who resolves it and what lands
 - **Status projection.** "One status per task" is a ledger projection — a `select … from ledger`
   fold over the correlation — maintained like any projection (§16.7a), never a stored event.
 
-### 16.4 The seam protocol — provider, identity, world
+### 16.4 The seam protocol - provider, identity, world
 
-The three external seams are reached as oracles (§15.4.2): cognition through the **provider**,
-accountability through the **identity** dependency, the world through the **wiring seam** (§6b). Each call
-appends its opening event, invokes the seam, journals the result (§16.5), and appends its close.
+External provider, identity, and world calls are ordinary journaled oracles. Each
+call appends its normal opening event, invokes the configured seam, journals the
+result needed to replay it, and appends its closing event.
 
-- **Provider (`think`).** A judgment `Credence<E> c = d <- p` or a typed reply `T x = d <- p`
-  renders the prompt `p` and compiles the destination schema: for a `Credence<E>` slot, the forced
-  categorical choice over `E`'s variants; for a typed reply, `T`'s JSON Schema (§8). The connector
-  receives the rendered prompt only after the runtime applies the manifest's provider-prompt
-  ingress policy to the prompt's ingress provenance: `warn` records an audit diagnostic for
-  `external_unscreened` ingress, `deny` aborts before invoking the provider, and `off` accepts
-  silently (§17). This policy has no effect on `perform` sink admission.
-  The connector
-  receives `{ prompt, schema }` and must return schema-conforming output by constrained decoding
-  (mandatory; no fuzzy fallback). A logprob-exposing connector returns the value plus bounded raw
-  sequence evidence; a text-only connector is served by the sampling fallback (§16.8). `Resolved`
-  journals the protected evidence hash/ref and public gate scores. Raw responses and candidate/token
-  sequences remain behind protected encrypted refs and are never copied into an unauthorized ledger
-  view. A returned reply that cannot be parsed into
-  the declared type — a *schema-violating return* — faults the send as a `TypeMismatch` (§16.6), the
-  retryable send-fault. This is distinct from a **connector error** — the request is rejected (e.g. an
-  HTTP 4xx), the transport fails, or the model refuses — which is an unrecoverable seam failure and
-  **crashes** the agent (§16.6), unretried: a rejected or failed *request* is not a schema-violating
-  *reply*, and the crash names the provider's status and message so an operator is not misled into
-  blaming the reply schema. A deterministic request-level rejection (a 4xx other than 429) cannot
-  succeed on re-ask — the connector's own retries are already exhausted when the error surfaces — and
-  the fault says so.
-- **Identity (`principal_decide`).** A principal-prefixed `p decide c by r` runs the rule first.
-  Only on abstention does it append the complete §13 `PendingPrincipalDecision`, using that row's tick
-  as `corr`, and present the canonical request hash and fields to identity. The backend signs the
-  domain-separated ruling hash `(corr, request_hash, ruled_variant)`; before recording a ruling the
-  runtime runs the **attester-match check** — the response's
-  verified attester identity must resolve, through the principal's configured authenticator
-  (`[security.attesters]`, §17), to the principal `p` the gate deferred to. On a match the runtime
-  records `PrincipalDecision { corr, request_hash, who, ruled_variant, evidence_hash,
-  governed_request_hash, attestation }`, where `attestation` carries identity, signature, and the verification label
-  (`verified` under an authenticator, `unverified` under the default `none` — the local-dev
-  trust-on-config posture, §17). A declined ruling, an unavailable principal, or an attester that
-  verifies as a **different** principal (or fails to verify) records a `FailedPrincipalDecision`
-  referencing `corr` (§13), and the decision stays `abstained`. In every case — match, mismatch,
-  decline, or a rule that commits without escalation — the resulting `Decision` is recorded as
-  `Decided`. No key material appears in source (§3).
-- **World (`invoke`, MCP).** A wired `perform A(args)` — or a wired `emit` — resolves its
-  `[actions.NAME]`/`[events.NAME]` wiring to its `[tools.*]` catalog entry (§17.1), issues an
-  MCP `tools/call` with the marshalled args, appends the `ToolStarted`/`ToolResolved` pair (the
-  replay journal, §6b, §7), and lands the configured `result_event` row when one is wired (§6b).
-  Args and results marshal between Agape values and MCP JSON by the action's/event's declared
-  fields and the result event's declared fields. A result-event payload carries judgment trust
-  joined with the request payload's trust; a `perform`'s arguments must be settled (§6b, §13).
-  Separately, result-event and standing-sensor payloads carry ingress provenance
-  `external_unscreened` unless the manifest-configured screen for that ingress accepts and records
-  `external_screened`. A standing sensor (`[events.NAME]` with no triggering emit) appends its
-  events as they arrive, like `prompt` (§5b, §6b).
-
-- **Ingress screening.** Prompt arrivals, standing-sensor events, and result-event payloads may be
-  bound in the manifest to an ingress screen (§17). The screen is not source syntax and is not a
-  way to grant action authority. The runtime records protected hash/refs for the original boundary
-  and normalized payloads, plus public screen identity, verdict, and resulting ingress provenance;
-  sensitive ingress bytes never enter a plaintext canonical event or recording segment. Accepted values are
-  delivered as `external_screened`; unscreened accepted values remain `external_unscreened`;
-  rejected values do not enter ordinary program data.
+- A typed provider reply must conform to its declared schema. A Credence reply
+  records the connector method and the truthful normalized gate scores used by
+  decide. A connector must not invent a logprob, raw candidate, protected evidence
+  reference, or calibration claim it did not receive or advertise.
+- A connector advertising the Studio Fact Checker calibration profile additionally
+  preserves the bounded raw candidate/logprob evidence and provides the authorized
+  inspection path specified by that profile. Core Credence records the truthful
+  method and normalized scores consumed by the gate.
+- Identity and wired world calls retain the existing principal, grant, and
+  settled-argument checks. Connector errors and schema violations retain their
+  ordinary fault distinctions.
 
 ### 16.5 Record and replay
 
-A run is a **protected recording** bound to runtime id and source head, canonical pre-state
-snapshot hash and schema version, behavior artifacts/epochs, instance ids/generation and memory roots,
-protected artifact hashes, all oracle results, and resolved configuration/deployment-policy hashes.
-The public ledger contains its recording hash/ref, never plaintext sensitive recording segments.
-Resolve, inspect, or export uses the exact principal-endorsed disclosure protocol (§16.8). Every oracle
-result is journaled as the operation's closing event; provider results carry the
-`JudgmentEvidence` hash/ref and public gate scores (§16.8).
-Nondeterministic *inputs* are journaled too: external `prompt` arrivals, standing-sensor arrivals,
-world result-event payloads, ingress provenance labels, screening verdicts/normalizations, and a
-wall-clock `expires` lifetime's firing (§6); a logical-tick lifetime is already deterministic.
-
-- **Replay modes and verification.** Replay first verifies every bound snapshot, artifact,
-  evaluation, memory root/cell, protected object, and policy hash. Read-only verification uses the
-  exact source runtime identity and snapshot, persists nothing, and recomputes the exact source ledger
-  head. A materialized forensic replay receives a new runtime id and its own ledger beginning with
-  `ReplayDerivedFrom { source_runtime_id, source_head, snapshot_hash,
-  source_projection_hash }`; its head is necessarily distinct. The replay engine folds a nested,
-  non-writable **source-identity projection** using the recorded source runtime/instance/spawn ids and
-  canonical source events exactly. That projection persists only as a protected hash/ref and must end
-  at `source_head`. The outer forensic ledger uses only the new runtime id; any agents it spawns use
-  fresh ids derived from that new id. Source and outer events/ids are never merged or substituted.
-  Correctness is equality of the nested projection hash, not equality of the outer head. Neither mode
-  mutates the live source ledger, memory, activation state, or protected store. Missing/hash-invalid
-  dependencies fail explicitly; current state is never substituted.
-- **Replay.** Given a verified recording, the runtime re-executes the program but **serves each oracle call
-  from the journal instead of invoking the seam**: the *i*-th call of a given kind, in issue order
-  (§16.1), is answered by the *i*-th recorded result of that kind. Replay invokes nothing external — a
-  wired effector is replayed as its recorded result, never re-run against the world. Ingress screens
-  are likewise not re-run during recorded replay; their recorded verdict and delivered payload are
-  served from the journal.
-- **What must be reproducible.** Replay never re-calls cognition completions, identity decisions, or
-  wired endpoints (above), and it likewise never re-calls the **memory-internalization oracles** — decomposition,
-  summarization, and embedding (§16.7). Each such call is either journaled (a non-deterministic provider
-  result is recorded like any oracle output) or **deterministically derived from recorded inputs by a
-  versioned algorithm** whose version is part of runtime metadata (§17.6). Either way memory is a
-  projection of ledgered events plus recorded oracle results: a faithful runtime can rebuild every
-  agent's private memory from the ledger, or verify materialized memory against its ledger provenance
-  (§16.7).
-- **Replay equality (T4).** Read-only verification regenerates the source ledger and exact source
-  chain-head (§16.2). A materialized forensic replay has a distinct ledger/head and instead must expose
-  a reconstructed-source projection hash equal to the source head. The conformance mode asserts the
-  appropriate invariant (§17.5); neither mode re-invokes an oracle.
-- **Counterfactual replay.** Any prefix may be replayed under altered recorded facts to test a
-  counterfactual; fork/merge of divergent continuations is the optional Multi-verse layer (§15.4.2a),
-  outside the core.
+A recording journals oracle results and nondeterministic external inputs in issue
+order. Given the same source, configuration, and recording, replay serves each
+provider, identity, and world result from the journal without invoking an external
+seam and regenerates the identical ledger and chain head. Memory and Studio
+calibration profiles include the additional recording material declared by their
+advertised capabilities.
 
 ### 16.6 Fault and recovery
 
@@ -3041,12 +2926,13 @@ wall-clock `expires` lifetime's firing (§6); a logical-tick lifetime is already
   `TaskFailed(reason)` row, reached by query — a task that comes back empty is the same fault shape
   as a provider that returns nothing (§5, §6c).
 
-### 16.7 Optional explicit-memory profile
+### 16.7 Explicit memory
 
-Private memory is an optional capability selected by source through a `mem` handle
-and by a runtime through a configured substrate. It is not an ambient agent
-requirement. A reaction that does not use a memory operation has no implicit
-consultation, memory packet, write evaluation, or automatic internalization.
+Every runtime session is constructed with a memory driver supplied by the manifest's
+`[memory].driver` binding or by explicit host injection. A missing runtime memory binding is a
+`ConfigError`. Each agent instance has an isolated private-memory scope, and a source `mem`
+handle names a region in that scope. Memory consultation, write evaluation, internalization,
+and forgetting occur only when source or the host explicitly invokes the corresponding operation.
 
 When source executes `mem <- value`, the runtime commits the configured canonical
 cell(s) and appends `Internalized`. Its public receipt identifies the owning agent
@@ -3067,68 +2953,29 @@ and any provenance it advertises across its own restart/recall/archive operation
 
 A configured driver may offer explicit opt-in retrieval, reflection, compression,
 ranking, or episode-selection policies. Such policies must be named and auditable,
-must not grant authority or change active source behavior, and are not requirements
-of the core-agent profile. Hand-edited memory bytes are external input unless a
-configured import protocol verifies them; copied metadata cannot authenticate an
-origin, correction, or authority.
+and preserve source-defined authority and active behavior. Hand-edited memory bytes
+are external input unless a configured import protocol verifies them; copied metadata
+cannot authenticate an origin, correction, or authority.
 
-Memory remains subjective: it may guide cognition but cannot settle a value, rewrite
-instructions, expand grants, alter dependencies, or bypass the ordinary decision,
-endorsement, and sink rules. A future automatic-memory profile requires a separate
-SPEC-first proposal and conformance suite.
+Memory guides cognition through recalled values. Recalled values remain tainted and
+pass through the ordinary decision, endorsement, and sink rules before consequential
+use. Active instructions, grants, and dependencies remain source-defined.
 
-### 16.8 The calibration pipeline
+### 16.8 Advertised calibration profiles
 
-A `Credence<E>` is a scored structured judgment over the forced categorical choice of `E`'s variants
-— not a verbalized self-rating and not, by itself, a calibrated probability (§3).
+Credence and decide are core language mechanisms. A core connector records the
+truthful method label and score vector consumed by the gate.
 
-- **Judgment evidence.** Every `Credence<E>` references immutable `JudgmentEvidence`: method
-  (`logprobs | sampling | deterministic | fused`), provider/connector/model versions, prompt/schema
-  hashes, declared candidate bound, protected exact raw-candidates ref, complete sequence-to-variant
-  or unmatched mapping, pre-normalization mass, exact `gate_scores`, and mapping/normalization versions.
-- **Protected access schema.** `ProtectedDisclosureRequest` is
-  `{ request_hash, requester, required_principal, operation, scope_hash, content_hashes,
-  redaction_policy_hash, destination, purpose, expires_at_head }`, where
-  `operation ∈ { resolve, inspect, export }` and
-  `request_hash` covers all remaining fields.
-  `governed_sig(std.protected.Resolve|Inspect|Export) = ProtectedDisclosureRequest` and
-  `configured_principal(std.protected.Resolve|Inspect|Export) =
-  behavior.protected_content_principal`. A `Credence<DisclosureVerdict>` is decided by a
-  principal using, for example,
-  `reviewer decide c about std.protected.Export(request) by confidence 0.9`; only `Approve` may
-  endorse the exact request. `protected.resolve`,
-  `protected.inspect`, and `protected.export` runtime operations accept only that endorsement and
-  recheck the §13 principal proof by configured `protected_content_principal`, expiry, content
-  hashes, and destination immediately before access.
-  Resolution and inspection are disclosures too; mere process-locality does not exempt them.
-- **Logprobs.** Protected encrypted segments preserve every returned candidate within the declared
-  bound, including every unmatched candidate and complete multi-token token/logprob sequence. The
-  connector declares sequence aggregation, mapping, and normalization; the runtime records all
-  intermediate mapping results and cannot discard inconvenient candidates. Threshold/margin use
-  `gate_scores`, never raw token/sequence logprobs. A successfully principal-endorsed exact
-  inspection resolves the named refs losslessly. Public/unauthorized views expose hashes, mapping
-  summaries, exact score vectors, and only an opaque protected ref already named by that visible event;
-  they cannot enumerate the protected store, raw sequences, candidate text, prompts, ingress bytes,
-  recordings, or holdouts. There is no list-all protected-content API.
-- **Sampling fallback.** Ordered bounded draws/counts are preserved and labeled sampling, never
-  logprobs; empirical frequencies become `gate_scores` (§17).
-- **Linkage and arithmetic.** `Resolved` records evidence id/hash/ref and public gate scores.
-  `Decided` repeats it with winner, runner-up, threshold, required margin/floor, actual margin,
-  profile, and exact pass/fail arithmetic. `Endorsed` repeats decision/evidence ids. Canonical fields
-  include these public values and protected hashes, not request ids, timestamps, or latency.
-- **Calibrated profile.** A fitted calibrator (temperature / Platt / isotonic / multiclass vector
-  calibration, depending on the connector and label space) maps raw score vectors to probability vectors.
-  It is fit from the ledger's recorded `(judgment, outcome)` pairs for a compatible gate profile (§13).
-  Only a gate with an active compatible profile may treat the calibrated vector as a probability for
-  expected-loss decisions.
-- **Conformal profile.** A conformal gate scores each variant's nonconformity and forms the prediction set
-  `{ v : nonconformity(v) ≤ q̂ }`, with `q̂` the level-`α` quantile of compatible recorded
-  decisions-and-labels on the ledger; below the readiness floor it abstains — the supervised cold start
-  (§13). Conformal coverage does not require the `Credence` scores to be calibrated probabilities.
-- **Invalidation.** Gate profiles are active only for the provider/model, schema, prompt template,
-  rule, score function, calibration pool, and drift status recorded at activation. A mismatch stales the
-  profile for future decisions and forces abstain/fallback until a new profile is activated; replay of old
-  decisions remains stable because each gate event records the profile it used.
+An advertised calibration profile defines its connector candidate bound, raw evidence
+storage, mapping and normalization algorithm, access control, and independent
+recomputation checks. The profile may attach an opaque `evidence_ref` to profile
+extension metadata on `Resolved` and `Decided`; that reference is not a core
+`Decision` or `Endorsement` source accessor.
+
+The Studio Fact Checker profile preserves the exact bounded candidates and returned
+logprobs used to derive gate scores, provides authorized inspection of that evidence,
+and exposes the threshold and margin arithmetic for independent comparison. Missing
+raw evidence is reported as unavailable and is never synthesized.
 
 ### 16.9 The runtime API surface
 
@@ -3140,17 +2987,14 @@ API but must offer the same operations as calls.
 
 | operation          | required behavior                                                         |
 | ------------------ | ------------------------------------------------------------------------ |
-| `health`           | runtime id/kind, impl version, language-spec version, ledger head, provider status (§17.6) |
+| `health`           | runtime id/kind, impl/spec versions, ledger head, provider status, advertised profiles (§17.6) |
 | `run`              | execute source or the project entry; return the appended events and the new head |
 | `check`            | run the static checks (§15.3) and return structured diagnostics          |
 | `ledger.read`      | query event ranges and subjects over the ledger (§7, §10)                |
-| `agent.respond`    | run one agent turn through the memory envelope (§16.7)                    |
-| `memory.ingest`    | internalize an artifact into one agent's private memory (§16.7b)         |
-| `memory.context`   | return the memory packet for a task *without* running cognition (§16.7)   |
-| `memory.inspect`   | inspect public counts/hashes/provenance; protected values require `protected.inspect` |
-| `protected.resolve`| resolve exact named protected refs only with principal-endorsed `ProtectedDisclosureRequest` (§13, §16.8) |
-| `protected.inspect`| inspect exact protected content only with the same principal-bound request; no enumeration |
-| `protected.export` | export exact protected content/redaction/destination/purpose only with the same proof |
+| `agent.respond`    | run one agent turn; it performs no implicit memory consultation or write  |
+| `memory.ingest`    | explicitly internalize an artifact and append the §16.7 receipt            |
+| `memory.context`   | explicitly recall context without running cognition; the result is tainted |
+| `memory.inspect`   | inspect public counts, hashes, and provenance                              |
 | `config.read/write`| manage the **dependency/connector** bindings and memory budgets (provider, the `[tools.*]` catalog and its wiring, identity; §17) — **never** decision rules, which live in source (§13, §17.2) |
 
 `config.read/write` is deliberately scoped to dependency and connector configuration plus memory
@@ -3183,10 +3027,9 @@ TOML in a project-root `agape.toml`. A host UI, build system, or service manager
 same manifest data model from another source, but conformance fixtures and portable projects use
 the TOML shape below.
 
-The manifest is an integration contract, not a second programming language. It binds
-declared dependencies, configured optional memory drivers, and transport details; it
-does not define a beta behavior-evolution surface or grant source authority. Source
-declares what exists:
+The manifest binds declared dependencies, the required runtime memory driver, and
+transport details. Agape source defines the program's agents, authority, gates,
+events, and actions:
 
 
 ```agape
@@ -3252,6 +3095,9 @@ result_event = "SearchResult"
 [actions.CreateTicket]
 tool = "ticketing"
 
+[profiles]
+advertised = []
+
 [memory]
 driver = "markdown"
 path = ".agape/memory"
@@ -3280,12 +3126,20 @@ Required stable tables:
 | `[security.ingress.prompts.NAME]` | manifest-level ingress screening for a prompt source | optional; that prompt binding is screened |
 | `[security.ingress.events.NAME]` | manifest-level ingress screening for a standing sensor or result-event payload | optional; that event binding is screened |
 | `[security.attesters.NAME]` | the authenticator that verifies an attester identity as principal `NAME` at a `p decide` ruling (§13) | optional; default is `none` (unverified) |
-| `[memory]` | private-memory substrate selection and memory-runtime policy | runtime has private memory |
+| `[memory]` | private-memory substrate selection and memory-runtime policy | every portable runtime project; host embedding may inject |
+| `[profiles]` | explicitly advertised runtime/product conformance profiles | optional; default is an empty list |
 | `[runtime]` | host/deployment runtime settings; parsed and preserved, no kernel-defined keys | optional |
 | `[policy]` | recognized only to be rejected — any key is a `ConfigError` (§17.2) | never |
 
 Resolution rules:
 
+- Runtime startup resolves exactly one memory driver from `[memory].driver` or explicit host
+  injection. A missing, blank, or unknown driver is a `ConfigError`; static source checking does
+  not start a runtime session and therefore does not require a memory binding.
+- `[profiles].advertised` is an array of recognized profile ids. The
+  `"studio-fact-checker"` profile requires a connector that advertises bounded raw evidence and
+  configures its authorized inspection surface. Startup rejects an advertised profile whose
+  dependencies are absent. `health` reports the active advertised profiles.
 - The key `NAME` in `[prompts.NAME]` and `[identity.NAME]` is the source
   declaration's dependency name. A declared dependency with no binding is a `ConfigError` before
   execution. A binding for a name not declared in source is ignored or warned by default; strict mode
@@ -3416,10 +3270,11 @@ The `[tools.*]` endpoint catalog (referenced by `[actions.*]`/`[events.*]` wirin
 
 Memory bindings — substrate selection:
 
-- `driver` (string, default `"markdown"`) selects the private-memory substrate. `"markdown"` is the
-  normative default (§16.7): scoped, user-editable markdown files under the project. `"local"` (alias
-  `"mock"`) is a process-local in-memory substrate for tests and replay fixtures. An unrecognized
-  driver is rejected at configuration time. No driver changes memory trust: recall remains tainted
+- Every runtime session receives one memory driver through `[memory].driver` or explicit host
+  injection (§16.7, §17.7). A missing or blank binding is a `ConfigError`.
+- `driver = "markdown"` selects scoped, user-editable markdown files under the project.
+  `driver = "local"` (alias `"mock"`) selects a process-local substrate for tests and replay
+  fixtures. An unrecognized driver is a `ConfigError`. Every driver preserves recalled-value taint
   (§10).
 
 Markdown-substrate keys (`driver = "markdown"`):
@@ -3440,10 +3295,16 @@ Markdown-substrate keys (`driver = "markdown"`):
   without an archive. The `Forgotten` effects counters must report archived vs deleted accordingly
   (§10).
 
-Memory-runtime policy keys (they apply over every substrate — the memory runtime wraps the
-configured driver):
-  lexical term-overlap similarity against the candidates; a hit at or above the threshold suppresses
-  the write with `driver_status = "DEDUPED"` and refs `duplicate_of`/`duplicate_score`.
+Memory-runtime policy keys apply to explicit writes over every substrate:
+
+- `classify` (bool, default `true`) classifies each explicitly stored cell into a kind
+  (`preference | fact | procedure | decision | interaction | note`) with tags and a signal score,
+  recorded in cell metadata and the receipt's `policy.classification`. `false` records kind
+  `note` with reason `classification_disabled`.
+- `dedupe` (bool, default `true`) and `dedupe_threshold` (float, default 0.9, clamped 0.5–1.0)
+  suppress near-duplicate explicit writes: the runtime consults the substrate and computes lexical
+  term-overlap similarity against the candidates; a qualifying hit records
+  `driver_status = "DEDUPED"` and refs `duplicate_of`/`duplicate_score`.
 - `recall_pool` (int, default 4× the requested depth, clamped to at least that depth and at most
   5000) sizes the substrate over-fetch pool that recall re-ranks (query-term overlap, domain-term
   match, kind match against the query's profile, a verbatim-query bonus, and an order tiebreak)
@@ -3516,14 +3377,13 @@ the epistemic remainder). All three are explicit, enforced, and checkable.
 
 The core-agent release profile tests ordinary source through a fresh CLI process:
 lifecycle/addressability, source instructions, grants and gate enforcement, deterministic
-observable scheduling, and recorded replay. It uses normal manifests and deterministic
-local connector loopbacks; helpers remain useful only as layer diagnostics.
+observable scheduling, recorded replay, required runtime memory configuration, and explicit
+store, recall, forget, taint, isolation, truthful durable receipts, and restart behavior.
+It uses normal manifests and deterministic local connector loopbacks; helpers remain useful
+only as layer diagnostics.
 
-A runtime advertising an optional memory driver additionally tests explicit store,
-recall, forget, taint, isolation, truthful durable receipts, and advertised restart
-behavior. A Studio product may separately require calibrated raw-evidence inspection.
-Experimental adaptation, behavior evolution, forensic replay, import/migration, and
-protected-export protocols are non-blocking until separately specified and shipped.
+The Studio Fact Checker profile separately tests calibrated raw-evidence preservation,
+authorized inspection, and independent threshold/margin recomputation.
 
 ### 17.6 Runtime lockstep and release reporting
 
@@ -3539,9 +3399,9 @@ moving parts are reported together. Every release reports:
 - the **canonical-ledger version** — hash algorithm, serialization, and redaction rules (§16.2).
 
 These are what `health` advertises (§16.9) and what a recording is identified against alongside
-`(I, manifest, recording)` (§17.3). **Changing the memory envelope, the ledger schema, the replay
-contract, or private-memory semantics requires a spec update and passing conformance tests before it
-is considered implemented** — the runtime contract does not drift ahead of (or behind) the document.
+`(I, manifest, recording)` (§17.3). **Changing runtime memory configuration, explicit-memory
+semantics, the ledger schema, or the replay contract requires a spec update and passing conformance
+tests before it is implemented.**
 
 ### 17.7 Host embedding — binding tool implementations in process
 
