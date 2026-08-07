@@ -309,3 +309,36 @@ describe("graph: dot output", () => {
     expect(dot).toContain("perform Reimburse");
   });
 });
+
+describe("graph: inherited qualified memory", () => {
+  const g = graphOf(`
+agent Base {
+  mem notes {
+    type text;
+    modality opaque;
+    scope project;
+    retention session;
+  }
+}
+agent Child {
+  extend Base();
+  on awake {
+    notes <- "remember";
+    text[] hits = notes -> "query";
+    say(hits);
+  }
+}
+spawn Child child;
+awake child;
+`);
+
+  it("materializes the effective descriptor and connects child store/recall sites", () => {
+    const mem = node(g, "mem:child/notes");
+    expect(mem?.kind).toBe("mem");
+    expect(mem?.meta).toMatchObject({
+      type: "text", modality: "opaque", scope: ["project"], retention: "session",
+    });
+    expect(edges(g, "store").some((e) => e.to === mem?.id)).toBe(true);
+    expect(edges(g, "recall").some((e) => e.from === mem?.id)).toBe(true);
+  });
+});

@@ -42,6 +42,10 @@ version.
   descriptor placement and clause order, closed qualifiers, persistable payloads,
   exact store and typed-recall checking, explicit-only writes, retained handles after
   forget, missing-user crash behavior, and standard-driver retention preflight.
+- **Fail-closed qualified-memory typing.** The checker resolves inherited memory
+  descriptors with lexical shadowing, preserves function and event-member types,
+  validates store payloads recursively, and gives every recall its descriptor's
+  `TYPE[]` independently of the consuming assignment, return, call, event, or action.
 - **Qualified-memory runtime oracle.** Black-box lifecycle cases pin resolved
   schemas and exact typed envelopes, concrete-instance/authenticated-tuple
   isolation, public-receipt privacy, deterministic ranking and generations,

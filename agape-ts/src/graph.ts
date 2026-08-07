@@ -101,6 +101,14 @@ export function buildGraph(program: A.Program, programName = ""): ProgramGraph {
       default: break;
     }
   }
+  const effectiveMems = (decl: A.AgentDecl, seen = new Set<string>()): A.MemoryDescriptor[] => {
+    if (seen.has(decl.name)) return [];
+    const next = new Set(seen);
+    next.add(decl.name);
+    const parent = decl.extends ? agents.get(decl.extends.name) : undefined;
+    const inherited = parent ? effectiveMems(parent, next) : [];
+    return [...inherited, ...decl.mems];
+  };
 
   // ---- instances: `spawn Type name(args)` is statically known ---------------------------------
   const instances = new Map<string, Instance>();
@@ -179,7 +187,7 @@ export function buildGraph(program: A.Program, programName = ""): ProgramGraph {
       },
     });
     if (!decl) continue;
-    for (const m of decl.mems) {
+    for (const m of effectiveMems(decl)) {
       const type = m.clauses.find((c): c is Extract<A.MemoryClause, { kind: "type" }> => c.kind === "type");
       const modality = m.clauses.find((c): c is Extract<A.MemoryClause, { kind: "modality" }> => c.kind === "modality");
       const scopes = m.clauses.find((c): c is Extract<A.MemoryClause, { kind: "scope" }> => c.kind === "scope");
