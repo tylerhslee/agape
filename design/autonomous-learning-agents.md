@@ -152,10 +152,11 @@ The runtime deliberately distinguishes four mechanisms that are often conflated 
 1. **Working state** is the bounded, reaction-local typed context assembled from the active
    task, stimulus, tool results, and recalled packets. It may be discarded at the reaction
    boundary. It is not a memory cell, a behavior version, or an authority source.
-2. **Episodic memory** is a durable, provenance-tagged record that can later be retrieved as
-   tainted data. `store` and `recall` provide this mechanism only. They can make a prior
-   episode available to cognition; they do not themselves alter competence, behavior,
-   instructions, grants, dependencies, evaluator, or model parameters.
+2. **Durable memory** consists of provenance-tagged records, including episodic and semantic
+   records, that can later be retrieved as tainted data. `store` and `recall` provide this
+   mechanism only. They can make a prior record available to cognition; they do not themselves
+   alter competence, behavior, instructions, grants, dependencies, evaluator, or model
+   parameters.
 3. **Consolidation** is the governed creation of a candidate `BehaviorArtifact` from declared
    evidence. It is a proposal, not a live update: candidate behavior is inert until isolated
    evaluation and principal-gated promotion. The old artifact remains available for rollback.
@@ -165,10 +166,13 @@ The runtime deliberately distinguishes four mechanisms that are often conflated 
    restricted deployment operation with its own authority, dataset provenance, evaluator,
    budget, promotion, rollback, and replay obligations.
 
-An implementation may use compression, retrieval, reflection, distillation, or online
-optimization internally, but it may not report one mechanism as another. In particular, a
-successful recall is not evidence of a durable capability increase, and a successful
-consolidation/evaluation is not evidence that a parameter update occurred.
+An implementation may use compression, retrieval, or reflection within its memory machinery.
+It may perform distillation or online optimization only inside a replay-safe, non-live
+evaluation runtime whose outputs remain inert candidates. In v1, implementation internals
+cannot mutate live model parameters, training policy, provider/model bindings, or active
+behavior. Such a mutation is policy/model adaptation and requires a separately specified
+governed surface. A successful recall is not evidence of a durable capability increase, and a
+successful consolidation/evaluation is not evidence that a parameter update occurred.
 
 Canonical cells, summaries, semantic chunks, facts, and relationship triples are logical
 memory records. **A semantic chunk may exist without an embedding.** Vector/embedding records
@@ -440,7 +444,11 @@ Implementation must be preceded by black-box tests for:
 - cross-version memory tagging plus recorded rollback down-ranking/exclusion policy;
 - privacy, retention, protected refs, authorized export, and cryptographic-erasure behavior;
 - reserved non-rebindable `std.behavior` types/actions/events and ordinary grant enforcement;
-- fixed isolated evaluator/holdout/policy binding and candidate inability to control them;
+- immutable evaluator configuration/version hash and exact evaluation-policy binding;
+- protected holdout use or a declared baseline/counterfactual plus missing-holdout limitation;
+- exact budget accounting and exhaustion enforcement for tokens, time, tools, and external cost;
+- candidate inability to influence evaluator evidence, budget, or granting authority;
+- no live parameter, training-policy, provider-binding, or active-behavior mutation in v1;
 - principal endorsement for every activation and rollback, with no automatic transition;
 - activation at a serialized reaction boundary while preserving instance/generation;
 - snapshot-bound read-only/separate-target replay and missing-artifact failure;

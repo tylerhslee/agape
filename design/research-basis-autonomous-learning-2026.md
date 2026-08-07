@@ -100,10 +100,13 @@ This is a benchmark result, not an argument for a single biological memory hiera
 support refusing to collapse context, stored episodes, consolidation, and model updates into
 one `learn` operation.
 
-**Design implication:** `store`/`recall` mean provenance-preserving episodic retrieval only.
-They can change the data a provider sees during a reaction but do not, by themselves, attest
-to changed competence. Consolidation and any policy/model mutation have separate, governed
-transition records.
+**Design implication:** `store`/`recall` mean provenance-preserving durable memory for
+episodic and semantic records. They can change the data a provider sees during a reaction but
+do not, by themselves, attest to changed competence. Consolidation and any policy/model
+mutation have separate, governed transition records. In v1, distillation or online
+optimization may run only as replay-safe, non-live evaluation work whose outputs remain inert
+candidates; implementation internals cannot mutate live parameters, training policy,
+provider/model bindings, or active behavior.
 
 ### 2.5 Long-horizon capability needs reliability and cost measurement
 
@@ -144,8 +147,8 @@ separately defined measure supports exactly that claim.
 
 The companion document therefore requires:
 
-1. separate working-state, episodic-memory, consolidation, and policy/model-adaptation
-   concepts;
+1. separate working-state, durable-memory (episodic and semantic), consolidation, and
+   policy/model-adaptation concepts;
 2. truthful `store`/`recall` receipts that do not imply competence change;
 3. immutable named candidates and evaluator versions;
 4. protected held-out evidence where available, or an explicitly declared counterfactual
