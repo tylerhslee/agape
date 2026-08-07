@@ -34,42 +34,57 @@ export interface MemoryRegionKeyInput {
   };
 }
 
-type EncodedValue =
+export type PersistedValueWire =
   | { kind: "text"; value: string }
   | { kind: "int"; value: string }
   | { kind: "float"; bits: string }
   | { kind: "bool"; value: boolean }
   | { kind: "null" }
   | { kind: "enum"; name: string; variant: string }
-  | { kind: "array"; items: EncodedValue[] }
-  | { kind: "struct"; name: string; fields: [string, EncodedValue][] };
+  | { kind: "array"; items: PersistedValueWire[] }
+  | { kind: "struct"; name: string; fields: [string, PersistedValueWire][] };
 
-interface ExactValueEnvelope {
+export interface ExactValueEnvelope {
   version: 1;
   schemaHash: string;
   valueHash: string;
-  value: EncodedValue;
+  value: PersistedValueWire;
 }
 
 function bytewiseCompare(left: string, right: string): number {
   return Buffer.compare(Buffer.from(left, "utf8"), Buffer.from(right, "utf8"));
 }
 
-function assertName(value: string, label: string): void {
-  if (value.length === 0) throw new Error(`${label} must not be empty`);
+function assertName(value: unknown, label: string): asserts value is string {
+  if (typeof value !== "string" || value.trim().length === 0) throw new Error(`${label} must not be blank`);
+}
+
+function assertOwnKeys(value: object, expected: readonly string[], label: string): void {
+  const actual = Object.keys(value).sort(bytewiseCompare);
+  const canonical = [...expected].sort(bytewiseCompare);
+  if (actual.length !== canonical.length || actual.some((key, index) => key !== canonical[index])) {
+    throw new Error(`${label} has unexpected fields`);
+  }
 }
 
 function canonicalSchema(schema: PersistedSchema, active = new Set<PersistedSchema>()): unknown {
+  const kind = (schema as { kind?: unknown }).kind;
+  if (!["scalar", "enum", "array", "struct"].includes(String(kind))) {
+    throw new Error(`unsupported persisted schema kind ${String(kind)}`);
+  }
   if (active.has(schema)) throw new Error("persisted schemas must not contain object cycles");
   active.add(schema);
   try {
     switch (schema.kind) {
       case "scalar":
+        assertOwnKeys(schema, ["kind", "name"], "persisted scalar schema");
         if (!["text", "int", "float", "bool", "null"].includes(schema.name)) {
           throw new Error(`unsupported persisted scalar ${String(schema.name)}`);
         }
         return { kind: "scalar", name: schema.name };
       case "enum": {
+        assertOwnKeys(schema, ["kind", "name", "variants"], "persisted enum schema");
+        if (!Array.isArray(schema.variants)) throw new Error("persisted enum variants must be an array");
         assertName(schema.name, "enum name");
         const seen = new Set<string>();
         for (const variant of schema.variants) {
@@ -81,12 +96,16 @@ function canonicalSchema(schema: PersistedSchema, active = new Set<PersistedSche
         return { kind: "enum", name: schema.name, variants: [...schema.variants] };
       }
       case "array":
+        assertOwnKeys(schema, ["items", "kind"], "persisted array schema");
         return { kind: "array", items: canonicalSchema(schema.items, active) };
       case "struct": {
+        assertOwnKeys(schema, ["fields", "kind", "name"], "persisted struct schema");
+        if (!Array.isArray(schema.fields)) throw new Error("persisted struct fields must be an array");
         assertName(schema.name, "struct name");
         const sorted = [...schema.fields].sort((a, b) => bytewiseCompare(a.name, b.name));
         const seen = new Set<string>();
         const fields = sorted.map((field) => {
+          assertOwnKeys(field, ["name", "schema"], "persisted struct field");
           assertName(field.name, "struct field name");
           if (seen.has(field.name)) throw new Error(`duplicate struct field ${field.name}`);
           seen.add(field.name);
@@ -130,6 +149,7 @@ export function hashPersistedSchema(schema: PersistedSchema): string {
 }
 
 function canonicalDescriptor(descriptor: ResolvedMemoryDescriptor): unknown {
+  assertOwnKeys(descriptor, ["modality", "name", "retention", "schema", "scopes"], "memory descriptor");
   if (!["opaque", "episodic", "semantic"].includes(descriptor.modality)) {
     throw new Error(`unsupported memory modality ${String(descriptor.modality)}`);
   }
@@ -138,6 +158,7 @@ function canonicalDescriptor(descriptor: ResolvedMemoryDescriptor): unknown {
   if (descriptor.retention !== "session" && descriptor.retention !== "durable") {
     throw new Error(`unsupported memory retention ${String(descriptor.retention)}`);
   }
+  if (!Array.isArray(descriptor.scopes)) throw new Error("memory descriptor scopes must be an array");
   const scopes = [...descriptor.scopes].sort(bytewiseCompare);
   if (scopes.length === 0) throw new Error("memory descriptors require at least one scope");
   const seen = new Set<string>();
@@ -180,7 +201,7 @@ function sortedFields(schema: Extract<PersistedSchema, { kind: "struct" }>): typ
   return [...schema.fields].sort((a, b) => bytewiseCompare(a.name, b.name));
 }
 
-function encodeValue(value: Value, schema: PersistedSchema): EncodedValue {
+function encodeValue(value: Value, schema: PersistedSchema): PersistedValueWire {
   switch (schema.kind) {
     case "scalar":
       switch (schema.name) {
@@ -251,7 +272,7 @@ function decodeValue(encoded: unknown, schema: PersistedSchema): Value {
         case "text":
           assertKeys(record, ["kind", "value"], "encoded text");
           if (record.kind !== "text" || typeof record.value !== "string") throw new Error("invalid encoded text");
-          return { kind: "text", v: record.value, trust: "settled" };
+          return { kind: "text", v: record.value, trust: "raw" };
         case "int": {
           assertKeys(record, ["kind", "value"], "encoded int");
           if (record.kind !== "int" || typeof record.value !== "string" || !/^-?(0|[1-9][0-9]*)$/.test(record.value)) {
@@ -259,20 +280,20 @@ function decodeValue(encoded: unknown, schema: PersistedSchema): Value {
           }
           const value = Number(record.value);
           if (!Number.isSafeInteger(value) || value.toString(10) !== record.value) throw new Error("encoded int is not canonical");
-          return { kind: "int", v: value, trust: "settled" };
+          return { kind: "int", v: value, trust: "raw" };
         }
         case "float":
           assertKeys(record, ["bits", "kind"], "encoded float");
           if (record.kind !== "float" || typeof record.bits !== "string") throw new Error("invalid encoded float");
-          return { kind: "float", v: bitsToFloat(record.bits), trust: "settled" };
+          return { kind: "float", v: bitsToFloat(record.bits), trust: "raw" };
         case "bool":
           assertKeys(record, ["kind", "value"], "encoded bool");
           if (record.kind !== "bool" || typeof record.value !== "boolean") throw new Error("invalid encoded bool");
-          return { kind: "bool", v: record.value, trust: "settled" };
+          return { kind: "bool", v: record.value, trust: "raw" };
         case "null":
           assertKeys(record, ["kind"], "encoded null");
           if (record.kind !== "null") throw new Error("invalid encoded null");
-          return { kind: "null", trust: "settled" };
+          return { kind: "null", trust: "raw" };
       }
     case "enum":
       assertKeys(record, ["kind", "name", "variant"], "encoded enum");
@@ -280,11 +301,11 @@ function decodeValue(encoded: unknown, schema: PersistedSchema): Value {
         throw new Error(`invalid encoded enum ${schema.name}`);
       }
       if (!schema.variants.includes(record.variant)) throw new Error(`unknown ${schema.name} variant ${record.variant}`);
-      return { kind: "enumval", enumName: schema.name, variant: record.variant, trust: "settled" };
+      return { kind: "enumval", enumName: schema.name, variant: record.variant, trust: "raw" };
     case "array":
       assertKeys(record, ["items", "kind"], "encoded array");
       if (record.kind !== "array" || !Array.isArray(record.items)) throw new Error("invalid encoded array");
-      return { kind: "array", items: record.items.map((item) => decodeValue(item, schema.items)), trust: "settled" };
+      return { kind: "array", items: record.items.map((item) => decodeValue(item, schema.items)), trust: "raw" };
     case "struct": {
       assertKeys(record, ["fields", "kind", "name"], "encoded struct");
       if (record.kind !== "struct" || record.name !== schema.name || !Array.isArray(record.fields)) {
@@ -301,7 +322,7 @@ function decodeValue(encoded: unknown, schema: PersistedSchema): Value {
         }
         fields.set(field.name, decodeValue(pair[1], field.schema));
       }
-      return { kind: "struct", typeName: schema.name, fields, trust: "settled" };
+      return { kind: "struct", typeName: schema.name, fields, trust: "raw" };
     }
   }
 }
@@ -333,19 +354,33 @@ function opaqueIdentity(domain: string, value: string): string {
 }
 
 export function deriveMemoryRegionKey(input: MemoryRegionKeyInput): string {
+  assertOwnKeys(input, [
+    "descriptor", "projectSubject", "sessionLineageId", "sessionId",
+    "stableAgentInstanceId", "user",
+  ].filter((key) => Object.prototype.hasOwnProperty.call(input, key)), "memory region key input");
   const { descriptor } = input;
   const scopes = [...descriptor.scopes].sort(bytewiseCompare);
   canonicalDescriptor(descriptor);
+  assertName(input.sessionLineageId, "lineage");
+  assertName(input.stableAgentInstanceId, "agent instance");
+  if (input.user !== undefined) {
+    assertOwnKeys(input.user, ["issuer", "subject", "verified"], "verified user identity");
+    if (input.user.verified !== true) throw new Error("user identity must be verified");
+    assertName(input.user.issuer, "user issuer");
+    assertName(input.user.subject, "user subject");
+  }
   const dimensions: Record<string, string> = {
     descriptor: hashMemoryDescriptor(descriptor),
     lineage: opaqueIdentity("lineage", input.sessionLineageId),
     agent: opaqueIdentity("agent-instance", input.stableAgentInstanceId),
   };
   if (descriptor.retention === "session") {
+    assertName(input.sessionId, "session");
     dimensions.session = opaqueIdentity("session", input.sessionId);
   }
   if (scopes.includes("project")) {
     if (input.projectSubject === undefined) throw new Error("project-scoped memory requires a project subject");
+    assertName(input.projectSubject, "project subject");
     dimensions.project = opaqueIdentity("project", input.projectSubject);
   }
   if (scopes.includes("user")) {

@@ -28,8 +28,9 @@ version.
   generation-aware store, recall, and forget operations.
 - **Named-memory persistence primitives are canonical.** The TypeScript runtime
   exposes interpreter-independent schema and descriptor hashes, exact typed-value
-  envelopes that exclude trust and private provenance, and opaque region keys
-  isolated by retention, declared scope, session lineage, and stable agent
+  envelopes that exclude trust and private provenance, decode recursively raw,
+  reject undeclared wire fields, and derive opaque region keys isolated by
+  retention, declared scope, session lineage, and stable agent
   instance.
 - **Recalled experience preserves typed outcomes and provenance.** Explicitly
   stored successful examples and rejected counterexamples retain their typed value
@@ -44,11 +45,11 @@ version.
   ledger content is hash/ref protected and private connector faults are sanitized.
   External prompt receipts and private-derived runtime warnings use the same
   protected envelope, including when a host tool echoes private arguments in an error.
-- **Calibration evidence is profile-scoped.** Core gates record truthful methods and
 - **Memory-derived cognition stays private in the ledger.** Explicit sends may
   use recalled values as provider input, while canonical `Sent`, `Resolved`,
   and mismatch receipts replace memory-derived prompt/result plaintext with
   deterministic protected envelopes.
+- **Calibration evidence is profile-scoped.** Core gates record truthful methods and
   scores; the Studio Fact Checker profile preserves raw-logprob evidence and exposes
   it through the authorized, non-enumerable `calibration.evidence.inspect` operation.
 
