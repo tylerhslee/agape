@@ -1,0 +1,11 @@
+prompt text question;
+
+agent Rememberer {
+  when (Prompt p about question) {
+    mem notes;
+    notes <- p.text;
+  }
+}
+
+spawn Rememberer remembered_agent;
+awake remembered_agent;

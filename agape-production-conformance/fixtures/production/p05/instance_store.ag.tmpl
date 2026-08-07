@@ -1,0 +1,11 @@
+agent Worker(text primary, text secondary) {
+  on awake {
+    mem notes <- primary;
+    mem scratch <- secondary;
+  }
+}
+
+spawn Worker first_agent("{{FIRST_PRIMARY}}", "{{FIRST_SECONDARY}}");
+spawn Worker second_agent("{{SECOND_PRIMARY}}", "{{SECOND_SECONDARY}}");
+awake first_agent;
+awake second_agent;

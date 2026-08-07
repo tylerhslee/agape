@@ -19,6 +19,13 @@ version.
   scores; the Studio Fact Checker profile preserves raw-logprob evidence and exposes
   it through the authorized, non-enumerable `calibration.evidence.inspect` operation.
 
+### Validation
+
+- **Production explicit-memory oracles.** Black-box CLI tests require a configured
+  memory driver, prove exact agent-instance and handle isolation, reject fabricated
+  Markdown modality effects or unresolvable refs, and distinguish immutable prompt
+  provenance from copied metadata in manually edited memory.
+
 ## [1.0.0-beta.2026.8.6.0] - 2026-08-06
 
 This beta adds the compiler-grounded Agentic Flow builder to Agape Studio and

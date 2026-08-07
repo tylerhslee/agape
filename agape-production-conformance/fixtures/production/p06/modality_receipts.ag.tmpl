@@ -1,0 +1,10 @@
+agent Archivist {
+  on awake {
+    mem notes;
+    LedgerEntry<Internalized> receipt = notes <- "{{SENTINEL}}";
+    forget notes;
+  }
+}
+
+spawn Archivist archivist;
+awake archivist;
