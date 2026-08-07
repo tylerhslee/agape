@@ -1,7 +1,6 @@
 # Design: production-path conformance profiles
 
-Status: **accepted reframing; implementation matrix must be revised before it is
-made release-blocking** (2026-08-06).
+Status: **accepted beta design** (2026-08-06).
 
 Production tests are valuable only when they prove a capability promised by the
 selected Agape profile. A test drives ordinary .ag source through a fresh shipped CLI
@@ -65,8 +64,8 @@ an explicit source or host memory operation.
 
 ## 3. Studio Fact Checker profile
 
-The Fact Checker is a product using Agape, not a second set of universal language
-semantics. Its release tests may require:
+The Studio Fact Checker requirements are scoped to its advertised product profile.
+Its release tests require:
 
 - the configured OpenAI-compatible connector and typed Credence request shape;
 - protected recording of raw candidate/logprob evidence when the connector exposes it;
@@ -74,22 +73,22 @@ semantics. Its release tests may require:
   and
 - visible threshold, margin, and gate-score arithmetic.
 
-A runtime that does not advertise raw logprob inspection remains eligible for the
-core-agent profile. It must not fabricate logprobs or claim this Studio calibration
-feature.
+The core-agent profile makes no raw-logprob inspection claim. Connectors report
+unavailable evidence truthfully; only the Studio profile exposes the calibrated
+inspection feature.
 
 ## 4. Non-blocking research profile
 
-The following are experimental and must not be beta release-gating requirements:
+The non-blocking research profile contains:
 causal retrieval adaptation/ablation, autonomous lesson selection, candidate behavior
 artifacts, std.behavior, evaluator/holdout isolation, principal-gated activation or
 rollback, behavior-promotion gaming, runtime fork/import/migration, and
 protected-content export protocols.
 
-Research tests should be reproducible, adversarial, and profile-labeled. They may
-fail while beta core and any advertised shipped optional profile remain green. They
-become mandatory only after a separate SPEC change, source syntax or runtime surface,
-implementation, and conformance proposal are accepted.
+Research tests are reproducible, adversarial, and profile-labeled. They are
+non-blocking for core and advertised shipped profiles. A capability moves to a
+release-blocking profile with its SPEC rule, runtime surface, implementation, and
+conformance oracle.
 
 ## 5. Harness rules
 
@@ -107,24 +106,19 @@ For any profile, the black-box harness:
 The manifest must encode profile membership and must not use required-pending entries
 to make unrelated beta CI red by construction.
 
-## 6. Migration from P01-P16
+## 6. P01-P16 capability allocation
 
-The previous P01-P16 inventory is useful as a backlog, but not as one mandatory
-release gate:
-
-| Former item | New disposition |
+| Capability | Profile |
 |---|---|
-| P01 | Core-agent instruction test, narrowed to source semantics |
-| P02-P03 | Core ordinary-send tests with configured memory and zero implicit memory operations |
+| P01 | Core agent instructions |
+| P02-P03 | Core configured-memory boundary |
 | P04-P07 | Core explicit-memory matrix |
-| P08 | Split core same-instance scheduling from optional persistence atomicity |
-| P09 | Core ledger replay; memory restart/replay only when advertised |
-| P10 | Research/policy experiment, not language semantics |
-| P11 | Studio Fact Checker calibration profile |
-| P12 | Non-blocking research |
-| P13-P14 | Non-blocking future behavior-evolution research |
-| P15 | Core lifecycle identity subset; storage import/migration research or optional runtime extension |
-| P16 | Optional protected-memory/evidence profile |
+| P08-P09 | Planned core scheduling, restart, and replay |
+| P10 | Research correction policy |
+| P11 | Studio Fact Checker calibration evidence |
+| P12-P14 | Research adaptation and evaluation |
+| P15 | Planned core durable identity |
+| P16 | Studio calibration evidence authorization and retention |
 
 No profile may claim that store/recall changes an agent's active instructions, grants,
 evaluator, behavior, provider binding, or model weights.

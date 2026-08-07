@@ -50,24 +50,25 @@ cost-model limitations.
 
 ## 3. Implications for Agape experiments
 
-The language distinction is foundational:
+The language assigns these capabilities to explicit surfaces:
 
-- explicit store/recall changes available tainted data, not competence or authority;
-- calibration evidence is a bounded optional connector/profile capability;
-- a model-internal workspace observation is protected model-specific telemetry, not
-  language truth or a gate input; and
+- explicit store/recall changes the available tainted data while preserving source
+  competence and authority;
+- calibration evidence belongs to a bounded advertised connector profile;
+- a model-internal workspace observation is protected model-specific telemetry with
+  no language authority or gate status; and
 - candidate consolidation, evaluator selection, promotion, rollback, policy/model
-  updates, and deployment transitions are future experiments, not beta semantics.
+  updates, and deployment transitions belong to advertised research profiles.
 
-A valid future experiment may independently toggle recurrence, retrieval,
+A research experiment may independently toggle recurrence, retrieval,
 consolidation, working-state/broadcast scope, self-model data, and evaluation. It
 must compare declared baselines and ablations, record evidence and resource budgets,
 and state only measured behavioral or reliability outcomes.
 
-## 4. Future adaptation requirements
+## 4. Adaptation profile requirements
 
-If Agape later specifies a behavior-adaptation profile, its candidate/evaluator/
-promotion obligations are requirements of that future experiment surface only:
+An advertised behavior-adaptation profile defines its candidate, evaluator, and
+promotion obligations:
 
 1. named inert candidate and evaluator versions;
 2. deployment-selected evidence, holdout/baseline, budget, and authority envelope;
@@ -75,6 +76,6 @@ promotion obligations are requirements of that future experiment surface only:
 4. explicit human or deployment approval for any live transition; and
 5. rollback and failure reporting without authority expansion.
 
-These conditions do not imply that beta agents automatically learn, evaluate,
-promote, or modify themselves. They exist to make a future experiment inspectable
-and governable if it is proposed and separately specified.
+These conditions make adaptation inspectable and governable. Active source and
+authority remain fixed until an explicit, approved source-version transition is
+deployed.

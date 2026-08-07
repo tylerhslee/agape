@@ -570,12 +570,12 @@ and may not `perform` (every `perform` is async, §6b).
 
 ## 5. Agents
 An **agent** is a first-class, addressable typed instance with a constructor,
-mailbox/lifecycle, source-settled instructions, private capability state, and
+mailbox/lifecycle, source-settled instructions, private memory and state, and
 bounded authority enforced by grants and the gate. Every runtime supplies a
 configured private-memory substrate. Source accesses that substrate through explicit
 memory operations. Learning is an advertised adaptation capability over recorded
-experience. Active source, grants, dependencies, and authority change only through
-operations defined by the language.
+experience. Active source, grants, dependencies, and authority remain fixed for
+the active source version and change only by deploying a new source version.
 
 
 ### Declaration (template)
@@ -660,11 +660,10 @@ provider sees behind every `<-`. Its argument is a string literal; a non-string 
 `instruction` inside an agent body is **agent-scoped** and composes **after** the global block
 (fixed order, for determinism). `extend` inherits the parent's instructions and appends the
 child's (append-only — a child cannot silently weaken a parent's guardrails).
-- **Settled by source.** An instruction is procedural behavior, and procedural behavior
-  lives in source, not mutable memory. Recall cannot rewrite it because recalled
-  values are data, never source directives. To change an agent's instructions,
-  grants, dependencies, schemas, or action bindings, ship a new source version.
-  Runtime self-modification of those source semantics is absent from this beta.
+- **Source definition.** Instructions, grants, dependencies, schemas, and action
+  bindings are procedural behavior defined by the source version. Recalled values
+  are data and do not alter those definitions. A behavioral or authority change
+  uses a new source version.
 
 Provider calls preserve the semantic distinction between the composed source
 instructions and typed task, prompt, tool, or recalled data. A connector may choose
@@ -1284,7 +1283,7 @@ type Task<T>                                               // a settled backgrou
 ```
 
 **Event-type hierarchy.** `Error` is the root; `Contradiction`, `TypeMismatch`,
-`FailedPrincipalDecision`, `MemoryWriteFailed`, `BehaviorTransitionRejected`, `MarginFloorViolation`, `TaskScopeViolation`, `RetryExhausted`, and
+`FailedPrincipalDecision`, `MemoryWriteFailed`, `MarginFloorViolation`, `TaskScopeViolation`, `RetryExhausted`, and
 `AgentCrashed` extend it. `when` matches by
 subtype, so `when (Error e)` catches a `Contradiction`; a contradiction is an `Error`
 subtype, and code that wants only faults matches the specific types. `Expired` and a lost
@@ -3331,11 +3330,12 @@ Memory-runtime policy keys apply to explicit writes over every substrate:
   stored). Reflection requires a provider handle; without one the write path is unchanged and the
   deterministic recollection template is stored (§16.7).
 
-*Future substrate ports (non-normative).* Earlier drafts specified a multi-store substrate port
-keyed by `facts_driver`, `graph_driver`, `vector_driver`, `blob_store`, `indexing`,
-`background_reindex`, `forget_policy`, `archive_retention`, and `max_internalize_chars`. Those keys
-are reserved and not recognized by the current runtime. The `Internalized`/`Forgotten` payloads
-still report per-modality effects and policy fields (§10), so a future port can honor them without
+*Reserved substrate keys (non-normative).* `facts_driver`, `graph_driver`,
+`vector_driver`, `blob_store`, `indexing`, `background_reindex`,
+`forget_policy`, `archive_retention`, and `max_internalize_chars` are reserved
+and not recognized by the current runtime. The `Internalized`/`Forgotten`
+payloads report per-modality effects and policy fields (§10), permitting
+compatible substrates without
 a ledger schema change.
 
 The `[runtime]` and `[policy]` tables:

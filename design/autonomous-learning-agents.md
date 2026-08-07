@@ -14,7 +14,7 @@ source-settled instructions.
 
 Every runtime session is configured with a private-memory driver. Source accesses
 memory through explicit handles and operations. Provider use, memory access, and
-learning loops do not determine whether an instance is an agent.
+learning loops are separately advertised runtime capabilities.
 
 An instance continues through sleep, re-awake, and a contained crash while its
 ordinary state and ledgered identity remain available. A later `spawn` creates a new
@@ -62,32 +62,30 @@ their configuration and receipts and preserve source-defined authority.
 
 `Credence<E>`, `decide`, and `endorse` remain core gate semantics. Preservation
 and inspection of raw logprob sequences, candidate mapping, and calibration profiles
-are optional bounded calibration capabilities. The Fact Checker may require this
-profile because it benefits from visual inspection of close threshold and margin
-cases. That makes it a Studio/product release requirement, not a universal
-requirement for every Agape runtime. Unavailable raw evidence must not be invented.
+are advertised bounded calibration capabilities. The Studio Fact Checker profile
+requires them for visual inspection of close threshold and margin cases. Runtimes
+advertise this profile only when they provide its evidence, authorization, and
+retention dependencies. Unavailable raw evidence must not be invented.
 
-## 5. Learning and behavior evolution are experiments
+## 5. Advertised adaptation capabilities
 
-Retrieval-assisted adaptation, consolidation into an inert candidate artifact,
-isolated candidate evaluation, and deployment transitions are useful experiments.
-None is part of beta language semantics. In particular, there is no normative
-`std.behavior` module, ambient artifact ingestion, automatic correction precedence,
-automatic promotion or rollback, or authority change through memory.
+Adaptation capabilities advertise their syntax, authority model, principal review,
+evaluator isolation, budgets, rollback, replay behavior, and conformance profile.
+Retrieval-assisted adaptation, consolidation into inert candidate artifacts,
+isolated candidate evaluation, and deployment transitions use separate advertised
+operations and receipts.
 
-A future proposal may define these operations only after its syntax, authority,
-principal review, evaluator isolation, budgets, rollback, and replay semantics have
-their own SPEC-first conformance suite. It may not silently mutate a live agent's
-source, grants, provider binding, evaluator, or model parameters.
+Adaptation preserves the active source version. Deployment of a candidate behavior
+uses an explicit source-version transition and does not change grants, provider
+bindings, evaluators, or model parameters through memory.
 
 ## 6. Research guidance
 
-Long-horizon agency and continual-learning research motivate experiments, not a
-claim that a memory store is learning or that an orchestrated model is conscious.
-Experiments should independently toggle recurrence, retrieval, consolidation,
+Long-horizon agency and continual-learning experiments independently toggle
+recurrence, retrieval, consolidation,
 self-modeling, and evaluation while measuring baselines and ablations. Model-internal
-workspace observations are model-specific protected observations - not language truth,
-authority, or a basis for a gate.
+workspace observations are model-specific protected observations and carry no
+language authority or gate status.
 
 The preferred experiment loop is:
 
