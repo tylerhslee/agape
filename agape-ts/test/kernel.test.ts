@@ -549,7 +549,10 @@ describe("the prompt sensor opens from its declaration (§5b)", () => {
     expect(r.stdout).toEqual(["hello from the user", "local-user"]);
     const prompt = r.ledger.events.find((e) => e.etype === "Prompt");
     expect(prompt?.subject).toBe("question");
-    expect((prompt?.payload as any)?.input).toMatchObject({ kind: "text", value: "hello from the user", trust: "settled" });
+    expect((prompt?.payload as any)?.input).toMatchObject({
+      content_hash: expect.any(String),
+      protected_ref: expect.stringMatching(/^blob:sha256:/),
+    });
     expect((prompt?.payload as any)?.attestation?.attester).toBe("local-user");
     expect((prompt?.payload as any)?.attestation?.payload_hash).toMatch(/^[a-f0-9]{64}$/);
   });
@@ -618,9 +621,8 @@ describe("manifest-level ingress provenance", () => {
     expect(r.warnings[0]!.prompt).toContain("hello from outside");
     const prompt = r.ledger.events.find((e) => e.etype === "Prompt");
     expect((prompt?.payload as any)?.input).toMatchObject({
-      kind: "text",
-      trust: "settled",
-      ingress: "external_unscreened",
+      content_hash: expect.any(String),
+      protected_ref: expect.stringMatching(/^blob:sha256:/),
     });
   });
 

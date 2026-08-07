@@ -37,6 +37,8 @@ version.
   nesting, slicing, function and pipeline returns, operators, fusion, provider
   replies, tools, events, and task terminals preserve private provenance; public
   ledger content is hash/ref protected and private connector faults are sanitized.
+  External prompt receipts and private-derived runtime warnings use the same
+  protected envelope, including when a host tool echoes private arguments in an error.
 - **Calibration evidence is profile-scoped.** Core gates record truthful methods and
 - **Memory-derived cognition stays private in the ledger.** Explicit sends may
   use recalled values as provider input, while canonical `Sent`, `Resolved`,

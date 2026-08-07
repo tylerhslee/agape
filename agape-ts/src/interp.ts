@@ -300,7 +300,7 @@ export interface RunResult {
 export interface RuntimeWarning {
   kind: "tainted_ingress_to_provider";
   message: string;
-  prompt: string;
+  prompt: string | Record<string, string>;
   ingress: "external_unscreened";
   agent?: string;
   subject?: string;
@@ -1202,7 +1202,15 @@ class Interpreter {
       ["payload_hash", settledText(String(attestation.payload_hash))],
       ["signature", settledText(String(attestation.signature))],
     ]);
-    this.ledger.append("Prompt", input.name, { input: summary, attestation }, undefined);
+    this.ledger.append("Prompt", input.name, {
+      input: this.receiptValue(summary, true),
+      attestation: {
+        kind: attestation.kind,
+        attester: attestation.attester,
+        payload_hash: attestation.payload_hash,
+        signature: attestation.signature,
+      },
+    }, undefined);
     // The delivery's whole cascade runs under this provenance, so a memory store anywhere in
     // the reaction records which attested prompt input it traces to (the dogfood contamination
     // fix: a test-harness attester is distinguishable from the real user at recall time).
@@ -1438,7 +1446,7 @@ class Interpreter {
     this.warnings.push({
       kind: "tainted_ingress_to_provider",
       message,
-      prompt,
+      prompt: this.receiptContent(prompt, this.containsPrivateMemory(promptValue)),
       ingress: "external_unscreened",
       agent: scope.currentAgent()?.name,
       subject,
@@ -1461,6 +1469,13 @@ class Interpreter {
     this.ledger.append("ToolStarted", catalogKey, startedPayload, agent?.name);
     return this.inResolutionOrder(
       this.effectorResult(catalogKey, args, binding, payload)
+        .catch((err) => {
+          if (!privateArgs) throw err;
+          const message = err instanceof Error ? err.message : String(err);
+          throw new CrashError(this.privateFaultReason(
+            `tool '${catalogKey}' failed while handling private-memory-derived arguments: ${message}`,
+          ));
+        })
         .then((resolved) => this.privateDerived(this.withIngress(resolved, resultIngress), args)),
       (resolved) => {
         this.ledger.append("ToolResolved", catalogKey, { ...startedPayload, result: this.publicLedgerValue(resolved) }, agent?.name);

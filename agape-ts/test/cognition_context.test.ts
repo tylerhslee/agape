@@ -409,4 +409,40 @@ describe("provider-neutral cognition context", () => {
     expect(crashed?.payload).toMatchObject({ reason: expect.stringContaining("protected") });
   });
 
+  it("protects a recalled external prompt in public warnings while preserving provider input", async () => {
+    const provider = new ContextProvider();
+    const secret = "private-warning-sentinel";
+    const result = await run(parse(`
+      prompt text request;
+      agent Rememberer {
+        mem facts { type text; modality opaque; scope project; retention session; }
+        when (Prompt p about request) {
+          text remembered = p.text;
+          facts <- remembered;
+          text[] recalled = facts -> "q";
+          text answer = self <- f"use \${recalled[0]}";
+        }
+      }
+      spawn Rememberer rememberer;
+      awake rememberer;
+    `), {
+      provider,
+      memory: new LocalMemoryDriver(),
+      promptInputs: [{ name: "request", value: secret }],
+      manifest: {
+        provider: { backend: "mock" },
+        security: { tainted_ingress_to_provider: "warn" },
+      },
+    });
+
+    expect(provider.structuredCalls[0]?.prompt).toContain(secret);
+    expect(result.warnings).toHaveLength(1);
+    expect(JSON.stringify(result.ledger.events)).not.toContain(secret);
+    expect(JSON.stringify(result.warnings)).not.toContain(secret);
+    expect((result.warnings[0] as any)?.prompt).toMatchObject({
+      content_hash: expect.any(String),
+      protected_ref: expect.stringMatching(/^blob:sha256:/),
+    });
+  });
+
 });
