@@ -7,7 +7,8 @@
 import { render, type Value } from "./runtime.js";
 
 export interface MemoryScope {
-  agent: string;
+  agentInstanceId: string;
+  agentAlias: string;
   mem: string;
   project?: string;
   user?: string;
@@ -91,7 +92,7 @@ export interface MemoryDriver {
 }
 
 export function memoryScopeKey(scope: MemoryScope): string {
-  return `${scope.project ?? ""}\u0000${scope.user ?? ""}\u0000${scope.agent}\u0000${scope.mem}`;
+  return `${scope.project ?? ""}\u0000${scope.user ?? ""}\u0000${scope.agentInstanceId}\u0000${scope.mem}`;
 }
 
 export class LocalMemoryDriver implements MemoryDriver {
@@ -190,7 +191,7 @@ export class LocalMemoryDriver implements MemoryDriver {
       region = { writes: [], generation: 0, closed: false, sequence: 0 };
       this.regions.set(key, region);
     }
-    if (!region) throw new Error(`memory '${scope.mem}' is not declared for agent '${scope.agent}'`);
+    if (!region) throw new Error(`memory '${scope.mem}' is not declared for agent '${scope.agentAlias}'`);
     return region;
   }
 }

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { rm } from "node:fs/promises";
 import { describe, it, expect, afterAll } from "vitest";
 import { parse } from "../src/parser.js";
-import { run as runtimeRun } from "../src/interp.js";
+import { run as runtimeRun } from "./runtime_harness.js";
 import { MockProvider, type StructuredSchema } from "../src/runtime.js";
 
 import { LocalMemoryDriver } from "../src/memory.js";

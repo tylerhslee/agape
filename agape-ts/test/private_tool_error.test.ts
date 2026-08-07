@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parse } from "../src/parser.js";
-import { run } from "../src/interp.js";
+import { run } from "./runtime_harness.js";
 import { LocalMemoryDriver } from "../src/memory.js";
 
 describe("private tool failure containment", () => {

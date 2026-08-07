@@ -156,7 +156,8 @@ export class MarkdownMemoryDriver implements MemoryDriver {
         metadata: {
           ...c.metadata,
           project: scope.project,
-          agent: scope.agent,
+          agent: scope.agentAlias,
+          user: scope.user,
           mem: scope.mem,
         },
       }));
@@ -164,7 +165,7 @@ export class MarkdownMemoryDriver implements MemoryDriver {
 
   private async updateIndex(scope: MemoryScope, loc: MarkdownLocation, latest: string | undefined): Promise<void> {
     const existing = await readText(loc.entrypoint);
-    const label = `${scope.project ?? "default"}/${scope.agent}/${scope.mem}`;
+    const label = scopeLabel(scope);
     const bullet = latest === undefined ? undefined : `- [${label}](${loc.topicRel}): ${oneLine(latest)}`;
     const lines = existing ? existing.split(/\r?\n/) : defaultIndexMarkdown().split(/\r?\n/);
     const start = lines.indexOf(INDEX_START);
@@ -197,7 +198,8 @@ export class MarkdownMemoryDriver implements MemoryDriver {
       root,
       "scopes",
       sanitizeSegment(scope.project ?? "default"),
-      sanitizeSegment(scope.agent),
+      sanitizeSegment(scope.agentInstanceId),
+      ...(scope.user ? [sanitizeSegment(scope.user)] : []),
       `${sanitizeSegment(scope.mem)}.md`,
     );
     return {
@@ -256,7 +258,8 @@ function renderEntry(args: { id: string; createdAt: string; req: MemoryWriteRequ
     id,
     created_at: createdAt,
     project: req.scope.project,
-    agent: req.scope.agent,
+    agent: req.scope.agentAlias,
+    user: req.scope.user,
     mem: req.scope.mem,
     ...(req.metadata ?? {}),
   };
@@ -406,7 +409,7 @@ function defaultIndexMarkdown(): string {
 
 function defaultTopicMarkdown(scope: MemoryScope): string {
   return [
-    `# Memory: ${scope.project ?? "default"}/${scope.agent}/${scope.mem}`,
+    `# Memory: ${scopeLabel(scope)}`,
     "",
     "Agape appends internalized memories here. You can edit this file directly; recall reads it as markdown.",
     "",
@@ -415,7 +418,7 @@ function defaultTopicMarkdown(scope: MemoryScope): string {
 
 function forgottenTopicMarkdown(scope: MemoryScope, count: number, at: Date): string {
   return [
-    `# Memory: ${scope.project ?? "default"}/${scope.agent}/${scope.mem}`,
+    `# Memory: ${scopeLabel(scope)}`,
     "",
     `<!-- agape-forgotten at="${at.toISOString()}" tombstoned="${count}" -->`,
     "",
@@ -480,16 +483,21 @@ function resolveConfiguredPath(raw: string, scope: MemoryScope, cwd: string): st
 function template(raw: string, scope: MemoryScope): string {
   return raw
     .replaceAll("{project}", sanitizeSegment(scope.project ?? "default"))
-    .replaceAll("{agent}", sanitizeSegment(scope.agent))
+    .replaceAll("{agent}", sanitizeSegment(scope.agentInstanceId))
+    .replaceAll("{user}", sanitizeSegment(scope.user ?? "default"))
     .replaceAll("{mem}", sanitizeSegment(scope.mem));
 }
+function scopeLabel(scope: MemoryScope): string {
+  return [scope.project ?? "default", ...(scope.user ? [scope.user] : []), scope.agentAlias, scope.mem].join("/");
+}
+
 
 function scopeSlug(scope: MemoryScope): string {
-  return [scope.project ?? "default", scope.agent, scope.mem].map(sanitizeSegment).join("-");
+  return [scope.project ?? "default", ...(scope.user ? [scope.user] : []), scope.agentInstanceId, scope.mem].map(sanitizeSegment).join("-");
 }
 
 function memoryScopeIdentity(scope: MemoryScope): string {
-  return `${scope.project ?? ""}\0${scope.agent}\0${scope.mem}`;
+  return `${scope.project ?? ""}\0${scope.user ?? ""}\0${scope.agentInstanceId}\0${scope.mem}`;
 }
 
 function sanitizeSegment(value: string): string {

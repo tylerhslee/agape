@@ -2,11 +2,22 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse } from "./parser.js";
-import { run as runtimeRun, type RunResult } from "./interp.js";
+import { deriveStableAgentInstanceId, run as runtimeRun, type RunOptions, type RunResult, type RuntimeIdentityContext } from "./interp.js";
 import type { LedgerEvent } from "./runtime.js";
 
 import { LocalMemoryDriver } from "./memory.js";
-export type AgapeRunOptions = NonNullable<Parameters<typeof runtimeRun>[1]>;
+export const TEST_RUNTIME_IDENTITY: RuntimeIdentityContext = Object.freeze({
+  projectSubject: "test://agape",
+  sessionLineageId: "test-lineage",
+  sessionId: "test-session",
+  conversationId: "test-conversation",
+});
+export const TEST_AGENT_INSTANCE_ID = deriveStableAgentInstanceId(
+  TEST_RUNTIME_IDENTITY.projectSubject,
+  TEST_RUNTIME_IDENTITY.sessionLineageId,
+  0,
+);
+export type AgapeRunOptions = Omit<RunOptions, "identity"> & { identity?: RuntimeIdentityContext };
 export type AgapeTestRun = RunResult & {
   memoryRoot?: string;
   cleanup: () => Promise<void>;
@@ -19,6 +30,7 @@ export async function runAgape(source: string, opts: AgapeRunOptions = {}): Prom
   const useConfiguredDriver = opts.manifest?.memory !== undefined;
   const result = await runtimeRun(parse(source), {
     ...opts,
+    identity: opts.identity ?? TEST_RUNTIME_IDENTITY,
     memoryRoot,
     ...(!opts.memory && !useConfiguredDriver ? { memory: new LocalMemoryDriver() } : {}),
   });

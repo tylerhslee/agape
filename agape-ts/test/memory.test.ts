@@ -1,9 +1,9 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parse } from "../src/parser.js";
-import { run } from "../src/interp.js";
+import { run, TEST_AGENT_INSTANCE_ID } from "./runtime_harness.js";
 import {
   LocalMemoryDriver,
   type MemoryConsultRequest,
@@ -76,8 +76,8 @@ describe("pluggable memory substrate", () => {
 
     expect(result.stdout.join(" ")).toContain("from driver");
     expect(memory.declared).toHaveLength(2);
-    expect(memory.declared.every((scope) => scope.project === "demo" && scope.agent === "a" && scope.mem === "notes")).toBe(true);
-    expect(memory.writes[0]?.scope).toMatchObject({ project: "demo", agent: "a", mem: "notes" });
+    expect(memory.declared.every((scope) => scope.project === "test://agape" && scope.agentInstanceId === TEST_AGENT_INSTANCE_ID && scope.agentAlias === "a" && scope.mem === "notes")).toBe(true);
+    expect(memory.writes[0]?.scope).toMatchObject({ project: "test://agape", agentInstanceId: TEST_AGENT_INSTANCE_ID, agentAlias: "a", mem: "notes" });
     expect(memory.consults[0]?.query).toBe("q");
     const internalized = result.ledger.events.find((e) => e.etype === "Internalized");
     expect((internalized?.payload as any)?.refs?.driver_event).toBe("driver-write-1");
@@ -87,7 +87,7 @@ describe("pluggable memory substrate", () => {
   });
   it("keeps LocalMemoryDriver declarations idempotent", async () => {
     const memory = new LocalMemoryDriver();
-    const scope = { project: "demo", agent: "a", mem: "notes" };
+    const scope = { project: "demo", agentInstanceId: "instance-a", agentAlias: "a", mem: "notes" };
     await memory.declare(scope);
     await memory.internalize({
       scope,
@@ -111,7 +111,7 @@ describe("markdown memory adapter", () => {
     try {
       const now = new Date("2026-01-02T03:04:05.000Z");
       const driver = new MarkdownMemoryDriver({ path: dir, top_k: 2 }, { now: () => now });
-      const scope = { project: "demo", agent: "a", mem: "notes" };
+      const scope = { project: "demo", agentInstanceId: "instance-a", agentAlias: "a", mem: "notes" };
 
       const receipt = await driver.internalize({
         scope,
@@ -129,9 +129,9 @@ describe("markdown memory adapter", () => {
         vectors: { chunks_upserted: 0 },
       });
       expect(consulted.recalled).toContain("the build command is npm test");
-      expect(consulted.candidates[0]).toMatchObject({ metadata: { markdown_file: "scopes/demo/a/notes.md" } });
-      await expect(readFile(join(dir, "MEMORY.md"), "utf8")).resolves.toContain("[demo/a/notes](scopes/demo/a/notes.md)");
-      await expect(readFile(join(dir, "scopes", "demo", "a", "notes.md"), "utf8")).resolves.toContain("agape-memory-id");
+      expect(consulted.candidates[0]).toMatchObject({ metadata: { markdown_file: "scopes/demo/instance-a/notes.md" } });
+      await expect(readFile(join(dir, "MEMORY.md"), "utf8")).resolves.toContain("[demo/a/notes](scopes/demo/instance-a/notes.md)");
+      await expect(readFile(join(dir, "scopes", "demo", "instance-a", "notes.md"), "utf8")).resolves.toContain("agape-memory-id");
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -142,14 +142,14 @@ describe("markdown memory adapter", () => {
     try {
       const driver = new MarkdownMemoryDriver({ path: dir });
       await driver.internalize({
-        scope: { project: "demo", agent: "chatbot", mem: "notes" },
+        scope: { project: "demo", agentInstanceId: "instance-chatbot", agentAlias: "chatbot", mem: "notes" },
         value: { kind: "text", v: "chatbot-only-sentinel", trust: "settled" },
         memory: "chatbot-only-sentinel",
         summary: { kind: "text", rendered: "chatbot-only-sentinel" },
       });
 
       const verifierRecall = await driver.consult({
-        scope: { project: "demo", agent: "verifier", mem: "notes" },
+        scope: { project: "demo", agentInstanceId: "instance-verifier", agentAlias: "verifier", mem: "notes" },
         query: "chatbot-only-sentinel",
       });
 
@@ -164,7 +164,7 @@ describe("markdown memory adapter", () => {
     const dir = await mkdtemp(join(tmpdir(), "agape-md-memory-"));
     try {
       const driver = new MarkdownMemoryDriver({ path: dir, archive_on_forget: false });
-      const scope = { project: "demo", agent: "a", mem: "notes" };
+      const scope = { project: "demo", agentInstanceId: "instance-a", agentAlias: "a", mem: "notes" };
       await driver.internalize({
         scope,
         value: { kind: "text", v: "private fact", trust: "settled" },
@@ -174,7 +174,7 @@ describe("markdown memory adapter", () => {
 
       const receipt = await driver.forget({ scope });
       const consulted = await driver.consult({ scope, query: "private fact" });
-      const topic = await readFile(join(dir, "scopes", "demo", "a", "notes.md"), "utf8");
+      const topic = await readFile(join(dir, "scopes", "demo", "instance-a", "notes.md"), "utf8");
 
       expect(receipt.status).toBe("TOMBSTONED");
       expect(consulted.recalled).not.toContain("private fact to remove");
@@ -213,12 +213,72 @@ describe("markdown memory adapter", () => {
         manifest: { provider: { backend: "mock" }, project: { name: "demo" }, memory: { driver: "markdown" } },
       });
 
-      await expect(readFile(join(dir, ".agape", "memory", "MEMORY.md"), "utf8")).resolves.toContain("demo/a/notes");
-      await expect(readFile(join(dir, ".agape", "memory", "scopes", "demo", "a", "notes.md"), "utf8")).resolves.toContain("default markdown write");
+      await expect(readFile(join(dir, ".agape", "memory", "MEMORY.md"), "utf8")).resolves.toContain(`[test://agape/a/notes](scopes/test_agape/${TEST_AGENT_INSTANCE_ID.replace(":", "_")}/notes.md)`);
+      await expect(readFile(join(dir, ".agape", "memory", "scopes", "test_agape", TEST_AGENT_INSTANCE_ID.replace(":", "_"), "notes.md"), "utf8")).resolves.toContain("default markdown write");
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
   });
+
+  it("isolates two users at the same project, lineage, and stable agent instance", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "agape-md-user-isolation-"));
+    const identity = {
+      projectSubject: "project://shared",
+      sessionLineageId: "lineage-shared",
+      sessionId: "session-shared",
+      conversationId: "conversation-shared",
+    };
+    const program = (awakeBody: string) => parse(`
+      agent A {
+        mem notes {
+          type text;
+          modality opaque;
+          scope project, user;
+          retention durable;
+        }
+        on awake { ${awakeBody} }
+      }
+      spawn A a;
+      awake a;
+    `);
+    const manifest = {
+      provider: { backend: "mock" as const },
+      memory: { driver: "markdown" },
+    };
+    try {
+      const alice = await run(program('notes <- "alice-only-sentinel";'), {
+        identity: {
+          ...identity,
+          user: { issuer: "https://idp.example", subject: "alice", verified: true },
+        },
+        memoryRoot: dir,
+        manifest,
+      });
+      const bob = await run(program('text[] hits = notes -> "alice-only-sentinel"; say(hits);'), {
+        identity: {
+          ...identity,
+          user: { issuer: "https://idp.example", subject: "bob", verified: true },
+        },
+        memoryRoot: dir,
+        manifest,
+      });
+
+      expect(bob.stdout.join(" ")).not.toContain("alice-only-sentinel");
+      const instanceId = String((alice.ledger.events.find((event) => event.etype === "Spawned")?.payload as Record<string, unknown>)?.instance_id);
+      const bobInstanceId = String((bob.ledger.events.find((event) => event.etype === "Spawned")?.payload as Record<string, unknown>)?.instance_id);
+      expect(bobInstanceId).toBe(instanceId);
+      const namespaces = await readdir(
+        join(dir, ".agape", "memory", "scopes", "project_shared", instanceId.replace(":", "_")),
+      );
+      expect(namespaces).toHaveLength(2);
+      expect(namespaces.every((name) => /^user-scope-v1_[0-9a-f]{64}$/.test(name))).toBe(true);
+      expect(namespaces.join(" ")).not.toContain("alice");
+      expect(namespaces.join(" ")).not.toContain("bob");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
 
   it("resolves relative markdown paths against the configured project root", async () => {
     const dir = await mkdtemp(join(tmpdir(), "agape-md-project-"));
@@ -229,7 +289,7 @@ describe("markdown memory adapter", () => {
         memory: { driver: "markdown", path: ".agape/memory" },
       }, { cwd: dir });
       await memory.internalize({
-        scope: { project: "demo", agent: "a", mem: "notes" },
+        scope: { project: "demo", agentInstanceId: "instance-a", agentAlias: "a", mem: "notes" },
         value: { kind: "text", v: "project rooted", trust: "settled" },
         memory: "project rooted memory",
         summary: { kind: "text", rendered: "project rooted" },
@@ -265,7 +325,7 @@ describe("direct configured memory substrate", () => {
     const dir = await mkdtemp(join(tmpdir(), "agape-runtime-memory-"));
     try {
       const driver = new MarkdownMemoryDriver({ path: dir, top_k: 10 });
-      const scope = { project: "league", agent: "advisor", mem: "notes" };
+      const scope = { project: "league", agentInstanceId: "instance-advisor", agentAlias: "advisor", mem: "notes" };
       const write: MemoryWriteRequest = {
         scope,
         value: { kind: "text", v: "User prefers conservative waiver advice in close roster calls.", trust: "settled" },
@@ -293,7 +353,7 @@ describe("direct configured memory substrate", () => {
     try {
       const driver = new MarkdownMemoryDriver({ path: dir });
       const receipt = await driver.internalize({
-        scope: { project: "demo", agent: "a", mem: "notes" },
+        scope: { project: "demo", agentInstanceId: "instance-a", agentAlias: "a", mem: "notes" },
         value: { kind: "text", v: "ok", trust: "raw" },
         memory: "ok",
         summary: { kind: "text", rendered: "ok" },

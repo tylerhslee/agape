@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it, expect, afterAll } from "vitest";
 import { parse } from "../src/parser.js";
-import { run as runtimeRun } from "../src/interp.js";
+import { run as runtimeRun } from "./runtime_harness.js";
 import { MockProvider, type StructuredSchema } from "../src/runtime.js";
 import { parseManifestDirective } from "../src/config.js";
 import { LocalMemoryDriver } from "../src/memory.js";

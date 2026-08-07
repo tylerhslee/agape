@@ -34,6 +34,11 @@ version.
   instance.
 - **Recalled experience preserves typed outcomes and provenance.** Explicitly
   stored successful examples and rejected counterexamples retain their typed value
+- **Runtime state is bound to authenticated identity.** Sessions require
+  explicit nonblank identity dimensions; `Spawned` commits an exact stable
+  instance ID before constructor effects; Local and Markdown memory isolate
+  stable instances and opaque user subjects. CLI and Studio mint fresh lineages;
+  authenticated durable resume remains pending.
   summaries and origin metadata across Local and Markdown drivers; recall remains
   tainted and requires a fresh gate before consequential use.
 - **Memory receipts are private and truthful.** Public ledger rows expose hashes,

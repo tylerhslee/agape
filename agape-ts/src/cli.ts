@@ -2,6 +2,7 @@
 // CLI — `agape-ts run <file.ag>`: lex -> parse -> run (async), then print the ledger.
 
 import { spawn, spawnSync } from "node:child_process";
+import { createHash, randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -223,7 +224,15 @@ async function main(argv: string[]): Promise<number> {
     const memory = createMemoryDriver(manifest, { cwd: projectRoot, provider });
 
     const program = parse(source);
-    const { ledger, stdout, warnings } = await run(program, { provider, manifest, memory, promptInputs, projectRoot });
+    const identity = {
+      projectSubject: `project:sha256:${createHash("sha256").update(projectRoot, "utf8").digest("hex")}`,
+      sessionLineageId: randomUUID(),
+      sessionId: randomUUID(),
+      conversationId: randomUUID(),
+    };
+    const { ledger, stdout, warnings } = await run(program, {
+      identity, provider, manifest, memory, promptInputs, projectRoot,
+    });
 
     if (json) {
       console.log(JSON.stringify({ ok: true, file, provider: manifest.provider.backend, events: ledger.events, stdout, warnings, head: ledger.head() }));

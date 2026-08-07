@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parse } from "../src/parser.js";
-import { run } from "../src/interp.js";
+import { run, TEST_AGENT_INSTANCE_ID } from "./runtime_harness.js";
 import { LocalMemoryDriver } from "../src/memory.js";
 import {
   MockProvider,
@@ -142,7 +142,7 @@ describe("provider-neutral cognition context", () => {
   it("preserves typed outcome labels and provenance for recalled counterexamples", async () => {
     const provider = new ContextProvider();
     const memory = new LocalMemoryDriver();
-    const scope = { project: "demo", agent: "reviewer", mem: "examples" };
+    const scope = { project: "test://agape", agentInstanceId: TEST_AGENT_INSTANCE_ID, agentAlias: "reviewer", mem: "examples" };
     await memory.declare(scope);
     await memory.internalize({
       scope,

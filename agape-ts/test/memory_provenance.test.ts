@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parse } from "../src/parser.js";
-import { run } from "../src/interp.js";
+import { run } from "./runtime_harness.js";
 import { MockProvider } from "../src/runtime.js";
 import {
   type MemoryConsultRequest,
@@ -186,14 +186,16 @@ describe("memory-cell provenance threading", () => {
         }
         spawn A a; awake a;
       `;
-      await run(parse(prog), {
+      const result = await run(parse(prog), {
         memoryRoot: dir,
         provider: new MockProvider(() => ({})),
         manifest: { provider: { backend: "mock" }, project: { name: "demo" }, memory: { driver: "markdown" } },
         promptInputs: [{ name: "question", value: "remember the deploy command", attestation: { attester: "local-user" } }],
       });
 
-      const topic = await readFile(join(dir, ".agape", "memory", "scopes", "demo", "a", "notes.md"), "utf8");
+      const spawned = result.ledger.events.find((event) => event.etype === "Spawned");
+      const instanceId = String((spawned?.payload as Record<string, unknown>)?.instance_id);
+      const topic = await readFile(join(dir, ".agape", "memory", "scopes", "test_agape", instanceId.replace(":", "_"), "notes.md"), "utf8");
       expect(topic).toContain("the deploy command is npm run deploy");
       expect(topic).toContain('"provenance"');
       expect(topic).toContain('"attester": "local-user"');
@@ -202,7 +204,7 @@ describe("memory-cell provenance threading", () => {
       // The configured substrate preserves provenance on exact recalled candidates.
       const driver = new MarkdownMemoryDriver({ path: join(dir, ".agape", "memory") });
       const consulted = await driver.consult({
-        scope: { project: "demo", agent: "a", mem: "notes" },
+        scope: { project: "test://agape", agentInstanceId: instanceId, agentAlias: "a", mem: "notes" },
         query: "deploy command",
         topK: 1,
       });
@@ -218,7 +220,7 @@ describe("memory-cell provenance threading", () => {
     const substrate = new RecordingMemory();
     const runtime = new MemoryRuntimeDriver(substrate, { dedupe: false });
     const req: MemoryWriteRequest = {
-      scope: { agent: "a", mem: "notes", project: "t" },
+      scope: { agentInstanceId: "instance-a", agentAlias: "a", mem: "notes", project: "t" },
       value: { kind: "text", v: "npm test", trust: "settled" },
       memory: "the build command is npm test",
       episode: { act: "store" },
@@ -243,7 +245,7 @@ describe("memory-cell provenance threading", () => {
     const runtime = new MemoryRuntimeDriver(substrate);
 
     const consulted = await runtime.consult({
-      scope: { agent: "a", mem: "notes", project: "t" },
+      scope: { agentInstanceId: "instance-a", agentAlias: "a", mem: "notes", project: "t" },
       query: "waiver advice preference",
       topK: 1,
     });

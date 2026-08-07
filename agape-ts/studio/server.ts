@@ -8,7 +8,7 @@
 //
 // Zero dependencies: plain node:http + the agape-ts compiler/runtime it already ships with.
 
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { readFileSync, readdirSync, statSync, existsSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
@@ -16,7 +16,7 @@ import { fileURLToPath } from "node:url";
 import { parse } from "../src/parser.js";
 import { check } from "../src/check.js";
 import { buildGraph } from "../src/graph.js";
-import { createSession, run, type ConsultRequest, type PrincipalAttestation, type PromptInput, type RuntimeSession } from "../src/interp.js";
+import { createSession, run, type ConsultRequest, type PrincipalAttestation, type PromptInput, type RuntimeIdentityContext, type RuntimeSession } from "../src/interp.js";
 import { createMemoryDriver, createProvider, loadManifest } from "../src/config.js";
 import type * as A from "../src/ast.js";
 
@@ -35,6 +35,15 @@ const MAX_SOURCE_BYTES = 256 * 1024;
 const CONFIG_NAME = "agape.toml";
 const MAX_CONFIG_BYTES = 128 * 1024;
 const MAX_SPEC_BYTES = 2 * 1024 * 1024;
+function mintStudioIdentity(projectRoot: string, conversationId = randomBytes(12).toString("base64url")): RuntimeIdentityContext {
+  return {
+    projectSubject: `project:sha256:${createHash("sha256").update(resolve(projectRoot), "utf8").digest("hex")}`,
+    sessionLineageId: randomBytes(24).toString("base64url"),
+    sessionId: randomBytes(24).toString("base64url"),
+    conversationId,
+  };
+}
+
 const SAFE_MARKDOWN_NAME = /\.(?:md|markdown)$/i;
 const MAX_MARKDOWN_BYTES = 512 * 1024;
 
@@ -662,7 +671,10 @@ async function runProgram(
   const provider = createProvider(manifest);
   const memory = createMemoryDriver(manifest, { cwd: opts.dir });
   try {
-    const { ledger, stdout } = await run(program, { provider, manifest, memory, promptInputs, principalAttestations, timingOriginMs: startedAt, projectRoot: opts.dir });
+    const { ledger, stdout } = await run(program, {
+      identity: mintStudioIdentity(opts.dir),
+      provider, manifest, memory, promptInputs, principalAttestations, timingOriginMs: startedAt, projectRoot: opts.dir,
+    });
     const ms = Date.now() - startedAt;
     const events = eventsWithResponseLatency(ledger.events, ms);
     const providerMeta = { backend: manifest.provider.backend, model: manifest.provider.model };
@@ -806,6 +818,7 @@ async function startRunSession(
     // pendingAttestation for the UI; POST /api/attest resolves it with the ruling (or a decline).
     session.runtime = createSession(program, {
       provider,
+      identity: mintStudioIdentity(opts.dir, session.id),
       manifest,
       memory,
       principalAttestations,

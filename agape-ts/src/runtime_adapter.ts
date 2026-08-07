@@ -549,6 +549,12 @@ class AgapeTsConformanceAdapter {
     }
     const opts: Parameters<typeof runtimeRun>[1] = {
       provider,
+      identity: {
+        projectSubject: "runtime-conformance://agape-ts",
+        sessionLineageId: "runtime-conformance-lineage",
+        sessionId: "runtime-conformance-session",
+        conversationId: "runtime-conformance-conversation",
+      },
       manifest,
       toolHandlers,
       memory: new LocalMemoryDriver(),

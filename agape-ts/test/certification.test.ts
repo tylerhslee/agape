@@ -10,6 +10,7 @@ import {
   normalizedLedger,
   requireEvent,
   withAgapeRun,
+  TEST_AGENT_INSTANCE_ID,
 } from "../src/testkit.js";
 
 const GATED_REPLY = `
@@ -67,8 +68,8 @@ describe("Agape core certification suite", () => {
       });
 
       await expect(readFile(join(dir, ".agape", "memory", "MEMORY.md"), "utf8"))
-        .resolves.toContain("demo/a/notes");
-      await expect(readFile(join(dir, ".agape", "memory", "scopes", "demo", "a", "notes.md"), "utf8"))
+        .resolves.toContain(`[test://agape/a/notes](scopes/test_agape/${TEST_AGENT_INSTANCE_ID.replace(":", "_")}/notes.md)`);
+      await expect(readFile(join(dir, ".agape", "memory", "scopes", "test_agape", TEST_AGENT_INSTANCE_ID.replace(":", "_"), "notes.md"), "utf8"))
         .resolves.toContain("certification writes project markdown");
     } finally {
       await rm(dir, { recursive: true, force: true });

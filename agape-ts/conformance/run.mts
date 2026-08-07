@@ -13,7 +13,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { LexError } from "../src/lexer.js";
 import { parse, ParseError } from "../src/parser.js";
-import { run } from "../src/interp.js";
+import { deriveStableAgentInstanceId, run } from "../src/interp.js";
 import { AgapeError } from "../src/errors.js";
 import type { ModuleInput } from "../src/check.js";
 import { parseManifestDirective } from "../src/config.js";
@@ -21,6 +21,15 @@ import { MockProvider, type Provider } from "../src/runtime.js";
 
 import { LocalMemoryDriver } from "../src/memory.js";
 const HERE = dirname(fileURLToPath(import.meta.url));
+function conformanceIdentity(testId: string) {
+  return Object.freeze({
+    projectSubject: "conformance://agape",
+    sessionLineageId: `conformance-lineage:${testId}`,
+    sessionId: `conformance-session:${testId}`,
+    conversationId: `conformance-conversation:${testId}`,
+  });
+}
+
 const SUITE = join(HERE, "..", "..", "agape-conformance", "tests");
 
 // ---- header parsing ----
@@ -149,6 +158,44 @@ function mapEtype(etype: string): string {
   if (etype === "AgentAsleep") return "SleepEvent";
   return etype;
 }
+function projectEvents(
+  events: readonly { etype: string; subject: string; tick: number; payload?: unknown }[],
+  identity: { projectSubject: string; sessionLineageId: string },
+): { type: string; subject: string }[] {
+  return events.map((event) => {
+    if (event.etype !== "Spawned") {
+      return { type: mapEtype(event.etype), subject: event.subject };
+    }
+    if (typeof event.payload !== "object" || event.payload === null || Array.isArray(event.payload)) {
+      throw new Error("Spawned must carry an object payload");
+    }
+    const payload = event.payload as Record<string, unknown>;
+    const alias = payload.alias;
+    const instanceId = payload.instance_id;
+    if (typeof alias !== "string" || alias.trim() === "") {
+      throw new Error("Spawned must carry a nonblank alias");
+    }
+    if (typeof instanceId !== "string" || !/^agent-instance-v1:[0-9a-f]{64}$/.test(instanceId)) {
+      throw new Error("Spawned must carry a canonical stable instance_id");
+    }
+    if (!Number.isSafeInteger(event.tick) || event.tick < 0) {
+      throw new Error("Spawned must carry a nonnegative safe tick");
+    }
+    const expectedInstanceId = deriveStableAgentInstanceId(
+      identity.projectSubject,
+      identity.sessionLineageId,
+      event.tick,
+    );
+    if (instanceId !== expectedInstanceId) {
+      throw new Error("Spawned instance_id must equal the canonical kappa/tick derivation");
+    }
+    if (event.subject !== instanceId) {
+      throw new Error("Spawned subject must equal payload.instance_id");
+    }
+    return { type: mapEtype(event.etype), subject: alias };
+  });
+}
+
 
 async function runTest(h: Header, src: string, companions: ModuleInput[]): Promise<Outcome> {
   let program;
@@ -171,12 +218,13 @@ async function runTest(h: Header, src: string, companions: ModuleInput[]): Promi
   const strictConfig = h.section === "16_config";
   const memory = manifest?.memory?.driver ? {} : { memory: new LocalMemoryDriver() };
   try {
-    const r = await run(program, { provider: providerFor(h), modules: companions, manifest, principal, attesterVerifier, strictConfig, ...memory });
-    const events = r.ledger.events.map((e) => ({ type: mapEtype(e.etype), subject: e.subject }));
+    const identity = conformanceIdentity(h.id);
+    const r = await run(program, { identity, provider: providerFor(h), modules: companions, manifest, principal, attesterVerifier, strictConfig, ...memory });
+    const events = projectEvents(r.ledger.events, identity);
     const out: Outcome = { threw: false, phase: "run", events, head: r.ledger.head() };
     if (h.replay === "chain_head_equal") {
       const replayMemory = manifest?.memory?.driver ? {} : { memory: new LocalMemoryDriver() };
-      const r2 = await run(parse(src), { provider: providerFor(h), modules: companions, manifest, principal, attesterVerifier, strictConfig, ...replayMemory });
+      const r2 = await run(parse(src), { identity, provider: providerFor(h), modules: companions, manifest, principal, attesterVerifier, strictConfig, ...replayMemory });
       out.head2 = r2.ledger.head();
     }
     return out;

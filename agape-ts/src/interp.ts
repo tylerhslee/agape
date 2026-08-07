@@ -101,6 +101,9 @@ interface AgentInstance {
   name: string;
   agentType: string;
   decl: A.AgentDecl;
+  instanceId: string;
+  spawnTick: number;
+  constructed: boolean;
   awake: boolean;
   fields: Map<string, Value>;
   // each instance owns its own private memory, namespaced per-instance (§16.7).
@@ -371,13 +374,13 @@ export interface ConformalLabel {
 
 export interface RuntimeIdentityContext {
   projectSubject: string;
-  sessionLineageId?: string;
-  sessionId?: string;
-  conversationId?: string;
-  user?: { issuer: string; subject: string; verified: boolean };
+  sessionLineageId: string;
+  sessionId: string;
+  conversationId: string;
+  user?: { issuer: string; subject: string; verified: true };
 }
 
-type RunOptions = {
+export type RunOptions = {
   provider?: Provider;
   modules?: ModuleInput[];
   manifest?: Manifest;
@@ -394,7 +397,7 @@ type RunOptions = {
   memory?: MemoryDriver;
   memoryRoot?: string;
   projectRoot?: string;
-  identity?: RuntimeIdentityContext;
+  identity: RuntimeIdentityContext;
   strictConfig?: boolean;
   timingOriginMs?: number;
   // §15.5.6/§16.8: the compatible labelled cases a `by conformal α` gate calibrates from (the GateProfile's
@@ -408,7 +411,7 @@ type RunOptions = {
 
 export async function run(
   program: A.Program,
-  opts: RunOptions = {},
+  opts: RunOptions,
 ): Promise<RunResult> {
   const session = createSession(program, opts);
   await session.start();
@@ -416,7 +419,8 @@ export async function run(
   return session.snapshot();
 }
 
-export function createSession(program: A.Program, opts: RunOptions = {}): RuntimeSession {
+export function createSession(program: A.Program, opts: RunOptions): RuntimeSession {
+  const identity = freezeRuntimeIdentity(opts.identity);
   const manifest: Manifest = opts.manifest ?? { provider: { backend: "mock" } };
   check(program, opts.modules, manifest, opts.strictConfig); // static pass first (TypeError/ModuleError/ConfigError/…)
   const provider = opts.provider ?? new MockProvider();
@@ -425,13 +429,13 @@ export function createSession(program: A.Program, opts: RunOptions = {}): Runtim
   // manifest opts in) runs behind the same seam as every other cognition call.
   const memory = opts.memory ?? createMemoryDriver(manifest, { cwd: opts.memoryRoot ?? projectRoot, provider });
   validateMemoryRetentions(program, memory);
-  const identity = freezeRuntimeIdentity(opts.identity, manifest, projectRoot);
   const toolHandlers = { ...createToolHandlers(manifest), ...(opts.toolHandlers ?? {}) };
   return new Interpreter(
     program,
     provider,
     opts.modules ?? [],
     memory,
+    identity,
     opts.principal,
     opts.principalAttestations ?? [],
     opts.onConsult,
@@ -442,7 +446,6 @@ export function createSession(program: A.Program, opts: RunOptions = {}): Runtim
     opts.calibration ?? [],
     opts.onEvent,
     opts.attesterVerifier,
-    identity,
   );
 }
 
@@ -474,16 +477,67 @@ function validateMemoryRetentions(program: A.Program, memory: MemoryDriver): voi
   }
 }
 
+export function deriveStableAgentInstanceId(
+  projectSubject: string,
+  sessionLineageId: string,
+  spawnedTick: number,
+): string {
+  if (!Number.isSafeInteger(spawnedTick) || spawnedTick < 0) {
+    throw new Error("Spawned tick must be a nonnegative safe integer");
+  }
+  const hash = createHash("sha256").update("agape.agent-instance.v1", "utf8");
+  for (const field of [projectSubject, sessionLineageId, String(spawnedTick)]) {
+    const bytes = Buffer.from(field, "utf8");
+    const length = Buffer.allocUnsafe(4);
+    length.writeUInt32BE(bytes.length);
+    hash.update(length);
+    hash.update(bytes);
+  }
+  return `agent-instance-v1:${hash.digest("hex")}`;
+}
+
+export function deriveUserMemoryScopeId(
+  issuer: string,
+  subject: string,
+): string {
+  if (typeof issuer !== "string" || issuer.trim().length === 0) {
+    throw new Error("user issuer must be a nonblank string");
+  }
+  if (typeof subject !== "string" || subject.trim().length === 0) {
+    throw new Error("user subject must be a nonblank string");
+  }
+  const hash = createHash("sha256").update("agape.user-scope.v1", "utf8");
+  for (const field of [issuer, subject]) {
+    const bytes = Buffer.from(field, "utf8");
+    const length = Buffer.allocUnsafe(4);
+    length.writeUInt32BE(bytes.length);
+    hash.update(length);
+    hash.update(bytes);
+  }
+  return `user-scope-v1:${hash.digest("hex")}`;
+}
+
 function freezeRuntimeIdentity(
-  supplied: RuntimeIdentityContext | undefined,
-  manifest: Manifest,
-  projectRoot: string,
+  supplied: RuntimeIdentityContext,
 ): Readonly<RuntimeIdentityContext> {
-  const configuredProject = manifest.project?.name;
-  const projectSubject = supplied?.projectSubject
-    ?? (typeof configuredProject === "string" ? configuredProject : `project:${createHash("sha256").update(projectRoot).digest("hex")}`);
-  const user = supplied?.user ? Object.freeze({ ...supplied.user }) : undefined;
-  return Object.freeze({ ...supplied, projectSubject, user });
+  if (!supplied || typeof supplied !== "object") {
+    throw configError("runtime identity context is required");
+  }
+  const required = ["projectSubject", "sessionLineageId", "sessionId", "conversationId"] as const;
+  for (const field of required) {
+    if (typeof supplied[field] !== "string" || supplied[field].trim().length === 0) {
+      throw configError(`runtime identity '${field}' must be a nonblank authenticated string`);
+    }
+  }
+  if (supplied.user && (
+    supplied.user.verified !== true
+    || typeof supplied.user.issuer !== "string" || supplied.user.issuer.trim().length === 0
+    || typeof supplied.user.subject !== "string" || supplied.user.subject.trim().length === 0
+  )) {
+    throw configError("runtime identity user must have nonblank issuer/subject and verified=true");
+  }
+  const user = supplied.user ? Object.freeze({ ...supplied.user }) : undefined;
+  return Object.freeze({ ...supplied, user });
 }
 
 class Interpreter {
@@ -564,6 +618,7 @@ class Interpreter {
     private provider: Provider,
     modules: ModuleInput[],
     private memory: MemoryDriver,
+    private readonly identity: Readonly<RuntimeIdentityContext>,
     private principalOutcome?: string,
     private principalAttestations: PrincipalAttestation[] = [],
     private onConsult?: (req: ConsultRequest) => Promise<PrincipalAttestation | undefined>,
@@ -573,8 +628,7 @@ class Interpreter {
     private projectRoot: string = process.cwd(),
     private calibrationPool: ConformalLabel[] = [],
     onEvent?: (event: LedgerEvent) => void,
-    private attesterVerifier?: AttesterVerifier,
-    private readonly identity?: Readonly<RuntimeIdentityContext>,
+    private attesterVerifier: AttesterVerifier | undefined = undefined,
   ) {
     this.ledger = new Ledger(timingOriginMs, onEvent);
     // §3: register the declared principal names so a `decide c by p` (the parser's {policy} rule form)
@@ -1028,8 +1082,31 @@ class Interpreter {
     const agentType = this.qualifyInModule(agentTypeRaw, scope);
     const decl = this.agents.get(agentType);
     if (!decl) throw new RuntimeError(`unknown agent type '${agentType}'`);
+    const args: Value[] = [];
+    for (let index = 0; index < decl.params.length; index += 1) {
+      const param = decl.params[index]!;
+      const arg = argExprs[index];
+      args.push(arg ? await this.evalExpr(arg, scope) : this.zeroOf(param.type));
+    }
+    const spawnTick = this.ledger.events.length;
+    const instanceId = deriveStableAgentInstanceId(
+      this.identity.projectSubject,
+      this.identity.sessionLineageId,
+      spawnTick,
+    );
     const homeModule = this.agentModuleOf.get(agentType);
-    const inst: AgentInstance = { name, agentType, decl, awake: false, fields: new Map(), mems: new Map(), module: homeModule };
+    const inst: AgentInstance = {
+      instanceId,
+      spawnTick,
+      constructed: false,
+      name,
+      agentType,
+      decl,
+      awake: false,
+      fields: new Map(),
+      mems: new Map(),
+      module: homeModule,
+    };
     for (const f of decl.fields) inst.fields.set(f.name, this.zeroOf(f.type));
     for (const m of this.memoryDeclsOf(decl)) {
       const descriptor = normalizeMemoryDescriptor(m);
@@ -1039,15 +1116,30 @@ class Interpreter {
     // in the SPAWNING scope (the args are the caller's expressions). These become instance fields visible to
     // the ctor/hooks/handlers; an agent-typed param binding is authority-checked by `reach` at each send (§13).
     for (let i = 0; i < decl.params.length; i++) {
-      const p = decl.params[i]!;
-      const arg = argExprs[i];
-      inst.fields.set(p.name, arg ? await this.evalExpr(arg, scope) : this.zeroOf(p.type));
+      inst.fields.set(decl.params[i]!.name, args[i]!);
     }
     this.instances.set(name, inst);
-    // the constructor body runs FIRST, then the Spawned event is appended.
+    this.ledger.append("Spawned", instanceId, {
+      instance_id: instanceId,
+      alias: name,
+      agent_type: agentType,
+      value: valueSummary({ kind: "agentref", name, agentType, trust: "settled" }),
+    }, name);
+    // Spawned is already committed; constructor effects and faults follow it.
     const ctorScope = new Scope(undefined, inst);
-    for (const st of this.ctorOf(inst)) await this.execStmt(st, ctorScope);
-    this.ledger.append("Spawned", name, { value: valueSummary({ kind: "agentref", name, agentType, trust: "settled" }) }, name);
+    try {
+      for (const st of this.ctorOf(inst)) await this.execStmt(st, ctorScope);
+      inst.constructed = true;
+    } catch (err) {
+      this.ledger.append("AgentCrashed", instanceId, {
+        instance_id: instanceId,
+        phase: "constructor",
+        stimulus_or_corr: spawnTick,
+        reason: crashReason(err),
+      }, name);
+      this.instances.delete(name);
+      throw err;
+    }
     return inst;
   }
 
@@ -2498,10 +2590,11 @@ class Interpreter {
       throw new CrashError(`memory '${mem}' requires a verified user scope subject`);
     }
     return {
-      agent: agent.name,
+      agentInstanceId: agent.instanceId,
+      agentAlias: agent.name,
       mem,
       project: needsProject ? this.identity?.projectSubject : undefined,
-      user: needsUser ? `${user!.issuer}\u0000${user!.subject}` : undefined,
+      user: needsUser ? deriveUserMemoryScopeId(user!.issuer, user!.subject) : undefined,
     };
   }
 

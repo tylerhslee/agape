@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { parse } from "../src/parser.js";
-import { run as runtimeRun } from "../src/interp.js";
+import { run as runtimeRun } from "./runtime_harness.js";
 import { MockProvider, render } from "../src/runtime.js";
 import { check } from "../src/check.js";
 
