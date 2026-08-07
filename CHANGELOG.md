@@ -16,8 +16,8 @@ version.
   receives a memory driver, while source and host operations control every memory
   consultation, write, and forget.
 - **Calibration evidence is profile-scoped.** Core gates record truthful methods and
-  scores; the Studio Fact Checker profile additionally preserves and exposes
-  authorized raw-logprob evidence.
+  scores; the Studio Fact Checker profile preserves raw-logprob evidence and exposes
+  it through the authorized, non-enumerable `calibration.evidence.inspect` operation.
 
 ## [1.0.0-beta.2026.8.6.0] - 2026-08-06
 

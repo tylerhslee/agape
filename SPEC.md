@@ -2977,6 +2977,16 @@ logprobs used to derive gate scores, provides authorized inspection of that evid
 and exposes the threshold and margin arithmetic for independent comparison. Missing
 raw evidence is reported as unavailable and is never synthesized.
 
+The profile adds `calibration.evidence.inspect`. Its request is
+`{ evidence_ref, decision_id, requester, authorization }`; `evidence_ref` must already appear
+in profile extension metadata visible to that requester. A successful response returns the exact
+bounded candidates, each candidate's complete token/logprob sequence and aggregate score, its
+variant mapping or unmatched status, mapping and normalization versions, the gate-score vector,
+winner, runner-up, threshold, required margin/floor, actual margin, and pass/fail arithmetic.
+The operation supports no enumeration. It returns `Forbidden` for failed authorization,
+`EvidenceMismatch` when the reference and decision do not match, and `EvidenceUnavailable`
+when the connector did not supply the evidence.
+
 ### 16.9 The runtime API surface
 
 Any *interactive* runtime — a CLI server or a hosted runtime — exposes the following
@@ -2995,6 +3005,7 @@ API but must offer the same operations as calls.
 | `memory.ingest`    | explicitly internalize an artifact and append the §16.7 receipt            |
 | `memory.context`   | explicitly recall context without running cognition; the result is tainted |
 | `memory.inspect`   | inspect public counts, hashes, and provenance                              |
+| `calibration.evidence.inspect` | Studio Fact Checker profile only: authorized exact evidence lookup (§16.8) |
 | `config.read/write`| manage the **dependency/connector** bindings and memory budgets (provider, the `[tools.*]` catalog and its wiring, identity; §17) — **never** decision rules, which live in source (§13, §17.2) |
 
 `config.read/write` is deliberately scoped to dependency and connector configuration plus memory
