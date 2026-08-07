@@ -82,6 +82,26 @@ export type StructuredSchema =
   | { type: "array"; items: StructuredSchema }
   | { type: "object"; properties: Record<string, StructuredSchema>; required: string[]; additionalProperties: false };
 
+// Provider-neutral semantic context. Connectors may choose their own wire shape, but they must preserve
+// the single ordered instruction list and keep every other input in typed data (sections 5 and 16.7).
+export interface CognitionMemoryHit {
+  cell_id: string;
+  content: string;
+  content_hash: string;
+  score?: number;
+  origin_ref: string;
+}
+
+export type CognitionDataSegment =
+  | { kind: "stimulus"; content: string }
+  | { kind: "task"; objective: string; acceptance: string }
+  | { kind: "recalled_memory"; query: string; hits: CognitionMemoryHit[] };
+
+export interface CognitionContext {
+  instructions: readonly string[];
+  data: readonly CognitionDataSegment[];
+}
+
 export const settledText = (v: string): Value => ({ kind: "text", v, trust: "settled" });
 
 export function ingressOf(v: { ingress?: IngressProvenance }): IngressProvenance {
@@ -137,11 +157,11 @@ export function render(v: Value): string {
 // Cognition is inherently asynchronous (a model call), so the seam is async even for the mock.
 export interface Provider {
   // a typed judgment: forced categorical choice over the enum's variants -> a scored distribution.
-  judge(prompt: string, enumName: string, variants: Variant[]): Promise<{ scores: Record<Variant, number> }>;
+  judge(prompt: string, enumName: string, variants: Variant[], context?: CognitionContext): Promise<{ scores: Record<Variant, number> }>;
   // a typed reply: constrained structured output for a declared scalar/array/struct schema.
-  structured?(prompt: string, schema: StructuredSchema, name?: string): Promise<unknown>;
+  structured?(prompt: string, schema: StructuredSchema, name?: string, context?: CognitionContext): Promise<unknown>;
   // a bare reply (raw text).
-  reply(prompt: string): Promise<string>;
+  reply(prompt: string, context?: CognitionContext): Promise<string>;
 }
 
 // A deterministic mock provider. Scores are scripted by keyword so the demo is reproducible and
@@ -150,7 +170,7 @@ export interface Provider {
 export class MockProvider implements Provider {
   constructor(private script?: (prompt: string, variants: Variant[]) => Record<Variant, number>) {}
 
-  async judge(prompt: string, _enumName: string, variants: Variant[]): Promise<{ scores: Record<Variant, number> }> {
+  async judge(prompt: string, _enumName: string, variants: Variant[], _context?: CognitionContext): Promise<{ scores: Record<Variant, number> }> {
     await tick();
     if (this.script) return { scores: normalize(this.script(prompt, variants), variants) };
     // default heuristic: lean toward the FIRST variant (a confident "yes"), tiny mass elsewhere.
@@ -159,12 +179,12 @@ export class MockProvider implements Provider {
     return { scores: normalize(raw, variants) };
   }
 
-  async reply(prompt: string): Promise<string> {
+  async reply(prompt: string, _context?: CognitionContext): Promise<string> {
     await tick();
     return `(reply to: ${prompt})`;
   }
 
-  async structured(_prompt: string, schema: StructuredSchema): Promise<unknown> {
+  async structured(_prompt: string, schema: StructuredSchema, _name?: string, _context?: CognitionContext): Promise<unknown> {
     await tick();
     return mockStructured(schema);
   }

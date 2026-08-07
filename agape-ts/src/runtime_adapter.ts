@@ -25,7 +25,7 @@ import { parse } from "./parser.js";
 import { check } from "./check.js";
 import { createSession, run as runtimeRun, type RunResult as KernelRunResult } from "./interp.js";
 import { LocalMemoryDriver } from "./memory.js";
-import type { Provider, StructuredSchema, Variant, LedgerEvent as KernelLedgerEvent } from "./runtime.js";
+import type { CognitionContext, Provider, StructuredSchema, Variant, LedgerEvent as KernelLedgerEvent } from "./runtime.js";
 import type { Manifest } from "./config.js";
 import type { ToolHandler } from "./tool_adapters.js";
 import { desugarLegacySurface } from "./runtime_adapter_desugar.js";
@@ -94,6 +94,7 @@ interface OracleJournal {
   structured: unknown[];
   reply: string[];
   tools: unknown[];
+  cognition?: Array<{ operation: "judge" | "structured" | "reply"; prompt_hash: string; context_hash?: string }>;
 }
 
 interface Recording {
@@ -145,10 +146,34 @@ class HarnessProvider implements Provider {
     return undefined;
   }
 
+  private observeCognition(
+    operation: "judge" | "structured" | "reply",
+    prompt: string,
+    context?: CognitionContext,
+  ): void {
+    const request = {
+      operation,
+      prompt_hash: createHash("sha256").update(prompt).digest("hex"),
+      ...(context
+        ? { context_hash: createHash("sha256").update(JSON.stringify(context)).digest("hex") }
+        : {}),
+    };
+    if (this.replayJournal?.cognition) {
+      const recorded = this.replayJournal.cognition.shift();
+      if (!recorded) throw new Error(`replay journal exhausted: cognition ${operation}`);
+      if (JSON.stringify(recorded) !== JSON.stringify(request)) {
+        throw new Error(`replay cognition context mismatch for ${operation}`);
+      }
+      return;
+    }
+    (this.journal.cognition ??= []).push(request);
+  }
+
   private scriptedScores(variants: Variant[]): Record<string, number> {
     const p = this.mode.provider;
     // an explicitly-scripted credence is the model's own score vector — used by the gate AS-IS (§15.5.6: the
     // score vector need not be a normalized distribution; a threshold/margin/floor rule reads the raw leads).
+
     // Renormalizing would corrupt a deliberately-non-unit vector (e.g. {0.81, 0.79}, where 0.81 must clear an
     // 0.8 threshold with a thin 0.02 margin), so pass the given scores through, defaulting an omitted variant to 0.
     if (p && typeof p === "object" && p.credence) {
@@ -170,7 +195,8 @@ class HarnessProvider implements Provider {
     return normalize(raw, variants);
   }
 
-  async judge(_prompt: string, _enumName: string, variants: Variant[]): Promise<{ scores: Record<Variant, number> }> {
+  async judge(prompt: string, _enumName: string, variants: Variant[], context?: CognitionContext): Promise<{ scores: Record<Variant, number> }> {
+    this.observeCognition("judge", prompt, context);
     if (this.replayJournal) {
       const recorded = this.replayJournal.judge.shift();
       if (!recorded) throw new Error("replay journal exhausted: judge");
@@ -182,7 +208,8 @@ class HarnessProvider implements Provider {
     return result;
   }
 
-  async structured(prompt: string, schema: StructuredSchema): Promise<unknown> {
+  async structured(prompt: string, schema: StructuredSchema, _name?: string, context?: CognitionContext): Promise<unknown> {
+    this.observeCognition("structured", prompt, context);
     if (this.replayJournal) {
       if (this.replayJournal.structured.length === 0) throw new Error("replay journal exhausted: structured");
       return this.replayJournal.structured.shift();
@@ -221,7 +248,8 @@ class HarnessProvider implements Provider {
     }
   }
 
-  async reply(prompt: string): Promise<string> {
+  async reply(prompt: string, context?: CognitionContext): Promise<string> {
+    this.observeCognition("reply", prompt, context);
     if (this.replayJournal) {
       const recorded = this.replayJournal.reply.shift();
       if (recorded === undefined) throw new Error("replay journal exhausted: reply");
