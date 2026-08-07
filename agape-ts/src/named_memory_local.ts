@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { Value } from "./runtime.js";
 import {
   deriveMemoryRegionKey,
+  hashResolvedMemoryScope,
   encodeExactValue,
   hashMemoryDescriptor,
   hashPersistedSchema,
@@ -103,6 +104,16 @@ interface LocalTransactionalNamedMemoryJournalState {
   operationByEvaluation: Map<string, string>;
 }
 
+export interface TransactionalNamedMemorySnapshot {
+  version: 1;
+  regions: readonly {
+    regionKey: string;
+    generation: number;
+    state: "open" | "closed";
+    cells: readonly NamedMemoryCell[];
+  }[];
+}
+
 const LOCAL_JOURNAL_STATES =
   new WeakMap<LocalTransactionalNamedMemoryJournal, LocalTransactionalNamedMemoryJournalState>();
 
@@ -113,9 +124,33 @@ const LOCAL_JOURNAL_STATES =
 export class LocalTransactionalNamedMemoryJournal {
   readonly #opaqueJournalHandle = true;
 
-  constructor() {
+  constructor(snapshot?: TransactionalNamedMemorySnapshot) {
+    const regions = new Map<string, RegionState>();
+    if (snapshot !== undefined) {
+      if (snapshot.version !== 1 || !Array.isArray(snapshot.regions)) {
+        throw new Error("invalid transactional named-memory snapshot");
+      }
+      for (const entry of snapshot.regions) {
+        assertNonblank(entry.regionKey, "snapshot memory region key");
+        if (!Number.isSafeInteger(entry.generation) || entry.generation < 0) {
+          throw new Error("snapshot memory generation must be a nonnegative safe integer");
+        }
+        if (entry.state !== "open" && entry.state !== "closed") {
+          throw new Error("snapshot memory region state is invalid");
+        }
+        if (!Array.isArray(entry.cells) || (entry.state === "closed" && entry.cells.length !== 0)) {
+          throw new Error("snapshot memory cells are invalid");
+        }
+        if (regions.has(entry.regionKey)) throw new Error("snapshot contains a duplicate memory region");
+        regions.set(entry.regionKey, freezeDeep({
+          generation: entry.generation,
+          state: entry.state,
+          cells: [...entry.cells],
+        }));
+      }
+    }
     LOCAL_JOURNAL_STATES.set(this, {
-      regions: new Map(),
+      regions,
       operations: new Map(),
       activeByRegion: new Map(),
       operationByEvaluation: new Map(),
@@ -130,34 +165,57 @@ export interface LocalTransactionalNamedMemoryDriverOptions {
   journal?: LocalTransactionalNamedMemoryJournal;
 }
 
+export interface DurableTransactionalNamedMemoryDriverOptions
+  extends LocalTransactionalNamedMemoryDriverOptions {}
+
 const EMPTY_OPEN_REGION: RegionState = Object.freeze({
   generation: 0,
   state: "open",
   cells: Object.freeze([]),
 });
 
-export class LocalTransactionalNamedMemoryDriver {
-  readonly capabilities = freezeDeep({
-    modalities: ["opaque", "episodic", "semantic"] as const,
-    retentions: ["session"] as const,
-    version: 1,
-    scopes: ["project", "user"] as const,
-    exactEncoding: true,
-    idempotentReconciliation: true,
-  });
+class TransactionalNamedMemoryDriver {
+  readonly capabilities;
+  readonly #retention: "session" | "durable";
   readonly #regions: Map<string, RegionState>;
   readonly #operations: Map<string, OperationRecord>;
   readonly #activeByRegion: Map<string, string>;
   readonly #operationByEvaluation: Map<string, string>;
 
-  constructor(private readonly options: LocalTransactionalNamedMemoryDriverOptions = {}) {
+  constructor(
+    retention: "session" | "durable",
+    private readonly options: LocalTransactionalNamedMemoryDriverOptions = {},
+  ) {
+    this.#retention = retention;
+    this.capabilities = freezeDeep({
+      modalities: ["opaque", "episodic", "semantic"] as const,
+      retentions: [retention] as readonly ("session" | "durable")[],
+      version: 1 as const,
+      scopes: ["project", "user"] as const,
+      exactEncoding: true as const,
+      idempotentReconciliation: true as const,
+    });
     const journal = options.journal ?? new LocalTransactionalNamedMemoryJournal();
     const state = LOCAL_JOURNAL_STATES.get(journal);
-    if (!state) throw new Error("invalid Local transactional named-memory journal");
+    if (!state) throw new Error("invalid transactional named-memory journal");
     this.#regions = state.regions;
     this.#operations = state.operations;
     this.#activeByRegion = state.activeByRegion;
     this.#operationByEvaluation = state.operationByEvaluation;
+  }
+
+  snapshot(): TransactionalNamedMemorySnapshot {
+    return freezeDeep({
+      version: 1 as const,
+      regions: [...this.#regions.entries()]
+        .sort(([left], [right]) => Buffer.compare(Buffer.from(left), Buffer.from(right)))
+        .map(([regionKey, region]) => ({
+          regionKey,
+          generation: region.generation,
+          state: region.state,
+          cells: [...region.cells],
+        })),
+    });
   }
 
   prepareStore(request: StoreRequest): PreparedNamedMemoryMutation {
@@ -429,13 +487,17 @@ export class LocalTransactionalNamedMemoryDriver {
       descriptorHash: hashMemoryDescriptor(context.descriptor),
       originId: `memory-origin-v1:${operationFingerprint(["origin", context.origin.invocationCorrelation, String(context.origin.evaluationOrdinal)])}`,
       schemaHash: hashPersistedSchema(context.descriptor.schema),
-      scopeHash: operationFingerprint(["scope", regionKey]),
+      scopeHash: hashResolvedMemoryScope({
+        descriptor: context.descriptor,
+        projectSubject: context.region.projectSubject,
+        user: context.region.user,
+      }),
     };
   }
 
   private assertLocalDescriptor(descriptor: ResolvedMemoryDescriptor): void {
-    if (descriptor.retention !== "session") {
-      throw new Error("Local transactional named memory supports session retention only");
+    if (descriptor.retention !== this.#retention) {
+      throw new Error(`transactional named memory supports ${this.#retention} retention only`);
     }
   }
 
@@ -466,6 +528,23 @@ export class LocalTransactionalNamedMemoryDriver {
       throw new Error("named-memory operation id refers to an aborted mutation");
     }
     return record;
+  }
+}
+
+/** Session-local backend. Its public capabilities remain unconditionally session-only. */
+export class LocalTransactionalNamedMemoryDriver extends TransactionalNamedMemoryDriver {
+  constructor(options: LocalTransactionalNamedMemoryDriverOptions = {}) {
+    super("session", options);
+  }
+}
+
+/**
+ * Durable transactional backend for a host-managed Markdown store. The host is
+ * responsible for authenticating and persisting snapshots before restoration.
+ */
+export class MarkdownTransactionalNamedMemoryDriver extends TransactionalNamedMemoryDriver {
+  constructor(options: DurableTransactionalNamedMemoryDriverOptions = {}) {
+    super("durable", options);
   }
 }
 

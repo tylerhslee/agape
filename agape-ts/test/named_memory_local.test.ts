@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   LocalTransactionalNamedMemoryJournal,
   LocalTransactionalNamedMemoryDriver,
+  MarkdownTransactionalNamedMemoryDriver,
   type NamedMemoryMutationContext,
 } from "../src/named_memory_local.js";
 import {
@@ -419,5 +420,58 @@ describe("transactional Local named memory", () => {
     expect(resumedDriver.reconcile(stage.operationId, binding)).toEqual(reconciled);
     expect(resumedDriver.recall({ descriptor: descriptor(), region: region() }).cells)
       .toHaveLength(1);
+  });
+
+  it("hashes only the resolved authenticated scope tuple for public evidence", () => {
+    const first = new LocalTransactionalNamedMemoryDriver().prepareStore({
+      ...mutation(),
+      value: { kind: "text", v: "first", trust: "raw" },
+    });
+    const sameScope = new LocalTransactionalNamedMemoryDriver().prepareStore({
+      ...mutation({
+        descriptor: { ...descriptor(), modality: "semantic" },
+        region: region({ sessionId: "session-2", stableAgentInstanceId: "agent-instance-v1:" + "b".repeat(64) }),
+      }),
+      value: { kind: "text", v: "second", trust: "raw" },
+    });
+    const otherUser = new LocalTransactionalNamedMemoryDriver().prepareStore({
+      ...mutation({ region: region({ user: { issuer: "https://idp.example", subject: "bob", verified: true } }) }),
+      value: { kind: "text", v: "third", trust: "raw" },
+    });
+
+    expect(sameScope.scopeHash).toBe(first.scopeHash);
+    expect(otherUser.scopeHash).not.toBe(first.scopeHash);
+    expect(first.scopeHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(JSON.stringify([first.scopeHash, sameScope.scopeHash, otherUser.scopeHash]))
+      .not.toMatch(/project|alice|bob|idp/);
+  });
+
+  it("restores exact durable state only through the explicit Markdown backend", () => {
+    const durable = descriptor("durable");
+    const driver = new MarkdownTransactionalNamedMemoryDriver();
+    expect(driver.capabilities.retentions).toEqual(["durable"]);
+    const stage = driver.prepareStore({
+      ...mutation({ descriptor: durable }),
+      value: { kind: "text", v: "persisted", trust: "graded" },
+    });
+    driver.finalize(stage.operationId, binding);
+
+    const snapshot = driver.snapshot();
+    expect(Object.isFrozen(snapshot)).toBe(true);
+    const restored = new MarkdownTransactionalNamedMemoryDriver({
+      journal: new LocalTransactionalNamedMemoryJournal(snapshot),
+    });
+    expect(restored.recall({
+      descriptor: durable,
+      region: region({ sessionId: "different-session" }),
+    }).values).toEqual([
+      encodeExactValue({ kind: "text", v: "persisted", trust: "graded" }, durable.schema),
+    ]);
+    expect(restored.recall({
+      descriptor: durable,
+      region: region({ user: { issuer: "https://idp.example", subject: "bob", verified: true } }),
+    }).values).toEqual([]);
+    expect(() => restored.recall({ descriptor: descriptor(), region: region() }))
+      .toThrow(/durable retention only/);
   });
 });

@@ -353,6 +353,36 @@ function opaqueIdentity(domain: string, value: string): string {
   return sha256(`agape.memory-region.${domain}.v1`, value);
 }
 
+export function hashResolvedMemoryScope(input: Pick<
+  MemoryRegionKeyInput,
+  "descriptor" | "projectSubject" | "user"
+>): string {
+  const scopes = [...input.descriptor.scopes].sort(bytewiseCompare);
+  canonicalDescriptor(input.descriptor);
+  const dimensions: Record<string, string> = {};
+  if (scopes.includes("project")) {
+    if (input.projectSubject === undefined) {
+      throw new Error("project-scoped memory requires a project subject");
+    }
+    dimensions.project = opaqueIdentity("project", input.projectSubject);
+  }
+  if (scopes.includes("user")) {
+    if (input.user === undefined || input.user.verified !== true) {
+      throw new Error("user-scoped memory requires a verified user identity");
+    }
+    assertName(input.user.issuer, "user issuer");
+    assertName(input.user.subject, "user subject");
+    dimensions.user = sha256("agape.memory-region.user.v1", {
+      issuer: opaqueIdentity("user-issuer", input.user.issuer),
+      subject: opaqueIdentity("user-subject", input.user.subject),
+    });
+  }
+  return sha256("agape.memory.scope-tuple.v1", {
+    scopes,
+    dimensions,
+  });
+}
+
 export function deriveMemoryRegionKey(input: MemoryRegionKeyInput): string {
   assertOwnKeys(input, [
     "descriptor", "projectSubject", "sessionLineageId", "sessionId",
