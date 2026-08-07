@@ -8,19 +8,16 @@ version.
 
 ## [Unreleased]
 
-### Added
-
-- **Executable production-conformance release gate.** A manifest-owned P01-P16
-  black-box suite now selects individual fresh-process tests for source CI and
-  extracted Linux, macOS, and Windows bundles, including protected evidence,
-  memory-envelope, instruction, typed-recall, and replay requirements.
-
 ### Changed
 
-- **Autonomous agents are defined as foundational language semantics.** The
-  specification now defines durable agent-instance identity, serialized reaction
-  memory envelopes, protected judgment evidence, governed behavior evolution,
-  and verification versus forensic replay. Studio and runtime implementations
+- **Agenthood and learning are now explicitly separated.** Beta agent semantics
+  are lifecycle, addressability, source-settled instructions, private capability
+  state, bounded authority, ledger inspection, and replay. Explicit memory and
+  calibration remain optional profiles; behavior evolution remains research work.
+- **Production conformance is profile-based.** Core-agent, shipped optional-memory,
+  Studio Fact Checker, and non-blocking research claims are separate. The future
+  P01-P16 backlog is not a beta-wide release gate.
+
   must consume this shared contract rather than introducing product-specific
   agent behavior.
 
