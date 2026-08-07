@@ -8,21 +8,16 @@ version.
 
 ## [Unreleased]
 
-### Added
-
-- **Executable production-conformance release gate.** A manifest-owned P01-P16
-  black-box suite now selects individual fresh-process tests for source CI and
-  extracted Linux, macOS, and Windows bundles, including protected evidence,
-  memory-envelope, instruction, typed-recall, and replay requirements.
-
 ### Changed
 
-- **Autonomous agents are defined as foundational language semantics.** The
-  specification now defines durable agent-instance identity, serialized reaction
-  memory envelopes, protected judgment evidence, governed behavior evolution,
-  and verification versus forensic replay. Studio and runtime implementations
-  must consume this shared contract rather than introducing product-specific
-  agent behavior.
+- **Agent semantics are lifecycle- and authority-defined.** Agents are addressable
+  source-defined entities; learning is an advertised adaptation capability.
+- **Runtime memory is configured and explicitly accessed.** Every runtime session
+  receives a memory driver, while source and host operations control every memory
+  consultation, write, and forget.
+- **Calibration evidence is profile-scoped.** Core gates record truthful methods and
+  scores; the Studio Fact Checker profile preserves raw-logprob evidence and exposes
+  it through the authorized, non-enumerable `calibration.evidence.inspect` operation.
 
 ## [1.0.0-beta.2026.8.6.0] - 2026-08-06
 

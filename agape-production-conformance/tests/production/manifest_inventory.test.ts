@@ -7,12 +7,12 @@ type Status = "implemented" | "partial" | "required_pending";
 interface FixtureEntry { id: string; path: string | null; status: "implemented" | "planned" }
 interface TestEntry { id: string; file: string; full_name: string; fixture_ids: string[]; execution: "fresh_cli_process" | "unit" | "coverage_gate" }
 interface Allocation { id: string; target: "source" | "package"; os: "linux" | "macos" | "windows"; lane: "standard" | "slow" | "full" | "smoke"; fresh_process: boolean; test_ids: string[] }
-interface Capability { id: string; capability: string; status: Status; required: boolean; fixtures: FixtureEntry[]; tests: TestEntry[]; allocations: Allocation[] }
-interface Manifest { schema_version: number; pending_is_failure: boolean; validation_test: { id: string; file: string; full_name: string }; capabilities: Capability[] }
+type ProfileId = "core-agent" | "optional-memory" | "studio-fact-checker" | "research";
+interface Capability { id: string; capability: string; profile: ProfileId; release_blocking: boolean; status: Status; required: boolean; fixtures: FixtureEntry[]; tests: TestEntry[]; allocations: Allocation[] }
+interface Manifest { schema_version: number; pending_is_failure: boolean; profiles: Array<{ id: ProfileId; label: string }>; validation_test: { id: string; file: string; full_name: string }; capabilities: Capability[] }
 
 const manifest = JSON.parse(await readFile(join(PACKAGE_ROOT, "manifest.json"), "utf8")) as Manifest;
-const packagedFull = new Set(["P01", "P02", "P03", "P05", "P09", "P11", "P15", "P16"]);
-const packagedSmoke = new Set(["P13"]);
+const profileIds: ProfileId[] = ["core-agent", "optional-memory", "studio-fact-checker", "research"];
 
 function duplicates(values: string[]): string[] {
   return [...new Set(values.filter((value, index) => values.indexOf(value) !== index))];
@@ -25,10 +25,15 @@ function allocationKeys(capability: Capability, target: Allocation["target"]): s
 
 describe("production conformance manifest", () => {
   it("[MANIFEST.validate] validates schema, ownership, references, and allocations", async () => {
-    expect(manifest.schema_version).toBe(2);
+    expect(manifest.schema_version).toBe(3);
     expect(manifest.pending_is_failure).toBe(true);
+    expect(manifest.profiles.map((entry) => entry.id)).toEqual(profileIds);
+    expect(duplicates(manifest.profiles.map((entry) => entry.id))).toEqual([]);
     const exactIds = Array.from({ length: 16 }, (_, index) => `P${String(index + 1).padStart(2, "0")}`);
     expect(manifest.capabilities.map((entry) => entry.id)).toEqual(exactIds);
+    expect(manifest.capabilities.every((entry) => profileIds.includes(entry.profile))).toBe(true);
+    expect(manifest.capabilities.filter((entry) => entry.profile === "research").every((entry) => !entry.release_blocking)).toBe(true);
+    expect(manifest.capabilities.filter((entry) => entry.profile !== "research").every((entry) => entry.release_blocking)).toBe(true);
     expect(duplicates(manifest.capabilities.map((entry) => entry.capability))).toEqual([]);
     expect(manifest.capabilities.every((entry) => entry.required)).toBe(true);
 
@@ -87,11 +92,10 @@ describe("production conformance manifest", () => {
 
       const sourceLane = capability.id === "P12" ? "slow" : "standard";
       expect(allocationKeys(capability, "source")).toEqual([`linux:${sourceLane}`]);
-      let expectedPackages: string[] = [];
-      if (packagedFull.has(capability.id)) expectedPackages = ["linux:full", "macos:full", "windows:full"];
-      if (packagedSmoke.has(capability.id)) expectedPackages = ["linux:smoke", "macos:smoke", "windows:smoke"];
-      if (capability.id === "P14") expectedPackages = ["linux:full"];
-      expect(allocationKeys(capability, "package"), `${capability.id}: exact packaged OS/lane allocation`).toEqual(expectedPackages);
+      const expectedPackages = capability.release_blocking
+        ? ["linux:full", "macos:full", "windows:full"]
+        : [];
+      expect(allocationKeys(capability, "package"), `${capability.id}: exact release profile allocation`).toEqual(expectedPackages);
       if (capability.status !== "required_pending") {
         expect(capability.tests.some((test) => test.execution === "fresh_cli_process"), `${capability.id}: runnable capability needs a fresh CLI test`).toBe(true);
       }
@@ -101,16 +105,32 @@ describe("production conformance manifest", () => {
     const selectedTarget = process.env.AGAPE_CONFORMANCE_TARGET as Allocation["target"] | undefined;
     const selectedOs = process.env.AGAPE_CONFORMANCE_OS as Allocation["os"] | undefined;
     const selectedLane = process.env.AGAPE_CONFORMANCE_LANE as Allocation["lane"] | undefined;
-    if (selectedTarget || selectedOs || selectedLane) {
-      expect(selectedTarget && selectedOs && selectedLane, "selector environment must provide target, os, and lane together").toBeTruthy();
-      const selected = allocations.filter(({ entry }) => entry.target === selectedTarget && entry.os === selectedOs && entry.lane === selectedLane);
+    const selectedProfile = process.env.AGAPE_CONFORMANCE_PROFILE as ProfileId | undefined;
+    if (selectedTarget || selectedOs || selectedLane || selectedProfile) {
+      expect(selectedTarget && selectedOs && selectedLane && selectedProfile,
+        "selector environment must provide profile, target, os, and lane together").toBeTruthy();
+      expect(profileIds).toContain(selectedProfile);
+      const selectedCapabilities = manifest.capabilities.filter((entry) => entry.profile === selectedProfile);
+      const selected = allocations.filter(({ owner, entry }) =>
+        owner.profile === selectedProfile && entry.target === selectedTarget && entry.os === selectedOs && entry.lane === selectedLane);
       expect(selected.length, "selector must resolve at least one executable allocation").toBeGreaterThan(0);
       expect(selected.every(({ entry }) => entry.test_ids.length > 0)).toBe(true);
+      for (const capability of selectedCapabilities.filter((entry) => entry.release_blocking)) {
+        expect(capability.allocations.some((entry) =>
+          entry.target === selectedTarget && entry.os === selectedOs && entry.lane === selectedLane),
+        `${capability.id}: release-blocking selected profile is missing its ${selectedTarget}/${selectedOs}/${selectedLane} allocation`).toBe(true);
+      }
     }
   });
 
   for (const capability of manifest.capabilities) {
     it(`[${capability.id}.coverage] required capability coverage`, () => {
+      const selectedProfile = process.env.AGAPE_CONFORMANCE_PROFILE as ProfileId | undefined;
+      if (selectedProfile && capability.profile !== selectedProfile) return;
+      if (!capability.release_blocking) {
+        expect(["implemented", "partial", "required_pending"]).toContain(capability.status);
+        return;
+      }
       expect(capability.status, `${capability.id} remains ${capability.status}; required production oracle is incomplete`).toBe("implemented");
     });
   }

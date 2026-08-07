@@ -5,7 +5,12 @@
   "version": "1.0.0-beta.2026.8.6.0",
   "description": "Black-box production-path conformance for the shipped Agape CLI.",
   "scripts": {
-    "test": "npm run test:allocated -- --target source --os linux --lane standard",
+    "test": "npm run test:core && npm run test:optional-memory && npm run test:studio-fact-checker",
+    "test:core": "npm run test:allocated -- --profile core-agent --target source --os linux --lane standard",
+    "test:optional-memory": "npm run test:allocated -- --profile optional-memory --target source --os linux --lane standard",
+    "test:studio-fact-checker": "npm run test:allocated -- --profile studio-fact-checker --target source --os linux --lane standard",
+    "test:research": "npm run test:allocated -- --profile research --target source --os linux --lane standard",
+    "test:research:slow": "npm run test:allocated -- --profile research --target source --os linux --lane slow",
     "test:allocated": "node scripts/run-allocated.mjs",
     "test:vitest": "vitest run",
     "typecheck": "tsc --noEmit"
