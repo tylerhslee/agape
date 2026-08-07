@@ -2,13 +2,19 @@
 //! section:   10_memory
 //! expect:    reject
 //! error:     TaintViolation
-//! spec:      §10, §13, §16.7 (a value recalled from private memory is subjective/graded and cannot drive a consequential sink without a gate)
+//! spec:      §10, §13, §16.7 (the exact typed recall array is deeply raw and cannot drive a consequential sink without a gate)
 //! ---
-action Publish(text body);
+action Publish(text[] bodies);
 agent A grants { perform Publish } {
+  mem note {
+    type text;
+    modality opaque;
+    scope project;
+    retention session;
+  }
   on awake {
-    mem note <- "remembered draft";
-    text recalled = note -> "draft";
+    note <- "remembered draft";
+    text[] recalled = note -> "draft";
     perform Publish(recalled);
   }
 }

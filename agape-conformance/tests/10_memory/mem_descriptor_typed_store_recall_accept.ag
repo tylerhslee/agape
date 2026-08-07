@@ -1,0 +1,23 @@
+//! id:        mem_descriptor_typed_store_recall_accept
+//! section:   10_memory
+//! expect:    accept
+//! contains:  Internalized(episodes); MemoryConsulted(episodes)
+//! order:     Internalized(episodes); MemoryConsulted(episodes)
+//! spec:      §10, §15.3 (the descriptor type governs both exact stores and TYPE[] recall)
+//! ---
+struct VerificationOutcome { candidate_id: text, certified: bool }
+agent A {
+  mem episodes {
+    type VerificationOutcome;
+    modality episodic;
+    scope project;
+    retention session;
+  }
+  on awake {
+    VerificationOutcome outcome = VerificationOutcome { candidate_id: "candidate-1", certified: true };
+    episodes <- outcome;
+    VerificationOutcome[] hits = episodes -> "recent outcomes";
+    say(hits);
+  }
+}
+spawn A a; awake a;

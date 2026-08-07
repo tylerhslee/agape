@@ -1,12 +1,18 @@
 //! id:        mem_store_internalizes_ok
 //! section:   10_memory
 //! expect:    accept
-//! spec:      §10 (the memory write seam mem <- value is the explicit emphasis form of internalization, on top of the mandatory memory envelope that internalizes every reaction, §16.7)
+//! spec:      §10 (an explicit write stores a value assignable to the structural descriptor type)
 //! ---
 agent A {
+  mem notes {
+    type text;
+    modality opaque;
+    scope project;
+    retention session;
+  }
   on awake {
     text r = self <- "summarize the day";
-    mem notes <- r;
+    notes <- r;
   }
 }
 spawn A a; awake a;

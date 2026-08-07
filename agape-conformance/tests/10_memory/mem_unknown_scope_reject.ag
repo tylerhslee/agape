@@ -1,0 +1,14 @@
+//! id:        mem_unknown_scope_reject
+//! section:   10_memory
+//! expect:    reject
+//! error:     TypeError
+//! spec:      §10 (the closed authenticated scope vocabulary is project and user)
+//! ---
+agent A {
+  mem notes {
+    type text;
+    modality opaque;
+    scope organization;
+    retention session;
+  }
+}

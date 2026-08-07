@@ -1,0 +1,22 @@
+//! id:        mem_episodic_equal_writes_receipts_accept
+//! section:   10_memory
+//! expect:    accept
+//! ledger:    Spawned(a); AgentAwake(a); Internalized(episodes); Internalized(episodes); MemoryConsulted(episodes)
+//! spec:      §10, §16.7 (each explicit episodic store evaluation records its own successful Internalized receipt)
+//! note:      distinct canonical episodes/origins for equal values are asserted by the runtime-contract suite
+//! ---
+agent A {
+  mem episodes {
+    type text;
+    modality episodic;
+    scope project;
+    retention session;
+  }
+  on awake {
+    episodes <- "same value";
+    episodes <- "same value";
+    text[] hits = episodes -> "same";
+    say(hits);
+  }
+}
+spawn A a; awake a;

@@ -1,0 +1,21 @@
+//! id:        cfg_memory_markdown_mixed_retention_accept
+//! section:   16_config
+//! expect:    accept
+//! manifest:  memory.driver=markdown
+//! spec:      §10, §16.7, §17.1 (markdown advertises both durable exact storage and an in-process session tier)
+//! ---
+agent A {
+  mem durable_notes {
+    type text;
+    modality opaque;
+    scope project;
+    retention durable;
+  }
+  mem scratch {
+    type text;
+    modality opaque;
+    scope project;
+    retention session;
+  }
+}
+spawn A a; awake a;

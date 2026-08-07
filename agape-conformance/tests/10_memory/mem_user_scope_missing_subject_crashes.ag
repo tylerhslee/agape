@@ -1,0 +1,19 @@
+//! id:        mem_user_scope_missing_subject_crashes
+//! section:   10_memory
+//! expect:    accept
+//! contains:  AgentCrashed(a)
+//! absent:    Internalized(notes)
+//! manifest:  memory.driver=local
+//! spec:      §10, §16.7 (a user-scoped operation without κ.user follows the auditable crash path without a successful memory mutation)
+//! note:      runtime-contract instrumentation separately proves that the driver was not accessed
+//! ---
+agent A {
+  mem notes {
+    type text;
+    modality opaque;
+    scope project, user;
+    retention session;
+  }
+  on awake { notes <- "no authenticated user on awake"; }
+}
+spawn A a; awake a;

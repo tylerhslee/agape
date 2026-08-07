@@ -1,6 +1,6 @@
 # Agape v1.0.0-beta.2026.8.6.0 — Conformance Test Index
 
-**217 tests** — accept: 137, reject: 80
+**241 tests** — accept: 146, reject: 95
 
 A conformant implementation must satisfy every `accept`/`reject` test (rejects with the declared error class; accepts matching any asserted spine).
 
@@ -61,13 +61,13 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 
 | id | expect | error | spec |
 |---|---|---|---|
+| `fn_local_memory_descriptor_reject` | reject | ParseError | §9, §10, §15.2 (a qualified memory descriptor is structural agent state and cannot be declared inside a function) |
 | `fn_pure_calls_async_reject` | reject | ColorViolation | §4 (a pure fn may only call other pure fns) |
 | `fn_pure_decide_by_principal_reject` | reject | ColorViolation | §4, §13 (`decide c by p` for a principal reaches the identity dependency → async; a pure fn may not) |
 | `fn_pure_emit_ok` | accept | — | §4 (emit is a ledger append, permitted in pure; a plain event needs no power) |
 | `fn_pure_inhand_decide_ok` | accept | — | §4, §13 (a rule-driven `decide` over an in-hand Credence is a pure collapse, no dependency reach → pure-permitted) |
 | `fn_pure_local_ok` | accept | — | §4 (a pure fn that reaches no declared dependency is well-formed) |
 | `fn_pure_reaches_seam_reject` | reject | ColorViolation | §1 Axis A, §4 (a pure fn may not reach the provider via `<-`) |
-| `fn_pure_store_reject` | reject | ColorViolation | §9, §10 (a mem write reaches the provider-backed memory substrate to internalize, so a pure function may not store) |
 | `fn_reject_nonterminal_return` | reject | TypeError | §4 (`return` is honored in tail position only — the final statement of a function body; a `return` nested in an `if` is never evaluated and would be silently ignored, so it is a static error, not a runtime no-op) |
 | `fn_taint_flows_through_call_reject` | reject | TaintViolation | §15.3.3 (function calls are trust-transparent; taint flowing through a helper still cannot reach a consequential sink) |
 
@@ -202,17 +202,39 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 
 | id | expect | error | spec |
 |---|---|---|---|
+| `mem_authority_payload_reject` | reject | TypeError | §10 (an Endorsement wrapper is authority-bearing and cannot be a persistent memory payload type) |
+| `mem_clause_order_accept` | accept | — | §10, §15.3 (descriptor clause order is insignificant) |
+| `mem_descriptor_typed_store_recall_accept` | accept | — | §10, §15.3 (the descriptor type governs both exact stores and TYPE[] recall) |
+| `mem_duplicate_clause_reject` | reject | TypeError | §10, §15.3 (a descriptor clause may appear only once) |
+| `mem_duplicate_name_reject` | reject | TypeError | §10, §15.3 (one structural descriptor is permitted per handle name in an agent) |
+| `mem_duplicate_scope_reject` | reject | TypeError | §10 (a scope dimension may appear only once in the descriptor tuple) |
+| `mem_empty_typed_recall_accept` | accept | — | §10 (recall against an empty typed region is well-typed, records consultation, and invokes no provider) |
+| `mem_episodic_equal_writes_receipts_accept` | accept | — | §10, §16.7 (each explicit episodic store evaluation records its own successful Internalized receipt) |
 | `mem_expr_query_no_ledger_event` | accept | — | §10 (query expression form yields a value and appends no QueryResult event) |
-| `mem_forget_accept` | accept | — | §10 (`forget` drops a memory handle — an audit-preserving tombstone) |
-| `mem_forget_records_tombstone` | accept | — | §10 (forget appends an audit-preserving Forgotten tombstone event) |
+| `mem_forget_accept` | accept | — | §10 (forget closes only the current scope tuple generation while the structural descriptor survives) |
+| `mem_forget_records_tombstone` | accept | — | §10 (forget appends a truthful Forgotten receipt for the resolved tuple generation) |
+| `mem_forget_reopen_operations_accept` | accept | — | §10, §16.7 (the structural descriptor remains usable for recall and a later store after forget) |
+| `mem_generic_syntax_reject` | reject | ParseError | §10, §15.2 (mem<T> is not Agape syntax; payload type is a named descriptor clause) |
 | `mem_ledger_recall_reject` | reject | TypeError | §10 (the ledger is not private memory; `->` recall requires a `mem` handle, never `ledger`) |
-| `mem_recall_after_forget_reject` | reject | TypeError | §10 (forget consumes the mem handle; the region is unrecallable going forward) |
+| `mem_legacy_direct_reject` | reject | TypeError | §10 (legacy unqualified declarations receive the qualified-descriptor migration diagnostic) |
+| `mem_legacy_local_initialized_reject` | reject | TypeError | §10 (legacy handler-local initialized declarations receive the hoist-and-qualify migration diagnostic) |
+| `mem_local_descriptor_reject` | reject | ParseError | §10, §15.2 (a qualified descriptor is a direct agent-body declaration, never handler-local) |
+| `mem_missing_clause_reject` | reject | TypeError | §10, §15.3 (type, modality, scope, and retention are each required exactly once) |
+| `mem_modalities_names_no_magic_accept` | accept | — | §10 (opaque, episodic, and semantic are declared policies; handle names have no intrinsic semantics) |
+| `mem_recall_after_forget_empty` | accept | — | §10 (a descriptor survives forget and recall of its closed tuple returns an empty typed array) |
 | `mem_recall_requires_mem_reject` | reject | TypeError | §10 (`->` recall requires a `mem` handle on the left; a non-`mem` LHS is a TypeError) |
-| `mem_recall_taint_perform_reject` | reject | TaintViolation | §10, §13, §16.7 (a value recalled from private memory is subjective/graded and cannot drive a consequential sink without a gate) |
+| `mem_recall_taint_perform_reject` | reject | TaintViolation | §10, §13, §16.7 (the exact typed recall array is deeply raw and cannot drive a consequential sink without a gate) |
+| `mem_recall_wrong_binding_reject` | reject | TypeError | §10, §15.3 (typed recall returns TYPE[] and cannot bind directly to text or Credence) |
 | `mem_select_boolean_ops_ok` | accept | — | §10 (select where conditions support comparison operators combined by boolean connectives) |
-| `mem_store_internalizes_ok` | accept | — | §10 (the memory write seam mem <- value is the explicit emphasis form of internalization, on top of the mandatory memory envelope that internalizes every reaction, §16.7) |
-| `mem_store_records_internalized` | accept | — | §10, §15.4.2 (a mem write internalizes the value across the region views and records Internalized) |
-| `mem_write_recall_accept` | accept | — | §10 (a `mem` handle into private memory: write with `<-`, recall with `->`) |
+| `mem_store_internalizes_ok` | accept | — | §10 (an explicit write stores a value assignable to the structural descriptor type) |
+| `mem_store_records_internalized` | accept | — | §10, §15.4.2 (a successful explicit typed write records Internalized) |
+| `mem_store_type_mismatch_reject` | reject | TypeError | §10, §15.3 (every stored expression must be assignable to the descriptor payload type) |
+| `mem_top_level_descriptor_reject` | reject | ParseError | §10, §15.2 (a qualified descriptor is structural agent state and is not a top-level declaration) |
+| `mem_unknown_modality_reject` | reject | TypeError | §10 (the closed modality vocabulary is opaque, episodic, and semantic; working state is not memory) |
+| `mem_unknown_retention_reject` | reject | TypeError | §10 (the closed retention vocabulary is session and durable) |
+| `mem_unknown_scope_reject` | reject | TypeError | §10 (the closed authenticated scope vocabulary is project and user) |
+| `mem_user_scope_missing_subject_crashes` | accept | — | §10, §16.7 (a user-scoped operation without κ.user follows the auditable crash path without a successful memory mutation) |
+| `mem_write_recall_accept` | accept | — | §10 (a qualified typed handle stores with <- and recalls a deeply raw TYPE[] with ->) |
 
 ## 11_control
 
@@ -279,10 +301,12 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 
 | id | expect | error | spec |
 |---|---|---|---|
-| `cfg_internalize_is_mandatory` | accept | — | §16.7 (the mandatory memory envelope internalizes every reaction as first-person memory content; consult+internalize is unconditional — there is no opt-in/opt-out config knob, and configuration tunes budget/fidelity, not whether memory is part of the turn) |
 | `cfg_manifest_decision_policy_reject` | reject | ConfigError | §17.1, §17.2 (decision rules live in source, not the manifest; config cannot set gate thresholds) |
+| `cfg_memory_durable_local_reject` | reject | ConfigError | §10, §16.7, §17.1 (local/mock advertises session retention only and rejects a durable descriptor before execution) |
+| `cfg_memory_markdown_mixed_retention_accept` | accept | — | §10, §16.7, §17.1 (markdown advertises both durable exact storage and an in-process session tier) |
 | `cfg_missing_principal_binding_reject` | reject | ConfigError | §17.1 (each principal declaration resolves to an identity binding; an unbound declared dependency is ALWAYS a ConfigError, not a late runtime lookup — no opt-in flag) |
 | `cfg_missing_prompt_binding_reject` | reject | ConfigError | §17.1 (each prompt declaration resolves to a manifest binding; an unbound declared dependency is ALWAYS a ConfigError, not a late runtime lookup — no opt-in flag) |
+| `cfg_no_implicit_internalization` | accept | — | §10, §16.7 (an agent send does not implicitly consult or write private memory) |
 | `cfg_require_fallback_temperature_reject` | reject | ConfigError | §17 (a text-only provider at temperature 0 requires fallback_temperature for the sampling fallback) |
 | `cfg_sampling_fallback` | accept | — | §16.8, §17 (a text-only provider is served by the sampling fallback: the credence is the empirical frequency of N forced draws; a confident judgment still commits) |
 | `cfg_sampling_fallback_disabled_defers` | accept | — | §13, §17 (without logprobs or the sampling fallback, a conformal gate has no distribution and degrades to deferral/abstain) |

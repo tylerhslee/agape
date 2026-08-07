@@ -1,0 +1,16 @@
+//! id:        cfg_memory_durable_local_reject
+//! section:   16_config
+//! expect:    reject
+//! error:     ConfigError
+//! manifest:  memory.driver=local
+//! spec:      §10, §16.7, §17.1 (local/mock advertises session retention only and rejects a durable descriptor before execution)
+//! ---
+agent A {
+  mem notes {
+    type text;
+    modality opaque;
+    scope project;
+    retention durable;
+  }
+}
+spawn A a; awake a;

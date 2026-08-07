@@ -1,0 +1,18 @@
+//! id:        mem_recall_wrong_binding_reject
+//! section:   10_memory
+//! expect:    reject
+//! error:     TypeError
+//! spec:      §10, §15.3 (typed recall returns TYPE[] and cannot bind directly to text or Credence)
+//! ---
+agent A {
+  mem notes {
+    type text;
+    modality opaque;
+    scope project;
+    retention session;
+  }
+  on awake {
+    text recalled = notes -> "query";
+  }
+}
+spawn A a; awake a;

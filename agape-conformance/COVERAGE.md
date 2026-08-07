@@ -8,9 +8,9 @@ Runtime conformance is tested separately in `../agape-runtime-conformance` with 
 
 ## Current Status
 
-- Language suite: `.ag` accept/reject tests under `tests/` — currently `217` tests (`137` accept, `80` reject), including `06b_world` (the wired events/actions world interface), `06c_delegation` (the §6c task-send), and the §13 attestation protocol (pending principal decision, attester-match verification).
+- Language suite: `.ag` accept/reject tests under `tests/` — currently `241` tests (`146` accept, `95` reject), including qualified typed-memory descriptors and recall, `06b_world` (the wired events/actions world interface), `06c_delegation` (the §6c task-send), and the §13 attestation protocol (pending principal decision, attester-match verification).
 - Runtime suite: TypeScript adapter tests under `../agape-runtime-conformance`.
-- Core kernel only: the suite exercises the core kernel with no syntactic sugar. Gate branching is an ordinary `if` over `.committed` (no arm block); bounded fan-out is `|>`; fusion is `quorum` with `independent`/`dependent` (no `all`/`any`); memory is store/recall over the `mem` handle plus the objective `select … from ledger` query (no `find`/`match`); rules carry inline `floor`/`readiness` (no `policy` declaration); the bounded `retry N` recovery block (§11) is core and exercised (`11_control`). The deferred library layer (modules, visibility, generics, interfaces) and §20 ergonomics (reversible sinks) are not exercised.
+- Core kernel only: the suite exercises the core kernel with no syntactic sugar. Gate branching is an ordinary `if` over `.committed` (no arm block); bounded fan-out is `|>`; fusion is `quorum` with `independent`/`dependent` (no `all`/`any`); memory uses structural named-clause `mem` descriptors with typed store/recall plus the objective `select … from ledger` query (no `mem<T>`, `find`, or `match`); rules carry inline `floor`/`readiness` (no `policy` declaration); the bounded `retry N` recovery block (§11) is core and exercised (`11_control`). The deferred library layer (modules, visibility, generics, interfaces) and §20 ergonomics (reversible sinks) are not exercised.
 - Manifest freshness is enforced by `python3 build_manifests.py --check`.
 
 ## Coverage Standard
@@ -27,5 +27,5 @@ Every surface construct above the trusted kernel needs bypass tests for taint, e
 ## Runtime/Adapter Coverage
 
 - Section-by-section compiler coverage accounting is tracked in `SPEC_COVERAGE.md`.
-- TypeScript runtime conformance tests cover scheduler/FIFO, illegal communication traces, canonical ledger behavior, replay/no-oracle-reinvocation, memory envelope, artifact ingestion, learning from experience, projection staleness/conflicts, config precedence, sampling fallback, warm conformal behavior, profile staling, and runtime API surfaces.
+- TypeScript runtime conformance tests cover scheduler/FIFO, illegal communication traces, canonical ledger behavior, replay/no-oracle-reinvocation, existing memory-driver diagnostics, projection staleness/conflicts, config precedence, sampling fallback, warm conformal behavior, profile staling, and runtime API surfaces. Exact typed envelopes, authenticated scope resolution, deterministic capped ranking, durable restart, generation reconciliation, and memory replay without live mutation remain pending runtime/production coverage for the named-clause contract.
 - Remaining implementation work is adapter work: each runtime must provide an `AGAPE_RUNTIME_ADAPTER` implementation so these tests execute instead of skip.

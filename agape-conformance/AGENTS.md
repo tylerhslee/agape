@@ -3,12 +3,12 @@
 The black-box `.ag` conformance suite: **this suite is THE ORACLE.** Each test is a
 valid Agape program tagged with an expected outcome, derived **only** from `../SPEC.md`
 — never from any implementation. An implementation is conformant iff it satisfies
-every test (217/217 today).
+all `241` tests in the current index.
 
 ## Commands (verified green)
 ```sh
 python3 build_manifests.py              # rebuild MANIFEST.toml + MANIFEST.md from //! headers
-python3 build_manifests.py --check      # CI gate -> "ok: 217 tests, manifests up to date"
+python3 build_manifests.py --check      # CI gate -> "ok: 241 tests, manifests up to date"
 ```
 `build_manifests.py` only reads tests and writes the two manifests; it never touches an
 `.ag` file. The `.ag` files are the source of truth — **edit them directly**; the

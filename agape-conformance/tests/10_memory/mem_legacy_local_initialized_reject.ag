@@ -1,0 +1,10 @@
+//! id:        mem_legacy_local_initialized_reject
+//! section:   10_memory
+//! expect:    reject
+//! error:     TypeError
+//! spec:      §10 (legacy handler-local initialized declarations receive the hoist-and-qualify migration diagnostic)
+//! ---
+agent A {
+  on awake { mem notes <- "old syntax"; }
+}
+spawn A a; awake a;

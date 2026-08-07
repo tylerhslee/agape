@@ -30,6 +30,10 @@ version.
   memory driver, prove exact agent-instance and handle isolation, reject fabricated
   Markdown modality effects or unresolvable refs, and distinguish immutable prompt
   provenance from copied metadata in manually edited memory.
+- **Qualified-memory language oracle.** The 241-case source suite pins structural
+  descriptor placement and clause order, closed qualifiers, persistable payloads,
+  exact store and typed-recall checking, explicit-only writes, retained handles after
+  forget, missing-user crash behavior, and standard-driver retention preflight.
 
 ## [1.0.0-beta.2026.8.6.0] - 2026-08-06
 

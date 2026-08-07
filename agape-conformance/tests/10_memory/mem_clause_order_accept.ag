@@ -1,20 +1,20 @@
-//! id:        mem_write_recall_accept
+//! id:        mem_clause_order_accept
 //! section:   10_memory
 //! expect:    accept
 //! contains:  Internalized(notes); MemoryConsulted(notes)
 //! order:     Internalized(notes); MemoryConsulted(notes)
-//! spec:      §10 (a qualified typed handle stores with <- and recalls a deeply raw TYPE[] with ->)
+//! spec:      §10, §15.3 (descriptor clause order is insignificant)
 //! ---
 agent A {
   mem notes {
+    retention session;
+    scope project;
     type text;
     modality opaque;
-    scope project;
-    retention session;
   }
   on awake {
-    notes <- "the earth is an oblate spheroid";
-    text[] hits = notes -> "what shape is earth?";
+    notes <- "reordered clauses";
+    text[] hits = notes -> "reordered";
     say(hits);
   }
 }

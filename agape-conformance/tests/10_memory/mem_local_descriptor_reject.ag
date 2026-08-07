@@ -1,0 +1,16 @@
+//! id:        mem_local_descriptor_reject
+//! section:   10_memory
+//! expect:    reject
+//! error:     ParseError
+//! spec:      §10, §15.2 (a qualified descriptor is a direct agent-body declaration, never handler-local)
+//! ---
+agent A {
+  on awake {
+    mem notes {
+      type text;
+      modality opaque;
+      scope project;
+      retention session;
+    }
+  }
+}

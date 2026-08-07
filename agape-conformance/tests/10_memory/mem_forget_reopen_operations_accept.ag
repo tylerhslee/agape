@@ -1,0 +1,24 @@
+//! id:        mem_forget_reopen_operations_accept
+//! section:   10_memory
+//! expect:    accept
+//! ledger:    Spawned(a); AgentAwake(a); Internalized(notes); Forgotten(notes); MemoryConsulted(notes); Internalized(notes); MemoryConsulted(notes)
+//! spec:      §10, §16.7 (the structural descriptor remains usable for recall and a later store after forget)
+//! note:      exact closed-generation misses and generation+1 isolation are asserted by the runtime-contract suite
+//! ---
+agent A {
+  mem notes {
+    type text;
+    modality episodic;
+    scope project;
+    retention session;
+  }
+  on awake {
+    notes <- "generation one";
+    forget notes;
+    text[] closed = notes -> "generation";
+    notes <- "generation two";
+    text[] reopened = notes -> "generation";
+    say(closed); say(reopened);
+  }
+}
+spawn A a; awake a;

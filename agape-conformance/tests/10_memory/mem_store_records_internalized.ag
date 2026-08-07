@@ -1,10 +1,16 @@
 //! id:        mem_store_records_internalized
 //! section:   10_memory
 //! expect:    accept
-//! contains:  Internalized
-//! spec:      §10, §15.4.2 (a mem write internalizes the value across the region views and records Internalized)
+//! contains:  Internalized(notes)
+//! spec:      §10, §15.4.2 (a successful explicit typed write records Internalized)
 //! ---
 agent A {
-  on awake { mem notes <- "fact note"; }
+  mem notes {
+    type text;
+    modality opaque;
+    scope project;
+    retention session;
+  }
+  on awake { notes <- "fact note"; }
 }
 spawn A a; awake a;
