@@ -2121,16 +2121,6 @@
       "directives": []
     },
     {
-      "id": "cfg_internalize_is_mandatory",
-      "section": "16_config",
-      "expect": "accept",
-      "pass": true,
-      "reason": "accepted + ledger ok",
-      "phase": "run",
-      "hadMatchers": true,
-      "directives": []
-    },
-    {
       "id": "cfg_manifest_decision_policy_reject",
       "section": "16_config",
       "expect": "reject",
@@ -2163,6 +2153,16 @@
       "errorClass": "ConfigError",
       "phase": "run",
       "hadMatchers": false,
+      "directives": []
+    },
+    {
+      "id": "cfg_reply_memory_is_explicit",
+      "section": "16_config",
+      "expect": "accept",
+      "pass": true,
+      "reason": "accepted + ledger ok",
+      "phase": "run",
+      "hadMatchers": true,
       "directives": []
     },
     {

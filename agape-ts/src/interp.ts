@@ -16,7 +16,7 @@ import {
 import { check, linkModules, type ModuleInput, type Resolution } from "./check.js";
 import { createMemoryDriver, type Manifest, type ToolBindingConfig, type BindingConfig } from "./config.js";
 import type { MemoryDriver, MemoryProvenance, MemoryReceipt, MemoryScope } from "./memory.js";
-import { compactMemoryText, renderReplyRecollection, renderStoreRecollection } from "./memory_runtime.js";
+import { renderStoreRecollection } from "./memory_runtime.js";
 import { parse } from "./parser.js";
 import { typeError, taintViolation, authorityViolation, configError } from "./errors.js";
 import { createToolHandlers, type ToolHandler } from "./tool_adapters.js";
@@ -411,13 +411,13 @@ export function createSession(program: A.Program, opts: RunOptions = {}): Runtim
     program,
     provider,
     opts.modules ?? [],
+    memory,
     opts.principal,
     opts.principalAttestations ?? [],
     opts.onConsult,
     manifest,
     toolHandlers,
     opts.timingOriginMs,
-    memory,
     projectRoot,
     opts.calibration ?? [],
     opts.onEvent,
@@ -502,13 +502,13 @@ class Interpreter {
     private program: A.Program,
     private provider: Provider,
     modules: ModuleInput[],
+    private memory: MemoryDriver,
     private principalOutcome?: string,
     private principalAttestations: PrincipalAttestation[] = [],
     private onConsult?: (req: ConsultRequest) => Promise<PrincipalAttestation | undefined>,
     private manifest?: Manifest,
     private toolHandlers: Record<string, ToolHandler> = {},
     timingOriginMs: number | undefined = undefined,
-    private memory: MemoryDriver = createMemoryDriver(manifest ?? { provider: { backend: "mock" } }),
     private projectRoot: string = process.cwd(),
     private calibrationPool: ConformalLabel[] = [],
     onEvent?: (event: LedgerEvent) => void,
@@ -658,18 +658,6 @@ class Interpreter {
     return instructions;
   }
 
-  private protectedJudgmentEvidence(binding: Record<string, unknown>): {
-    evidence_id: string;
-    evidence_hash: string;
-    evidence_ref: string;
-  } {
-    const evidenceHash = createHash("sha256").update(JSON.stringify(binding)).digest("hex");
-    return {
-      evidence_id: `judgment:${evidenceHash.slice(0, 24)}`,
-      evidence_hash: evidenceHash,
-      evidence_ref: `protected:judgment:${evidenceHash}`,
-    };
-  }
 
   private cognitionContext(
     agent: AgentInstance | undefined,
@@ -2360,9 +2348,19 @@ class Interpreter {
 
   private memoryDriverRefs(receipt?: MemoryReceipt): Record<string, unknown> {
     if (!receipt) return {};
+    const safeKeys = [
+      "markdown_file", "markdown_index", "markdown_archive",
+      "duplicate_of", "duplicate_score",
+    ] as const;
+    const publicRefs: Record<string, unknown> = {};
+    for (const key of safeKeys) {
+      const value = receipt.refs?.[key];
+      if (value !== undefined) publicRefs[key] = value;
+    }
     return {
       ...(receipt.eventId ? { driver_event: receipt.eventId } : {}),
       ...(receipt.ids?.length ? { driver_ids: receipt.ids } : {}),
+      ...publicRefs,
     };
   }
 
@@ -2370,37 +2368,25 @@ class Interpreter {
     const summary = valueSummary(value);
     const refs = {
       input: this.blobRef({ mem, view: "input", value: summary }),
-      facts_delta: this.blobRef({ mem, view: "facts_delta", value: summary }),
-      graph_delta: this.blobRef({ mem, view: "graph_delta", value: summary }),
-      vector_delta: this.blobRef({ mem, view: "vector_delta", value: summary }),
       ...this.memoryDriverRefs(receipt),
-      ...(receipt?.refs ?? {}),
     };
-    const policy = {
-      indexing: "incremental",
-      background_reindex: "runtime-managed",
-      graph_forget: "cascade",
-      archive: "runtime-configured",
-      ...(receipt?.policy ?? {}),
-    };
+    const policy = receipt?.policy ?? {};
     return {
-      // The runtime owns memory-text policy: prefer what it actually stored
-      // (reflected prose when [memory] reflect is on); fall back to the
-      // deterministic template for drivers that don't report it.
-      memory: receipt?.memory ?? renderStoreRecollection(mem, value),
-      value: summary,
+      region: mem,
+      source_operation: "store",
       effects: receipt?.effects ?? {
-        facts: { upserted: 1, tombstoned: 0, deleted: 0 },
+        cells: { upserted: 0, tombstoned: 0, deleted: 0 },
+        facts: { upserted: 0, tombstoned: 0, deleted: 0 },
         graph: {
-          nodes_upserted: 1,
+          nodes_upserted: 0,
           edges_upserted: 0,
           nodes_tombstoned: 0,
           edges_tombstoned: 0,
           nodes_deleted: 0,
           edges_deleted: 0,
         },
-        vectors: { chunks_upserted: 1, chunks_deleted: 0, embeddings_deleted: 0 },
-        blobs: { archived: 1, redacted: 0, deleted: 0 },
+        vectors: { chunks_upserted: 0, chunks_deleted: 0, embeddings_deleted: 0 },
+        blobs: { archived: 0, redacted: 0, deleted: 0 },
       },
       refs,
       policy,
@@ -2408,55 +2394,29 @@ class Interpreter {
     };
   }
 
-  private receivedReplyInternalizedPayload(prompt: string, value: Value, sourceEvent: number, receipt?: MemoryReceipt): Record<string, unknown> {
-    return {
-      memory: receipt?.memory ?? renderReplyRecollection(prompt, value),
-      prompt,
-      reply: valueSummary(value),
-      source_event: sourceEvent,
-      derived_from: ["prompt", "provider reply"],
-      trust: value.trust,
-      ...(receipt ? { refs: this.memoryDriverRefs(receipt) } : {}),
-      ...(receipt?.status ? { driver_status: receipt.status } : {}),
-    };
-  }
-
-  private async internalizeReceivedReply(subj: string, prompt: string, value: Value, sourceEvent: number, agent?: AgentInstance): Promise<void> {
-    let receipt: MemoryReceipt | undefined;
-    if (agent) {
-      receipt = await this.memory.internalize({
-        scope: this.memoryScope(agent, "__agent__"),
-        value,
-        memory: renderReplyRecollection(prompt, value),
-        episode: { act: "provider_reply", prompt: compactMemoryText(prompt) },
-        summary: valueSummary(value),
-        metadata: { source: "provider_reply", subject: subj, source_event: sourceEvent, ...this.memoryProvenance() },
-      });
-    }
-    this.ledger.append("Internalized", subj, this.receivedReplyInternalizedPayload(prompt, value, sourceEvent, receipt), agent?.name);
-  }
 
   private memoryForgottenPayload(mem: string, region: MemRegion, receipt?: MemoryReceipt): Record<string, unknown> {
     const n = region.writes.length;
     return {
       mode: "cascade",
+      region: mem,
+      source_operation: "forget",
       effects: receipt?.effects ?? {
-        facts: { upserted: 0, tombstoned: n, deleted: 0 },
+        cells: { upserted: 0, tombstoned: n, deleted: 0 },
+        facts: { upserted: 0, tombstoned: 0, deleted: 0 },
         graph: {
           nodes_upserted: 0,
           edges_upserted: 0,
-          nodes_tombstoned: n,
+          nodes_tombstoned: 0,
           edges_tombstoned: 0,
           nodes_deleted: 0,
           edges_deleted: 0,
         },
-        vectors: { chunks_upserted: 0, chunks_deleted: n, embeddings_deleted: n },
-        blobs: { archived: n, redacted: 0, deleted: 0 },
+        vectors: { chunks_upserted: 0, chunks_deleted: 0, embeddings_deleted: 0 },
+        blobs: { archived: 0, redacted: 0, deleted: 0 },
       },
       refs: {
-        forget_delta: this.blobRef({ mem, op: "forget", count: n }),
         ...this.memoryDriverRefs(receipt),
-        ...(receipt?.refs ?? {}),
       },
       policy: {
         graph_forget: "cascade",
@@ -2659,27 +2619,19 @@ class Interpreter {
           }, scope.currentAgent()?.name);
           throw new TypeMismatchError(`the model's structured reply for '${subj}' violated the declared type ${typeLabel(structuredType)}: ${(err as Error).message}; the send faults (§8/§16.6)`);
         }
-        const resolved = this.ledger.append("Resolved", subj, {
+        this.ledger.append("Resolved", subj, {
           kind: "structured",
           prompt,
           schema,
           reply: valueSummary(value),
         }, scope.currentAgent()?.name);
-        // §16.7: a received typed reply is internalized into the agent's private memory — the mandatory
-        // memory envelope (consult+internalize is unconditional; no opt-in/opt-out config knob).
-        await this.internalizeReceivedReply(subj, prompt, value, resolved.tick, scope.currentAgent());
       });
       return value;
     }
     let value: Value = { kind: "null", trust: "raw" };
     await this.inResolutionOrder(this.provider.reply(prompt, cognitionContext), async (reply) => {
       value = { kind: "text", v: reply, trust: "raw" };
-      const resolved = this.ledger.append("Resolved", subj, { kind: "reply", prompt, reply: valueSummary(value) }, scope.currentAgent()?.name);
-      // §16.7: a received typed reply is internalized into the agent's private memory — the mandatory memory
-      // envelope (consult+internalize is unconditional; there is no opt-in/opt-out config knob). A typed
-      // binding slot (`text r = d <- …`) internalizes; a bare unbound send (`d <- …;`) records only its
-      // lifecycle. (Credence-slot judgments take the judge path above, not this reply path.)
-      if (expected !== undefined) await this.internalizeReceivedReply(subj, prompt, value, resolved.tick, scope.currentAgent());
+      this.ledger.append("Resolved", subj, { kind: "reply", prompt, reply: valueSummary(value) }, scope.currentAgent()?.name);
     });
     return value;
   }
@@ -2809,6 +2761,7 @@ class Interpreter {
       : region.writes.map((value, index) => ({
           id: `overlay:${index + 1}`,
           memory: render(value),
+          typed: valueSummary(value),
           value,
           metadata: { source: "live_overlay" },
         }));
@@ -2817,16 +2770,24 @@ class Interpreter {
       const contentHash = createHash("sha256").update(content).digest("hex");
       const metadata = hit.metadata as Record<string, unknown> | undefined;
       const origin = metadata?.origin_tick ?? metadata?.source_event;
+      const provenance = metadata?.provenance;
+      const typedProvenance = provenance && typeof provenance === "object"
+        && typeof (provenance as Record<string, unknown>).attester === "string"
+        && typeof (provenance as Record<string, unknown>).prompt_name === "string"
+        ? provenance as { attester: string; prompt_name: string }
+        : undefined;
       return {
         cell_id: hit.id ?? `memory:${index + 1}`,
         content,
         content_hash: contentHash,
         score: "score" in hit ? hit.score : undefined,
         origin_ref: typeof origin === "number" ? `event:${origin}` : `sha256:${contentHash}`,
+        ...((hit.typed ?? hit.value) ? { value: hit.typed ?? valueSummary(hit.value!) } : {}),
+        ...(typedProvenance ? { provenance: typedProvenance } : {}),
       };
     });
     const queryHash = createHash("sha256").update(query).digest("hex");
-    const consultation = this.ledger.append("MemoryConsulted", agent?.name ?? "<top>", {
+    this.ledger.append("MemoryConsulted", agent?.name ?? "<top>", {
       consult_kind: "explicit_recall",
       reaction_event: this.reactionEventALS.getStore() ?? null,
       query_hash: queryHash,
@@ -2846,20 +2807,10 @@ class Interpreter {
       const { scores } = await this.inResolutionOrder(
         this.provider.judge(query, expected.enumName, variants, cognitionContext),
         ({ scores: resolvedScores }) => {
-          const evidence = this.protectedJudgmentEvidence({
-            consult_event: consultation.tick,
-            query_hash: queryHash,
-            hit_ids: typedHits.map((hit) => hit.cell_id),
-            content_hashes: typedHits.map((hit) => hit.content_hash),
-            origin_refs: typedHits.map((hit) => hit.origin_ref),
-            enum: expected.enumName,
-            scores: resolvedScores,
-          });
           this.ledger.append("Resolved", memName, {
             kind: "credence",
             enum: expected.enumName,
             gate_scores: resolvedScores,
-            ...evidence,
             ...scoreSummary(resolvedScores),
           }, agent?.name);
         },

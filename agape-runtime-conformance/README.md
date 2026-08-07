@@ -79,9 +79,9 @@ For learning conformance, a failed coding experience is not just an opaque trans
 
 ## Current Coverage
 
-This first runtime suite covers the mandatory memory-envelope items enumerated in SPEC section 17.5:
+This runtime suite covers the memory-contract items enumerated in SPEC section 17.5:
 
-- mandatory `MemoryConsulted` on every agent turn, including empty memory
+- explicit `MemoryConsulted` on authored recall or `memoryContext`; `agentRespond` itself is memory-free
 - per-agent memory isolation
 - artifact ingestion into summary, chunks, facts, graph, vectors, and provenance
 - idempotent unchanged artifact ingestion

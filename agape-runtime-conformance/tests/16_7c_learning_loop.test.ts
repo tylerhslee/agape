@@ -121,6 +121,10 @@ suite("SPEC 16.7c longitudinal learning loop", () => {
       revisedMustNotContain: ["perform PublishMemo(body)"],
     });
 
+    const laterMemory = await adapter!.memoryContext({
+      agent: a,
+      task: "Write another publishing workflow. Use prior implementation experience.",
+    });
     const later = await adapter!.agentRespond({
       agent: a,
       task: "Write another publishing workflow. Use prior implementation experience.",
@@ -132,8 +136,8 @@ suite("SPEC 16.7c longitudinal learning loop", () => {
     });
 
     expect(later.ok).toBe(true);
-    expect(later.memoryPacket.consulted).toBe(true);
-    const packet = packetText(later.memoryPacket);
+    expect(later.memoryPacket.consulted).toBe(false);
+    const packet = packetText(laterMemory);
     expect(packet).toContain("endorse");
     expect(packet).toContain("publishmemo");
     expect(packet).not.toContain("perform publishmemo(body)");

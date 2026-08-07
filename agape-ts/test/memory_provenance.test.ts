@@ -50,7 +50,7 @@ class ProvenancedSubstrate extends RecordingMemory {
 }
 
 describe("memory-cell provenance threading", () => {
-  it("threads the prompt attestation into explicit stores and provider-reply internalizations", async () => {
+  it("threads the prompt attestation into explicit stores without hidden provider-reply writes", async () => {
     const memory = new RecordingMemory();
     const prog = `
       prompt text question;
@@ -70,9 +70,8 @@ describe("memory-cell provenance threading", () => {
     });
 
     const store = memory.writes.find((w) => w.metadata?.source === "store");
-    const reply = memory.writes.find((w) => w.metadata?.source === "provider_reply");
     expect(store?.metadata?.provenance).toEqual({ attester: "test-harness", prompt_name: "question" });
-    expect(reply?.metadata?.provenance).toEqual({ attester: "test-harness", prompt_name: "question" });
+    expect(memory.writes).toHaveLength(1);
   });
 
   it("records the default local attester when the prompt input carries no attestation", async () => {
@@ -163,6 +162,7 @@ describe("memory-cell provenance threading", () => {
       await run(parse(prog), {
         memoryRoot: dir,
         provider: new MockProvider(() => ({})),
+        manifest: { provider: { backend: "mock" }, memory: { driver: "markdown" } },
         promptInputs: [{ name: "question", value: "remember the deploy command", attestation: { attester: "local-user" } }],
       });
 

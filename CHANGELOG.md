@@ -15,6 +15,15 @@ version.
 - **Runtime memory is configured and explicitly accessed.** Every runtime session
   receives a memory driver, while source and host operations control every memory
   consultation, write, and forget.
+  Provider replies and adapter `agent.respond` turns no longer create or consult
+  hidden memory.
+- **Recalled experience preserves typed outcomes and provenance.** Explicitly
+  stored successful examples and rejected counterexamples retain their typed value
+  summaries and origin metadata across Local and Markdown drivers; recall remains
+- **Memory receipts are private and truthful.** Public ledger rows expose hashes,
+  resolvable driver references, and actual cell/view deltas without memory plaintext
+  or fabricated fact, graph, vector, or blob effects.
+  tainted and requires a fresh gate before consequential use.
 - **Calibration evidence is profile-scoped.** Core gates record truthful methods and
   scores; the Studio Fact Checker profile preserves raw-logprob evidence and exposes
   it through the authorized, non-enumerable `calibration.evidence.inspect` operation.

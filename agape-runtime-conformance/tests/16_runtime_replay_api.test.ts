@@ -95,7 +95,7 @@ suite("SPEC 16 runtime API, ledger, and replay", () => {
     expect(afterReplay.embeddingCalls).toBe(beforeReplay.embeddingCalls);
   });
 
-  it("records ArtifactObserved and MemoryConsulted as ordinary ledger events", async () => {
+  it("records ArtifactObserved and explicitly requested MemoryConsulted as ordinary ledger events", async () => {
     const agent = { template: "LedgerAgent", instanceId: "ledger-agent" };
 
     const ingest = await adapter!.memoryIngest({
@@ -109,11 +109,8 @@ suite("SPEC 16 runtime API, ledger, and replay", () => {
     });
     requireEvent(ingest.events, "ArtifactObserved", "mem://ledger-events");
 
-    const turn = await adapter!.agentRespond({
-      agent,
-      task: "use memory",
-      stimulus: { kind: "user", text: "what did you observe?" },
-    });
-    requireEvent(turn.events, "MemoryConsulted");
+    const context = await adapter!.memoryContext({ agent, task: "use memory" });
+    expect(context.consulted).toBe(true);
+    requireEvent(await adapter!.ledgerRead({ agent: agent.instanceId }), "MemoryConsulted");
   });
 });

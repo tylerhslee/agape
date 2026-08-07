@@ -7,12 +7,13 @@ import { parse } from "../src/parser.js";
 import { run as runtimeRun } from "../src/interp.js";
 import { MockProvider, type StructuredSchema } from "../src/runtime.js";
 
+import { LocalMemoryDriver } from "../src/memory.js";
 const TEST_MEMORY_ROOT = mkdtempSync(join(tmpdir(), "agape-schema-suite-"));
 afterAll(async () => {
   await rm(TEST_MEMORY_ROOT, { recursive: true, force: true });
 });
 function run(program: Parameters<typeof runtimeRun>[0], opts: Parameters<typeof runtimeRun>[1] = {}) {
-  return runtimeRun(program, { memoryRoot: TEST_MEMORY_ROOT, ...opts });
+  return runtimeRun(program, { memoryRoot: TEST_MEMORY_ROOT, ...opts, memory: opts.memory ?? new LocalMemoryDriver() });
 }
 
 // Records every schema the runtime compiles and hands to the provider seam, while returning a

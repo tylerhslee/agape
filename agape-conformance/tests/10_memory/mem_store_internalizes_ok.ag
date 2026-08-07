@@ -1,7 +1,7 @@
 //! id:        mem_store_internalizes_ok
 //! section:   10_memory
 //! expect:    accept
-//! spec:      §10 (the memory write seam mem <- value is the explicit emphasis form of internalization, on top of the mandatory memory envelope that internalizes every reaction, §16.7)
+//! spec:      §10, §16.7 (mem <- value explicitly internalizes a value into the selected private-memory region)
 //! ---
 agent A {
   on awake {

@@ -46,6 +46,7 @@ interface MarkdownChunk {
   score: number;
   order: number;
   metadata: Record<string, unknown>;
+  typed?: Record<string, unknown>;
 }
 
 const INDEX_START = "<!-- agape:markdown-memory-index:start -->";
@@ -101,6 +102,7 @@ export class MarkdownMemoryDriver implements MemoryDriver {
         memory: c.memory,
         score: c.score,
         metadata: c.metadata,
+        typed: c.typed,
       }));
     return {
       hits,
@@ -143,8 +145,6 @@ export class MarkdownMemoryDriver implements MemoryDriver {
 
   private async loadChunks(scope: MemoryScope, loc: MarkdownLocation, query: string): Promise<MarkdownChunk[]> {
     const chunks: MarkdownChunk[] = [];
-    const indexText = limitIndex(await readText(loc.entrypoint), this.indexLines(), this.indexBytes());
-    chunks.push(...splitMarkdownChunks(indexText, this.entrypointName(), chunks.length));
     chunks.push(...splitMarkdownChunks(await readText(loc.topic), loc.topicRel, chunks.length));
     const terms = queryTerms(query);
     return chunks
@@ -278,7 +278,7 @@ function splitMarkdownChunks(markdown: string, file: string, startOrder: number)
   const out: MarkdownChunk[] = [];
   for (const section of sections) {
     const id = extractMemoryId(section);
-    const entryMetadata = extractEntryMetadata(section);
+    const entryData = extractEntryData(section);
     const memory = stripJsonFences(stripHtmlComments(section)).trim();
     const body = stripFirstHeading(memory).trim();
     if (!body) continue;
@@ -289,7 +289,8 @@ function splitMarkdownChunks(markdown: string, file: string, startOrder: number)
       memory,
       score: 0,
       order: startOrder + out.length,
-      metadata: { markdown_file: file, ...entryMetadata },
+      metadata: { markdown_file: file, ...entryData.metadata },
+      typed: entryData.summary,
     });
   }
   return out;
@@ -315,15 +316,18 @@ function extractMemoryId(section: string): string | undefined {
   return match?.[1];
 }
 
-function extractEntryMetadata(section: string): Record<string, unknown> {
+function extractEntryData(section: string): { metadata: Record<string, unknown>; summary?: Record<string, unknown> } {
   const match = section.match(/```json\s*([\s\S]*?)```/);
-  if (!match?.[1]) return {};
+  if (!match?.[1]) return { metadata: {} };
   try {
     const parsed: unknown = JSON.parse(match[1]);
-    if (!isRecord(parsed) || !isRecord(parsed.metadata)) return {};
-    return { ...parsed.metadata };
+    if (!isRecord(parsed)) return { metadata: {} };
+    return {
+      metadata: isRecord(parsed.metadata) ? { ...parsed.metadata } : {},
+      ...(isRecord(parsed.summary) ? { summary: { ...parsed.summary } } : {}),
+    };
   } catch {
-    return {};
+    return { metadata: {} };
   }
 }
 
@@ -419,33 +423,35 @@ function forgottenTopicMarkdown(scope: MemoryScope, count: number, at: Date): st
 
 function writeEffects(): Record<string, unknown> {
   return {
-    facts: { upserted: 1, tombstoned: 0, deleted: 0 },
+    cells: { upserted: 1, tombstoned: 0, deleted: 0 },
+    facts: { upserted: 0, tombstoned: 0, deleted: 0 },
     graph: {
-      nodes_upserted: 1,
+      nodes_upserted: 0,
       edges_upserted: 0,
       nodes_tombstoned: 0,
       edges_tombstoned: 0,
       nodes_deleted: 0,
       edges_deleted: 0,
     },
-    vectors: { chunks_upserted: 1, chunks_deleted: 0, embeddings_deleted: 0 },
-    blobs: { archived: 1, redacted: 0, deleted: 0 },
+    vectors: { chunks_upserted: 0, chunks_deleted: 0, embeddings_deleted: 0 },
+    blobs: { archived: 0, redacted: 0, deleted: 0 },
   };
 }
 
 function forgetEffects(count: number, archive: boolean): Record<string, unknown> {
   return {
-    facts: { upserted: 0, tombstoned: count, deleted: 0 },
+    cells: { upserted: 0, tombstoned: count, deleted: 0 },
+    facts: { upserted: 0, tombstoned: 0, deleted: 0 },
     graph: {
       nodes_upserted: 0,
       edges_upserted: 0,
-      nodes_tombstoned: count,
+      nodes_tombstoned: 0,
       edges_tombstoned: 0,
       nodes_deleted: 0,
       edges_deleted: 0,
     },
-    vectors: { chunks_upserted: 0, chunks_deleted: count, embeddings_deleted: count },
-    blobs: { archived: archive ? count : 0, redacted: 0, deleted: archive ? 0 : count },
+    vectors: { chunks_upserted: 0, chunks_deleted: 0, embeddings_deleted: 0 },
+    blobs: { archived: 0, redacted: 0, deleted: 0 },
   };
 }
 

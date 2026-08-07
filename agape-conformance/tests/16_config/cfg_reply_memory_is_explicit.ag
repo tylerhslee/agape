@@ -1,0 +1,11 @@
+//! id:        cfg_reply_memory_is_explicit
+//! section:   16_config
+//! expect:    accept
+//! absent:    Internalized
+//! spec:      §10, §16.7 (memory mutation is a source-authored operation on a declared mem region)
+//! note:      a provider reply resolves the typed send but does not mutate private memory without an explicit mem store
+//! ---
+agent A {
+  on awake { text r = self <- "what happened today?"; }
+}
+spawn A a; awake a;

@@ -19,6 +19,7 @@ import type { ModuleInput } from "../src/check.js";
 import { parseManifestDirective } from "../src/config.js";
 import { MockProvider, type Provider } from "../src/runtime.js";
 
+import { LocalMemoryDriver } from "../src/memory.js";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SUITE = join(HERE, "..", "..", "agape-conformance", "tests");
 
@@ -169,11 +170,11 @@ async function runTest(h: Header, src: string, companions: ModuleInput[]): Promi
   // declared principal/prompt/tool dependency must be bound in the manifest; other sections auto-bind mocks.
   const strictConfig = h.section === "16_config";
   try {
-    const r = await run(program, { provider: providerFor(h), modules: companions, manifest, principal, attesterVerifier, strictConfig });
+    const r = await run(program, { provider: providerFor(h), modules: companions, manifest, principal, attesterVerifier, strictConfig, memory: new LocalMemoryDriver() });
     const events = r.ledger.events.map((e) => ({ type: mapEtype(e.etype), subject: e.subject }));
     const out: Outcome = { threw: false, phase: "run", events, head: r.ledger.head() };
     if (h.replay === "chain_head_equal") {
-      const r2 = await run(parse(src), { provider: providerFor(h), modules: companions, manifest, principal, attesterVerifier, strictConfig });
+      const r2 = await run(parse(src), { provider: providerFor(h), modules: companions, manifest, principal, attesterVerifier, strictConfig, memory: new LocalMemoryDriver() });
       out.head2 = r2.ledger.head();
     }
     return out;

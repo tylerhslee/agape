@@ -41,7 +41,6 @@ tool = "ship"
 [memory]
 # Default vanilla system: plain markdown substrate plus Agape's built-in memory runtime.
 driver = "markdown"
-auto_memory = true
 classify = true
 dedupe = true
 dedupe_threshold = 0.9

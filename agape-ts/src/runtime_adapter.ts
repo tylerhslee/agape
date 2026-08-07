@@ -695,7 +695,7 @@ class AgapeTsConformanceAdapter {
 
   async agentRespond(input: { agent: AgentRef; task: string; stimulus: { kind: string; text: string }; testMode?: Record<string, unknown> }) {
     const start = this.ledger.length;
-    const packet = this.consult(input.agent, input.task);
+    const packet = { consulted: false, empty: true };
     const testMode = (input.testMode ?? {}) as TestMode;
     this.counters.providerCalls++;
     const p = testMode.provider;
@@ -842,12 +842,16 @@ class AgapeTsConformanceAdapter {
     const agent = input.agent;
 
     // Turn 1: consult (empty), produce the fixed candidate, check it for real.
+    const firstTurnStart = this.ledger.length;
+    const firstMemory = this.consult(agent, input.task);
     const firstTurn = await this.agentRespond({
       agent,
       task: input.task,
       stimulus: { kind: "user", text: input.task },
     });
     const firstSource = input.firstCandidateSource;
+    firstTurn.memoryPacket = firstMemory;
+    firstTurn.events = this.ledger.slice(firstTurnStart);
     const firstCheck = await this.check({ source: firstSource });
 
     // Internalize the failure as decomposed experience.
@@ -896,12 +900,16 @@ class AgapeTsConformanceAdapter {
     const failureMemory = this.consult(agent, input.task);
 
     // Turn 2: consult again; the retrieved lesson drives a deterministic revision.
+    const secondTurnStart = this.ledger.length;
+    const secondMemory = this.consult(agent, input.revisionRequest);
     const secondTurn = await this.agentRespond({
       agent,
       task: input.revisionRequest,
       stimulus: { kind: "user", text: input.revisionRequest },
     });
-    const lessonRetrieved = JSON.stringify(secondTurn.memoryPacket).toLowerCase().includes("endorsement");
+    secondTurn.memoryPacket = secondMemory;
+    secondTurn.events = this.ledger.slice(secondTurnStart);
+    const lessonRetrieved = JSON.stringify(secondMemory).toLowerCase().includes("endorsement");
     const revisedSource = lessonRetrieved ? reviseWithEndorsement(firstSource) : firstSource;
     const revisedCheck = await this.check({ source: revisedSource });
 

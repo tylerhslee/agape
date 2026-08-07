@@ -15,7 +15,7 @@ suite("SPEC 16.7 memory envelope", () => {
     await adapter!.reset();
   });
 
-  it("records MemoryConsulted for every agent turn, including empty memory", async () => {
+  it("keeps agent turns memory-free until memory.context is explicitly invoked", async () => {
     const a = agent("mem-empty");
     const turn = await adapter!.agentRespond({
       agent: a,
@@ -25,10 +25,13 @@ suite("SPEC 16.7 memory envelope", () => {
     });
 
     expect(turn.ok).toBe(true);
-    expect(turn.memoryPacket.consulted).toBe(true);
+    expect(turn.memoryPacket.consulted).toBe(false);
     expect(turn.memoryPacket.empty).toBe(true);
 
-    const event = requireEvent(turn.events.length ? turn.events : await adapter!.ledgerRead({ agent: a.instanceId }), "MemoryConsulted");
+    expect(turn.events.filter((event) => event.etype === "MemoryConsulted")).toHaveLength(0);
+    const context = await adapter!.memoryContext({ agent: a, task: "answer a simple greeting" });
+    expect(context.consulted).toBe(true);
+    const event = requireEvent(await adapter!.ledgerRead({ agent: a.instanceId }), "MemoryConsulted");
     const payload = payloadObject(event);
     expect(payload).toHaveProperty("counts");
     expect(JSON.stringify(payload).toLowerCase()).toContain("query");

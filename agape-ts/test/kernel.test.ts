@@ -8,13 +8,14 @@ import { parse } from "../src/parser.js";
 import { run as runtimeRun } from "../src/interp.js";
 import { MockProvider, type StructuredSchema } from "../src/runtime.js";
 import { parseManifestDirective } from "../src/config.js";
+import { LocalMemoryDriver } from "../src/memory.js";
 const TEST_MEMORY_ROOT = mkdtempSync(join(tmpdir(), "agape-kernel-suite-"));
 afterAll(async () => {
   await rm(TEST_MEMORY_ROOT, { recursive: true, force: true });
 });
 
 function run(program: Parameters<typeof runtimeRun>[0], opts: Parameters<typeof runtimeRun>[1] = {}) {
-  return runtimeRun(program, { memoryRoot: TEST_MEMORY_ROOT, ...opts });
+  return runtimeRun(program, { memoryRoot: TEST_MEMORY_ROOT, ...opts, memory: opts.memory ?? new LocalMemoryDriver() });
 }
 const HELLO = `
 enum Verdict { Publish, Revise }
@@ -256,15 +257,7 @@ describe("structured provider replies", () => {
     expect((resolved?.payload as any)?.reply?.value).toBe("claim summary");
     expect((resolved?.payload as any)?.reply?.rendered).toBe("claim summary");
     const internalized = r.ledger.events.find((e) => e.etype === "Internalized" && e.subject === "claim");
-    const memory = internalized?.payload as any;
-    expect(memory?.memory).toContain('I was asked "summarize the incoming claim"');
-    expect(memory?.memory).toContain("I received a text value from the provider");
-    expect(memory?.memory).toContain('I learned the reply content was "claim summary"');
-    expect(memory?.source_event).toBe(resolved?.tick);
-    expect(memory?.reply?.kind).toBe("text");
-    expect(memory?.kind).toBeUndefined();
-    expect(memory?.experienced).toBeUndefined();
-    expect(memory?.experience).toBeUndefined();
+    expect(internalized).toBeUndefined();
   });
 
   it("faults the send (no null-fill) when a structured reply fails its schema, recording the raw bad value", async () => {
@@ -322,15 +315,8 @@ describe("structured provider replies", () => {
     expect((resolved?.payload as any)?.reply?.kind).toBe("struct");
     expect((resolved?.payload as any)?.reply?.fields?.vendor).toMatchObject({ kind: "text", value: "Northwind" });
     expect((resolved?.payload as any)?.reply?.fields?.total_cents).toMatchObject({ kind: "int", value: 4125 });
-    // §16.7: the mandatory memory envelope internalizes every received typed reply — struct replies
-    // included (cfg_internalize_is_mandatory pins the same for bare text replies).
     const internalized = r.ledger.events.find((e) => e.etype === "Internalized" && e.subject === "receipt");
-    expect(internalized).toBeDefined();
-    const memory = internalized?.payload as any;
-    expect(memory?.memory).toContain("I received a structured Receipt from the provider");
-    expect(memory?.memory).toContain("I learned the provider filled 3 fields: vendor, total_cents, needs_review");
-    expect(memory?.kind).toBeUndefined();
-    expect(memory?.experienced).toBeUndefined();
+    expect(internalized).toBeUndefined();
   });
 
   it("rejects legacy event<T> reply syntax", () => {
@@ -363,8 +349,10 @@ describe("structured provider replies", () => {
       expect(r.stdout[0]).toBe("Internalized");
       expect(r.stdout[1]).toMatch(/^blob:sha256:/);
       const internalized = r.ledger.events.find((e) => e.etype === "Internalized" && e.subject === "notes");
-      expect((internalized?.payload as any)?.effects?.facts?.upserted).toBe(1);
-      expect((internalized?.payload as any)?.policy?.background_reindex).toBe("runtime-managed");
+      expect((internalized?.payload as any)?.effects?.cells?.upserted).toBe(1);
+      expect((internalized?.payload as any)?.effects?.facts?.upserted).toBe(0);
+      expect((internalized?.payload as any)?.memory).toBeUndefined();
+      expect((internalized?.payload as any)?.value).toBeUndefined();
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

@@ -210,7 +210,7 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 | `mem_recall_requires_mem_reject` | reject | TypeError | §10 (`->` recall requires a `mem` handle on the left; a non-`mem` LHS is a TypeError) |
 | `mem_recall_taint_perform_reject` | reject | TaintViolation | §10, §13, §16.7 (a value recalled from private memory is subjective/graded and cannot drive a consequential sink without a gate) |
 | `mem_select_boolean_ops_ok` | accept | — | §10 (select where conditions support comparison operators combined by boolean connectives) |
-| `mem_store_internalizes_ok` | accept | — | §10 (the memory write seam mem <- value is the explicit emphasis form of internalization, on top of the mandatory memory envelope that internalizes every reaction, §16.7) |
+| `mem_store_internalizes_ok` | accept | — | §10, §16.7 (mem <- value explicitly internalizes a value into the selected private-memory region) |
 | `mem_store_records_internalized` | accept | — | §10, §15.4.2 (a mem write internalizes the value across the region views and records Internalized) |
 | `mem_write_recall_accept` | accept | — | §10 (a `mem` handle into private memory: write with `<-`, recall with `->`) |
 
@@ -279,10 +279,10 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 
 | id | expect | error | spec |
 |---|---|---|---|
-| `cfg_internalize_is_mandatory` | accept | — | §16.7 (the mandatory memory envelope internalizes every reaction as first-person memory content; consult+internalize is unconditional — there is no opt-in/opt-out config knob, and configuration tunes budget/fidelity, not whether memory is part of the turn) |
 | `cfg_manifest_decision_policy_reject` | reject | ConfigError | §17.1, §17.2 (decision rules live in source, not the manifest; config cannot set gate thresholds) |
 | `cfg_missing_principal_binding_reject` | reject | ConfigError | §17.1 (each principal declaration resolves to an identity binding; an unbound declared dependency is ALWAYS a ConfigError, not a late runtime lookup — no opt-in flag) |
 | `cfg_missing_prompt_binding_reject` | reject | ConfigError | §17.1 (each prompt declaration resolves to a manifest binding; an unbound declared dependency is ALWAYS a ConfigError, not a late runtime lookup — no opt-in flag) |
+| `cfg_reply_memory_is_explicit` | accept | — | §10, §16.7 (memory mutation is a source-authored operation on a declared mem region) |
 | `cfg_require_fallback_temperature_reject` | reject | ConfigError | §17 (a text-only provider at temperature 0 requires fallback_temperature for the sampling fallback) |
 | `cfg_sampling_fallback` | accept | — | §16.8, §17 (a text-only provider is served by the sampling fallback: the credence is the empirical frequency of N forced draws; a confident judgment still commits) |
 | `cfg_sampling_fallback_disabled_defers` | accept | — | §13, §17 (without logprobs or the sampling fallback, a conformal gate has no distribution and degrades to deferral/abstain) |

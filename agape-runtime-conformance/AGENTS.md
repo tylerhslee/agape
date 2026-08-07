@@ -25,7 +25,8 @@ AGAPE_RUNTIME_ADAPTER=/abs/path/to/adapter.js npm test   # any other implementat
   checked, stored as decomposed experience, retrieved later, and corrected.
 
 ## Coverage (SPEC §17.5 mandatory items)
-Mandatory `MemoryConsulted` every turn; per-agent isolation; artifact decomposition
+Explicit `MemoryConsulted` for authored recall or `memoryContext`; `agentRespond`
+is memory-free; per-agent isolation; artifact decomposition
 (summary/chunks/facts/graph/vectors/provenance); idempotent unchanged ingestion; failure
 + success experience internalization; longitudinal learning loop; user-correction
 precedence; provenance to ledger ticks; replay without re-invoking oracles; no

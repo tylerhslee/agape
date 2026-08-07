@@ -12,7 +12,6 @@ import {
 } from "../src/memory.js";
 import {
   MemoryRuntimeDriver,
-  renderReplyRecollection,
   renderStoreRecollection,
 } from "../src/memory_runtime.js";
 
@@ -61,10 +60,7 @@ function writeReq(raw: string, episode: MemoryEpisode = { act: "store" }): Memor
   return {
     scope: SCOPE,
     value,
-    memory:
-      episode.act === "provider_reply"
-        ? renderReplyRecollection(episode.prompt ?? "", value)
-        : renderStoreRecollection(SCOPE.mem, value),
+    memory: renderStoreRecollection(SCOPE.mem, value),
     episode,
     summary: { rendered: raw },
   };
@@ -93,29 +89,25 @@ describe("memory reflection ([memory] reflect)", () => {
     expect(provider.prompts[0]).toContain("memory 'notes'");
   });
 
-  it("frames provider-reply episodes with the asking prompt", async () => {
+  it("reflects explicit writes without special-casing their metadata source", async () => {
     const substrate = new RecordingSubstrate();
     const provider = new ProseProvider();
-    const driver = new MemoryRuntimeDriver(
-      substrate,
-      { reflect: true, dedupe: false, auto_memory: false },
-      provider,
-    );
+    const driver = new MemoryRuntimeDriver(substrate, { reflect: true, dedupe: false }, provider);
 
     await driver.internalize({
-      ...writeReq("The answer is 4.", { act: "provider_reply", prompt: "what is 2+2" }),
-      metadata: { source: "provider_reply", subject: "q" },
+      ...writeReq("The answer is 4."),
+      metadata: { source: "external_import", subject: "q" },
     });
 
-    expect(provider.prompts[0]).toContain("I asked: what is 2+2");
-    expect(provider.prompts[0]).toContain("The reply was: The answer is 4.");
-    expect(provider.prompts[0]).not.toContain("I was asked");
+    expect(provider.prompts[0]).toContain("Something I chose to remember");
+    expect(provider.prompts[0]).toContain("The answer is 4.");
+    expect(provider.prompts[0]).not.toContain("I asked:");
     expect(substrate.writes[0]!.metadata?.subject).toBe("q");
   });
 
   it("keeps the reflect-off path byte-identical: the template is what gets stored", async () => {
     const substrate = new RecordingSubstrate();
-    const driver = new MemoryRuntimeDriver(substrate, { dedupe: false, auto_memory: false });
+    const driver = new MemoryRuntimeDriver(substrate, { dedupe: false });
 
     const req = writeReq(RAW);
     const receipt = await driver.internalize(req);

@@ -1,9 +1,14 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { parse } from "../src/parser.js";
-import { run } from "../src/interp.js";
+import { run as runtimeRun } from "../src/interp.js";
 import { MockProvider, render } from "../src/runtime.js";
 import { check } from "../src/check.js";
 
+import { LocalMemoryDriver } from "../src/memory.js";
+
+function run(program: Parameters<typeof runtimeRun>[0], opts: Parameters<typeof runtimeRun>[1] = {}) {
+  return runtimeRun(program, { ...opts, memory: opts.memory ?? new LocalMemoryDriver() });
+}
 // now() and take(xs, n): the two kernel builtins. now() is the kernel's own
 // clock — settled world-fact, pinned by AGAPE_FIXED_NOW for determinism, and
 // a world reach a `pure` body may not observe. take + array `+` concat form

@@ -21,7 +21,6 @@ import {
 export type MemoryKind = "preference" | "fact" | "procedure" | "decision" | "interaction" | "note";
 
 export interface MemoryRuntimeConfig {
-  auto_memory?: boolean;
   classify?: boolean;
   dedupe?: boolean;
   dedupe_threshold?: number;
@@ -79,14 +78,6 @@ export class MemoryRuntimeDriver implements MemoryDriver {
   async internalize(req: MemoryWriteRequest): Promise<MemoryReceipt> {
     const raw = compactText(req.memory);
     let classification = this.classify(raw, req);
-    const source = stringMetadata(req.metadata, "source");
-    const explicitStore = source !== "provider_reply";
-
-    // Judgment and dedupe run on the RAW episode, before any cognition is
-    // spent on it: junk is skipped and repeats are suppressed for free.
-    if (!explicitStore && this.autoMemoryEnabled() && !worthRemembering(raw, classification)) {
-      return skippedReceipt("SKIPPED", "low_signal_auto_memory", classification, this.policy(), raw);
-    }
 
     if (this.dedupeEnabled() && raw) {
       const duplicate = await this.findDuplicate(req.scope, raw);
@@ -180,7 +171,6 @@ export class MemoryRuntimeDriver implements MemoryDriver {
     if (this.cfg.classify === false) {
       return { kind: "note", tags: [], signal: 1, reason: "classification_disabled" };
     }
-    const source = stringMetadata(req.metadata, "source");
     const rendered = typeof req.summary.rendered === "string" ? req.summary.rendered : "";
     const terms = new Set([...contentTerms(memory), ...contentTerms(rendered)]);
     const score = (words: Set<string>) => [...terms].filter((t) => words.has(t)).length;
@@ -189,22 +179,17 @@ export class MemoryRuntimeDriver implements MemoryDriver {
     const dec = score(DECISION_TERMS);
     const fact = score(FACT_TERMS);
     const signal = terms.size + pref * 3 + proc * 2 + dec * 2 + fact;
-    const kind: MemoryKind = source === "provider_reply" && signal < 8 ? "interaction"
-      : pref > 0 ? "preference"
+    const kind: MemoryKind = pref > 0 ? "preference"
       : proc > 0 ? "procedure"
       : dec > 0 ? "decision"
       : fact > 0 ? "fact"
-      : source === "provider_reply" ? "interaction"
       : "note";
     const tags = [...terms]
       .filter((t) => !STOP_WORDS.has(t))
       .slice(0, 16);
-    return { kind, tags, signal, reason: classificationReason(kind, source, signal) };
+    return { kind, tags, signal, reason: classificationReason(kind, signal) };
   }
 
-  private autoMemoryEnabled(): boolean {
-    return this.cfg.auto_memory !== false;
-  }
 
   private dedupeEnabled(): boolean {
     return this.cfg.dedupe !== false;
@@ -223,7 +208,6 @@ export class MemoryRuntimeDriver implements MemoryDriver {
   private policy(reflection?: string): Record<string, unknown> {
     return {
       memory_runtime: "agape-default",
-      auto_memory: this.autoMemoryEnabled(),
       classify: this.cfg.classify !== false,
       dedupe: this.dedupeEnabled(),
       dedupe_threshold: clampNumber(this.cfg.dedupe_threshold, 0.5, 1, 0.9),
@@ -242,15 +226,6 @@ export class MemoryRuntimeDriver implements MemoryDriver {
 function episodeText(req: MemoryWriteRequest): string | undefined {
   const rendered = compactText(render(req.value));
   if (!rendered) return undefined;
-  const act =
-    req.episode?.act ??
-    (stringMetadata(req.metadata, "source") === "provider_reply" ? "provider_reply" : "store");
-  if (act === "provider_reply") {
-    const prompt = req.episode?.prompt;
-    return prompt
-      ? `I asked: ${prompt}\nThe reply was: ${rendered}`
-      : `A reply I received: ${rendered}`;
-  }
   return `Something I chose to remember (memory '${req.scope.mem}'): ${rendered}`;
 }
 
@@ -264,10 +239,6 @@ export function renderStoreRecollection(mem: string, value: Value): string {
   return `I stored ${valueMemoryLabel(value)} in private memory '${mem}'. ${lessonFromValue(value)}`;
 }
 
-export function renderReplyRecollection(prompt: string, value: Value): string {
-  const asked = compactMemoryText(prompt);
-  return `I was asked ${JSON.stringify(asked)}. I received ${valueMemoryLabel(value)} from the provider. ${lessonFromValue(value)}`;
-}
 
 export function compactMemoryText(text: string, max = 240): string {
   const compact = text.replace(/\s+/g, " ").trim();
@@ -413,16 +384,8 @@ function queryKindProfile(query: string): MemoryKind | undefined {
   return undefined;
 }
 
-function worthRemembering(memory: string, classification: ClassifiedMemory): boolean {
-  if (!memory || memory.length < 16) return false;
-  if (classification.kind === "preference" || classification.kind === "procedure") return true;
-  if (classification.kind === "fact" || classification.kind === "decision") return classification.signal >= 7;
-  if (classification.kind === "interaction") return classification.signal >= 12;
-  return classification.signal >= 8;
-}
 
-function classificationReason(kind: MemoryKind, source: string | undefined, signal: number): string {
-  if (kind === "interaction" && source === "provider_reply") return `provider_reply_signal_${signal}`;
+function classificationReason(kind: MemoryKind, signal: number): string {
   return `${kind}_signal_${signal}`;
 }
 
@@ -457,25 +420,6 @@ function enrichPolicy(receipt: MemoryReceipt, policy: Record<string, unknown>): 
   };
 }
 
-function skippedReceipt(
-  status: string,
-  reason: string,
-  classification: ClassifiedMemory,
-  policy: Record<string, unknown>,
-  memory?: string,
-): MemoryReceipt {
-  return {
-    status,
-    ...(memory === undefined ? {} : { memory }),
-    effects: zeroEffects(),
-    refs: { skipped_reason: reason },
-    policy: {
-      ...policy,
-      stored: false,
-      classification,
-    },
-  };
-}
 
 function dedupedReceipt(
   duplicate: MemoryStoredCell,

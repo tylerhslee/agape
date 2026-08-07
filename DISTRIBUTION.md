@@ -77,7 +77,6 @@ backend = "local-keyring"
 [memory]
 driver = "markdown"
 path = ".agape/memory"
-auto_memory = true
 
 [tools]
 payments = { mcp = "https://payments.internal/mcp" }

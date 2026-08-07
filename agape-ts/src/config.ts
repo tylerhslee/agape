@@ -7,6 +7,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { MockProvider, type CognitionContext, type Provider, type StructuredSchema, type Variant } from "./runtime.js";
+import { configError } from "./errors.js";
 import { LocalMemoryDriver, type MemoryDriver } from "./memory.js";
 import { MarkdownMemoryDriver } from "./memory_markdown.js";
 import { MemoryRuntimeDriver } from "./memory_runtime.js";
@@ -45,7 +46,6 @@ export interface MemoryConfig {
   index_lines?: number;
   index_bytes?: number;
   archive_on_forget?: boolean;
-  auto_memory?: boolean;
   classify?: boolean;
   dedupe?: boolean;
   dedupe_threshold?: number;
@@ -158,8 +158,11 @@ export function createProvider(m: Manifest, options: ProviderFactoryOptions = {}
 }
 
 export function createMemoryDriver(m: Manifest, deps: { cwd?: string; provider?: Provider } = {}): MemoryDriver {
-  const cfg = m.memory ?? {};
-  const driver = typeof cfg.driver === "string" ? cfg.driver : "markdown";
+  const cfg = m.memory;
+  if (!cfg || typeof cfg.driver !== "string" || cfg.driver.trim().length === 0) {
+    throw configError("runtime memory requires a configured [memory] driver (or an injected host MemoryDriver)");
+  }
+  const driver = cfg.driver.trim();
   let substrate: MemoryDriver;
   switch (driver) {
     case "markdown":
@@ -170,7 +173,7 @@ export function createMemoryDriver(m: Manifest, deps: { cwd?: string; provider?:
       substrate = new LocalMemoryDriver();
       break;
     default:
-      throw new Error(`unknown memory driver '${driver}' (manifest [memory] driver=...)`);
+      throw configError(`unknown memory driver '${driver}' (manifest [memory] driver=...)`);
   }
   // The provider handle enables [memory] reflect = true; without it the
   // memory runtime is purely lexical (judgment/classify/dedupe/rerank).

@@ -1208,7 +1208,7 @@ id = "mem_store_internalizes_ok"
 section = "10_memory"
 path = "tests/10_memory/mem_store_internalizes_ok.ag"
 expect = "accept"
-spec = "§10 (the memory write seam mem <- value is the explicit emphasis form of internalization, on top of the mandatory memory envelope that internalizes every reaction, §16.7)"
+spec = "§10, §16.7 (mem <- value explicitly internalizes a value into the selected private-memory region)"
 
 [[test]]
 id = "mem_store_records_internalized"
@@ -1572,15 +1572,6 @@ contains = ["Decided"]
 spec = "§13, §15 (`decide c by R` records a Decided ledger event while remaining pure/no dependency reach)"
 
 [[test]]
-id = "cfg_internalize_is_mandatory"
-section = "16_config"
-path = "tests/16_config/cfg_internalize_is_mandatory.ag"
-expect = "accept"
-contains = ["Internalized"]
-spec = "§16.7 (the mandatory memory envelope internalizes every reaction as first-person memory content; consult+internalize is unconditional — there is no opt-in/opt-out config knob, and configuration tunes budget/fidelity, not whether memory is part of the turn)"
-note = "a received reply is internalized into private memory with no config flag; the former `internalize_on_receive` opt-in was removed when the envelope became mandatory, and the Internalized event is the episode rather than a payload `kind`"
-
-[[test]]
 id = "cfg_manifest_decision_policy_reject"
 section = "16_config"
 path = "tests/16_config/cfg_manifest_decision_policy_reject.ag"
@@ -1604,6 +1595,15 @@ path = "tests/16_config/cfg_missing_prompt_binding_reject.ag"
 expect = "reject"
 error = "ConfigError"
 spec = "§17.1 (each prompt declaration resolves to a manifest binding; an unbound declared dependency is ALWAYS a ConfigError, not a late runtime lookup — no opt-in flag)"
+
+[[test]]
+id = "cfg_reply_memory_is_explicit"
+section = "16_config"
+path = "tests/16_config/cfg_reply_memory_is_explicit.ag"
+expect = "accept"
+absent = ["Internalized"]
+spec = "§10, §16.7 (memory mutation is a source-authored operation on a declared mem region)"
+note = "a provider reply resolves the typed send but does not mutate private memory without an explicit mem store"
 
 [[test]]
 id = "cfg_require_fallback_temperature_reject"

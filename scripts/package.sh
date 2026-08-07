@@ -78,7 +78,6 @@ model = "mock-deterministic"
 # Project-local, editable markdown memory. The built-in runtime adds classification,
 # dedupe/consolidation, automatic memory judgment, and recall ranking.
 driver = "markdown"
-auto_memory = true
 classify = true
 dedupe = true
 dedupe_threshold = 0.9

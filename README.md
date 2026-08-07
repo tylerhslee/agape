@@ -202,7 +202,6 @@ driver = "mock"
 # Markdown is the editable substrate; the default Agape memory runtime wraps it
 # with classification, dedupe/consolidation, auto-memory judgment, and recall ranking.
 driver = "markdown"
-auto_memory = true
 classify = true
 dedupe = true
 dedupe_threshold = 0.9

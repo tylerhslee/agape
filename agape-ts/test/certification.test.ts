@@ -40,7 +40,7 @@ describe("Agape core certification suite", () => {
     });
   });
 
-  it("certifies default markdown memory is project-rooted and runtime-wrapped", async () => {
+  it("certifies configured markdown memory is project-rooted and runtime-wrapped", async () => {
     const dir = await mkdtemp(join(tmpdir(), "agape-cert-memory-"));
     try {
       await withAgapeRun(`
@@ -51,7 +51,10 @@ describe("Agape core certification suite", () => {
         }
         spawn A a;
         awake a;
-      `, { memoryRoot: dir }, (run) => {
+      `, {
+        memoryRoot: dir,
+        manifest: { provider: { backend: "mock" }, memory: { driver: "markdown" } },
+      }, (run) => {
         const internalized = requireEvent(run, "Internalized");
         const payload = assertPayloadObject(internalized);
         expect(payload.policy).toMatchObject({ driver: "markdown", memory_runtime: "agape-default" });

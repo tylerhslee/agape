@@ -5,6 +5,7 @@ import { parse } from "./parser.js";
 import { run as runtimeRun, type RunResult } from "./interp.js";
 import type { LedgerEvent } from "./runtime.js";
 
+import { LocalMemoryDriver } from "./memory.js";
 export type AgapeRunOptions = NonNullable<Parameters<typeof runtimeRun>[1]>;
 export type AgapeTestRun = RunResult & {
   memoryRoot?: string;
@@ -15,7 +16,12 @@ export async function runAgape(source: string, opts: AgapeRunOptions = {}): Prom
   let ownedMemoryRoot: string | undefined;
   const memoryRoot = opts.memoryRoot ?? await mkdtemp(join(tmpdir(), "agape-test-memory-"));
   if (!opts.memoryRoot) ownedMemoryRoot = memoryRoot;
-  const result = await runtimeRun(parse(source), { memoryRoot, ...opts });
+  const useConfiguredDriver = opts.manifest?.memory !== undefined;
+  const result = await runtimeRun(parse(source), {
+    ...opts,
+    memoryRoot,
+    ...(!opts.memory && !useConfiguredDriver ? { memory: new LocalMemoryDriver() } : {}),
+  });
   return {
     ...result,
     memoryRoot,

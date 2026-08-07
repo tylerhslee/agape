@@ -122,10 +122,71 @@ describe("provider-neutral cognition context", () => {
     expect(consultation).toBeTruthy();
     expect(JSON.stringify(consultation?.payload)).not.toContain(fact);
     const resolved = result.ledger.events.find((event) => event.etype === "Resolved");
-    expect(resolved?.payload).toMatchObject({
-      evidence_id: expect.any(String),
-      evidence_hash: expect.any(String),
-      evidence_ref: expect.stringMatching(/^protected:judgment:/),
+    expect(resolved?.payload).toMatchObject({ kind: "credence", gate_scores: expect.any(Object) });
+    expect(resolved?.payload).not.toHaveProperty("evidence_ref");
+    expect(JSON.stringify(resolved?.payload)).not.toContain(fact);
+  });
+  it("preserves typed outcome labels and provenance for recalled counterexamples", async () => {
+    const provider = new ContextProvider();
+    const memory = new LocalMemoryDriver();
+    const scope = { project: "demo", agent: "reviewer", mem: "examples" };
+    await memory.declare(scope);
+    await memory.internalize({
+      scope,
+      value: {
+        kind: "struct",
+        typeName: "DraftMemory",
+        fields: new Map([
+          ["outcome", { kind: "enumval", enumName: "Outcome", variant: "Rejected", trust: "settled" }],
+          ["draft", { kind: "text", v: "counterexample draft", trust: "raw" }],
+        ]),
+        trust: "raw",
+      },
+      memory: "counterexample draft",
+      summary: {
+        kind: "struct",
+        type: "DraftMemory",
+        trust: "raw",
+        fields: {
+          outcome: { kind: "enumval", enum: "Outcome", variant: "Rejected", trust: "settled" },
+          draft: { kind: "text", value: "counterexample draft", trust: "raw" },
+        },
+      },
+      metadata: {
+        provenance: { attester: "review-ledger", prompt_name: "review-result" },
+      },
+    });
+
+    await run(parse(`
+      enum Usefulness { Useful, NotUseful }
+      agent Reviewer {
+        mem examples;
+        on awake {
+          Credence<Usefulness> result = examples -> "find prior rejected drafts";
+        }
+      }
+      spawn Reviewer reviewer;
+      awake reviewer;
+    `), {
+      provider,
+      memory,
+      manifest: { provider: { backend: "mock" }, project: { name: "demo" } },
+    });
+
+    const context = provider.judgments[0]!.context!;
+    const recalled = context.data.find((segment) => segment.kind === "recalled_memory");
+    expect(recalled).toMatchObject({
+      hits: [expect.objectContaining({
+        value: expect.objectContaining({
+          kind: "struct",
+          type: "DraftMemory",
+          fields: expect.objectContaining({
+            outcome: expect.objectContaining({ variant: "Rejected" }),
+          }),
+        }),
+        provenance: { attester: "review-ledger", prompt_name: "review-result" },
+      })],
     });
   });
+
 });

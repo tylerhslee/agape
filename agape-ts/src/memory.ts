@@ -17,19 +17,17 @@ export interface MemoryStoredCell {
   memory: string;
   score?: number;
   value?: Value;
+  typed?: Record<string, unknown>;
   metadata?: Record<string, unknown>;
 }
 
 /**
  * Structured context for the episode behind a write: what act produced the
- * value (an explicit store into a mem region, or a provider reply being
- * auto-internalized) and, for replies, the asking prompt. The memory runtime
- * renders recollection text from this — callers pass the episode, not prose.
+ * value. Runtime writes are explicit source operations; cognition replies do
+ * not silently become memory.
  */
 export interface MemoryEpisode {
-  act: "store" | "provider_reply";
-  /** The asking prompt behind a provider reply (compacted). */
-  prompt?: string;
+  act: "store";
 }
 
 /**
@@ -95,7 +93,8 @@ export class LocalMemoryDriver implements MemoryDriver {
   private regions = new Map<string, { writes: MemoryStoredCell[]; forgotten: boolean }>();
 
   async declare(scope: MemoryScope): Promise<void> {
-    this.regions.set(memoryScopeKey(scope), { writes: [], forgotten: false });
+    const key = memoryScopeKey(scope);
+    if (!this.regions.has(key)) this.regions.set(key, { writes: [], forgotten: false });
   }
 
   async internalize(req: MemoryWriteRequest): Promise<MemoryReceipt> {
@@ -106,8 +105,27 @@ export class LocalMemoryDriver implements MemoryDriver {
       memory: req.memory,
       value: req.value,
       metadata: req.metadata,
+      typed: req.summary,
     });
-    return {};
+    const id = region.writes[region.writes.length - 1]!.id!;
+    return {
+      status: "APPENDED",
+      ids: [id],
+      effects: {
+        cells: { upserted: 1, tombstoned: 0, deleted: 0 },
+        facts: { upserted: 0, tombstoned: 0, deleted: 0 },
+        graph: {
+          nodes_upserted: 0,
+          edges_upserted: 0,
+          nodes_tombstoned: 0,
+          edges_tombstoned: 0,
+          nodes_deleted: 0,
+          edges_deleted: 0,
+        },
+        vectors: { chunks_upserted: 0, chunks_deleted: 0, embeddings_deleted: 0 },
+        blobs: { archived: 0, redacted: 0, deleted: 0 },
+      },
+    };
   }
 
   async consult(req: MemoryConsultRequest): Promise<MemoryConsultResult> {
@@ -129,17 +147,18 @@ export class LocalMemoryDriver implements MemoryDriver {
     region.forgotten = true;
     return {
       effects: {
-        facts: { upserted: 0, tombstoned: count, deleted: 0 },
+        cells: { upserted: 0, tombstoned: count, deleted: 0 },
+        facts: { upserted: 0, tombstoned: 0, deleted: 0 },
         graph: {
           nodes_upserted: 0,
           edges_upserted: 0,
-          nodes_tombstoned: count,
+          nodes_tombstoned: 0,
           edges_tombstoned: 0,
           nodes_deleted: 0,
           edges_deleted: 0,
         },
-        vectors: { chunks_upserted: 0, chunks_deleted: count, embeddings_deleted: count },
-        blobs: { archived: count, redacted: 0, deleted: 0 },
+        vectors: { chunks_upserted: 0, chunks_deleted: 0, embeddings_deleted: 0 },
+        blobs: { archived: 0, redacted: 0, deleted: 0 },
       },
     };
   }

@@ -90,6 +90,8 @@ export interface CognitionMemoryHit {
   content_hash: string;
   score?: number;
   origin_ref: string;
+  value?: Record<string, unknown>;
+  provenance?: { attester: string; prompt_name: string };
 }
 
 export type CognitionDataSegment =
