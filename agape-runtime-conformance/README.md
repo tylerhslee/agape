@@ -1,84 +1,66 @@
 # Agape Runtime Conformance
 
 This package is the transport-neutral black-box suite for the Agape runtime
-contract in [`../SPEC.md`](../SPEC.md), especially sections 10, 16, 16.5, 16.7,
-17.5, and 17.7. It does not import or assume the TypeScript, Rust, Studio, or
-any other runtime implementation.
+contract in [`../SPEC.md`](../SPEC.md), especially sections 10, 16.1a, 16.5,
+16.7, 17.5, and 17.7. It does not import a runtime implementation.
 
 ## Running the suite
 
-An implementation exports `default`, `adapter`, or `createAdapter()` and
-implements `RuntimeConformanceAdapter` from `src/adapter.ts`:
-
 ```sh
 AGAPE_RUNTIME_ADAPTER=/absolute/path/to/adapter.js npm test
-```
-
-With no `AGAPE_RUNTIME_ADAPTER`, every test skips cleanly. The repository's
-TypeScript adapter can be exercised with:
-
-```sh
 npm run test:agape-ts
 ```
 
-The qualified named-memory cases are TDD oracles and are expected to remain red
-until the TypeScript runtime implements the current SPEC. Adapterless execution
-must remain clean.
+With no `AGAPE_RUNTIME_ADAPTER`, all tests skip cleanly. The qualified
+named-memory cases are TDD oracles and remain red until the runtime implements
+the current SPEC.
 
-## Core named-memory test-mode contract
+## Named-memory test-mode contract
 
-`namedMemoryScenario` runs declared-memory operations against an adapter-owned
-ephemeral local or Markdown driver. Its inputs are semantic rather than
-implementation-specific:
+The adapter exposes four lifecycle operations:
 
-- one structural descriptor (`type`, `modality`, authenticated `scope`,
-  and `retention`);
-- immutable host identity contexts;
-- explicit store, recall, forget, close, and authenticated-resume steps;
-- optional deterministic retrieval candidates for score/id ordering; and
-- optional loss of one finalize acknowledgement after the ledger commit.
+- `openNamedMemorySession` constructs a runtime with one immutable host identity
+  context, an adapter-neutral resolved program/schema, and concrete spawned agent
+  instances.
+- `invokeNamedMemory` invokes explicit store/recall/forget operations for one
+  stable agent instance. It never accepts an identity override.
+- `closeNamedMemorySession` destroys that runtime and returns its authenticated
+  snapshot, recording, exact normalized invocation results, and mutation
+  acknowledgements.
+- `resumeNamedMemorySession` creates a fresh runtime instance from the
+  host-returned snapshot and revalidates program, manifest, ledger, project, and
+  lineage bindings before any driver read.
 
-The result exposes exact typed recall envelopes, public receipts, snapshots, and
-one ordered semantic trace of driver and ledger boundaries. The trace is not a
-storage API. It exists so conformance can prove prepare -> ledger decision ->
-finalize, reconciliation before later access, and zero driver mutation during
-recorded replay.
+Driver namespaces let independent runtime sessions exercise one substrate while
+the normative key still includes the stable agent instance, full authenticated
+scope tuple, retention tier, handle, and generation.
 
-`oracleStats.memoryDriverCalls` and
-`oracleStats.memoryMutationCalls` are required for adapters implementing the
-named-memory profile. They make the SPEC 16.5 no-live-driver replay rule
-observable without exposing private durable contents.
+Schemas are structural (`scalar`, `enum`, `array`, or recursively resolved
+`struct`), not a caller-supplied type label. Recall envelopes carry the exact
+decoded value, schema, schema/descriptor hashes, cell id, score, origin,
+generation, and raw trust. Public receipts must contain protected hashes and must
+not expose memory plaintext or raw project/user subjects.
 
-## Explicit-only semantics
+The ordered trace uses normalized semantic phases:
+`prepare -> ledger-commit -> finalize`, followed by `reconcile` when needed.
+These are observable transaction boundaries, not mandatory physical driver method
+names; an atomic driver wrapped by a runtime-owned transaction adapter is valid.
 
-Agent turns do not consult, write, or forget memory merely because they occur.
-A `MemoryConsulted` receipt is required only for an explicit source recall or
-explicit host `memory.context` request. Named memory is always configured, and
-every operation remains bound to the owning concrete agent instance, handle,
-complete authenticated scope tuple, retention tier, and current generation.
+Recorded replay exposes the exact journaled named-memory invocation outputs and
+mutation acknowledgements. Tests compare them structurally to the live run and
+also require zero added provider calls, memory-driver calls, or live mutation.
 
-The core oracle covers:
+## Explicit-only coverage
 
-- exact `TYPE[]` misses and provider-free recall;
-- equal-value episodic writes with distinct evaluation origins;
-- tuple-local forget, repeated forget, and next-generation reopen;
-- project/user isolation and missing-user crash with no driver access;
-- descending score plus bytewise cell-id ordering before `top_k`;
-- local-driver durable preflight rejection;
-- Markdown durable close and authenticated resume;
-- wrong-lineage resume rejection;
-- lost-finalize-ack reconciliation by operation id; and
-- replay with identical ledger head, zero provider/memory-driver calls, and no
-  live durable mutation.
+Agent turns do not consult memory merely because they occur. The core oracle
+covers exact typed misses, equal-value episodic origins, two-instance and
+project/user tuple isolation, tuple-local forget generations, missing-user crash
+with no memory seam access, score/id ordering before `top_k`, local durable
+preflight, Markdown close/resume with stable instance restoration, precise
+lineage-mismatch rejection, public-receipt privacy, lost-ack reconciliation, and
+seam-free replay.
 
-## Other adapter surfaces
-
-The suite also covers scheduler lifecycle, ledger traces and canonical hashing,
-task dispatch, attestation, fault recovery, replay, stochastic idempotency,
-projection diagnostics, and advertised calibration evidence.
-
-The repository currently carries explicit host artifact/decomposition and
-implementation-learning diagnostics for the TypeScript adapter. Those calls are
-advertised extension operations: they are not automatic properties of an Agape
-agent, and they do not permit memory to modify source-defined instructions,
-grants, dependencies, or authority.
+The suite also carries scheduler, ledger, delegation, attestation, fault,
+calibration, and explicitly advertised extension diagnostics. Extension learning
+helpers do not define an Agape agent and cannot modify source-defined behavior or
+authority.

@@ -25,7 +25,6 @@ suite("SPEC 16.7 memory envelope", () => {
     });
 
     expect(turn.ok).toBe(true);
-    expect(turn.memoryPacket.consulted).toBe(false);
     const events = turn.events.length
       ? turn.events
       : await adapter!.ledgerRead({ agent: a.instanceId });
