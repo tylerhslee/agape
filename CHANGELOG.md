@@ -6,6 +6,17 @@ All notable changes to Agape are recorded here. The format follows
 suite, and the studio move in lockstep — a release is the whole bundle at one
 version.
 
+## [Unreleased]
+
+### Changed
+
+- **Autonomous agents are defined as foundational language semantics.** The
+  specification now defines durable agent-instance identity, serialized reaction
+  memory envelopes, protected judgment evidence, governed behavior evolution,
+  and verification versus forensic replay. Studio and runtime implementations
+  must consume this shared contract rather than introducing product-specific
+  agent behavior.
+
 ## [1.0.0-beta.2026.8.6.0] - 2026-08-06
 
 This beta adds the compiler-grounded Agentic Flow builder to Agape Studio and

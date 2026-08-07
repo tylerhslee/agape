@@ -591,15 +591,19 @@ agent NAME ( [TYPE PARAM] , ... ) [grants { CAP , ... }] {
 - `self` is the agent's reference to itself.
 - `extend PARENT(args);` (first statement) is composition/inheritance.
 - `grants { ... }` (optional) declares the agent's authority (§13).
+- A spawn expression yields a typed reference to the new instance. An authored name is a
+  human-readable alias, not the durable identity or isolation key (§16.1a).
 
 ### Lifecycle
 
 Each transition is a ledger event. Construction is at `spawn`; `awake` and `sleep` toggle the
 mailbox:
 
-- `**spawn TYPE name(args);**` — allocate and construct. Give the instance an address, bind the
-constructor parameters to `args`, run the constructor body, and hoist its subscriptions. It
-reaches no cognition and opens no mailbox yet. Appends `Spawned(name)`.
+- `**spawn TYPE name(args);**` — statement sugar for `TYPE name = spawn TYPE(args);`: allocate
+  exactly one fresh instance, bind the constructor arguments, run the constructor, bind the authored
+  alias, and hoist subscriptions. `spawn TYPE(args)` is also an expression yielding the typed instance
+  reference. Construction reaches no cognition and opens no mailbox. Both forms append the same
+  canonical `Spawned` row and differ only in whether source supplies an alias.
 - `**awake name;**` — announce: open the mailbox, append `AgentAwake(name)`, and run the
 `on awake` hook. It takes no arguments; the constructor already ran at `spawn`. A re-`awake`
 after `sleep` resumes the agent — and loses nothing, because the agent's state is a function of
@@ -607,6 +611,13 @@ the ledger, not fragile in-memory state.
 - `**sleep name;**` — close the mailbox; run the `on sleep` hook; a slept agent with no
 live references is collected. A collected agent is re-entered by a fresh `spawn`; a
 still-referenced slept agent is re-entered by `awake name;`.
+The canonical `Spawned` payload is
+`{ runtime_id, agent_template, agent_instance_id, agent_generation:0, parent_instance_id|null,
+spawn_site_id, reaction_stimulus_tick, logical_invocation_path, per_site_issue_ordinal,
+authored_alias|null, behavior_version, activation_epoch }`. Each field is hashed. The instance id is
+the §16.1a hash of the identity inputs in that payload; implementations may not substitute an alias,
+path, allocation counter, wall time, or completion order.
+
 - **Crash (involuntary).** A fault within a single handler invocation — an unrecoverable
 seam failure (e.g. the provider returns nothing) or an uncaught error — does **not** end
 the agent. The faulting invocation is abandoned, `AgentCrashed(name)` is appended, the
@@ -647,11 +658,19 @@ provider sees behind every `<-`. Its argument is a string literal; a non-string 
 `instruction` inside an agent body is **agent-scoped** and composes **after** the global block
 (fixed order, for determinism). `extend` inherits the parent's instructions and appends the
 child's (append-only — a child cannot silently weaken a parent's guardrails).
-- **Settled by source.** An instruction is procedural behavior, and procedural behavior lives
-in **source, not mutable memory** — it is `settled` by origin and injection-proof: no recalled
-fact or injected memory can rewrite it, because the system prompt is not in memory (contrast a
-runtime jotted note, which lands in tainted memory, §10). To change an agent's behavior you
-**ship a new version**; runtime self-modification of instructions is deliberately absent.
+- **Settled by an immutable behavior artifact.** An instruction is procedural behavior and is
+  never mutable memory. The active content-addressed `BehaviorArtifact` fixes the source instruction
+  blocks, grants, dependencies, schemas, and action/event declarations. Recall cannot rewrite any of
+  them. Runtime behavior changes only through the governed activation/rollback protocol (§16.7d),
+  never by editing the active artifact in place.
+
+**One instruction list; typed reaction data.** Every provider call receives exactly one instruction
+list, assembled once in this order: runtime safety instructions; the active artifact's global source
+instructions; inherited agent instructions in parent-to-child order. The task objective/acceptance,
+current stimulus, and recalled memory packet follow as typed data segments, not instruction entries,
+even when their text is imperative. Task authority is the nonforgeable endorsed task value and scope
+(§6c, §13), never prose. A connector may serialize these roles to its wire format but may not merge
+data into the instruction list or assemble a second hidden list.
 
 ### Lifecycle hooks vs `when`
 
@@ -1234,6 +1253,15 @@ enum Basis { Threshold, Conformal, Calibrated, Principal } // how a Decision was
 type Principal                                             // an accountable identity — a declared dependency (§3)
 type TaskSpec                                              // a delegated-task payload built by `task { … }` (§6c); fields: .objective (text), .acceptance (text); trust = join of its fields
 type Task<T>                                               // a settled background-task handle (§6c): correlates `when (… about h)` and `cancel h`
+type JudgmentEvidence                                      // exact bounded provider evidence and score derivation (§16.8)
+type BehaviorArtifact                                      // immutable content-addressed behavior bundle (§16.7d)
+type BehaviorProposal                                      // inert candidate and provenance bindings (§16.7d)
+type BehaviorEvaluation                                    // candidate/policy-bound isolated evaluation (§16.7d)
+type BehaviorActivation                                    // exact activation request (§16.7d)
+type BehaviorRollback                                      // exact rollback request (§16.7d)
+enum BehaviorVerdict { Approve, Reject }                     // ruling used to endorse an exact behavior request
+type ProtectedDisclosureRequest                              // exact protected resolve/inspect/export subject (§16.8)
+enum DisclosureVerdict { Approve, Reject }                   // principal ruling over protected disclosure
 // Rule is the gate's PARAMETER, not a type: `confidence θ [margin δ] [floor m]` | `conformal [α] [readiness N] [floor m]`  (§3, §13)
 // abstained — the prelude sentinel value of Decision.committed when the gate did not commit (§3, §13)
 
@@ -1244,16 +1272,23 @@ type Task<T>                                               // a settled backgrou
 //   Endorsed(subj)         a committed Decision was applied to an exact subject value
 //   Contradiction(subj)    emitted when a Credence<Entailment> commits to Contradicts
 //   PendingPrincipalDecision(subj)  a principal-prefixed `p decide c by r` deferred: awaiting an attested ruling (correlation id = its tick, §13)
-//   PrincipalDecision(subj)    a principal-prefixed `p decide c by r` that escalated and got an attested, attester-verified ruling
+//   PrincipalDecision(subj)    a returned principal ruling with recorded verification status; governed proof requires verified (§13)
 //   FailedPrincipalDecision(subj)  the principal declined, was unavailable, or the attester did not verify as the principal (decision stays abstained)
 //   MarginFloorViolation(subj)  a committed decision's margin was below the rule floor at a sink (§13)
 //   QueryResult(subj)      the event a query STATEMENT lands
-//   MemoryConsulted(subj)  the memory-envelope consult trace (counts/query meta, §16.7)
-//   Internalized(subj)     a memory write (incidental trace, §15.5.1)
+//   MemoryConsulted(subj)  automatic-reaction or explicit-recall consult; public ids/hashes/scores only (§16.7)
+//   MemoryWriteEvaluated(subj)  an automatic closure or explicit-store disposition (§16.7)
+//   MemoryWriteFailed(subj)  a failed explicit or automatic memory transaction (§16.7)
+//   Internalized(subj)     a successfully committed memory write (§10, §16.7)
+//   RuntimeIdentityCreated / RuntimeForked / RuntimeImported / RuntimeMigrated  durable identity lifecycle (§16.1a)
+//   ExternalMemoryObserved(subj)  out-of-band memory bytes entering as external_unscreened (§16.7)
+//   BehaviorProposed / BehaviorEvaluated / BehaviorActivated / BehaviorRolledBack  governed behavior lifecycle (§16.7d)
+//   BehaviorTransitionRejected(subj)  fail-closed behavior transition rejection (§16.7d)
 //   ArtifactObserved(subj) a knowledge-artifact ingest opening (kind/uri/hash, §16.7b)
 //   Forgotten(subj)        a `forget` memory tombstone (§10)
 //   ToolStarted/ToolResolved   the wired-invocation replay-journal pair (§6b)
-//   Spawned / AgentAwake / AgentAsleep / AgentCrashed   lifecycle (§5)
+//   Spawned(subj) canonical identity appended before constructor effects (§5, §16.1a)
+//   AgentAwake / AgentAsleep / AgentCrashed   lifecycle; AgentCrashed includes instance_id, phase, stimulus/corr, reason (§5)
 //   Sent / Delivered / Resolved                message lifecycle (§6); a send's provider reply is its Resolved
 //   Expired(corr) / DeliveryRefused(corr)      message expiry / refused-late-delivery (§6)
 //   PromptOpened(name) / Prompt(name)          external input sensor (§5b)
@@ -1266,7 +1301,7 @@ type Task<T>                                               // a settled backgrou
 ```
 
 **Event-type hierarchy.** `Error` is the root; `Contradiction`, `TypeMismatch`,
-`FailedPrincipalDecision`, `MarginFloorViolation`, `TaskScopeViolation`, `RetryExhausted`, and
+`FailedPrincipalDecision`, `MemoryWriteFailed`, `BehaviorTransitionRejected`, `MarginFloorViolation`, `TaskScopeViolation`, `RetryExhausted`, and
 `AgentCrashed` extend it. `when` matches by
 subtype, so `when (Error e)` catches a `Contradiction`; a contradiction is an `Error`
 subtype, and code that wants only faults matches the specific types. `Expired` and a lost
@@ -1298,15 +1333,14 @@ Each agent instance has its own **private memory** — subjective, agentic belie
 global ledger. It is per-instance: two instances of the same agent template have separate memory and
 share no subjective state (§16.7).
 
-### The substrate — one region, three views
+### The substrate — canonical cells and materialized views
 
-A memory region maintains up to three live materialized views of what it holds: a **fact table**
-(exact, selective facts), a **relationship graph** (SPO triples over a typed predicate set), and a
-**vector store** (chunks/embeddings for similarity). These are not three stores the program chooses
-between; they are three views of one region. Internalization decomposes each stored value across
-them and mutates the live views incrementally. A runtime may compact or fully re-index a region in
-the background, but a program-level `mem <- value` is not required to rebuild every view from
-scratch.
+A memory region has canonical cells and may materialize a **fact table**, a **relationship graph**
+(SPO triples), logical **semantic chunks**, and a **vector index** (embeddings). These are views of one
+region, not stores selected by source. Logical chunks do not imply embeddings: a vanilla or
+budget-limited runtime may retain chunks while reporting zero vector effects. Every receipt reports
+actual before/after deltas. It is nonconformant to claim any fact, triple, chunk, embedding, blob,
+tombstone, deletion, or archive that cannot be resolved or observed in the named substrate state.
 
 The ledger records the recipe/provenance of each mutation, while private memory keeps the current
 usable state. Archival blob storage is runtime-configured and durable: `refs` in an `Internalized`
@@ -1330,7 +1364,7 @@ forget notes;                                    // audit-preserving tombstone
   the region's live views. The same `<-` arrow as a send, disambiguated by the left-hand type — an
   *agent* on the left thinks (provider), a *mem* on the left stores. If the expression is bound, it
   returns a `LedgerEntry<Internalized>` receipt.
-- `**NAME -> "query"**` **recalls**: a cognition-mediated retrieval that draws across the three views
+- `**NAME -> "query"**` **recalls**: a cognition-mediated retrieval that draws across canonical cells and all available materialized views
   and fuses them. `->` requires a `mem` on the left; `->` on any non-`mem` left-hand side (e.g.
   `self -> "x"`) is a **`TypeError`**.
 - `**forget NAME;**` removes the region's active private-memory data by the runtime's cascade policy
@@ -1339,38 +1373,37 @@ forget notes;                                    // audit-preserving tombstone
   `Forgotten` payload must say `tombstoned`, not `deleted`. `redact` is a separate operation, not the
   default `forget`.
 
-An `Internalized` payload records what changed using exact modality terms:
+An `Internalized` payload contains no plaintext memory value. It records the transaction and
+actual modality deltas using this canonical shape (nullable fields are present as `null`):
 
 ```json
 {
-  "value": { "kind": "text", "rendered": "info", "value": "info" },
+  "runtime_id": "...", "agent_instance_id": "...", "agent_generation": 0,
+  "memory_region": "notes", "write_source": "explicit_store",
+  "reaction_event": 41, "evaluation_event": null, "explicit_evaluation_event": 47,
+  "value_kind": "text", "value_hash": "sha256:...", "value_ref": "protected:sha256:...",
+  "behavior_version": "sha256:...", "activation_epoch": 2, "basis_head": "sha256:...",
   "effects": {
-    "facts": { "upserted": 1, "tombstoned": 0, "deleted": 0 },
-    "graph": {
-      "nodes_upserted": 1,
-      "edges_upserted": 0,
-      "nodes_tombstoned": 0,
-      "edges_tombstoned": 0,
-      "nodes_deleted": 0,
-      "edges_deleted": 0
-    },
-    "vectors": { "chunks_upserted": 1, "chunks_deleted": 0, "embeddings_deleted": 0 },
+    "facts": { "upserted": 0, "tombstoned": 0, "deleted": 0 },
+    "graph": { "nodes_upserted": 0, "edges_upserted": 0, "nodes_tombstoned": 0,
+               "edges_tombstoned": 0, "nodes_deleted": 0, "edges_deleted": 0 },
+    "semantics": { "chunks_upserted": 1, "chunks_deleted": 0 },
+    "vectors": { "embeddings_upserted": 0, "embeddings_deleted": 0 },
     "blobs": { "archived": 1, "redacted": 0, "deleted": 0 }
   },
-  "refs": {
-    "input": "blob:sha256:...",
-    "facts_delta": "blob:sha256:...",
-    "graph_delta": "blob:sha256:...",
-    "vector_delta": "blob:sha256:..."
-  },
-  "policy": {
-    "indexing": "incremental",
-    "background_reindex": "runtime-managed",
-    "graph_forget": "cascade",
-    "archive": "runtime-configured"
-  }
+  "refs": { "facts_delta": null, "graph_delta": null,
+            "semantic_delta": "protected:sha256:...", "vector_delta": null },
+  "policy_hash": "sha256:..."
 }
 ```
+
+`write_source` is one of `explicit_store | automatic_reaction | artifact_ingest |
+external_memory_import`. `evaluation_event` identifies the automatic-reaction
+`MemoryWriteEvaluated` and is non-null only for `write_source:"automatic_reaction"`. Explicit stores
+set it to `null` and place their optional explicit-store evaluation tick in
+`explicit_evaluation_event`; that field is `null` for automatic writes. `reaction_event` is the
+enclosing reaction's stimulus, or `null` for top-level initialization. All content and deltas are
+protected refs; public ledger inspection exposes hashes, counts, policy, and provenance only.
 
 ### A recall is ALWAYS tainted
 
@@ -1657,38 +1690,44 @@ if (d.committed == Faithful) {
 A `decide` may be written **without endorsing** — bound to a `Decision` value — to defer subject
 endorsement or to record an abstention. Branching itself is never skipped. A `Decision` (no subject)
 may guide branching and `emit`, but **cannot drive a consequential sink**; only an `endorse`'s
-settled subject, constructed inside a committed branch, reaches a sink.
+settled subject, constructed inside a committed branch, reaches a sink. `Decision`/`Decided` carry an
+immutable `evidence_ref` to the exact `JudgmentEvidence`; `Endorsed` repeats that identity (§16.8).
 
 ### Decision and Endorsement — the settled values and their fields
 
-A `Decision<E>` is introspectable for how it was settled: read-only `**.decision_id`** (the tick of
-the `Decided` event), `**.committed`** (the variant, or `abstained`), `**.basis`** (`Basis =
-Threshold | Conformal | Calibrated | Principal`), and `**.margin`** (the gap `g`, §15.5.6), plus
-provenance for the source `Credence`, profile, or principal. An `Endorsement<T>` **is** the settled
-subject: it carries the underlying value of type `T` (reachable explicitly as **`e.subject : T`**,
-and the whole `Endorsement<T>` coerces to `T` at a consequential sink), exposes `T`'s own fields
-directly (`e.some_field`), and adds the read-only gate metadata `.decision_id` / `.committed` /
-`.basis` / `.margin`. The `.decision_id` is the endorsement's single ledger join key: the
-recorded subject, tick, and chain position live on its `Endorsed` row (and the `Decided` row it
-references), reached by the ledger query — `select Endorsed as r from ledger where { … }`, then
-`r._meta.tick` (§10); a gate value carries no `_meta` of its own. Where a field of `T`
+A `Decision<E>` exposes read-only `.decision_id` (the `Decided` tick), `.committed` (variant or
+`abstained`), `.basis`, `.margin`, `.evidence_ref`, `.principal_event` (`null` unless identity was
+reached), and `.principal_request` (`null` unless a pending request was created). The canonical
+`Decided` row additionally declares credence/rule/profile ids, winner/runner-up, threshold,
+minimum-margin/floor, arithmetic, and those same evidence/principal fields. Basis is `Principal` only
+for a returned principal ruling; a prefixed rule commit retains its rule basis and null principal
+fields. Verification status lives on the referenced principal event: only `verified` may label a
+gate or satisfy a governed operation, so basis alone is never authority.
+
+An `Endorsement<T>` is the settled subject: it carries `e.subject:T`, coerces to `T` at a sink,
+exposes `T`'s fields, and adds `.decision_id`, `.committed`, `.basis`, `.margin`, `.evidence_ref`,
+`.principal_event`, and `.principal_request`. Its canonical row is
+`Endorsed { subject_hash, decision_id, variant, evidence_ref, principal_event,
+principal_request }`. These fields must equal the referenced decision; none is caller-supplied. The
+`.decision_id` joins the `Endorsed` and `Decided` rows, while evidence/principal fields provide the
+non-circular governed-operation proof (§13). A gate value carries no `_meta`; query the row for tick
+and chain position. Where a field of `T`
 collides with a reserved metadata accessor, the metadata name wins and the shadowed field is reached
 through `e.subject` (e.g. `e.subject.committed`). This is Agape's reflection surface over gate
 metadata, not general structural `typeof`.
 
-- `**decide c by R**` collapses a `Credence<E>` to a `Decision<E>` by a `Rule` `R` (§3), appending
-`Decided { decision_id, credence, rule, committed, basis, margin }`. It is color-`S` when the
-`Credence` is already in hand.
-- `**p decide c by R**`, with a `principal` `p` as the prefix, attaches human escalation. The rule
-runs first; when it cannot commit, the identity dependency is reached — `p` is consulted (over MCP
-or another identity backend), the human's reply arrives as one of `E`'s variants, and the runtime
-records `PrincipalDecision { who, credence, decision, signature }`. A declined or unavailable
-principal records `FailedPrincipalDecision` and the decision stays `abstained`. Either way the final
-`Decision` is recorded as `Decided`, with `principal_event` pointing at the identity event when one
-exists. A principal-prefixed `decide` is color-`A` (it may reach identity); a rule-only `decide` is
-color-`S`.
+- `**decide c by R**` appends the complete `Decided` schema above with `evidence_ref` from `c`
+  and null principal fields. It is color-`S` when the credence is in hand.
+- `**p decide c by R**` runs the rule first. A rule commit appends the same row with the rule basis
+  and does not contact `p`. On abstention it appends the complete `PendingPrincipalDecision` request
+  below, consults identity, appends `PrincipalDecision` or `FailedPrincipalDecision`, then appends
+  `Decided` with the exact evidence/request/event linkage. Any returned ruling has basis
+  `Principal` and records its verification status on the principal event; only a verified ruling
+  may label calibration or satisfy a governed operation. Failure remains `abstained`. The
+  expression is color-`A`.
 - `**endorse subject by d**` requires `d` to be flow-narrowed by an explicit committed-variant test
-such as `if (d.committed == V)`; it records `Endorsed { subject_hash, decision_id, variant }` and
+such as `if (d.committed == V)`; it records the complete evidence/principal-linked `Endorsed`
+row above and
 returns `Endorsement<T>`. In the `else`/abstained branch (`d.committed == abstained`) no
 endorsement may be constructed, so the subject cannot reach a sink unless it is independently
 judgment-settled (for example, a literal or external ingress value with no un-endorsed model
@@ -1698,8 +1737,9 @@ cognition).
 
 A principal-prefixed `p decide c by r` that cannot commit by its rule **defers to `p`**. Deferral is
 not a silent branch and not only an in-memory pause: the runtime appends a durable
-**`PendingPrincipalDecision { who = p, credence = ledger-id(c), corr }`** receipt whose tick is the
-**correlation id** `corr`. This receipt is the whole protocol's join key — it records, on the
+`PendingPrincipalDecision { corr, who, credence_id, evidence_hash, rule_hash, subject_hash,
+governed_operation, governed_request_hash, request_hash }`, whose tick equals `corr`. This complete
+receipt is the protocol join key — it records, on the
 append-only ledger, that the gate reached outside the program for an accountable ruling and is
 awaiting one. Nothing about the deferral is new kernel machinery beyond this receipt and the
 attester check below; everything else composes the existing primitives (`prompt` ingress, `perform`
@@ -1718,11 +1758,13 @@ actions, receipts, correlation).
   identity seam's synchronous reply (§16.4); in an out-of-band host the ruling arrives later as an
   attested `prompt` ingress (§5b) the host routes to the pending decision by `corr`. Either shape is
   the same logical event: an attested resolution of a recorded pending decision.
-- **The kernel verifies the attester before recording a ruling.** The runtime checks that the
-  response's verified attester identity **is the principal `p` the gate deferred to** (the
-  attester-match check, resolved by the principal's configured authenticator, §17). Only then does it
-  record `PrincipalDecision { who, credence, decision, attestation }` (basis `Principal`) referencing
-  `corr`. A ruling whose attester verifies as a **different** principal, or that fails to verify, or a
+- **The kernel records and checks attester status.** With a verifying authenticator, the response's
+  attester must resolve to the exact deferred principal; mismatch/failure is rejected. The development
+  `none` driver may record a returned ruling with `attester_verification=unverified`, but it is not a
+  verified proof, contributes no calibration label, and cannot satisfy behavior or protected-data
+  operations. A returned ruling records `PrincipalDecision { corr, request_hash, who, ruled_variant,
+  evidence_hash, governed_request_hash, attestation }`; the subsequent `Decided` has basis
+  `Principal`. A ruling whose configured verifier resolves a **different** principal, or fails, or a
   decline or unavailable principal, records `FailedPrincipalDecision` referencing `corr` and the
   decision stays `abstained` — the fail-closed default (§13). A refusal or a rejected attester
   contributes **no** calibration label (§13): only an actual, attester-verified ruling labels the
@@ -1740,6 +1782,36 @@ The pending receipt makes autonomy's supervised phase (§13, cold start) auditab
 implicit: a fresh gate's every deferral is a ledgered `PendingPrincipalDecision`, each grounded
 ruling is the labelled case that earns later autonomy, and the human's accountability is bound to a
 verified identity, not asserted by an unforgeable name in source (§3).
+
+#### Exact, non-circular principal proof for governed operations
+
+Before consulting identity, the kernel appends a `PendingPrincipalDecision` whose tick is `corr` and
+whose payload is `{ corr, who, credence_id, evidence_hash, rule_hash, subject_hash,
+governed_operation, governed_request_hash, request_hash }` (the two governed fields are `null`
+for ordinary prefixed decide). `request_hash` is
+`H("agape/principal-request/v1", canonical(all preceding fields))`; it excludes any future decision
+id/event and is therefore non-circular. The principal signs
+`H("agape/principal-ruling/v1", corr, request_hash, ruled_variant)`. A verified
+`PrincipalDecision` declares `{ corr, request_hash, who, ruled_variant, evidence_hash,
+governed_request_hash, attestation }`. The later `Decided` declares its own tick-derived
+`decision_id`, `basis:Principal`, `principal_event`, and the same `principal_request=request_hash`.
+
+The source form `p decide c about Q(request) by r` is the only way to create a decision bound to a
+governed operation. Unlike ordinary prefixed decide, it always consults the configured principal;
+`r` records the gate arithmetic but cannot locally commit the governed decision. `Q` and `request`
+are evaluated/bound before the pending row. Omitting `about`, naming an ambiguous/unknown operation,
+using the wrong request type, substituting another request after consultation, or using a principal
+other than the operation's configured principal is rejected.
+
+A principal-prefixed expression whose ordinary rule commits never produces governed proof and retains its rule
+basis. A governed request endorsement `e` is admitted only if: `d.basis == Principal`; the referenced
+principal event is verified and matches `d.principal_request`, evidence, ruled variant, and pending
+`corr`; `e.decision_id == d.decision_id`, `e.evidence_ref == d.evidence_ref`, and
+`H(e.subject) == subject_hash`; and the principal event's governed-operation/request hashes equal the
+canonical sink request. Behavior transitions bind exact artifact/evaluation/evaluator/deployment/
+scope/expected-state hashes. Protected resolve, inspect, or export binds requester, operation, scope,
+exact content hashes, redaction policy, destination, purpose, and expiry head. Any mismatch, absence,
+rule basis, or reuse for another request fails before transition or disclosure.
 
 ### The rule selects the basis; the gate stays uniform
 
@@ -2000,6 +2072,7 @@ Judgment `**Γ; Σ; A ⊢ e : T ! c · t**`.
 program    ::= decl*                                          // one flat namespace
 
 decl       ::= typedecl | agent | fn | confdecl | stmt
+qname      ::= Ident ("." Ident)*                          // reserved standard-module or user name
 typedecl   ::= "struct" Ident "{" field ("," field)* "}"
              | "enum"   Ident "{" Ident ("," Ident)* "}"
              | "event"  Ident "(" field ("," field)* ")" (":" "Error")? ";"   // optional Error supertype (§9)
@@ -2010,7 +2083,7 @@ fn         ::= "pure"? type Ident params block                // async is the de
 confdecl   ::= "conformal" Number ";"                         // file-level default conformal α
 
 grants     ::= "grants" "{" ( "*" | cap ("," cap)* ) "}"
-cap        ::= "perform" Ident | "reach" Ident
+cap        ::= "perform" qname | "reach" Ident
 config     ::= "{" directive* "}"                             // colon-free `keyword operand…` directives
 directive  ::= Ident operand*
 operand    ::= Ident | String | Int | Float
@@ -2031,7 +2104,7 @@ stmt       ::= vardecl | assign | spawn | prompt | principal | depdecl
              | instruction | memdecl | forget            // system prompt (§5); private-memory handle + tombstone (§10)
              | "awake" Ident ";" | "sleep" Ident ";"
              | "emit" Ident "(" [expr ("," expr)*] ")" ";"     // plain event; args match fields positionally
-             | "perform" Ident "(" [expr ("," expr)*] ")" ";"  // action; args match fields positionally
+             | "perform" qname "(" [expr ("," expr)*] ")" ";"  // user or reserved action; args match fields positionally
              | "complete" expr ";"                      // resolve the active assigned task (§6c; task handler only)
              | "fail" expr ";"                          // fail the active assigned task with a text reason (§6c)
              | "cancel" postfix ";"                     // delegator-side task cancel; operand must be Task<T> (§6c)
@@ -2042,7 +2115,8 @@ stmt       ::= vardecl | assign | spawn | prompt | principal | depdecl
              | expr ";"
 vardecl    ::= type Ident ("=" expr)? ";"               // disambiguated from `assign` by the leading `type Ident` (LL(2))
 assign     ::= postfix "=" expr ";"                     // postfix covers `x`, `self.f`, `x.f`, `x[i]`
-spawn      ::= "spawn" Ident Ident args? ";"            // allocate + construct
+spawn      ::= "spawn" Ident Ident args? ";"            // statement sugar: allocate, construct, bind alias
+spawnexpr  ::= "spawn" Ident args?                         // allocate + construct, yield typed reference
 prompt     ::= "prompt" type Ident ";"
 instruction ::= "instruction" String ";"                // compile-time system prompt; global or agent-scoped (§5)
 memdecl    ::= "mem" Ident ("<-" expr)? ";"             // declare a private-memory handle, optionally initialized (§10)
@@ -2053,8 +2127,9 @@ when       ::= "when" "(" type Ident? ("about" expr)? ")" ("if" "(" expr ")")? b
 block      ::= "{" (vardecl | stmt | when)* "}"         // a scope; hoists its `when` subscriptions (§16.3)
 args       ::= "(" (expr ("," expr)*)? ")"              // call / spawn / extend arguments (no trailing comma)
 
-gate       ::= Ident? "decide" expr "by" rule           // → Decision<E>; the optional leading Ident is the escalation prefix — it must resolve to a `Principal` (T-Decide-Principal, §15.3.2); needs LL(2) lookahead to `decide`
+gate       ::= Ident? "decide" expr governed? "by" rule // → Decision<E>; governed form requires Principal prefix
              | "endorse" expr "by" expr                 // → Endorsement<T> (subject, decision)
+governed   ::= "about" qname "(" expr ")"              // exact governed operation and typed request (§13)
 rule       ::= "confidence" Number ("margin" Number)? ("floor" Number)?     // threshold basis
              | "conformal" Number? ("readiness" Int)? ("floor" Number)?     // conformal basis; with no α, inherits the file `conformal` default (else 0.05)
              | "(" expr ")"                              // a Rule-valued expression (parenthesized); must be Rule-typed (else TypeError)
@@ -2063,13 +2138,13 @@ expr       ::= expr "<-" expr ("expires" expr)?          // send (agent on left)
              | expr "->" expr                            // RECALL from a `mem` (always tainted, §10)
              | expr "|>" Ident                           // bounded fan-out: map async fn over a finite collection (§12)
              | gate                                      // a gate as an expression: decide → Decision<E>, endorse → Endorsement<T>
-             | "perform" Ident "(" (expr ("," expr)*)? ")" ("expires" expr)?   // foreground perform BINDING (§6b): an expression ONLY when result-bound, and `expires` is then MANDATORY (checked); the statement form remains in stmt
+             | "perform" qname "(" (expr ("," expr)*)? ")" ("expires" expr)?   // foreground perform BINDING (§6b): an expression ONLY when result-bound, and `expires` is then MANDATORY (checked); the statement form remains in stmt
              | "quorum" "(" Int "," expr ")"             // at least k of a Credence<bool>[] (§12)
              | ledgerquery                               // objective ledger read → LedgerEntry<E>[] / Record[]
              | cmp
 tasklit    ::= "task" "{" taskclause* "}"                // builds a TaskSpec (§6c); objective+acceptance REQUIRED
 taskclause ::= "objective" expr ";" | "acceptance" expr ";"
-             | "scope" "{" "perform" Ident ("," "perform" Ident)* "}"   // enabling scope; delegator must hold each power
+             | "scope" "{" "perform" qname ("," "perform" qname)* "}"   // enabling scope; delegator must hold each power
 ledgerquery ::= "select" Ident "as" Ident "from" "ledger" "where" "{" cond "}"
               | "select" (Ident ("," Ident)* | "*") "from" "ledger" "where" "{" cond "}"  // recorded-trust read of the log
 cond       ::= cmp (("&&"|"||") cmp)*                    // a boolean filter over fields
@@ -2082,6 +2157,7 @@ primary    ::= Int|Float|String|FString|"true"|"false"|"null"|"abstained"|"self"
              | "(" expr ")"
              | Ident "{" (Ident ":" expr ("," Ident ":" expr)*)? "}"  // struct literal
              | tasklit                                    // : TaskSpec — bindable (e.g. a draft to endorse) or sent directly (§6c)
+             | spawnexpr                                  // typed instance reference (§5, §16.1a)
              | "[" (expr ("," expr)*)? "]"               // array literal
 ```
 
@@ -2121,12 +2197,13 @@ provider_ingress_policy(ι_p, manifest) ≠ deny
 Γ ⊢ (Credence<E> _ = d <- p) : Credence<E> ! A · graded · ι_p    // any destination d
 
 Γ ⊢ aᵢ : Tᵢ · settled · ιᵢ    action A(T₁..Tₙ) declared    ("perform",A) ∈ G ∨ G = {*}
-result_event(A) = E per the manifest    Γ ⊢ n : Int · settled
+result_event(A) = E from reserved prelude mapping or manifest    Γ ⊢ n : Int · settled
 ─────────────────────────────────────────────────────────────────────────  (T-Perform-Bound)
 Γ ⊢ (x = perform A(a₁..aₙ) expires n) : T_E ! A · settled · ingress(E)
 // T_E from the configured result event E: a single-field event binds that field's value; a
-// multi-field event binds a struct of its fields; no manifest in scope ⇒ conservative (`unknown`),
-// runtime-enforced. Result judgment trust = boundary-settled ⊔ (⊔ tᵢ) = settled (args are settled);
+// multi-field event binds a struct of its fields. Reserved mappings are fixed and need no manifest;
+// a non-reserved action with no manifest in scope is conservative (`unknown`), runtime-enforced.
+// Result judgment trust = boundary-settled ⊔ (⊔ tᵢ) = settled (args are settled);
 // result ingress = external_unscreened unless E's manifest-configured screen accepts and records
 // external_screened.
 // `expires` MANDATORY on the binding form; failure/expiry faults the awaiting invocation (§6c, §16.6).
@@ -2140,9 +2217,28 @@ result_event(A) = E per the manifest    Γ ⊢ n : Int · settled
 ────────────────────────────────────────────  (T-Decide-Principal / GATE, async)
 Γ ⊢ p decide e by r : Decision<E> ! A · settled
 
+Γ ⊢ e : Credence<E> ! _ · graded    r : Rule    Γ ⊢ p : Principal    governed_sig(Q)=T
+Γ ⊢ req : T ! c_r · settled · ι_r   configured_principal(Q)=p
+────────────────────────────────────────────  (T-Decide-Governed / GATE, async)
+Γ ⊢ p decide e about Q(req) by r : Decision<E> ! A · settled
+
+Γ ⊢ m : mem    Γ ⊢ q : Text ! c_q · t_q · ι_q
+────────────────────────────────────────────  (T-Recall)
+Γ ⊢ m -> q : T_reply ! A · raw · ι_q      // graded when context-bound to Credence<E>
+
 Γ ⊢ a : T · _ · ι_a    Γ ⊢ d : Decision<E> · settled    a ∈ scope(d)    committed-narrowed(d)
 ────────────────────────────────────────────  (T-Endorse / GATE)
 Γ ⊢ endorse a by d : Endorsement<T> ! S · settled · ι_a
+
+agent T(T₁ p₁,…,Tₙ pₙ) declared    Γ ⊢ aᵢ : Tᵢ ! cᵢ · tᵢ · ιᵢ    Φ(ctor(T)).color=c_T
+c = c_T ⊔ (⊔ᵢ cᵢ)
+──────────────────────────────────────────────────────────────  (T-Spawn-Expr)
+Γ ⊢ spawn T(a₁,…,aₙ) : T ! c · settled · internal
+
+agent T(T₁ p₁,…,Tₙ pₙ) declared    Γ ⊢ aᵢ : Tᵢ ! cᵢ · tᵢ · ιᵢ    name fresh
+c = Φ(ctor(T)).color ⊔ (⊔ᵢ cᵢ)
+──────────────────────────────────────────────────────────────  (T-Spawn-Stmt)
+Γ ⊢ spawn T name(a₁,…,aₙ); ok ! c   // evaluate once; bind name:T to that result
 
 Γ ⊢ cs : Credence<Bool>[] ! col · graded    dep-declared(cs)
 ──────────────────────────────────────────────────────────────  (T-Fuse)   // quorum
@@ -2150,7 +2246,20 @@ result_event(A) = E per the manifest    Γ ⊢ n : Int · settled
         // ILL-FORMED if any pair in cs is neither independent- nor dependent-declared
 ```
 
-The GATE rules (`T-Decide`, `T-Decide-Principal`) are the only routes from `Credence` to `Decision`;
+`T-Spawn-Expr` and `T-Spawn-Stmt` reject a non-agent `T`, wrong arity, or any argument not
+assignable to its constructor parameter. Their color joins evaluated-argument colors with the
+constructor effect summary (including inherited constructors); the returned reference itself is
+always settled/internal. Each syntactic spawn evaluation allocates once. The statement is sugar that
+binds that one expression result, never a second allocation, and the expression may appear wherever
+its agent-template type is expected (including arrays and fan-out).
+
+`T-Decide-Governed` rejects a missing principal prefix, zero or multiple `about` clauses, an
+unknown/non-governable qname, wrong request type, non-settled request, or configured-principal
+mismatch. The request expression is evaluated exactly once and its typed value, qname, and canonical
+hash enter the pending request; later substitution is impossible. `T-Recall` is an async provider
+judgment over the retrieved packet and query, not a query-only classifier (§16.7).
+
+The GATE rules (`T-Decide`, `T-Decide-Principal`, `T-Decide-Governed`) are the only routes from `Credence` to `Decision`;
 `T-Endorse` is the only route from a `Decision` to a settled `Endorsement` of a subject, and is
 synchronous (the committed `Decision` is in hand). A principal prefix makes `decide` async (it may
 reach the identity dependency). A result-bound `perform` (T-Perform-Bound) is async and settled;
@@ -2181,7 +2290,7 @@ c_f = S
 // AUTHORITY — perform / reach (DEFAULT-DENY):
 allowed(C,kind,X) ⟺ G ≠ ⊥ ∧ ((kind,X) ∈ G ∨ G = {*})
 ──────────────────────────────────────────────────────────  (W-Auth)
-in C:  ⊢ perform A(e) ok ⟺ allowed(C,"perform",A)
+       ⊢ perform Q(e) ok ⟺ allowed(C,"perform",Q)   // Q is a qname; reserved actions are default-deny too
        ⊢ (x <- p)    ok ⟺ x = self ∨ allowed(C,"reach",typeof(x))
        ⊢ emit E(e)   ok                        // a plain event needs no power (an emit-trigger wiring is manifest-controlled, §6b)
 
@@ -2275,9 +2384,9 @@ ingress screen is also replay-bound: its input bytes, verdict, normalized output
 ingress provenance (`external_screened` on accept, no ordinary delivery on reject) are recorded at
 the boundary that invoked it. Gate collapses are journaled as `Decided`, whether they commit or
 abstain. Replay never re-invokes an oracle, endpoint, or screen: it serves each from the recording
-in order — a wired effector is replayed as its recorded result, not re-run. The ledger is
-hash-chained, so a faithful replay regenerates an identical chain — chain-head equality is the
-proof of replay-equivalence.
+in order — a wired effector is replayed as its recorded result, not re-run. Read-only replay
+verification regenerates the identical source chain/head; a materialized forensic replay has a new
+runtime and ledger and proves equality with its reconstructed-source projection hash (§16.5).
 
 **Task-send dynamics (§6c).** A task-send is an ordinary send whose `Resolved` is produced by
 the recipient's `complete` statement rather than by `think`; `complete e` appends `Resolved`
@@ -2305,31 +2414,69 @@ library.
 // DECIDE (rule only) — local gate collapse; no oracle; sealed ledgered Decision value:
 v' = collapse(eval(c), r)        // singleton prediction set ⇒ that variant; else `abstained`
 id = tick(S)
-S' = append(S, Decided(subject(c), { decision_id:id, credence:c, rule:r, committed:v', basis, margin }))
+S' = append(S, Decided(subject(c), { decision_id:id, credence:c, evidence_ref:evidence(c), rule:r, committed:v', basis, winner, runner_up, threshold, minimum_margin, floor, margin, arithmetic }))
 ─────────────────────────────────────────────  (E-Decide)
 ⟨…|S| decide c by r ⟩ → Decision{decision_id:id, committed:v', …}, ledger S'
 
-// DECIDE (principal prefix) — rule first; on non-commit, reach the identity dependency; async:
+// DECIDE (principal prefix) — rule first; an actual returned ruling has Basis.Principal,
+// while verification status separately governs labels and governed operations:
 v' = collapse(eval(c), r)
-(v' ≠ abstained)                       ⇒ S₁ = S , v'' = v' , Ψ' = Ψ , principal_event = null
-(v' = abstained ∧ consult succeeds)    ⇒ (Ψ, p, eval(c)) ⇝ (decision, sig, Ψ') , principal_event = tick(S) , S₁ = append(S, PrincipalDecision(who:p, credence:c, decision, sig)) , v'' = decision
-(v' = abstained ∧ consult declines/unavailable) ⇒ principal_event = tick(S) , S₁ = append(S, FailedPrincipalDecision(who:p, credence:c)) , v'' = abstained , Ψ' = Ψ
-id = tick(S₁)
-S₂ = append(S₁, Decided(subject(c), { decision_id:id, credence:c, rule:r, committed:v'', basis, margin, principal_event }))
+(v' ≠ abstained) ⇒ id=tick(S); S₂=append(S, Decided({decision_id:id, committed:v', basis:basis(r), principal_event:null, principal_request:null, …}))
+(v' = abstained) ⇒ corr=tick(S); req=principal_request(p,c,r,corr,{operation:null,request_hash:null,request_type:null})
+                   S₀=append(S, PendingPrincipalDecision(req))
+(consult(req) succeeds with attester_verification∈{verified,unverified}) ⇒ pe=tick(S₀);
+ S₁=append(S₀, PrincipalDecision({corr, request_hash:req.request_hash,
+                   who:p, evidence_hash:req.evidence_hash, governed_request_hash:req.governed_request_hash,
+                   ruled_variant, attestation})); id=tick(S₁); v''=ruled_variant; b=Principal
+(consult declines/unavailable/mismatch) ⇒ pe=tick(S₀); S₁=append(S₀, FailedPrincipalDecision({corr,
+                   request_hash:req.request_hash, reason})); id=tick(S₁); v''=abstained; b=basis(r)
+S₂=append(S₁, Decided({decision_id:id, credence:c, evidence_ref:evidence(c), rule:r, committed:v'',
+                      basis:b, principal_event:pe, principal_request:req.request_hash, arithmetic,…}))
 ─────────────────────────────────────────────  (E-Decide-Principal)
-⟨…|Ψ|S| p decide c by r; k⟩ → ⟨…|Ψ'| S₂ | Decision{decision_id:id, committed:v'', …}; k⟩
+⟨…|Ψ|S| p decide c by r; k⟩ → ⟨…|Ψ'|S₂|Decision{decision_id:id, committed:v'', basis:b,
+                                                principal_event:pe, principal_request:req.request_hash,…};k⟩
+
+// DECIDE (governed) — bind exact operation/request first and always consult configured principal:
+reqv=eval_once(req); require governed_sig(Q)=typeof(reqv) ∧ configured_principal(Q)=p
+corr=tick(S); preq=principal_request(p,c,r,corr,{operation:Q,request_hash:H(reqv),request_type:typeof(reqv)})
+S₀=append(S,PendingPrincipalDecision(preq)); consult(preq)⇝ruling
+verified_exact(ruling,p,preq) ⇒ pe=tick(S₀); S₁=append(S₀,PrincipalDecision(ruling));
+ id=tick(S₁); S₂=append(S₁,Decided({decision_id:id,basis:Principal,principal_event:pe,
+ principal_request:preq.request_hash,evidence_ref:evidence(c),committed:ruling.variant,…}))
+otherwise ⇒ append FailedPrincipalDecision; Decided(committed:abstained); no governed proof
+─────────────────────────────────────────────  (E-Decide-Governed)
+⟨…|Ψ|S|p decide c about Q(req) by r;k⟩ → ⟨…|Ψ'|S₂|Decision{…,governed_operation:Q,
+ governed_request_hash:H(reqv)};k⟩
 
 // ENDORSE — apply an existing committed Decision to an exact subject; synchronous; single event; → Endorsement value:
 d = eval(decision) ; v' = d.committed ; require v' ≠ abstained ∧ subject ∈ scope(d)
-ev = Endorsed(subject_hash(subject), decision_id(d), v')
+ev = Endorsed({subject_hash:H(subject),decision_id:d.decision_id,variant:v',
+                        evidence_ref:d.evidence_ref,principal_event:d.principal_event,
+                        principal_request:d.principal_request})
 ─────────────────────────────────────────────  (E-Endorse)
-⟨…|S| endorse subject by decision ⟩ → append(S, ev), Endorsement{subject, decision_id:decision_id(d), committed:v', …}
+⟨…|S|endorse subject by decision⟩ → append(S,ev),Endorsement{subject,decision_id:d.decision_id,
+ evidence_ref:d.evidence_ref,principal_event:d.principal_event,principal_request:d.principal_request,…}
 // There is no abstained endorsement; abstinence is represented by the Decision's `Decided` event.
 
-// SPAWN — allocate + bind ctor args + run constructor; mailbox closed; hoist subs:
-Â' = Â[name ↦ { type, params := eval(args), awake:false }] ;  register-hoisted-subs(ctor-body)
-─────────────────────────────────────────────────────────────  (E-Spawn)
-⟨…|Â|μ|S| spawn T name(args); k⟩ → ⟨…|Â'|μ| run(ctor-body); append(S, Spawned(name)) |k⟩
+// SPAWN EXPRESSION — evaluation context E[·] receives the one allocated reference:
+vals=eval_left_to_right(args); sp={runtime_id,agent_template:T,parent_instance_id|ROOT,spawn_site_id,
+ reaction_stimulus_tick,logical_invocation_path,per_site_issue_ordinal,authored_alias:null,
+ agent_generation:0,behavior_version,activation_epoch}
+i=H(sp.runtime_id,sp.parent_instance_id,sp.spawn_site_id,sp.reaction_stimulus_tick,
+    sp.logical_invocation_path,sp.per_site_issue_ordinal)
+Â'=Â[i↦{type:T,params:=vals,awake:false,constructed:false,identity:sp+i}]
+S'=append(S,Spawned(sp+{agent_instance_id:i}))               // identity exists before ctor effects
+─────────────────────────────────────────────────────────────  (E-Spawn-Expr)
+⟨…|Â|μ|S|E[spawn T(args)]⟩ → ⟨…|Â'|μ|S'|run(ctor(T),vals);finish_construct(i);E[ref<T>(i)]⟩
+
+ctor(T) completes ⇒ Â[i.constructed:=true]; register subscriptions; yield ref<T>(i)
+ctor(T) faults(reason) ⇒ append AgentCrashed({instance_id:i,phase:constructor,stimulus_or_corr,
+ reason}); preserve Spawned and already-committed explicit-store/ledger effects; leave i allocated,
+ constructed=false, mailbox closed; run no on-crash hook; fault the spawn expression and bind no ref.
+// An unconstructed instance cannot awake or be reused. A later spawn allocates a different id.
+
+// SPAWN STATEMENT — evaluate the same expression once with alias=name, then bind its one result:
+⟨…|Â|μ|S|spawn T name(args);k⟩ → ⟨…|Â|μ|S|T tmp=spawn[alias=name] T(args); name=tmp; k⟩
 
 // AWAKE — open mailbox, emit AgentAwake, run on-awake hook (no args; state is the ledger):
 ─────────────────────────────────────────────────────────────  (E-Awake)
@@ -2366,10 +2513,76 @@ Sent(corr) ∈ S   ¬Delivered(corr)   lifetime(corr) elapsed
 ─────────────────────────────────────────────────────────────  (E-Expire)
 ⟨…|S| … ⟩ → ⟨…| append(S, Expired(corr)) | … ⟩
 
-// STORE / RECALL — private memory seams; store internalizes, recall is ALWAYS tainted:
-─────────────────────────────────────────────────────────────  (E-Store / E-Recall)
-⟨…|μ|S| m <- v ⟩ → ⟨…|μ' = internalize(μ, m, v)| append(S, Internalized(m)) ⟩          // decompose across the three views (§16.7)
-⟨…|μ|S| x = (m -> q) ⟩ → ⟨…|μ| x ↦ recall(μ, m, q) (trust raw; graded if x : Credence<E>) ⟩   // fused across views; never settled
+// STORE — evaluate then atomically commit only actual canonical cells/materialized views:
+rid=tick(S)+1
+ev = MemoryWriteEvaluated({closure_kind:explicit_store, write_source:explicit_store,
+      reaction_event:active_stimulus|null, disposition:stored, reason:null, value_hash:H(v),
+      policy_hash, committed_receipt_id:rid})
+(μ',effects,refs) = prepare_internalize(μ,m,protected(v))
+ir = Internalized({…,write_source:explicit_store,evaluation_event:null,
+                   explicit_evaluation_event:tick(S),value_hash:H(v),
+                   value_ref:protected_ref(v),effects,refs})
+─────────────────────────────────────────────────────────────  (E-Store)
+⟨…|μ|S|m <- v⟩ → atomic⟨…|μ'|append²(S,ev,ir)⟩
+
+prepare_internalize fails(reason)
+─────────────────────────────────────────────────────────────  (E-Store-Failure)
+⟨…|μ|S|m <- v⟩ → ⟨…|μ|append²(S,MemoryWriteEvaluated({closure_kind:explicit_store,
+ disposition:failed,reason,value_hash:H(v),committed_receipt_id:null}),
+ MemoryWriteFailed({closure_kind:explicit_store,evaluation_event:null,
+  explicit_evaluation_event:tick(S),reason,value_hash:H(v)}));fault⟩
+// Failure commits no cell, delta, ref, or Internalized. Non-materialized facts/graph/chunks/embeddings
+// report zero; a successful write reports only before/after effects that actually committed.
+
+// EXPLICIT RECALL — distinct consult, then provider judges query plus retrieved protected content:
+hits=retrieve(μ,m,q); mc=MemoryConsulted({consult_kind:explicit_recall,reaction_event,
+ query_hash:H(q),budget,empty,limited,hit_ids,content_hashes,scores,origin_refs})
+S'=append(S,mc); (Π,render_recall(q,hits),schema(T))⇝(v,evidence,Π')
+S''=append(S',Resolved({corr:tick(S),subject:m,evidence_id,evidence_hash,evidence_ref,gate_scores}))
+─────────────────────────────────────────────────────────────  (E-Recall)
+⟨Π|…|μ|S|E[m -> q]⟩ → ⟨Π'|…|μ|S''|E[v (trust raw; graded if context:Credence<E>)]⟩
+// MemoryConsulted precedes the provider call. Its public payload never contains hit plaintext;
+// internal provider context resolves only the named protected hit refs under provider-ingress policy.
+
+// AUTOMATIC REACTION CLOSURE — exactly one closure_kind=automatic_reaction evaluation:
+prepare_auto(episode,policy)=(stored,μ',effects,refs,value_hash,value_ref); rid=tick(S)+1
+ev=MemoryWriteEvaluated({…,closure_kind:automatic_reaction,write_source:automatic_reaction,
+                         disposition:stored,value_hash,policy_hash,committed_receipt_id:rid})
+ir=Internalized({…,write_source:automatic_reaction,evaluation_event:tick(S),
+                 explicit_evaluation_event:null,value_hash,value_ref,effects,refs})
+─────────────────────────────────────────────────────────────  (E-Reaction-Close-Stored)
+⟨…|μ|S|close(reaction)⟩ → atomic⟨…|μ'|append²(S,ev,ir)|closed⟩
+
+prepare_auto(episode,policy)=(disp,reason)    disp∈{skipped,deduplicated}
+─────────────────────────────────────────────────────────────  (E-Reaction-Close-NoStore)
+⟨…|μ|S|close(reaction)⟩ → ⟨…|μ|append(S,MemoryWriteEvaluated({…,closure_kind:automatic_reaction,
+ disposition:disp,reason,committed_receipt_id:null}))|closed⟩
+
+prepare_auto(episode,policy)=failed(reason)
+─────────────────────────────────────────────────────────────  (E-Reaction-Close-Failure)
+⟨…|μ|S|close(reaction)⟩ → ⟨…|μ|append²(S,MemoryWriteEvaluated({…,closure_kind:automatic_reaction,
+ disposition:failed,reason,committed_receipt_id:null}),
+ MemoryWriteFailed({closure_kind:automatic_reaction,evaluation_event:tick(S),
+  explicit_evaluation_event:null,reaction_event,reason}));fault⟩
+// No closure rule may fire twice for one reaction id; stored transaction components commit all-or-none.
+
+// RESERVED BEHAVIOR ACTIONS — ordinary grant/perform admission plus reserved checks (§16.7d):
+valid_proposal(x) ⇒ perform std.behavior.Propose(x) atomically stores protected artifact ref
+                     and appends BehaviorProposed(public_fields(x))                 (E-Behavior-Propose)
+fixed_evaluator(manifest) ∧ isolated_run(x)⇓ev ∧ hashes_match(ev)
+                  ⇒ perform std.behavior.Evaluate(x) appends BehaviorEvaluated(ev)  (E-Behavior-Evaluate)
+principal_proof(e) ∧ evaluation_passed(e) ∧ expected_state(e) ∧ authority_equal(e)
+                  ⇒ perform std.behavior.Activate(e) atomically updates artifact/epoch
+                     and appends BehaviorActivated(proof_and_state_hashes(e))        (E-Behavior-Activate)
+principal_proof(e) ∧ restoration_valid(e) ∧ expected_state(e) ∧ authority_equal(e)
+                  ⇒ perform std.behavior.Rollback(e) atomically updates artifact/epoch
+                     and appends BehaviorRolledBack(proof_and_state_hashes(e))       (E-Behavior-Rollback)
+failed premise ⇒ append BehaviorTransitionRejected(public request hashes,reason); fault; no state change
+
+// PROTECTED DISCLOSURE — exact, non-enumerating, principal-bound (§13, §16.8):
+principal_proof(e) ∧ not_expired(e) ∧ exact_named_refs(e) ∧ destination_matches(e)
+                  ⇒ protected.(resolve|inspect|export)(e) discloses only named content under redaction
+failed premise ⇒ fault before content resolution or disclosure                         (E-Protected-Disclosure)
 
 // EMIT:
 ─────────────────────────────────────────────────────────────  (E-Emit)
@@ -2595,8 +2808,9 @@ and an `Endorsement` can only be constructed from a committed-narrowed
 `Decision` (so an `abstained` decision cannot reach a sink), with the runtime margin floor
 `margin ≥ m` checked there; equivalently, varying the model's raw judgments
 changes no world-effect except through a gate (Lemma 1, §15.5). **(T4) Reproducibility up to
-`≈`** — state is a function of the ledger plus recorded oracle results; a recorded run replays
-to chain-head equality unconditionally; inter-agent message content is derived, not stored.
+`≈`** — state is a function of the ledger plus recorded oracle results; read-only replay
+regenerates the source head, while materialized forensic replay has a distinct head and an equal
+reconstructed-source projection hash (§16.5); inter-agent message content is derived, not stored.
 **(T5) Pure seam safety** — no `pure` function reaches a declared dependency. Technique for
 T1/T2/T5: progress+preservation. T3 is Lemma 1 (two-run bisimulation, §15.7); T4 is the
 Stability theorem (§15.5.5), modulo O/NI of §15.7.
@@ -2672,6 +2886,11 @@ assigned, monotonic, gap-free (§7).
   when that resolution is dispatched. Many operations may be in flight at once (a query's fan-out over
   a collection, §12, issues all its calls before any resolves; the worker-side oracle calls of
   concurrently-delivered background tasks likewise overlap, §16.3a).
+- **Per-instance serialization.** Reactions for one agent instance never overlap: a later stimulus may
+  be journaled, but its `MemoryConsulted` and handler wait until the earlier reaction completes its
+  `MemoryWriteEvaluated` and any successful `Internalized`. Distinct instances may overlap oracle
+  calls. Construction/spawn is initialization in the invoking reaction, not a reaction of the
+  not-yet-existing instance.
 - **The scheduler loop.** While `Q` is non-empty or the top level is unfinished: take the next ready
   resolution, apply its effect (append the closing event(s) — `Resolved`, `ToolResolved`, a bound
   `Credence` — and resume its continuation), then drain any subscriptions the appends fired.
@@ -2689,26 +2908,29 @@ assigned, monotonic, gap-free (§7).
 
 ### 16.1a Runtime identity and isolation
 
-Each runtime has a stable **runtime id** and a **runtime kind** — e.g. `rust-local` (a CLI /
-toolchain runtime) or a hosted runtime. The kind names the deployment, not a different language: every
-kind satisfies the same §16 contract.
+Each runtime has a durable random **runtime id** independent of project name, mutable path,
+hostname, or display name, plus a runtime kind naming the deployment. Creation, fork, import, and
+migration append `RuntimeIdentityCreated`, `RuntimeForked`, `RuntimeImported`, or `RuntimeMigrated` with
+source/target ids, heads, snapshot hashes, and authenticated policy. A clone always gets a new id.
+Only an exclusive authenticated migration may preserve an id, and at most one live writer may hold
+that id's ledger/memory lease; conflict fails before execution.
 
-Each agent **instance** has a stable runtime-local id. Two instances of the same agent template
-(§5) are *distinct cognitive entities* with *distinct private-memory namespaces* (§16.7) — same
-code, different memory, no shared subjective state. A recommended identity tuple:
+Every evaluated spawn creates a new deterministic instance id:
+`H(runtime_id, parent_instance_id|ROOT, spawn_site_id, reaction_stimulus_tick,
+logical_invocation_path, per_site_issue_ordinal)`. The spawn-site id is stable for an unchanged
+artifact; invocation path and issue ordinal distinguish fan-out/repetition without wall time or
+completion order. In v1 `agent_generation` is reserved and fixed at `0`: there is no implicit
+replacement or reincarnation. A later spawn is a new id. Sleep, awake, crash, activation, and rollback
+preserve the existing id. The complete identity/view tuple is:
 
 ```text
-runtime_id        // which runtime authority
-agent_template    // the agent declaration (§5)
-agent_instance_id // this spawned instance
-agent_generation  // bumped when an instance is collected and respawned fresh
-ledger_head       // the ledger prefix the view is derived from (§7)
+runtime_id, agent_template, agent_instance_id, agent_generation=0,
+behavior_version, activation_epoch, ledger_head
 ```
 
-`agent_generation` advances only when a slept agent with no live references is collected and a
-later `spawn` creates a *fresh* entity (§5); `sleep` / `awake` / a contained crash do **not** erase
-memory or advance the generation, because an agent's state is a function of the ledger and its
-private memory, not fragile in-flight state (§5, §16.6).
+Authored names are aliases only. Persistent paths encode every semantic component with a
+collision-resistant escape or hash; sanitizing distinct identities to one visible path is not
+sufficient isolation.
 
 ### 16.2 The ledger journal — serialization, hashing, ticks
 
@@ -2716,9 +2938,12 @@ The ledger is an append-only, hash-chained log (§7, §15.4.2a). A conformant ru
 a replay (§16.5) and an audit depend on:
 
 - **Event record.** Each event is `{ tick, etype, subject, payload, corr, agent }` (§7): `tick` the
-  append index; `etype` the prelude or user event-type name (§9); `subject` the source / correlation
-  key (§7); `payload` the typed value carried (or empty); `corr` the id linking an opening event to its
-  close (or the event's own id); `agent` the acting agent's address.
+  append index; `etype` the prelude or user event-type name (§9); `subject` the source/correlation key;
+  `payload` the typed public value or a protected envelope `{content_hash, protected_ref,
+  redaction_policy_hash}`; `corr` the opening/close join id; `agent` the acting address. Sensitive
+  prompt/result ingress, raw provider candidates, memory values, holdouts, and recordings never
+  appear as plaintext canonical payload. Public ledger range/query APIs cannot enumerate protected
+  store contents; they expose only refs already named by visible authorized rows.
 - **Canonical serialization.** An event serializes to bytes as **canonical JSON**: object keys
   in the fixed order above, no insignificant whitespace, UTF-8 strings, numbers in shortest
   round-tripping form, the payload encoded by its structured-output schema (§8). Canonical means
@@ -2782,14 +3007,15 @@ A task-send routes like any send; what changes is who resolves it and what lands
   its dependency calls (§16.1, §12). Scheduling is a runtime freedom, and the determinism obligation
   is **unchanged** — concurrency is achieved the same way as fan-out (§16.1, §16.5): every ledger
   append still commits in a deterministic **issue order**, and every oracle result is journaled, so
-  a recorded run replays to the identical chain-head (T4, §16.5) with zero oracle re-invocation. The
+  read-only replay regenerates the source head and materialized replay regenerates an equal source
+  projection (T4, §16.5), both with zero oracle re-invocation. The
   ordering invariants this pins are **per-task**: each correlation's receipt chain
   (`Sent → Delivered → Resolved → TaskCompleted`, or its `TaskFailed`/`Expired`/`TaskCancelled`
   terminal) stays internally ordered, and the first-terminal-wins rule holds per correlation. The
   **inter-task** interleaving is scheduling-dependent but journal-derived: it is a deterministic
   function of the recorded run (issue order of the batch), not of wall-clock resolution timing, so it
   is reproduced exactly on replay. A conformant runtime **may** also deliver them sequentially — the
-  contract fixes only the per-task invariants and chain-head reproducibility, not an overlap policy.
+  contract fixes only the per-task invariants and replay reproducibility, not an overlap policy.
 - **Status projection.** "One status per task" is a ledger projection — a `select … from ledger`
   fold over the correlation — maintained like any projection (§16.7a), never a stored event.
 
@@ -2808,10 +3034,11 @@ appends its opening event, invokes the seam, journals the result (§16.5), and a
   silently (§17). This policy has no effect on `perform` sink admission.
   The connector
   receives `{ prompt, schema }` and must return schema-conforming output by constrained decoding
-  (mandatory; no fuzzy fallback). A logprob-exposing connector returns the committed value plus the
-  per-variant score/logprob vector; a text-only connector returns only the value and is served by the
-  sampling fallback (§16.8). The result is journaled as the send's `Resolved` (with the raw response and
-  per-variant scores, §15.5.1, for replay and calibration). A returned reply that cannot be parsed into
+  (mandatory; no fuzzy fallback). A logprob-exposing connector returns the value plus bounded raw
+  sequence evidence; a text-only connector is served by the sampling fallback (§16.8). `Resolved`
+  journals the protected evidence hash/ref and public gate scores. Raw responses and candidate/token
+  sequences remain behind protected encrypted refs and are never copied into an unauthorized ledger
+  view. A returned reply that cannot be parsed into
   the declared type — a *schema-violating return* — faults the send as a `TypeMismatch` (§16.6), the
   retryable send-fault. This is distinct from a **connector error** — the request is rejected (e.g. an
   HTTP 4xx), the transport fails, or the model refuses — which is an unrecoverable seam failure and
@@ -2820,17 +3047,15 @@ appends its opening event, invokes the seam, journals the result (§16.5), and a
   blaming the reply schema. A deterministic request-level rejection (a 4xx other than 429) cannot
   succeed on re-ask — the connector's own retries are already exhausted when the error surfaces — and
   the fault says so.
-- **Identity (`principal_decide`).** A principal-prefixed `p decide c by r` runs the rule first; when
-  it cannot commit, it **defers**: it appends `PendingPrincipalDecision { who = p, credence =
-  ledger-id(c), corr }` (the correlation id `corr` is that receipt's tick, §13) and presents
-  `(p, c, corr)` to the identity dependency, which returns the principal's attested verdict (a variant
-  of `E`) together with the deployment-verified attester identity. The backend (e.g. `local-keyring`,
-  `oidc`, `webauthn`, §17) signs a canonical serialization of `(who = p, credence = ledger-id(c),
-  decision)`; before recording a ruling the runtime runs the **attester-match check** — the response's
+- **Identity (`principal_decide`).** A principal-prefixed `p decide c by r` runs the rule first.
+  Only on abstention does it append the complete §13 `PendingPrincipalDecision`, using that row's tick
+  as `corr`, and present the canonical request hash and fields to identity. The backend signs the
+  domain-separated ruling hash `(corr, request_hash, ruled_variant)`; before recording a ruling the
+  runtime runs the **attester-match check** — the response's
   verified attester identity must resolve, through the principal's configured authenticator
   (`[security.attesters]`, §17), to the principal `p` the gate deferred to. On a match the runtime
-  records `PrincipalDecision { who, credence, decision, attestation }` referencing `corr`, where
-  `attestation` carries the attester identity, signature, and the `attester_verification` label
+  records `PrincipalDecision { corr, request_hash, who, ruled_variant, evidence_hash,
+  governed_request_hash, attestation }`, where `attestation` carries identity, signature, and the verification label
   (`verified` under an authenticator, `unverified` under the default `none` — the local-dev
   trust-on-config posture, §17). A declined ruling, an unavailable principal, or an attester that
   verifies as a **different** principal (or fails to verify) records a `FailedPrincipalDecision`
@@ -2851,20 +3076,39 @@ appends its opening event, invokes the seam, journals the result (§16.5), and a
 
 - **Ingress screening.** Prompt arrivals, standing-sensor events, and result-event payloads may be
   bound in the manifest to an ingress screen (§17). The screen is not source syntax and is not a
-  way to grant action authority. The runtime records the original boundary payload, screen identity,
-  verdict, normalized delivered payload, and resulting ingress provenance. Accepted values are
+  way to grant action authority. The runtime records protected hash/refs for the original boundary
+  and normalized payloads, plus public screen identity, verdict, and resulting ingress provenance;
+  sensitive ingress bytes never enter a plaintext canonical event or recording segment. Accepted values are
   delivered as `external_screened`; unscreened accepted values remain `external_unscreened`;
   rejected values do not enter ordinary program data.
 
 ### 16.5 Record and replay
 
-A run is a **recording**: every oracle result (§16.4) is journaled to the ledger as the operation's
-closing event, carrying the result payload — and, for the provider, the per-variant scores (§15.5.1).
+A run is a **protected recording** bound to runtime id and source head, canonical pre-state
+snapshot hash and schema version, behavior artifacts/epochs, instance ids/generation and memory roots,
+protected artifact hashes, all oracle results, and resolved configuration/deployment-policy hashes.
+The public ledger contains its recording hash/ref, never plaintext sensitive recording segments.
+Resolve, inspect, or export uses the exact principal-endorsed disclosure protocol (§16.8). Every oracle
+result is journaled as the operation's closing event; provider results carry the
+`JudgmentEvidence` hash/ref and public gate scores (§16.8).
 Nondeterministic *inputs* are journaled too: external `prompt` arrivals, standing-sensor arrivals,
 world result-event payloads, ingress provenance labels, screening verdicts/normalizations, and a
 wall-clock `expires` lifetime's firing (§6); a logical-tick lifetime is already deterministic.
 
-- **Replay.** Given a recording, the runtime re-executes the program but **serves each oracle call
+- **Replay modes and verification.** Replay first verifies every bound snapshot, artifact,
+  evaluation, memory root/cell, protected object, and policy hash. Read-only verification uses the
+  exact source runtime identity and snapshot, persists nothing, and recomputes the exact source ledger
+  head. A materialized forensic replay receives a new runtime id and its own ledger beginning with
+  `ReplayDerivedFrom { source_runtime_id, source_head, snapshot_hash,
+  source_projection_hash }`; its head is necessarily distinct. The replay engine folds a nested,
+  non-writable **source-identity projection** using the recorded source runtime/instance/spawn ids and
+  canonical source events exactly. That projection persists only as a protected hash/ref and must end
+  at `source_head`. The outer forensic ledger uses only the new runtime id; any agents it spawns use
+  fresh ids derived from that new id. Source and outer events/ids are never merged or substituted.
+  Correctness is equality of the nested projection hash, not equality of the outer head. Neither mode
+  mutates the live source ledger, memory, activation state, or protected store. Missing/hash-invalid
+  dependencies fail explicitly; current state is never substituted.
+- **Replay.** Given a verified recording, the runtime re-executes the program but **serves each oracle call
   from the journal instead of invoking the seam**: the *i*-th call of a given kind, in issue order
   (§16.1), is answered by the *i*-th recorded result of that kind. Replay invokes nothing external — a
   wired effector is replayed as its recorded result, never re-run against the world. Ingress screens
@@ -2878,9 +3122,10 @@ wall-clock `expires` lifetime's firing (§6); a logical-tick lifetime is already
   projection of ledgered events plus recorded oracle results: a faithful runtime can rebuild every
   agent's private memory from the ledger, or verify materialized memory against its ledger provenance
   (§16.7).
-- **Chain-head equality (T4).** A faithful replay regenerates an identical ledger and therefore an
-  identical chain-head (§16.2); chain-head equality *is* the proof of replay-equivalence (§15.4.2), the
-  operational form of `≈` (§15.5.2). The conformance test-mode asserts it (§17.5).
+- **Replay equality (T4).** Read-only verification regenerates the source ledger and exact source
+  chain-head (§16.2). A materialized forensic replay has a distinct ledger/head and instead must expose
+  a reconstructed-source projection hash equal to the source head. The conformance mode asserts the
+  appropriate invariant (§17.5); neither mode re-invokes an oracle.
 - **Counterfactual replay.** Any prefix may be replayed under altered recorded facts to test a
   counterfactual; fork/merge of divergent continuations is the optional Multi-verse layer (§15.4.2a),
   outside the core.
@@ -2948,25 +3193,53 @@ state (Section 0.2).
   created_at           // wall-clock, non-canonical (never hashed, §16.2)
   ```
 
-- **Memory envelope (mandatory trigger).** Each agent reaction runs the **memory envelope** below
-  in full. The runtime may tune limits, ranking, summarization, and embedding backends, and a
-  cost-constrained run may record a *budget-limited* packet — but it does **not** omit the consult
-  (step 4), its recorded trace (step 5), or the internalization (step 9) to save cost, and a limited
-  packet says it was limited. Configuration controls budget and fidelity, not whether memory is part
-  of the turn.
+- **Memory envelope (mandatory trigger).** Each actual reaction runs the envelope exactly once.
+  Construction/spawn is initialization inside its invoking reaction and creates no fictional consult
+  for the not-yet-existing instance; an explicit constructor store still has an ordinary store
+  receipt. Budget may limit content, but never omits the consult or post-reaction write evaluation.
 
   ```text
   1. Receive the stimulus.
   2. Append (or identify) the ledger event representing that stimulus.
   3. Build a memory query from the stimulus, current task, agent role, and ledger head.
   4. Consult the instance's canonical cells and any available fact, relationship, or semantic indexes.
-  5. Append MemoryConsulted with counts, query metadata, and result provenance (§9).
-  6. Build the cognition/action context from source instruction (§5), project context,
-     and the memory packet.
-  7. Execute the reaction.
-  8. Append the resulting ledger events.
-  9. Internalize the experience into the same instance's private memory.
+  5. Append MemoryConsulted with `consult_kind = automatic_reaction`, query hash, budget,
+     empty/limited flags, and public hit ids/content hashes/scores/origin refs (§9).
+  6. Build typed context from the one instruction list (§5), task/stimulus data, and memory packet.
+  7. Execute wholly under the reaction's starting behavior version, epoch, and grants.
+  8. Append resulting ledger events.
+  9. Append exactly one automatic-closure MemoryWriteEvaluated
+     (`closure_kind = automatic_reaction`): stored, skipped, deduplicated, or failed.
+  10. Only for stored, commit cells and append exactly one evaluation-correlated automatic Internalized.
+      Explicit `mem <-` operations executed by the reaction append their own independent receipts.
   ```
+
+  Exactly one `MemoryConsulted` with `consult_kind:"automatic_reaction"` exists per actual
+  reaction. An explicit `m -> q` may append additional `consult_kind:"explicit_recall"` events; it
+  never satisfies or duplicates the automatic consult. Both forms use
+  `{ consult_kind, reaction_event, query_hash, budget, empty, limited, hit_ids, content_hashes,
+  scores, origin_refs }`. Public payloads contain no recalled plaintext.
+
+  The automatic closure's canonical `MemoryWriteEvaluated` payload is
+  `{ reaction_event, runtime_id, agent_instance_id, agent_generation:0, behavior_version,
+  activation_epoch, closure_kind:"automatic_reaction", write_source:"automatic_reaction",
+  disposition, reason|null, value_hash|null, policy_hash, budget, evaluation_inputs_hash,
+  committed_receipt_id }`, where `committed_receipt_id` is the preallocated tick of the paired
+  `Internalized` for `stored` and `null` for every other disposition. The pair must commit adjacently
+  and atomically, so the id cannot name an unrelated or later receipt. Where
+  `disposition ∈ { stored, skipped, deduplicated, failed }`. Exactly one event with
+  `closure_kind:"automatic_reaction"` exists per actual reaction. Explicit stores may add their own
+  `closure_kind:"explicit_store"` evaluations and receipts; they do not satisfy or duplicate the
+  automatic closure.
+
+  For an automatic `stored`, cell changes, one `MemoryWriteEvaluated`, and one `Internalized`
+  whose `evaluation_event` points back and whose tick equals `committed_receipt_id` commit atomically.
+  Explicit stores use `explicit_evaluation_event` and leave `evaluation_event=null`. For `skipped` or `deduplicated`, only the
+  evaluation commits. For `failed`, `MemoryWriteEvaluated` plus `MemoryWriteFailed` commit, the
+  reaction faults, and no cell, delta/ref, or `Internalized` exists. A crash after an explicit store
+  does not roll that already committed store back, but the reaction still executes its automatic
+  failure-episode closure exactly once. This transaction rule applies equally to markdown and other
+  substrates and to restart recovery: a partial pair is corrupt state, never a successful write.
 
   The **memory packet** supplied to cognition includes, within budget: whole-artifact summaries
   relevant to the task (§16.7b); precise chunk or semantic hits with their origin ticks; relationship
@@ -2975,7 +3248,7 @@ state (Section 0.2).
   empty. **An empty lookup is a meaningful recorded result, not an omitted step** — step 5 records
   that memory was consulted and returned no applicable context.
 
-  Internalization (step 9) records the canonical cell and may decompose it into typed facts,
+  A stored disposition (step 10) records the canonical cell and may decompose it into typed facts,
   relationship hints, semantic chunks, embeddings, or substrate-native records. Any provider-assisted
   decomposition is non-deterministic but shape-fixed (Section 10), and journaled (or deterministically
   derived, Section 16.5), so replay reproduces it without re-invoking the provider. **Memory cannot launder
@@ -2990,9 +3263,20 @@ state (Section 0.2).
   episode discriminator such as `kind: "episode"` and should not split the recollection into an
   `experienced` field. Machine-readable backpointers such as `source_event` may accompany the memory
   content for audit and replay.
-- **Provenance.** Every memory cell carries an immutable backpointer to the ledger event that produced it;
-  `origin(n)` projects it (§10). A recalled value stays tainted regardless of its origin (§10); the
-  recorded-trust reading of the same origin is the ledger query.
+- **Provenance and version.** Every cell records immutable runtime/instance identity,
+  `agent_generation=0`, behavior version/epoch, origin event, basis head, source kind, and ingress or
+  attestation provenance. Prior-version cells stay tainted and retrievable by default. Cells from a
+  rolled-back version are down-ranked/excluded only by a recorded deployment policy; transitions do
+  not relabel or delete history.
+- **Privacy, retention, export.** Canonical ledger rows keep ids, hashes, policy/version identifiers,
+  counts, public scores, and protected refs by default, not sensitive prompt, candidate, memory,
+  artifact, secret, holdout, or raw-sequence bytes. Those bytes live in access-controlled,
+  content-addressed protected storage; raw provider evidence, recordings, and sensitive ingress are
+  encrypted at rest, while a configured markdown root is an access-controlled protected boundary.
+  Retention and cryptographic erasure are recorded; erased data
+  leaves a hash/tombstone and makes dependent replay fail. Export of protected content requires the
+  exact principal proof in §13 and records requester, scope, content hashes, redaction, destination,
+  purpose, decision, endorsement, and disclosure result.
 - **Recall and query execution.** Recall (`m -> q`, §10) is a cognition-mediated retrieval fused across
   the region's fact, graph, and vector views, always tainted. The **ledger query**
   `select Event as e from ledger where { e.field ... }` or `select COLS from ledger where { COND }`
@@ -3051,7 +3335,10 @@ state (Section 0.2).
   the recall text strips HTML comments and the metadata fence; a cell's id comes from its
   `agape-memory-id` comment or, absent one, a content hash. Boilerplate scaffolding and forgotten
   sections are skipped. The files are the canonical cells: they are plain markdown and
-  **user-editable** — recall honors hand edits, and a hand-written section needs no metadata block.
+  **user-editable**, but out-of-band bytes are not authenticated runtime cells. A hash mismatch
+  is imported through `ExternalMemoryObserved` with `external_unscreened` provenance and a protected
+  content hash/ref before recall. Comments, filenames, frontmatter, or copied metadata cannot assert
+  correction priority, attester, origin, or version. The imported value stays tainted.
   `forget` replaces the topic file with a tombstone
   (`<!-- agape-forgotten at="…" tombstoned="N" -->`), archiving the prior contents first when
   `archive_on_forget` is set; the receipt refs name the touched files
@@ -3104,7 +3391,7 @@ semantics.
 A **knowledge artifact** is any durable input an agent is allowed or instructed to learn from: this
 spec or any project file, a README or design doc, generated code, check/test/run output, a user
 correction or review, a result-event payload, a prior ledger slice, or a hosted/uploaded file. Internalizing
-an artifact is the same memory operation as §16.7 step 9, applied to a durable source rather than to
+an artifact uses the same write-evaluation/committed-store contract as §16.7 steps 9–10, applied to a durable source rather than to
 the immediate experience.
 
 - **It is an agent capability, not an ambient sweep.** An agent internalizes an artifact only when
@@ -3119,9 +3406,9 @@ the immediate experience.
   1. Append ArtifactObserved(kind, uri, source_hash, title) (§9).
   2. Summarize the whole artifact for future orientation.
   3. Chunk it with stable chunk hashes (by headings, the default for Markdown / sectioned source).
-  4. Decompose new chunks into facts and SPO triples.
-  5. Embed new chunks.
-  6. Store summary, facts, triples, and embeddings in the agent's private memory (§16.7).
+  4. Decompose chunks into facts/triples only when that materializer is configured.
+  5. Embed chunks only when an embedding materializer is configured and succeeds.
+  6. Store summary/chunks and only the actually produced facts, triples, and embeddings.
   7. Record provenance from each cell to its ledger event and the artifact hash.
   ```
 
@@ -3135,7 +3422,8 @@ the immediate experience.
 ### 16.7c Learning from experience
 
 Beyond explicit artifacts, every agent-internal experience that can improve future behavior is
-recorded and internalized through the §16.7 envelope: code written, tests written or selected,
+recorded and write-evaluated through the §16.7 envelope; only a selected, successfully committed store
+is internalized: code written, tests written or selected,
 `agape check` results, `agape run` results and their ledger events, unit/integration/conformance
 pass/fail, provider failures, wired-endpoint failures, user feedback and corrections, and accepted working
 patterns.
@@ -3148,23 +3436,146 @@ internalize pass/fail -> retry or report
 ```
 
 Failure memories are distilled into reusable **lessons**; success memories are stored as working
-**patterns**. When retrieval conflicts, **user correction outranks an inferred lesson** — explicit
-human feedback is higher-authority memory than a pattern the agent inferred on its own. None of this
+**patterns**. When retrieval conflicts, a **verified correction** outranks an inferred lesson only when its
+attestation and corrected-origin binding verify under deployment policy. Unverified user text or
+hand-edited metadata remains `external_unscreened` and gains no correction precedence. None of this
 is new kernel authority: a lesson is an ordinary tainted memory fact (§10), so acting on it still
 requires re-gating at the sink (§13). (`agape check` / `run` are the toolchain commands of §17; the
 events they emit are ordinary ledger events.)
+
+### 16.7d The reserved behavior lifecycle
+
+`std.behavior` is an implicitly available reserved prelude module: no import or user declaration is
+required or permitted. Its fully-qualified actions are accepted by the `qname` grammar (§15.2) and
+are default-deny capabilities like user actions. It declares these closed schemas (all `*_hash`
+fields are canonical SHA-256 identifiers; all `*_ref` fields are protected content-addressed refs):
+
+```text
+BehaviorArtifact {
+  artifact_hash, artifact_ref, source_hash, instruction_set_hash, effective_grants_hash,
+  dependency_bindings_hash, schemas_hash, declarations_hash
+}
+BehaviorProposal {
+  proposal_hash, candidate_artifact_hash, parent_artifact_hash, candidate_artifact_ref,
+  proposer_runtime_id, proposer_instance_id, proposer_behavior_version,
+  triggering_memory_origins_hash, triggering_ledger_head, change_surface_hash
+}
+BehaviorEvaluation {
+  evaluation_hash, candidate_artifact_hash, evaluator_bundle_hash, evaluator_policy_hash,
+  evaluator_runtime_version, language_version, public_holdout_manifest_hash,
+  protected_holdout_manifest_ref, scenarios_hash, metrics_hash, failures_hash,
+  security_results_hash, replay_evidence_hash, passed
+}
+BehaviorActivation {
+  request_hash, candidate_artifact_hash, evaluation_hash, evaluator_policy_hash,
+  deployment_policy_hash, required_principal, target_runtime_id, target_instance_id, scope_hash,
+  expected_active_artifact_hash, expected_activation_epoch
+}
+BehaviorRollback {
+  request_hash, current_artifact_hash, restoration_artifact_hash, triggering_evidence_hash,
+  deployment_policy_hash, required_principal, target_runtime_id, target_instance_id, scope_hash,
+  expected_activation_epoch
+}
+```
+
+`request_hash` is the domain-separated canonical hash of every other field in its request. The
+module actions/signatures are:
+
+```text
+std.behavior.Propose(BehaviorProposal) -> BehaviorProposed(BehaviorProposal proposal)
+std.behavior.Evaluate(BehaviorProposal) -> BehaviorEvaluated(BehaviorEvaluation evaluation)
+std.behavior.Activate(Endorsement<BehaviorActivation>) -> BehaviorActivated(BehaviorActivation activation)
+std.behavior.Rollback(Endorsement<BehaviorRollback>) -> BehaviorRolledBack(BehaviorRollback rollback)
+
+result_event(std.behavior.Propose) = BehaviorProposed
+result_event(std.behavior.Evaluate) = BehaviorEvaluated
+result_event(std.behavior.Activate) = BehaviorActivated
+result_event(std.behavior.Rollback) = BehaviorRolledBack
+
+governed_sig(std.behavior.Activate) = BehaviorActivation
+governed_sig(std.behavior.Rollback) = BehaviorRollback
+configured_principal(std.behavior.Activate|Rollback) = behavior.transition_principal
+```
+
+These result-event mappings are fixed prelude semantics and cannot be manifest-bound. Foreground
+binding is ordinary, for example
+`BehaviorEvaluation evaluation = perform std.behavior.Evaluate(proposal) expires 60;`; the bound
+value is the sole `evaluation` field of `BehaviorEvaluated`. Statement form remains legal and leaves
+the result on the ledger.
+
+The exact activation or rollback struct is the endorsed subject. Its governing judgment is
+`Credence<BehaviorVerdict>` and its decision is `Decision<BehaviorVerdict>`; only an `Approve`
+branch can endorse the request. A conforming activation path uses, for example,
+`reviewer decide c about std.behavior.Activate(request) by confidence 0.9`, then endorses `request`
+inside the `Approve` branch. This is the existing decide/endorse kernel. Each action requires its
+exact `perform std.behavior.X` grant. The manifest
+cannot bind, replace, redirect, shadow, or grant these actions, and a host API is only a transport for
+the same static and runtime checks.
+
+`Propose` verifies proposal/artifact/ref hashes and parent binding, stores no candidate bytes in the
+public ledger, and appends `BehaviorProposed` with the proposal's canonical fields. The candidate is
+inert. `Evaluate` loads the exact configured evaluator bundle and policy, runs the candidate in a
+fresh isolated runtime with deployment-selected holdouts, resources, secrets (normally none), and
+network/tool allowlists, verifies every result/ref hash, and appends the complete
+`BehaviorEvaluated`. Candidate tests are supplemental; candidate content cannot choose evaluator,
+holdout, thresholds, principal, policy, authority, bindings, secrets, or access.
+
+`Activate` atomically validates: grant and settled subject; the §13 principal proof for the exact
+request by the configured `transition_principal`; `BehaviorEvaluation.passed`; all
+candidate/evaluation/evaluator/deployment/scope/expected-
+state hashes; protected ref availability; and
+`effective_grants(candidate)==effective_grants(active)` plus
+`dependency_bindings(candidate)==dependency_bindings(active)`, both inside the configured envelopes.
+Only then does one transaction change active artifact/epoch and append `BehaviorActivated` with all
+proof ids/hashes and prior/new state. `Rollback` analogously validates its exact current/restoration/
+evidence/policy/scope/expected-epoch request and atomically changes artifact/epoch plus appends
+`BehaviorRolledBack`. On any failed check, `BehaviorTransitionRejected` records only public hashes and
+reason, no activation state changes, and the action faults. There is no automatic transition.
+
+Transitions run only between serialized reactions, preserve runtime/instance id, generation 0, and
+memory, and increment the epoch. The completed reaction uses its starting artifact/grants and the
+next uses the new artifact/grants. Rollback deletes no history. Administrative authority or binding
+change is a separate deployment operation and artifact; endorsement cannot expand it.
 
 ### 16.8 The calibration pipeline
 
 A `Credence<E>` is a scored structured judgment over the forced categorical choice of `E`'s variants
 — not a verbalized self-rating and not, by itself, a calibrated probability (§3).
 
-- **From logprobs.** A logprob-exposing connector (`exposes_logprobs`, §17) yields per-variant scores;
-  the runtime normalizes them over `E`'s variants to the `Credence` score distribution and journals the
-  raw vector plus connector provenance.
-- **Sampling fallback.** A text-only connector is served by drawing the forced choice `fallback_samples`
-  times (min 10, at `fallback_temperature`) and taking the empirical frequency as the score distribution
-  (§17). This is an estimator of model behavior, not a calibrated correctness probability.
+- **Judgment evidence.** Every `Credence<E>` references immutable `JudgmentEvidence`: method
+  (`logprobs | sampling | deterministic | fused`), provider/connector/model versions, prompt/schema
+  hashes, declared candidate bound, protected exact raw-candidates ref, complete sequence-to-variant
+  or unmatched mapping, pre-normalization mass, exact `gate_scores`, and mapping/normalization versions.
+- **Protected access schema.** `ProtectedDisclosureRequest` is
+  `{ request_hash, requester, required_principal, operation, scope_hash, content_hashes,
+  redaction_policy_hash, destination, purpose, expires_at_head }`, where
+  `operation ∈ { resolve, inspect, export }` and
+  `request_hash` covers all remaining fields.
+  `governed_sig(std.protected.Resolve|Inspect|Export) = ProtectedDisclosureRequest` and
+  `configured_principal(std.protected.Resolve|Inspect|Export) =
+  behavior.protected_content_principal`. A `Credence<DisclosureVerdict>` is decided by a
+  principal using, for example,
+  `reviewer decide c about std.protected.Export(request) by confidence 0.9`; only `Approve` may
+  endorse the exact request. `protected.resolve`,
+  `protected.inspect`, and `protected.export` runtime operations accept only that endorsement and
+  recheck the §13 principal proof by configured `protected_content_principal`, expiry, content
+  hashes, and destination immediately before access.
+  Resolution and inspection are disclosures too; mere process-locality does not exempt them.
+- **Logprobs.** Protected encrypted segments preserve every returned candidate within the declared
+  bound, including every unmatched candidate and complete multi-token token/logprob sequence. The
+  connector declares sequence aggregation, mapping, and normalization; the runtime records all
+  intermediate mapping results and cannot discard inconvenient candidates. Threshold/margin use
+  `gate_scores`, never raw token/sequence logprobs. A successfully principal-endorsed exact
+  inspection resolves the named refs losslessly. Public/unauthorized views expose hashes, mapping
+  summaries, exact score vectors, and only an opaque protected ref already named by that visible event;
+  they cannot enumerate the protected store, raw sequences, candidate text, prompts, ingress bytes,
+  recordings, or holdouts. There is no list-all protected-content API.
+- **Sampling fallback.** Ordered bounded draws/counts are preserved and labeled sampling, never
+  logprobs; empirical frequencies become `gate_scores` (§17).
+- **Linkage and arithmetic.** `Resolved` records evidence id/hash/ref and public gate scores.
+  `Decided` repeats it with winner, runner-up, threshold, required margin/floor, actual margin,
+  profile, and exact pass/fail arithmetic. `Endorsed` repeats decision/evidence ids. Canonical fields
+  include these public values and protected hashes, not request ids, timestamps, or latency.
 - **Calibrated profile.** A fitted calibrator (temperature / Platt / isotonic / multiclass vector
   calibration, depending on the connector and label space) maps raw score vectors to probability vectors.
   It is fit from the ledger's recorded `(judgment, outcome)` pairs for a compatible gate profile (§13).
@@ -3196,7 +3607,10 @@ API but must offer the same operations as calls.
 | `agent.respond`    | run one agent turn through the memory envelope (§16.7)                    |
 | `memory.ingest`    | internalize an artifact into one agent's private memory (§16.7b)         |
 | `memory.context`   | return the memory packet for a task *without* running cognition (§16.7)   |
-| `memory.inspect`   | inspect counts, summaries, recent cells, and provenance (§16.7)          |
+| `memory.inspect`   | inspect public counts/hashes/provenance; protected values require `protected.inspect` |
+| `protected.resolve`| resolve exact named protected refs only with principal-endorsed `ProtectedDisclosureRequest` (§13, §16.8) |
+| `protected.inspect`| inspect exact protected content only with the same principal-bound request; no enumeration |
+| `protected.export` | export exact protected content/redaction/destination/purpose only with the same proof |
 | `config.read/write`| manage the **dependency/connector** bindings and memory budgets (provider, the `[tools.*]` catalog and its wiring, identity; §17) — **never** decision rules, which live in source (§13, §17.2) |
 
 `config.read/write` is deliberately scoped to dependency and connector configuration plus memory
@@ -3229,8 +3643,39 @@ TOML in a project-root `agape.toml`. A host UI, build system, or service manager
 same manifest data model from another source, but conformance fixtures and portable projects use
 the TOML shape below.
 
-The manifest is an integration contract, not a second programming language. Source declares *what*
-exists:
+The manifest is an integration contract, not a second programming language. Reserved
+`std.behavior` entries cannot be bound, replaced, redirected, shadowed, or granted by the manifest;
+attempts are `ConfigError` (§16.7d); the fixed reserved result-event mappings are equally
+non-bindable. The module itself is implicit, but a deployment using it declares
+its evaluator and policy artifacts in the dedicated runtime-owned table:
+
+```toml
+[behavior]
+artifact_store_ref = "protected:sha256:..."
+evaluator_bundle_ref = "protected:sha256:..."
+evaluator_bundle_hash = "sha256:..."
+evaluator_policy_ref = "protected:sha256:..."
+evaluator_policy_hash = "sha256:..."
+deployment_policy_ref = "protected:sha256:..."
+deployment_policy_hash = "sha256:..."
+protected_holdout_store_ref = "protected:sha256:..."
+transition_principal = "reviewer"
+protected_content_principal = "reviewer"
+authority_envelope_ref = "protected:sha256:..."
+authority_envelope_hash = "sha256:..."
+dependency_envelope_ref = "protected:sha256:..."
+dependency_envelope_hash = "sha256:..."
+```
+
+These keys configure reserved runtime evaluation/transition mechanics; they do not bind actions or
+create grants. Ref contents must hash to paired hashes; deployment policy resolves and covers both
+authority/dependency envelope refs so the runtime re-evaluates membership, never trusts a hash-only
+claim. `transition_principal` and `protected_content_principal` must name source-declared principals
+with identity bindings and non-`none` verified attester authenticators. They may name the same
+principal. Their names are covered by deployment policy and every corresponding governed request
+hash; a ruling from any other declared principal fails. If source can reach a `std.behavior` action,
+every required ref/hash/envelope/principal is mandatory and mismatch/missing content is `ConfigError`
+before execution. Candidate/proposal values cannot override this table. Source declares *what* exists:
 
 ```agape
 prompt text question;
@@ -3487,11 +3932,11 @@ Markdown-substrate keys (`driver = "markdown"`):
 Memory-runtime policy keys (they apply over every substrate — the memory runtime wraps the
 configured driver):
 
-- `auto_memory` (bool, default `true`) enables the write-judgment filter on auto-internalized
-  provider replies: a low-signal reply is skipped rather than stored, with receipt
-  `driver_status = "SKIPPED"` and `refs.skipped_reason = "low_signal_auto_memory"`. Explicit stores
-  (`mem <- v`, a `mem` declaration initializer) are never filtered. `false` stores every provider
-  reply unfiltered.
+- `auto_memory` (bool, default `true`) selects post-reaction write policy; it never disables
+  `MemoryWriteEvaluated`. Low-signal, duplicate, or failed automatic writes record `skipped`,
+  `deduplicated`, or `failed` with reason and emit no `Internalized`; only `stored` emits it. Explicit
+  stores are unfiltered ordinary stores. `false` selects store for eligible provider episodes but
+  still records evaluation and truthful failure.
 - `classify` (bool, default `true`) classifies each stored cell lexically into a kind
   (`preference | fact | procedure | decision | interaction | note`) with tags and a signal score,
   recorded in the cell metadata (`memory_kind`, `memory_tags`, `memory_signal`, `memory_reason`)
@@ -3571,6 +4016,15 @@ the epistemic remainder). All three are explicit, enforced, and checkable.
 
 ### 17.5 The conformance harness contract
 
+A conformant implementation ships a test mode the black-box suite drives. The normative
+machine-readable allocation is `agape-production-conformance/manifest.json`: it enumerates exactly
+P01–P16, marks each case required, names its fixture/test ids and capability, and allocates it to
+source-tree and/or extracted-package execution on Linux, macOS, and Windows. Every P01–P16 id must
+have at least one fresh-OS-process source allocation; the packaged matrix must include the cases
+designated package-required there. A missing id, duplicate id, unallocated supported OS, optional/
+skipped required allocation, or test not selected by the manifest is a release failure. Human prose,
+test discovery, or an adapter suite cannot replace this inventory.
+
 A conformant implementation ships a test mode the black-box suite drives:
 
 - **Fault injection.** A designated stub provider returns schema-violating output on
@@ -3578,9 +4032,12 @@ demand, so a `TypeMismatch` send-fault (§16.6) is triggerable deterministically
 *transient* variant that violates the schema for a bounded number of sends and then conforms, so a
 `retry N` recovery (§11) and its exhaustion crash are both observable. A separate `empty` provider
 models the unrecoverable seam failure (the provider returns nothing → `AgentCrashed`, §16.6).
-- **Recorded replay.** The runner can capture a run's journal and replay it; "chain-head
-equality" is equality of the ledger's terminal hash under the canonical event
-serialization.
+- **Recorded replay.** The runner captures protected recordings and tests both §16.5 modes.
+  Read-only verification persists nothing and must regenerate the exact source head. Materialized
+  forensic replay must use a new runtime id and distinct outer head, append `ReplayDerivedFrom`, keep
+  recorded source runtime/spawn ids only inside its non-writable nested source projection, and prove
+  that projection's hash equals the source head. Both make zero oracle calls. A chain-head-only check
+  against the outer forensic ledger is invalid evidence.
 - **Rule observation.** Decision rules are in the test's own source — the gate's inline rule
 (§13), no manifest fixture — and the gate records the applied `Rule` in its
 `Decided` event (and, when it escalates, the paired `PendingPrincipalDecision` + `PrincipalDecision`
@@ -3595,16 +4052,34 @@ replays without a live human.
   proving it cannot bypass taint, endorsement, grants, the perform-only outbound path, or replay. A feature is
   conformant only if its accepted forms reduce to kernel operations and its rejected forms fail at the
   correct boundary.
-- **Memory-envelope coverage.** Because the memory runtime (§16.7) is part of the contract, a
-  runtime is memory-conformant only if it passes tests for: (1) mandatory memory consultation on
-  every agent turn, *including* the empty-memory case (the `MemoryConsulted` trace, §16.7); (2)
-  per-agent memory isolation across multiple instances of the same template (§16.1a); (3)
-  artifact ingestion producing summary + chunks + facts + graph + vectors when an artifact is
-  internalized (§16.7b); (4) idempotent re-ingestion of an unchanged artifact; (5) check/test/run
-  *failure* internalization and (6) *success* internalization (§16.7c); (7) user-correction
-  internalization and its retrieval precedence over inferred lessons; (8) memory provenance back to
-  ledger origin ticks (§10); (9) replay without re-invoking provider/endpoint/decomposition oracles
-  (§16.5); and (10) no memory-to-action trust laundering (§16.7, §13).
+- **Memory-envelope coverage.** Tests prove exactly one `MemoryConsulted` with
+  `consult_kind=automatic_reaction` per actual reaction; explicit recalls add separate
+  `consult_kind=explicit_recall` events with public hit ids/hashes/scores/origins and no plaintext.
+  They also prove exactly one `MemoryWriteEvaluated` with `closure_kind=automatic_reaction` per actual reaction, including
+  empty/no-provider cases; additional explicit stores use `closure_kind=explicit_store`; the automatic closure's correlated
+  automatic `Internalized` only on committed store while explicit stores retain independent receipts;
+  typed recall over retrieved content; instance identity/isolation and immutable
+  provenance across restart/reflection/forget/version; verified correction precedence; hand-edit
+  external ingress; truthful modality deltas including chunks with zero embeddings; idempotence; and
+  no memory-to-action laundering.
+
+**Production-path release oracle.** Every normative runtime capability has a required black-box proof
+that starts a fresh OS process, runs ordinary `.ag` source via a portable manifest and shipped CLI and
+connector path, and asserts exit/diagnostics, canonical ledger/projection hashes, connector transcript
+and call counts, recordings, durable memory, and protected artifacts. Interpreter/memory/Studio/helper
+or adapter imports remain useful layer tests but are not production proof. Loopback provider/identity/
+tool services use ordinary configuration, no live credentials/internet, and no timing oracle. Missing
+CLI, fixture/output, protected export principal path, or skipped required case fails.
+
+The named source and extracted-package matrices cover: instruction-role composition; envelope across
+lifecycle/event/task/tool/crash and raw/structured/graded/no-provider cases; typed recall content;
+identity/isolation/generation-zero/collision paths; truthful modalities/origin; same-instance
+serialization with cross-instance overlap/atomic persistence; both replay modes with zero repeated
+oracle calls; verified corrections; exact protected multi-token/unmatched evidence and public gate
+arithmetic; causal bounded adaptation; `std.behavior` proposal/evaluation/activation/rollback,
+candidate-independent evaluation, unchanged effective authority, and principal-only transitions;
+durable fork/import/migration identity/leases; and principal-authorized protected export, retention,
+and erasure without leakage. Adapter-only success cannot make a release conformant.
 
 ### 17.6 Runtime lockstep and release reporting
 
@@ -3613,7 +4088,7 @@ moving parts are reported together. Every release reports:
 
 - the **language-spec version** (this document);
 - the **runtime implementation version**;
-- the **conformance suite version** (kernel + memory-envelope, §17.5);
+- the **conformance suite version** and named source-tree plus packaged production matrix (§17.5);
 - the **memory schema / projection version** (§16.7);
 - the **provider / decomposition / embedding algorithm versions** used for memory and calibration
   (§16.5, §16.8);
