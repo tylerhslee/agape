@@ -21,6 +21,11 @@ version.
   exact typed values, recall returns deeply tainted typed arrays without implicit
   cognition, and durable regions use authenticated instance resumption and
   recoverable ledger-bound mutations.
+- **Qualified memory executes as declared.** The TypeScript runtime allocates
+  direct and inherited descriptors as structural handles, freezes project/user
+  identity for each session, enforces driver retention capabilities before
+  execution, isolates authenticated scope tuples, and implements deterministic
+  generation-aware store, recall, and forget operations.
 - **Recalled experience preserves typed outcomes and provenance.** Explicitly
   stored successful examples and rejected counterexamples retain their typed value
   summaries and origin metadata across Local and Markdown drivers; recall remains
@@ -38,7 +43,7 @@ version.
   memory driver, prove exact agent-instance and handle isolation, reject fabricated
   Markdown modality effects or unresolvable refs, and distinguish immutable prompt
   provenance from copied metadata in manually edited memory.
-- **Qualified-memory language oracle.** The 253-case source suite pins structural
+- **Qualified-memory language oracle.** The 254-case source suite pins structural
   descriptor placement and clause order, closed qualifiers, persistable payloads,
   exact store and typed-recall checking, explicit-only writes, retained handles after
   forget, missing-user crash behavior, and standard-driver retention preflight.

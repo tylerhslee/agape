@@ -10,7 +10,6 @@ import { MockProvider, type CognitionContext, type Provider, type StructuredSche
 import { configError } from "./errors.js";
 import { LocalMemoryDriver, type MemoryDriver } from "./memory.js";
 import { MarkdownMemoryDriver } from "./memory_markdown.js";
-import { MemoryRuntimeDriver } from "./memory_runtime.js";
 
 export interface ProviderConfig {
   backend: "mock" | "anthropic" | "openai" | "gemini" | string;
@@ -175,9 +174,7 @@ export function createMemoryDriver(m: Manifest, deps: { cwd?: string; provider?:
     default:
       throw configError(`unknown memory driver '${driver}' (manifest [memory] driver=...)`);
   }
-  // The provider handle enables [memory] reflect = true; without it the
-  // memory runtime is purely lexical (judgment/classify/dedupe/rerank).
-  return new MemoryRuntimeDriver(substrate, cfg, deps.provider);
+  return substrate;
 }
 
 // ---- a small TOML reader for the manifest subset the runtime needs ----

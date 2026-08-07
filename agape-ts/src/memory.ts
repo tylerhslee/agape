@@ -10,6 +10,7 @@ export interface MemoryScope {
   agent: string;
   mem: string;
   project?: string;
+  user?: string;
 }
 
 export interface MemoryStoredCell {
@@ -19,6 +20,7 @@ export interface MemoryStoredCell {
   value?: Value;
   typed?: Record<string, unknown>;
   metadata?: Record<string, unknown>;
+  generation?: number;
 }
 
 /**
@@ -70,6 +72,8 @@ export interface MemoryReceipt {
   effects?: Record<string, unknown>;
   refs?: Record<string, unknown>;
   policy?: Record<string, unknown>;
+  generation?: number;
+  alreadyForgotten?: boolean;
 }
 
 export interface MemoryConsultResult {
@@ -79,6 +83,7 @@ export interface MemoryConsultResult {
 }
 
 export interface MemoryDriver {
+  readonly capabilities?: { retentions: readonly ("session" | "durable")[] };
   declare?(scope: MemoryScope): void | Promise<void>;
   internalize(req: MemoryWriteRequest): Promise<MemoryReceipt>;
   consult(req: MemoryConsultRequest): Promise<MemoryConsultResult>;
@@ -86,31 +91,39 @@ export interface MemoryDriver {
 }
 
 export function memoryScopeKey(scope: MemoryScope): string {
-  return `${scope.project ?? ""}\u0000${scope.agent}\u0000${scope.mem}`;
+  return `${scope.project ?? ""}\u0000${scope.user ?? ""}\u0000${scope.agent}\u0000${scope.mem}`;
 }
 
 export class LocalMemoryDriver implements MemoryDriver {
-  private regions = new Map<string, { writes: MemoryStoredCell[]; forgotten: boolean }>();
+  readonly capabilities = { retentions: ["session"] as const };
+  private regions = new Map<string, { writes: MemoryStoredCell[]; generation: number; closed: boolean; sequence: number }>();
 
   async declare(scope: MemoryScope): Promise<void> {
     const key = memoryScopeKey(scope);
-    if (!this.regions.has(key)) this.regions.set(key, { writes: [], forgotten: false });
+    if (!this.regions.has(key)) this.regions.set(key, { writes: [], generation: 0, closed: false, sequence: 0 });
   }
 
   async internalize(req: MemoryWriteRequest): Promise<MemoryReceipt> {
     const region = this.region(req.scope, true);
-    if (region.forgotten) throw new Error(`memory '${req.scope.mem}' was forgotten`);
+    if (region.closed) {
+      region.generation += 1;
+      region.closed = false;
+      region.writes = [];
+    }
+    region.sequence += 1;
+    const id = `local:g${region.generation}:c${String(region.sequence).padStart(8, "0")}`;
     region.writes.push({
-      id: `local:${region.writes.length + 1}`,
+      id,
       memory: req.memory,
       value: req.value,
       metadata: req.metadata,
       typed: req.summary,
+      generation: region.generation,
     });
-    const id = region.writes[region.writes.length - 1]!.id!;
     return {
       status: "APPENDED",
       ids: [id],
+      generation: region.generation,
       effects: {
         cells: { upserted: 1, tombstoned: 0, deleted: 0 },
         facts: { upserted: 0, tombstoned: 0, deleted: 0 },
@@ -130,9 +143,10 @@ export class LocalMemoryDriver implements MemoryDriver {
 
   async consult(req: MemoryConsultRequest): Promise<MemoryConsultResult> {
     const region = this.region(req.scope);
-    if (region.forgotten) throw new Error(`memory '${req.scope.mem}' was forgotten`);
-    const hits = region.writes.slice(-(req.topK ?? region.writes.length));
-    const recalled = hits.length ? renderStoredCell(hits[hits.length - 1]!) : "";
+    const hits = region.closed ? [] : [...region.writes]
+      .sort((a, b) => (b.score ?? 0) - (a.score ?? 0) || String(a.id).localeCompare(String(b.id)))
+      .slice(0, req.topK ?? region.writes.length);
+    const recalled = hits.map(renderStoredCell).join("\n");
     return {
       hits,
       recalled,
@@ -142,12 +156,18 @@ export class LocalMemoryDriver implements MemoryDriver {
 
   async forget(req: MemoryForgetRequest): Promise<MemoryReceipt> {
     const region = this.region(req.scope);
+    const alreadyForgotten = region.closed;
     const count = region.writes.length;
-    region.writes = [];
-    region.forgotten = true;
+    if (!alreadyForgotten) {
+      region.writes = [];
+      region.closed = true;
+    }
     return {
+      status: alreadyForgotten ? "ALREADY_FORGOTTEN" : "TOMBSTONED",
+      generation: region.generation,
+      alreadyForgotten,
       effects: {
-        cells: { upserted: 0, tombstoned: count, deleted: 0 },
+        cells: { upserted: 0, tombstoned: alreadyForgotten ? 0 : count, deleted: 0 },
         facts: { upserted: 0, tombstoned: 0, deleted: 0 },
         graph: {
           nodes_upserted: 0,
@@ -163,11 +183,11 @@ export class LocalMemoryDriver implements MemoryDriver {
     };
   }
 
-  private region(scope: MemoryScope, create = false): { writes: MemoryStoredCell[]; forgotten: boolean } {
+  private region(scope: MemoryScope, create = false): { writes: MemoryStoredCell[]; generation: number; closed: boolean; sequence: number } {
     const key = memoryScopeKey(scope);
     let region = this.regions.get(key);
     if (!region && create) {
-      region = { writes: [], forgotten: false };
+      region = { writes: [], generation: 0, closed: false, sequence: 0 };
       this.regions.set(key, region);
     }
     if (!region) throw new Error(`memory '${scope.mem}' is not declared for agent '${scope.agent}'`);

@@ -55,6 +55,7 @@ const DEFAULT_ENTRYPOINT = "MEMORY.md";
 const DEFAULT_ROOT = ".agape/memory";
 
 export class MarkdownMemoryDriver implements MemoryDriver {
+  readonly capabilities = { retentions: ["session", "durable"] as const };
   constructor(
     private readonly cfg: MarkdownMemoryConfig = {},
     private readonly deps: { cwd?: string; now?: () => Date } = {},

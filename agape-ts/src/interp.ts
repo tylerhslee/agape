@@ -82,11 +82,18 @@ const TASK_ALIASES: Record<string, string> = {
   TaskExpired: "Expired",
 };
 
-// A private-memory region: the values written through a `mem` handle, plus a `forgotten` flag — a
-// `forget` tombstones the region (it stays in the map for audit, but is no longer recallable, §10).
+interface QualifiedMemoryDescriptor {
+  type: A.TypeRef;
+  modality: "opaque" | "episodic" | "semantic";
+  scopes: ("project" | "user")[];
+  retention: "session" | "durable";
+}
+
 interface MemRegion {
   writes: Value[];
-  forgotten: boolean;
+  closed: boolean;
+  generation: number;
+  descriptor: QualifiedMemoryDescriptor;
 }
 
 interface AgentInstance {
@@ -129,6 +136,7 @@ class Scope {
     if (this.vars.has(name)) return this.vars.get(name);
     if (this.parent) return this.parent.get(name);
     if (this.agent?.fields.has(name)) return this.agent.fields.get(name);
+    if (this.agent?.mems.has(name)) return { kind: "memref", name, trust: "settled" };
     return undefined;
   }
   set(name: string, v: Value) {
@@ -360,6 +368,14 @@ export interface ConformalLabel {
   label: string;
 }
 
+export interface RuntimeIdentityContext {
+  projectSubject: string;
+  sessionLineageId?: string;
+  sessionId?: string;
+  conversationId?: string;
+  user?: { issuer: string; subject: string; verified: boolean };
+}
+
 type RunOptions = {
   provider?: Provider;
   modules?: ModuleInput[];
@@ -377,6 +393,7 @@ type RunOptions = {
   memory?: MemoryDriver;
   memoryRoot?: string;
   projectRoot?: string;
+  identity?: RuntimeIdentityContext;
   strictConfig?: boolean;
   timingOriginMs?: number;
   // §15.5.6/§16.8: the compatible labelled cases a `by conformal α` gate calibrates from (the GateProfile's
@@ -406,6 +423,8 @@ export function createSession(program: A.Program, opts: RunOptions = {}): Runtim
   // The memory runtime shares the session's provider so reflection (when the
   // manifest opts in) runs behind the same seam as every other cognition call.
   const memory = opts.memory ?? createMemoryDriver(manifest, { cwd: opts.memoryRoot ?? projectRoot, provider });
+  validateMemoryRetentions(program, memory);
+  const identity = freezeRuntimeIdentity(opts.identity, manifest, projectRoot);
   const toolHandlers = { ...createToolHandlers(manifest), ...(opts.toolHandlers ?? {}) };
   return new Interpreter(
     program,
@@ -422,7 +441,48 @@ export function createSession(program: A.Program, opts: RunOptions = {}): Runtim
     opts.calibration ?? [],
     opts.onEvent,
     opts.attesterVerifier,
+    identity,
   );
+}
+
+function normalizeMemoryDescriptor(d: A.MemoryDescriptor): QualifiedMemoryDescriptor {
+  const type = d.clauses.find((c): c is Extract<A.MemoryClause, { kind: "type" }> => c.kind === "type")!.type;
+  const modality = d.clauses.find((c): c is Extract<A.MemoryClause, { kind: "modality" }> => c.kind === "modality")!.value;
+  const scopes = d.clauses.find((c): c is Extract<A.MemoryClause, { kind: "scope" }> => c.kind === "scope")!.values;
+  const retention = d.clauses.find((c): c is Extract<A.MemoryClause, { kind: "retention" }> => c.kind === "retention")!.value;
+  return {
+    type,
+    modality: modality as QualifiedMemoryDescriptor["modality"],
+    scopes: scopes as QualifiedMemoryDescriptor["scopes"],
+    retention: retention as QualifiedMemoryDescriptor["retention"],
+  };
+}
+
+function validateMemoryRetentions(program: A.Program, memory: MemoryDriver): void {
+  const required = new Set<"session" | "durable">();
+  for (const d of program.decls) {
+    if (d.kind !== "agent") continue;
+    for (const m of d.mems) required.add(normalizeMemoryDescriptor(m).retention);
+  }
+  if (required.size === 0) return;
+  const supported = new Set(memory.capabilities?.retentions ?? []);
+  for (const retention of required) {
+    if (!supported.has(retention)) {
+      throw configError(`configured memory driver does not advertise required '${retention}' retention`);
+    }
+  }
+}
+
+function freezeRuntimeIdentity(
+  supplied: RuntimeIdentityContext | undefined,
+  manifest: Manifest,
+  projectRoot: string,
+): Readonly<RuntimeIdentityContext> {
+  const configuredProject = manifest.project?.name;
+  const projectSubject = supplied?.projectSubject
+    ?? (typeof configuredProject === "string" ? configuredProject : `project:${createHash("sha256").update(projectRoot).digest("hex")}`);
+  const user = supplied?.user ? Object.freeze({ ...supplied.user }) : undefined;
+  return Object.freeze({ ...supplied, projectSubject, user });
 }
 
 class Interpreter {
@@ -513,6 +573,7 @@ class Interpreter {
     private calibrationPool: ConformalLabel[] = [],
     onEvent?: (event: LedgerEvent) => void,
     private attesterVerifier?: AttesterVerifier,
+    private readonly identity?: Readonly<RuntimeIdentityContext>,
   ) {
     this.ledger = new Ledger(timingOriginMs, onEvent);
     // §3: register the declared principal names so a `decide c by p` (the parser's {policy} rule form)
@@ -909,27 +970,8 @@ class Interpreter {
 
   // memdecl ::= "mem" Ident ("<-" expr)? ";" — declare a private-memory region on this instance (§10).
   private async execMemDecl(s: A.MemDecl, scope: Scope): Promise<void> {
-    const agent = scope.currentAgent();
-    if (!agent) throw new RuntimeError("`mem` declared outside an agent");
-    const region: MemRegion = { writes: [], forgotten: false };
-    const memScope = this.memoryScope(agent, s.name);
-    await this.memory.declare?.(memScope);
-    agent.mems.set(s.name, region);
-    scope.set(s.name, { kind: "memref", name: s.name, trust: "settled" });
-    if (s.init) {
-      const v = await this.evalExpr(s.init, scope);
-      region.writes.push(v);
-      // E-Store (§15.4.2): the declare-with-init form is a store too — it internalizes and traces.
-      const receipt = await this.memory.internalize({
-        scope: memScope,
-        value: v,
-        memory: renderStoreRecollection(s.name, v),
-        episode: { act: "store" },
-        summary: valueSummary(v),
-        metadata: { source: "memdecl", subject: s.name, ...this.memoryProvenance() },
-      });
-      this.ledger.append("Internalized", s.name, this.memoryInternalizedPayload(s.name, v, receipt), agent.name);
-    }
+    void scope;
+    throw typeError(`legacy memory declaration 'mem ${s.name};' is not executable`);
   }
 
   // forget ::= "forget" Ident ";" — an audit-preserving tombstone; the region becomes unrecallable (§10).
@@ -937,10 +979,17 @@ class Interpreter {
     const agent = scope.currentAgent();
     const region = agent?.mems.get(s.name);
     if (!region) throw typeError(`'forget ${s.name}': not a mem handle`);
-    const receipt = await this.memory.forget({ scope: this.memoryScope(agent!, s.name) });
+    const memScope = this.memoryScope(agent!, s.name);
+    await this.memory.declare?.(memScope);
+    const alreadyForgotten = region.closed;
+    const receipt = await this.memory.forget({ scope: memScope });
     const payload = this.memoryForgottenPayload(s.name, region, receipt);
-    region.writes = [];
-    region.forgotten = true;
+    if (!alreadyForgotten) {
+      region.writes = [];
+      region.closed = true;
+    }
+    payload.generation = region.generation;
+    payload.already_forgotten = alreadyForgotten;
     this.ledger.append("Forgotten", s.name, payload, agent?.name);
   }
 
@@ -980,6 +1029,10 @@ class Interpreter {
     const homeModule = this.agentModuleOf.get(agentType);
     const inst: AgentInstance = { name, agentType, decl, awake: false, fields: new Map(), mems: new Map(), module: homeModule };
     for (const f of decl.fields) inst.fields.set(f.name, this.zeroOf(f.type));
+    for (const m of this.memoryDeclsOf(decl)) {
+      const descriptor = normalizeMemoryDescriptor(m);
+      inst.mems.set(m.name, { writes: [], closed: false, generation: 0, descriptor });
+    }
     // E-Spawn (§15.4.2): bind constructor arguments positionally to the agent's declared params, evaluated
     // in the SPAWNING scope (the args are the caller's expressions). These become instance fields visible to
     // the ctor/hooks/handlers; an agent-typed param binding is authority-checked by `reach` at each send (§13).
@@ -994,6 +1047,14 @@ class Interpreter {
     for (const st of this.ctorOf(inst)) await this.execStmt(st, ctorScope);
     this.ledger.append("Spawned", name, { value: valueSummary({ kind: "agentref", name, agentType, trust: "settled" }) }, name);
     return inst;
+  }
+
+  private memoryDeclsOf(decl: A.AgentDecl): A.MemoryDescriptor[] {
+    const parentName = decl.extends?.name;
+    if (!parentName) return [...decl.mems];
+    const parent = this.agents.get(parentName);
+    if (!parent) return [...decl.mems];
+    return [...this.memoryDeclsOf(parent), ...decl.mems];
   }
 
   // the constructor statements of an instance, with an `extend`ed parent's ctor running first (§5).
@@ -2330,11 +2391,19 @@ class Interpreter {
   }
 
   private memoryScope(agent: AgentInstance, mem: string): MemoryScope {
-    const project = this.manifest?.project?.name;
+    const region = agent.mems.get(mem);
+    if (!region) throw typeError(`'${mem}': not a qualified memory descriptor`);
+    const needsProject = region.descriptor.scopes.includes("project");
+    const needsUser = region.descriptor.scopes.includes("user");
+    const user = this.identity?.user;
+    if (needsUser && (!user || !user.verified)) {
+      throw new CrashError(`memory '${mem}' requires a verified user scope subject`);
+    }
     return {
       agent: agent.name,
       mem,
-      project: typeof project === "string" ? project : undefined,
+      project: needsProject ? this.identity?.projectSubject : undefined,
+      user: needsUser ? `${user!.issuer}\u0000${user!.subject}` : undefined,
     };
   }
 
@@ -2465,18 +2534,32 @@ class Interpreter {
       const region = agent?.mems.get(dest.name);
       const v = await this.evalExpr(e.message, scope);
       if (!region) throw typeError(`'${dest.name} <-': not a mem handle`);
-      if (region.forgotten) throw typeError(`'${dest.name} <-': the handle was forgotten and is no longer writable`);
-      region.writes.push(v);
-      // E-Store (§15.4.2): a mem write mutates the live private-memory views and appends an audit receipt.
+      const memScope = this.memoryScope(agent!, dest.name);
+      await this.memory.declare?.(memScope);
+      const generation = region.closed ? region.generation + 1 : region.generation;
       const receipt = await this.memory.internalize({
-        scope: this.memoryScope(agent!, dest.name),
+        scope: memScope,
         value: v,
         memory: renderStoreRecollection(dest.name, v),
         episode: { act: "store" },
         summary: valueSummary(v),
-        metadata: { source: "store", subject: dest.name, ...this.memoryProvenance() },
+        metadata: {
+          source: "store",
+          subject: dest.name,
+          generation,
+          modality: region.descriptor.modality,
+          retention: region.descriptor.retention,
+          ...this.memoryProvenance(),
+        },
       });
+      if (region.closed) {
+        region.generation = generation;
+        region.closed = false;
+        region.writes = [];
+      }
+      region.writes.push(v);
       const payload = this.memoryInternalizedPayload(dest.name, v, receipt);
+      payload.generation = region.generation;
       const ev = this.ledger.append("Internalized", dest.name, payload, agent?.name);
       return this.ledgerEntryValue(ev, "Internalized", {
         mem: settledText(dest.name),
@@ -2741,22 +2824,20 @@ class Interpreter {
     }
   }
 
-  // E-Recall (§10): `MEM -> "query"` consults the agent's private memory. A recall is ALWAYS tainted —
-  // taint-equivalent to a send reply: `graded` when bound to a Credence<E> slot, else `raw` text. It
-  // records a `MemoryConsulted` trace but never settles a value (no laundering path, §10/§16.7).
-  private async evalRecall(e: A.RecallExpr, scope: Scope, expected?: A.TypeRef): Promise<Value> {
+  // E-Recall (§10): provider-free deterministic exact TYPE[] recall; every element is deeply raw.
+  private async evalRecall(e: A.RecallExpr, scope: Scope, _expected?: A.TypeRef): Promise<Value> {
     const agent = scope.currentAgent();
-    // `->` requires a `mem` on the left; any non-`mem` LHS is a TypeError (also caught statically, §10).
     if (e.mem.kind !== "ident") throw typeError("`->` recall requires a mem handle on the left");
     const memName = e.mem.name;
     const region = agent?.mems.get(e.mem.name);
     if (!region) throw typeError(`'${e.mem.name} ->': not a mem handle`);
-    if (region.forgotten) throw typeError(`'${e.mem.name} ->': the handle was forgotten and is no longer recallable`);
     const queryValue = await this.evalExpr(e.query, scope);
     const query = render(queryValue);
-    const consulted = await this.memory.consult({ scope: this.memoryScope(agent!, e.mem.name), query });
-    const recalled = consulted.recalled || (region.writes.length ? render(region.writes[region.writes.length - 1]!) : "");
-    const sourceHits = consulted.hits.length > 0
+    const memScope = this.memoryScope(agent!, e.mem.name);
+    await this.memory.declare?.(memScope);
+    const cap = this.manifest?.memory?.top_k ?? 10;
+    const consulted = await this.memory.consult({ scope: memScope, query, topK: cap });
+    const sourceHits = region.closed ? [] : consulted.hits.length > 0
       ? consulted.hits
       : region.writes.map((value, index) => ({
           id: `overlay:${index + 1}`,
@@ -2787,40 +2868,25 @@ class Interpreter {
       };
     });
     const queryHash = createHash("sha256").update(query).digest("hex");
-    this.ledger.append("MemoryConsulted", agent?.name ?? "<top>", {
+    this.ledger.append("MemoryConsulted", memName, {
       consult_kind: "explicit_recall",
       reaction_event: this.reactionEventALS.getStore() ?? null,
       query_hash: queryHash,
-      budget: { top_k: this.manifest?.memory?.top_k ?? 10 },
+      budget: { top_k: cap },
+      cap,
       empty: typedHits.length === 0,
       limited: false,
       hit_ids: typedHits.map((hit) => hit.cell_id),
       content_hashes: typedHits.map((hit) => hit.content_hash),
       scores: typedHits.map((hit) => hit.score ?? null),
+      origins: typedHits.map((hit) => hit.origin_ref),
       origin_refs: typedHits.map((hit) => hit.origin_ref),
     }, agent?.name);
-    if (expected?.kind === "credence") {
-      const variants = this.variantsOf(expected.enumName);
-      if (!variants) throw new RuntimeError(`unknown enum '${expected.enumName}'`);
-      this.checkProviderIngress(queryValue, query, scope, agent?.name ?? "<top>");
-      const cognitionContext = this.cognitionContext(agent, query, { query, hits: typedHits });
-      const { scores } = await this.inResolutionOrder(
-        this.provider.judge(query, expected.enumName, variants, cognitionContext),
-        ({ scores: resolvedScores }) => {
-          this.ledger.append("Resolved", memName, {
-            kind: "credence",
-            enum: expected.enumName,
-            gate_scores: resolvedScores,
-            ...scoreSummary(resolvedScores),
-          }, agent?.name);
-        },
-      );
-      const recalledSource: Value = { kind: "text", v: recalled, trust: "raw" };
-      const sources = [...this.promptSources(e.query, scope), recalledSource];
-      return { kind: "credence", enumName: expected.enumName, scores, trust: "graded", derivedFrom: sources, ingress: ingressJoin(sources) };
-    }
-    // raw recall text — never settled (a recalled value must be re-decided + endorsed before a sink).
-    return { kind: "text", v: recalled, trust: "raw" };
+    const items = sourceHits.flatMap((hit, index) => {
+      const value = hit.value ?? region.writes[index];
+      return value ? [this.withTrust(value, "raw")] : [];
+    });
+    return { kind: "array", items, trust: "raw" };
   }
 
   // E-Query (§10, §16.7): a deterministic read of the facts table / relationship graph / the ledger
