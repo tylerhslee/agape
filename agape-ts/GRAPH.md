@@ -20,7 +20,7 @@ validates; a program that parses and checks always has a graph.
 | `handler`   | `when` clause (in an agent or top-level)   | `when EventType`         | `guard`, `about` |
 | `hook`      | `on awake/sleep/crash` hook                | `on awake`               | — |
 | `ask`       | self-send (`self <- …`) — a testimony step | `ask Credence<E>`        | `reply`, `binding` |
-| `gate`      | `decide` site — a STANDALONE decision diamond named by the enum (not a cluster member: the chain drops out of the agent box into it) | `decide Credence<E>` | `enum`, `rule`, `principal`, `quorum`, `endorses`, `agent` |
+| `gate`      | `decide` site — a STANDALONE decision diamond named by the enum (not a cluster member: the chain drops out of the agent box into it) | `decide Credence<E>` | `enum`, `rule`, `principal`, `quorum`, `endorsements`, `endorses`, `agent` |
 | `sink`      | each `perform` SITE (one box per site)     | `perform Action`         | `action`, `variant`, `reversible`, `agent` |
 | `emit`      | each `emit` SITE (one box per site; dashed when no subscriber) | `emit Event` | `event`, `variant`, `consumed`, `agent` |
 | `tool`      | tool that some call targets                | tool name                | `effect`, `reversible` |
@@ -33,6 +33,10 @@ validates; a program that parses and checks always has a graph.
 `parent` pointing at the instance or helper function they live in. Gate nodes are standalone
 decision diamonds so the chain can visibly leave an agent or function box. Every node carries a
 1-based source `line` for click-to-source.
+Gate `endorsements` is an ordered list of every endorsement site, each with its
+`subject`, optional committed `variant`, and source `line`. The legacy scalar
+`endorses` is emitted only when every site endorses the same subject.
+
 
 Generated nodes (`ask`, `gate`, per-site `emit`, per-site `sink`) also carry explicit source-shape
 fields so readers do not have to parse ids:

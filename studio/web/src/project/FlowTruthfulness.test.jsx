@@ -6,8 +6,8 @@ import FlowBuilder, { FlowCanvas } from "./FlowBuilder.jsx";
 describe("Flow Builder interaction contract", () => {
   it("states that source properties and canvas layout are different edit surfaces", () => {
     const html = renderToStaticMarkup(<FlowBuilder info={{ files: [{ rel: "fact_checker.ag" }] }} />);
-    expect(html).toContain("Property edits rewrite");
-    expect(html).toContain("dragging arranges this canvas only");
+    expect(html).toContain("explicit port drops rewrite");
+    expect(html).toContain("dragging a card header arranges only this canvas");
   });
 
   it("makes temporary filtered layouts explicitly non-draggable", () => {

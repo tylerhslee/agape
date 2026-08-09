@@ -2176,6 +2176,8 @@ class Checker {
           if (e.field === "basis") return "enum"; // a value of the built-in `Basis` enum (§20.4)
           if (e.field === "margin") return "float";
           if (e.field === "decision_id") return "int";
+          if (e.field === "principal_event") return "unknown";
+          if (e.field === "principal_request") return "unknown";
           if (e.field === "subject") return "unknown";
         }
         return "unknown";

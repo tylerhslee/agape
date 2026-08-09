@@ -24,8 +24,8 @@ version.
 - **Qualified memory descriptors are resolved as declared.** The TypeScript compiler
   and runtime allocate direct and inherited descriptors as structural handles, freeze
   project/user identity for each session, enforce driver retention capabilities before
-  execution, and isolate authenticated scope tuples. The shipped interpreter's
-  source-operation path still requires migration onto the transactional coordinator.
+  execution, isolate authenticated scope tuples, and route source `store`, `recall`,
+  and `forget` operations through the configured transactional runtime coordinator.
 - **Named-memory persistence primitives are canonical.** The TypeScript runtime
   exposes interpreter-independent schema and descriptor hashes, exact typed-value
   envelopes that exclude trust and private provenance, decode recursively raw,
@@ -51,11 +51,11 @@ version.
   recall ordering. The adapter restores exact ledger history and stable instances from
   authenticated snapshots under an injected host key, and replay serves recorded
   outputs and acknowledgements without live memory seams.
-- **Production durable storage remains pending.** Authenticated snapshot resume is a
-  recovery primitive, not the configured `markdown` store. The interpreter's
-  source-memory operations still require coordinator integration; host-persistent key
-  management, a single-writer durable canonical store, and the derived on-disk Markdown
-  projection remain required before release.
+- **Configured transactional Markdown memory is implemented.** The shipped source and
+  packaged CLI paths use a project-rooted, single-writer canonical journal with
+  recoverable prepare/finalize operations and a derived human-readable Markdown
+  projection. Canonical bytes, not editable projection text, govern typed recall;
+  restart, reconciliation, identity isolation, and truthful effects are release-gated.
 - **Memory receipts are private and truthful.** Public ledger rows expose hashes,
   resolvable driver references, and actual cell/view deltas without memory plaintext
   or fabricated fact, graph, vector, or blob effects.
@@ -71,20 +71,41 @@ version.
   deterministic protected envelopes.
 - **Calibration evidence is profile-scoped.** Core gates record truthful methods and
   scores; the Studio Fact Checker profile preserves raw-logprob evidence and exposes
-  it through the authorized, non-enumerable `calibration.evidence.inspect` operation.
+  authorized, non-enumerable inspect, export, and delete operations. Exact protected
+  evidence can be retained and exported as a tamper-evident bundle, deleted only by
+  its bound principal/address, and its public commitments replayed after deletion
+  without provider or protected-store access.
+- **Consequential actions carry generic authorization receipts.** `ActionAuthorized`
+  binds each exact action tick and argument position to canonical typed commitments,
+  the transitive `Decided` → `Endorsed` rule/evidence chain, and any verifiable public
+  structural projection. Protected projections fail closed until separately endorsed;
+  complete multi-argument receipt batches are validated atomically.
+- **Principal attestations and replay remain portable.** Canonical decisions and
+  endorsements carry `principal_request`; adapter runs start from the host ledger
+  prefix so authenticated correlations and request hashes are born at final global
+  ticks and record/replay needs no post-hoc rebasing.
 - **Ledger commitments are canonical and replay-stable.** Runtime events commit an
   immutable six-field SHA-256 chain, lifecycle operations use unique opening-event
-  correlations, adapter rebasing preserves protocol references, and concurrent
+  correlations, global-prefix execution preserves protocol references, and concurrent
   scope-local task delivery remains deterministic without cross-scope subscriptions.
+- **The fact-checker proof app has two authored flows.** A general-purpose Agape
+  chatbot drafts and remembers labeled episodes; a distinct verifier first extracts
+  atomic claims, searches only exact endorsed query text, binds claim evidence, and
+  publishes every response through a truthful gated certificate path.
+- **Studio edits and runs the authored system directly.** Structural flow operations
+  create, delete, reorder, and reconnect source-backed nodes with compiler checks,
+  optimistic revisions, rollback, and authority guards. The runtime UI supports
+  authenticated principal rulings, protected evidence lifecycle operations, and shows
+  action authorization only after exact receipt-chain validation.
 
 ### Validation
 
-- **Production explicit-memory release gates are defined.** Black-box CLI tests cover
-  configured memory, exact agent-instance and handle isolation, truthful Markdown
-  effects and resolvable references, and immutable origin provenance. The production
-  manifest keeps P04 and P11 partial and P05-P07 pending, so these cases remain
-  release-blocking until the shipped source and packaged CLI paths satisfy them.
-- **Qualified-memory language oracle.** The 254-case source suite pins structural
+- **Production memory and evidence release gates pass.** The manifest marks P04-P07,
+  P11, and P16 implemented. Black-box fresh-process source and packaged-CLI allocations
+  cover explicit typed recall, configured Markdown identity isolation, truthful effects,
+  immutable origin provenance, protected judgment evidence, retention/export/delete,
+  and post-delete replay.
+- **Qualified-memory language oracle.** The 259-case source suite pins structural
   descriptor placement and clause order, closed qualifiers, persistable payloads,
   exact store and typed-recall checking, explicit-only writes, retained handles after
   forget, missing-user crash behavior, and standard-driver retention preflight.
@@ -97,7 +118,8 @@ version.
   isolation, public-receipt privacy, deterministic ranking and generations,
   injected-key authenticated snapshot resume, normalized lost-ack reconciliation,
   and replayed outputs/acknowledgements with no live memory-driver access or
-  mutation. On-disk durability remains a separate production-path gate.
+  mutation. Configured transactional Markdown persistence is exercised in the shipped
+  source and packaged CLI production paths.
 
 ## [1.0.0-beta.2026.8.6.0] - 2026-08-06
 

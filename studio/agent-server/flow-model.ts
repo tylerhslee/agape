@@ -1,6 +1,9 @@
 import { createHash } from "node:crypto";
 import { applyCompilerGraphToDocument } from "./flow-compiler-graph.ts";
 import { validateConfidence, validateLiteralInterpolations } from "./flow-model-safety.ts";
+import { deletableAgentNodeIds, structuralCapabilities } from "./flow-structural-edit.ts";
+import { parse } from "../../agape-ts/src/parser.ts";
+import type * as A from "../../agape-ts/src/ast.ts";
 
 export type FlowDiagnostic = {
   severity: "error" | "warning";
@@ -22,7 +25,7 @@ export type FlowField = {
 
 export type FlowNode = {
   id: string;
-  kind: "prompt" | "agent" | "model" | "decision" | "endorsement" | "action" | "event" | "output" | "program" | "function" | "handler" | "hook" | "principal" | "memory" | "ledger" | "tool";
+  kind: "prompt" | "agent" | "model" | "message" | "decision" | "endorsement" | "action" | "event" | "output" | "program" | "function" | "handler" | "hook" | "principal" | "memory" | "ledger" | "tool";
   label: string;
   readOnly: boolean;
   readOnlyReason?: string;
@@ -38,7 +41,8 @@ export type FlowEdge = {
   target: string;
   label: string;
   kind: string;
-  readOnly: true;
+  readOnly: boolean;
+  structural?: { operation: "reconnect_handoff"; nodeId: string };
 };
 
 export type FlowDocument = {
@@ -47,7 +51,7 @@ export type FlowDocument = {
   revision: string;
   readOnly: boolean;
   readOnlyReason?: string;
-  capabilities: { editProperties: boolean; createNodes: false; deleteNodes: false; connectNodes: false };
+  capabilities: { editProperties: boolean; createNodes: boolean; deleteNodes: boolean; connectNodes: boolean; reorderSteps: boolean };
   diagnostics: FlowDiagnostic[];
   nodes: FlowNode[];
   edges: FlowEdge[];
@@ -116,7 +120,7 @@ function parseFlow(rel: string, source: string): Parsed {
     const message = error?.message || "Unable to scan Agape source.";
     return {
       edits: new Map(),
-      document: { schemaVersion: 1, rel, revision: flowRevision(source), readOnly: true, readOnlyReason: message, capabilities: { editProperties: false, createNodes: false, deleteNodes: false, connectNodes: false }, diagnostics: [{ severity: "error", code: "unsupported_source", message }], nodes: [], edges: [] },
+      document: { schemaVersion: 1, rel, revision: flowRevision(source), readOnly: true, readOnlyReason: message, capabilities: { editProperties: false, createNodes: false, deleteNodes: false, connectNodes: false, reorderSteps: false }, diagnostics: [{ severity: "error", code: "unsupported_source", message }], nodes: [], edges: [] },
     };
   }
 
@@ -126,6 +130,8 @@ function parseFlow(rel: string, source: string): Parsed {
   const counts = new Map<string, number>();
   const agents: Array<{ name: string; start: number; end: number; nodeId: string }> = [];
   const declarations = new Map<string, string>();
+  const memoryNames = sourceMemoryNames(source);
+  const deletableAgents = deletableAgentNodeIds(source);
 
   const unique = (base: string) => {
     const n = (counts.get(base) || 0) + 1;
@@ -138,6 +144,18 @@ function parseFlow(rel: string, source: string): Parsed {
   };
 
   const braces = matching(tokens, "{", "}");
+  const blockAt = (offset: number) => [...braces.entries()]
+    .filter(([open, close]) => tokens[open].start < offset && offset < tokens[close].end)
+    .sort((left, right) => tokens[right[0]].start - tokens[left[0]].start)[0]?.[0];
+  const localMemories = tokens.flatMap((token, position) => {
+    if (token.value !== "mem" || !isName(tokens[position + 1]?.value || "") || tokens[position + 2]?.value === "{") return [];
+    const open = blockAt(token.start);
+    const close = open === undefined ? undefined : braces.get(open);
+    return open === undefined || close === undefined ? [] : [{
+      name: tokens[position + 1].value, declaration: token.start,
+      blockStart: tokens[open].start, blockEnd: tokens[close].end,
+    }];
+  });
   for (let i = 0; i < tokens.length; i++) {
     if (tokens[i].value !== "agent") continue;
     const nameTok = tokens[i + 1];
@@ -151,7 +169,7 @@ function parseFlow(rel: string, source: string): Parsed {
     const close = braces.get(open);
     if (close === undefined) continue;
     const id = unique(`agent:${nameTok.value}`);
-    addNode({ id, kind: "agent", label: nameTok.value, readOnly: true, readOnlyReason: "Renaming agents requires a reference-aware refactor and is not available in flow editing yet.", source: { line: nameTok.line, column: nameTok.column }, fields: [field("name", "Agent", "text", nameTok.value, true, "Agent identifiers are read-only in the conservative editor.")] }, 1);
+    addNode({ id, kind: "agent", label: nameTok.value, readOnly: !deletableAgents.has(id), ...(!deletableAgents.has(id) ? { readOnlyReason: "This agent is referenced or has only source-level structural edits." } : {}), source: { line: nameTok.line, column: nameTok.column }, fields: [field("name", "Agent", "text", nameTok.value, true, "Agent identifiers are read-only; an unreferenced definition can be deleted as one structural patch.")], metadata: { compilerMeta: { agentDefinition: true, deletable: deletableAgents.has(id) } } }, 1);
     agents.push({ name: nameTok.value, start: tokens[open].start, end: tokens[close].end, nodeId: id });
   }
 
@@ -171,7 +189,7 @@ function parseFlow(rel: string, source: string): Parsed {
       let semi = i + 2;
       while (semi < tokens.length && tokens[semi].value !== ";") semi++;
       const id = unique(`${t.value}-decl:${nameTok.value}`);
-      addNode({ id, kind: t.value as "action" | "event", label: `${capitalize(t.value)} ${nameTok.value}`, readOnly: true, readOnlyReason: "Declaration signatures are structural and remain source-only.", source: { line: t.line, column: t.column }, fields: [field("signature", "Signature", "text", source.slice(t.start, tokens[semi]?.end || nameTok.end), true, "Signature editing is not yet supported.")] }, 0);
+      addNode({ id, kind: t.value as "action" | "event", label: `${capitalize(t.value)} ${nameTok.value}`, readOnly: false, source: { line: t.line, column: t.column }, fields: [field("signature", "Signature", "text", source.slice(t.start, tokens[semi]?.end || nameTok.end), true, "Signature editing is not yet supported.")], metadata: { compilerMeta: { declaration: true, handoffKind: t.value, name: nameTok.value } } }, 0);
       declarations.set(`${t.value}:${nameTok.value}`, id);
     }
   }
@@ -197,9 +215,16 @@ function parseFlow(rel: string, source: string): Parsed {
       const end = statementEnd(tokens, i);
       const literal = tokens.slice(i + 1, end).find((x) => x.string);
       const binding = bindingBefore(tokens, i);
-      const id = unique(`model:${scope}:${binding || "call"}`);
+      const destination = t.value === "<-" ? tokens[i - 1] : undefined;
+      const localMemory = destination && localMemories.some((memory) => memory.name === destination.value
+        && memory.declaration < t.start && memory.blockStart < t.start && t.start < memory.blockEnd);
+      if (destination && (memoryNames.get(scope)?.has(destination.value) || localMemory)) continue;
+      const isMessage = Boolean(destination && isName(destination.value) && destination.value !== "self");
+      const id = unique(isMessage ? `message:${scope}:${binding || destination!.value}` : `model:${scope}:${binding || "call"}`);
       const fields: FlowField[] = [];
-      if (literal?.string && literal.innerStart !== undefined && literal.innerEnd !== undefined) {
+      if (isMessage) {
+        fields.push(field("expression", "Message handoff", "text", source.slice(destination!.start, tokens[end]?.start || t.end).trim(), true, "Message payload edits remain Code-only; the destination may be reconnected through an explicit port drop."));
+      } else if (literal?.string && literal.innerStart !== undefined && literal.innerEnd !== undefined) {
         const value = decodeString(source.slice(literal.innerStart, literal.innerEnd), literal.string === "format");
         fields.push(field("instruction", "Instruction", "multiline", value, false));
         edits.set(`${id}:instruction`, literalEdit(id, "instruction", literal, source));
@@ -207,7 +232,7 @@ function parseFlow(rel: string, source: string): Parsed {
         fields.push(field("instruction", "Instruction", "multiline", source.slice(t.end, tokens[end]?.start || t.end).trim(), true, "This message is computed rather than literal-backed; editing it could change data flow."));
         diagnostics.push({ severity: "warning", code: "computed_prompt_read_only", message: "Computed model messages remain visible but read-only.", nodeId: id, field: "instruction" });
       }
-      addConstruct({ id, kind: "model", label: binding ? `Model: ${binding}` : "Model call", readOnly: fields.every((f) => f.readOnly), ...(fields.every((f) => f.readOnly) ? { readOnlyReason: "No literal-backed instruction is available for safe editing." } : {}), source: { line: t.line, column: t.column }, fields }, t.start);
+      addConstruct({ id, kind: isMessage ? "message" : "model", label: isMessage ? `Send to ${destination!.value}` : binding ? `Model: ${binding}` : "Model call", readOnly: !isMessage && fields.every((f) => f.readOnly), ...(!isMessage && fields.every((f) => f.readOnly) ? { readOnlyReason: "No literal-backed instruction is available for safe editing." } : {}), source: { line: t.line, column: t.column }, fields, ...(isMessage ? { metadata: { compilerMeta: { invocation: true, handoffKind: "message", target: destination!.value } } } : {}) }, t.start);
     }
     if (t.value === "decide") {
       const end = statementEnd(tokens, i);
@@ -234,9 +259,10 @@ function parseFlow(rel: string, source: string): Parsed {
       const kind = t.value === "perform" ? "action" : "event";
       const id = unique(`${kind}:${scope}:${name}`);
       const end = statementEnd(tokens, i);
-      addConstruct({ id, kind, label: `${capitalize(t.value)} ${name}`, readOnly: true, readOnlyReason: "Invocation arguments and topology remain source-only in v1.", source: { line: t.line, column: t.column }, fields: [field("expression", "Invocation", "text", source.slice(t.start, tokens[end]?.start || t.end).trim(), true, "Structural edits are not yet supported.")] }, t.start);
+      addConstruct({ id, kind, label: `${capitalize(t.value)} ${name}`, readOnly: false, source: { line: t.line, column: t.column }, fields: [field("expression", "Invocation", "text", source.slice(t.start, tokens[end]?.start || t.end).trim(), true, "Arguments remain Code-only; the typed target can be reconnected through an explicit port drop.")], metadata: { compilerMeta: { invocation: true, handoffKind: kind, target: name } } }, t.start);
       const decl = declarations.get(`${kind}:${name}`);
-      if (!decl) diagnostics.push({ severity: "warning", code: "unresolved_flow_target", message: `${capitalize(kind)} ${name} is not declared in this file; it remains visible as an unresolved flow target.`, nodeId: id });
+      if (decl) edges.push({ id: `handoff:${id}:${decl}`, source: id, target: decl, label: name, kind: `handoff:${kind}`, readOnly: false, structural: { operation: "reconnect_handoff", nodeId: id } });
+      else diagnostics.push({ severity: "warning", code: "unresolved_flow_target", message: `${capitalize(kind)} ${name} is not declared in this file; it remains visible as an unresolved flow target.`, nodeId: id });
     }
     if (t.value === "say" && tokens[i + 1]?.value === "(") {
       const end = statementEnd(tokens, i);
@@ -260,9 +286,11 @@ function parseFlow(rel: string, source: string): Parsed {
     }
   }
 
-  diagnostics.push({ severity: "warning", code: "topology_read_only", message: "Flow topology is inferred from source. Creating, deleting, reconnecting, and reordering nodes remains source-only in this conservative editor." });
+  const structural = structuralCapabilities(source);
+  diagnostics.push({ severity: "warning", code: "topology_structural_scope", message: "Only explicit structural targets rewrite source. Free card dragging remains layout-only; unsupported AST shapes remain Code-only." });
   const editable = edits.size > 0;
-  return { edits, document: { schemaVersion: 1, rel, revision: flowRevision(source), readOnly: !editable, ...(!editable ? { readOnlyReason: "This file has no literal-backed prompts, thresholds, or outputs that can be edited safely." } : {}), capabilities: { editProperties: editable, createNodes: false, deleteNodes: false, connectNodes: false }, diagnostics, nodes, edges } };
+  const structurallyEditable = structural.createNodes || structural.deleteNodes || structural.connectNodes || structural.reorderSteps;
+  return { edits, document: { schemaVersion: 1, rel, revision: flowRevision(source), readOnly: !editable && !structurallyEditable, ...(!editable && !structurallyEditable ? { readOnlyReason: "This file has no source-backed edits available from the flow surface." } : {}), capabilities: { editProperties: editable, ...structural }, diagnostics, nodes, edges } };
 }
 
 function scan(source: string): Token[] {
@@ -399,4 +427,23 @@ function literalEdit(nodeId: string, field: string, literal: Token, source: stri
     encode: (value) => encodeString(value, literal.string === 'format'),
     validate: literal.string === "format" ? (value) => validateLiteralInterpolations(original, value) : () => null,
   };
+}
+
+function sourceMemoryNames(source: string): Map<string, Set<string>> {
+  const names = new Map<string, Set<string>>();
+  const add = (owner: string, name: string) => { const set = names.get(owner) || new Set<string>(); set.add(name); names.set(owner, set); };
+  try {
+    const program = parse(source);
+    const agents = new Map(program.decls.filter((decl): decl is A.AgentDecl => decl.kind === "agent").map((agent) => [agent.name, agent]));
+    const collect = (agent: A.AgentDecl, seen = new Set<string>()): Set<string> => {
+      if (seen.has(agent.name)) return new Set();
+      const next = new Set(seen); next.add(agent.name);
+      const inherited = agent.extends ? agents.get(agent.extends.name) : undefined;
+      const result = inherited ? collect(inherited, next) : new Set<string>();
+      agent.mems.forEach((memory) => result.add(memory.name));
+      return result;
+    };
+    for (const agent of agents.values()) for (const name of collect(agent)) add(agent.name, name);
+  } catch {}
+  return names;
 }

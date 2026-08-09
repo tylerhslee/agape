@@ -1,0 +1,24 @@
+//! id:        gov_transformed_endorsement_no_action_receipt
+//! section:   13_governance
+//! expect:    accept
+//! contains:  Endorsed; Spend
+//! absent:    ActionAuthorized
+//! spec:      §13, §14 (arithmetic over an endorsed structural projection is settled but does not retain authorization lineage)
+//! ---
+enum Verdict { Allow, Deny }
+struct Budget { amount: float }
+action Spend(float amount);
+agent A grants { perform Spend } {
+  on awake {
+    Budget budget = Budget { amount: 7.0 };
+    Credence<Verdict> c = self <- f"allow: ${budget.amount}";
+    Decision<Verdict> d = decide c by confidence 0.5;
+    if (d.committed == Allow) {
+      Endorsement<Budget> e = endorse budget by d;
+      perform Spend(-e.subject.amount);
+    } else if (d.committed == Deny) {
+      Endorsement<Budget> e = endorse budget by d;
+    }
+  }
+}
+spawn A a; awake a;

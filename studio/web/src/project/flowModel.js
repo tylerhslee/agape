@@ -3,7 +3,7 @@ const NODE_HEIGHT = 118;
 const COL_GAP = 86;
 const ROW_GAP = 30;
 const PAD = 42;
-export const FLOW_KINDS = ['prompt', 'agent', 'model', 'decision', 'endorsement', 'action', 'event', 'output', 'program', 'function', 'handler', 'hook', 'principal', 'memory', 'ledger', 'tool'];
+export const FLOW_KINDS = ['prompt', 'agent', 'model', 'message', 'decision', 'endorsement', 'action', 'event', 'output', 'program', 'function', 'handler', 'hook', 'principal', 'memory', 'ledger', 'tool'];
 
 export function layoutFlow(nodes, edges) {
   const ids = new Set(nodes.map((node) => node.id));
@@ -104,7 +104,7 @@ export function changedFields(document, draft) {
 }
 
 export function kindIcon(kind) {
-  return ({ prompt: 'ti-message-question', agent: 'ti-robot', model: 'ti-sparkles', decision: 'ti-filter-check',
+  return ({ prompt: 'ti-message-question', agent: 'ti-robot', model: 'ti-sparkles', message: 'ti-arrow-forward-up', decision: 'ti-filter-check',
     endorsement: 'ti-shield-check', action: 'ti-bolt', event: 'ti-radio', output: 'ti-arrow-bar-to-right',
     program: 'ti-app-window', function: 'ti-function', handler: 'ti-route-alt-left', hook: 'ti-anchor',
     principal: 'ti-user-shield', memory: 'ti-database', ledger: 'ti-book-2', tool: 'ti-tool' })[kind] || 'ti-box';

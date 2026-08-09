@@ -1271,6 +1271,7 @@ type Task<T>                                               // a settled backgrou
 //   Error(text)            ROOT error type (hierarchy below)
 //   Decided(subj)          a Credence was collapsed by a Rule into a Decision, committed or abstained
 //   Endorsed(subj)         a committed Decision was applied to an exact subject value
+//   ActionAuthorized(subj) a consequential action consumed that exact Endorsement at a granted sink
 //   Contradiction(subj)    emitted when a Credence<Entailment> commits to Contradicts
 //   PendingPrincipalDecision(subj)  a principal-prefixed `p decide c by r` deferred: awaiting an attested ruling (correlation id = its tick, §13)
 //   PrincipalDecision(subj)    a returned principal ruling with recorded verification status; governed proof requires verified (§13)
@@ -1772,14 +1773,74 @@ gate or satisfy a governed operation, so basis alone is never authority.
 An `Endorsement<T>` is the settled subject: it carries `e.subject:T`, coerces to `T` at a sink,
 exposes `T`'s fields, and adds `.decision_id`, `.committed`, `.basis`, `.margin`,
 `.principal_event`, and `.principal_request`. Its canonical row is
-`Endorsed { subject_hash, decision_id, variant, principal_event, principal_request }`. These fields
-must equal the referenced decision; none is caller-supplied. The `.decision_id` joins the
+`Endorsed { subject_commitment, subject_hash, decision_id, variant, rule_hash, evidence_ref,
+principal_event, principal_request }`. `subject_commitment` is the same privacy-safe typed
+commitment used for action arguments. These
+fields must equal the referenced decision; none is caller-supplied. The `.decision_id` joins the
 `Endorsed` and `Decided` rows, while principal fields provide the non-circular governed-operation
 proof (§13). A gate value carries no `_meta`; query the row for tick
 and chain position. Where a field of `T`
 collides with a reserved metadata accessor, the metadata name wins and the shadowed field is reached
 through `e.subject` (e.g. `e.subject.committed`). This is Agape's reflection surface over gate
 metadata, not general structural `typeof`.
+
+When a `perform` argument consumes an `Endorsement<T>`, the runtime appends the action row and then
+an `ActionAuthorized` receipt for that argument. Its canonical payload is
+`{ action_tick, action, action_agent, action_corr, request_hash, argument_index, argument_hash,
+derivation_path, subject_hash, endorsement_tick, decision_id, rule_hash, evidence_ref }`.
+The action row's payload includes public `arguments`, privacy-safe typed `argument_commitments`,
+their `argument_hashes`, the ordered `authorization_argument_indices`, the corresponding complete
+`authorization_bindings`, and `request_hash`.
+`action_tick` identifies the action row committed immediately before the receipt sequence;
+`endorsement_tick` identifies the exact earlier `Endorsed` row; `decision_id` identifies its
+earlier `Decided` row; and `rule_hash` is the SHA-256 identity of that decision's canonical rule.
+`action`, `action_agent`, and `action_corr` equal that action row. `request_hash` is the SHA-256
+hash of canonical `{ action, argument_hashes }`, and `argument_hash` equals the action row's
+commitment for the exact sink argument at `argument_index`. A public argument commitment is its
+canonical recursively typed value encoding; its hash is the SHA-256 of that encoding. The encoding
+is injective over sink-admissible values and has exactly these forms: scalar values are
+`{ kind, value }` (with distinct `text`, `int`, `float`, `bool`, and `null` kinds); enum values are
+`{ kind:"enumval", enum, variant }`; structs are `{ kind:"struct", type?, fields }`, where each
+field is recursively encoded; arrays are `{ kind:"array", items }`; agent and task references
+with complete address identity encode their kind and address. A memory handle is not sink-admissible;
+pass recalled typed data instead. Keys not defined by the selected form
+are forbidden. `Credence` and `Decision` are gate intermediates and cannot be sink arguments;
+an `Endorsement` is unwrapped to its subject before commitment. Trust, ingress, rendering,
+authorization lineage, and all other runtime metadata are excluded. A protected argument commitment is exactly
+`{ content_hash, protected_ref, redaction_policy_hash }`; after validating the envelope bindings,
+its hash is `content_hash`, which commits to the withheld typed encoding without exposing it.
+`subject_hash` is computed by the same rule from the canonical endorsed subject recorded by
+`Endorsed`. No commitment is a hash of rendered prose. The counts of `arguments`,
+`argument_commitments`, and `argument_hashes` are equal, and the authorization indices are unique,
+strictly increasing, and in bounds.
+The typed commitments and hashes are the authoritative action request. The public `arguments`
+field is a non-authoritative display projection and is never used to validate or label a
+certificate; protected displays remain redacted.
+Each action `authorization_bindings` entry repeats the receipt's argument index/hash, derivation
+path, subject hash, endorsement tick, decision id, rule hash, and evidence reference. An offline
+validator requires exact equality and a complete contiguous receipt sequence.
+`evidence_ref` is the exact
+protected-evidence reference inherited through the decision when the advertised profile supplied
+one, otherwise `null`. Every non-null field must equal the referenced ledger rows; none is
+caller-supplied. A `perform` with several endorsed arguments records one receipt per endorsed
+argument in argument order. The action row and its complete receipt sequence become visible as one
+atomic ledger batch before any external effector is invoked. A settled argument that is not an `Endorsement` does not acquire an
+authorization receipt.
+
+A field selected through a committed endorsement (`e.field` or `e.subject.field`) retains the same
+authorization lineage with `derivation_path` extended by the selected field names. Its receipt
+binds the hash of the projected argument separately from the hash of the originally endorsed
+subject. Wrapper coercion and verifiable structural field selection are the only operations that preserve this
+lineage; arithmetic, interpolation, calls, collection construction, and indexing do not.
+Validation traverses each named path segment through a public typed struct commitment and requires
+the projected commitment hash to equal `argument_hash`; an empty path requires
+`argument_hash == subject_hash`. A protected root exposes no verifiable field path, so a nonempty
+derivation fails closed and the projected field must be independently decided and endorsed.
+
+`ActionAuthorized` proves that the kernel admitted and committed the named action using the exact
+endorsement chain. It does not assert that a remote effector completed; a wired action's
+`ToolResolved` row records that separate fact. If the runtime cannot validate any link before the
+action commit, it faults closed and appends neither the action row nor `ActionAuthorized`.
 
 - `**decide c by R**` appends the complete `Decided` schema above with null principal fields.
   It is color-`S` when the credence is in hand.
@@ -1995,7 +2056,9 @@ raw reply -> Credence<E> -> Decision<E> -> Endorsement<T> -> granted sink -> led
 
 The subject `T` may be anything cognition produced — a reply, a generated artifact, a parsed claim;
 the chain is the same. The `Decision<E>` link is always recorded as `Decided`; the
-`Endorsement<T>` link exists only for committed variants.
+`Endorsement<T>` link exists only for committed variants. When that endorsement reaches a
+consequential sink, the action row followed by `ActionAuthorized` closes the auditable chain from
+rule and protected evidence to the exact world request.
 
 A helper function, memory recall, ledger query, or wired result event may make this path easier to write,
 but may not add a second path. A `Decision` may guide control flow, but only an `Endorsement`
@@ -2510,12 +2573,39 @@ otherwise ⇒ append FailedPrincipalDecision; Decided(committed:abstained); no g
 
 // ENDORSE — apply an existing committed Decision to an exact subject; synchronous; single event; → Endorsement value:
 d = eval(decision) ; v' = d.committed ; require v' ≠ abstained ∧ subject ∈ scope(d)
-ev = Endorsed({subject_hash:H(subject),decision_id:d.decision_id,variant:v',
+ev = Endorsed({subject_commitment:public_typed_commitment(subject),subject_hash:H(subject),decision_id:d.decision_id,variant:v',
+               rule_hash:H(d.rule),evidence_ref:d.evidence_ref,
                principal_event:d.principal_event,principal_request:d.principal_request})
 ─────────────────────────────────────────────  (E-Endorse)
 ⟨…|S|endorse subject by decision⟩ → append(S,ev),Endorsement{subject,decision_id:d.decision_id,
+ endorsement_tick:tick(ev),rule_hash:H(d.rule),evidence_ref:d.evidence_ref,
  principal_event:d.principal_event,principal_request:d.principal_request,…}
 // There is no abstained endorsement; abstinence is represented by the Decision's `Decided` event.
+
+// CONSEQUENTIONAL ACTION AUTHORIZATION — one receipt for each endorsed argument, in argument order:
+args = eval_left_to_right(es); require allowed(C,"perform",Q) ∧ sink_checks(args)
+links = endorsed_lineages(args)
+require ∀ l ∈ links. valid_chain(l.endorsement_tick,l.decision_id,l.rule_hash,
+                                   l.evidence_ref,l.subject_hash)
+commitments = public_typed_commitments(sink(args))
+argument_hashes = [commitment_hash(c) for c in commitments]
+require ∀ (i,l) ∈ links. projection_proof(commitment_at(l.endorsement_tick),
+                                         l.derivation_path,argument_hashes[i])
+request_hash = H(canonical({action:Q,argument_hashes}))
+indices = [i for each (i,l) in links]
+bindings = [authorization_binding(i,argument_hashes[i],l) for each (i,l) in links]
+a = Q({arguments:public(args),argument_commitments:commitments,
+       argument_hashes,authorization_argument_indices:indices,
+       authorization_bindings:bindings,request_hash})
+receipts = []
+for each (i,l) in links:
+  receipts += ActionAuthorized({action_tick:tick(S),action:Q,argument_index:i,
+    action_agent:a.agent,action_corr:a.corr,request_hash,
+    argument_hash:argument_hashes[i],derivation_path:l.derivation_path,
+    subject_hash:l.subject_hash,endorsement_tick:l.endorsement_tick,
+    decision_id:l.decision_id,rule_hash:l.rule_hash,evidence_ref:l.evidence_ref},corr=tick(S))
+S = append_batch(S,[a,...receipts])
+// append_batch is atomic and precedes any effector call. A failed check appends none of the batch.
 
 // SPAWN EXPRESSION - evaluation context receives one newly allocated address:
 vals=eval_left_to_right(args); i=fresh_instance_id(T,source_site)
@@ -3194,16 +3284,46 @@ The Studio Fact Checker profile preserves the exact bounded candidates and retur
 logprobs used to derive gate scores, provides authorized inspection of that evidence,
 and exposes the threshold and margin arithmetic for independent comparison. Missing
 raw evidence is reported as unavailable and is never synthesized.
+Accepted raw evidence must identify the requested enum/schema and its exact ordered declared variant
+set, and its gate-score vector must exactly equal the vector returned to the live judgment request.
+A mismatch fails closed before evidence retention or replay linkage.
 
-The profile adds `calibration.evidence.inspect`. Its request is
+The profile retains protected evidence encrypted and durable until an authorized explicit
+deletion. It adds `calibration.evidence.inspect`, `calibration.evidence.export`, and
+`calibration.evidence.delete`. Every request is
 `{ evidence_ref, decision_id, requester, authorization }`; `evidence_ref` must already appear
-in profile extension metadata visible to that requester. A successful response returns the exact
-bounded candidates, each candidate's complete token/logprob sequence and aggregate score, its
-variant mapping or unmatched status, mapping and normalization versions, the gate-score vector,
-winner, runner-up, threshold, required margin/floor, actual margin, and pass/fail arithmetic.
-The operation supports no enumeration. It returns `Forbidden` for failed authorization,
+in profile extension metadata visible to that requester. The host authorization mechanism
+authenticates the requester and binds a capability to exactly one operation, evidence reference,
+and decision. A capability cannot authorize a different operation, requester, reference, or
+decision.
+
+A successful inspection returns the judged enum/schema identity, its exact ordered variant set,
+the exact bounded candidates, each candidate's complete
+token/logprob sequence and aggregate score, its variant mapping or unmatched status, mapping and
+normalization versions, the gate-score vector, winner, runner-up, threshold, required margin/floor,
+actual margin, and pass/fail arithmetic. A successful export returns that same exact evidence and
+decision binding in a canonical bundle with a tamper-evident proof over the complete bundle and
+requester. The required proof is HMAC-SHA-256 under a host-managed export-verification key derived
+from the protected-evidence secret; `calibration.evidence.verify-export` verifies it across runtime
+restarts that retain that key. The proof is host-verifiable integrity, not a public-identity
+signature, and the verifier rejects a different requester, key, content, or proof. A successful
+deletion removes the protected evidence and its decision binding; later
+inspection, export, or deletion through the former reference reports `EvidenceUnavailable`.
+Deletion becomes authoritative through a durable, atomic deletion marker before artifact cleanup;
+each evidence operation linearizes at its final deletion-marker check. An operation whose final check
+precedes the marker is ordered before deletion even if response delivery completes later. An operation
+that observes the marker fails with `EvidenceUnavailable`; a mutating operation that raced marker
+creation also cleans any artifact it created before failing. The delete operation linearizes when the
+marker commits, then removes the evidence and decision-binding artifacts. Interrupted cleanup is
+reconciled after restart. Public ledger commitments and historical references remain unchanged.
+
+These operations require an exact reference and decision and provide no list, search, prefix,
+range, count, or other enumeration surface. They return `Forbidden` for failed authorization,
 `EvidenceMismatch` when the reference and decision do not match, and `EvidenceUnavailable`
-when the connector did not supply the evidence.
+when the connector did not supply the evidence or it has been deleted.
+Deletion affects protected retrieval only. A recording that already contains the provider result
+and public evidence commitment continues to replay the exact ledger and chain head with no provider
+call, protected-store mutation, or recreation of deleted evidence.
 
 ### 16.9 The runtime API surface
 
@@ -3224,6 +3344,9 @@ API but must offer the same operations as calls.
 | `memory.context`   | explicitly recall context without running cognition; the result is tainted |
 | `memory.inspect`   | inspect public counts, hashes, and provenance                              |
 | `calibration.evidence.inspect` | Studio Fact Checker profile only: authorized exact evidence lookup (§16.8) |
+| `calibration.evidence.export` | Studio Fact Checker profile only: authorized exact canonical export with host-verifiable integrity proof (§16.8) |
+| `calibration.evidence.delete` | Studio Fact Checker profile only: authorized exact deletion with durable tombstone (§16.8) |
+| `calibration.evidence.verify-export` | Studio Fact Checker profile only: verify an exported bundle against the configured host verification key (§16.8) |
 | `config.read/write`| manage the **dependency/connector** bindings and memory budgets (provider, the `[tools.*]` catalog and its wiring, identity; §17) — **never** decision rules, which live in source (§13, §17.2) |
 
 `config.read/write` is deliberately scoped to dependency and connector configuration plus memory

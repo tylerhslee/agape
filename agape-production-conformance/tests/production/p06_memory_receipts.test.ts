@@ -1,21 +1,11 @@
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  createTempProject,
-  eventsOf,
-  fixture,
-  payloadObject,
-  readTree,
-  runCli,
-  runDiagnostic,
-  sentinel,
+  createTempProject, eventsOf, fixture, payloadObject, readTree, runCli, runDiagnostic, sentinel,
   type TempProject,
 } from "./harness.js";
 
-interface NumericLeaf {
-  path: string;
-  value: number;
-}
+interface NumericLeaf { path: string; value: number }
 
 function numericLeaves(value: unknown, path = ""): NumericLeaf[] {
   if (typeof value === "number") return [{ path, value }];
@@ -28,26 +18,17 @@ function positivePaths(value: unknown): string[] {
   return numericLeaves(value).filter((entry) => entry.value > 0).map((entry) => entry.path);
 }
 
-function expectNoFabricatedMarkdownModalities(effects: unknown, label: string): void {
+function expectNoFabricatedModalities(effects: unknown, label: string): void {
   const positives = positivePaths(effects);
   expect.soft(positives.filter((path) => /(^|\.)(facts?|graph|vectors?|embeddings?)(\.|$)/i.test(path)),
-    `${label}: markdown claimed an unmaterialized fact/graph/vector/embedding effect`).toEqual([]);
+    `${label}: receipt claimed an unmaterialized fact/graph/vector/embedding effect`).toEqual([]);
 }
 
-function expectResolvableMarkdownRefs(
-  tree: Record<string, string>,
-  refs: Record<string, unknown>,
-  label: string,
-): void {
-  for (const key of ["markdown_file", "markdown_index"]) {
-    expect.soft(refs[key], `${label}: missing ${key}`).toEqual(expect.any(String));
-    if (typeof refs[key] === "string") {
-      expect.soft(tree[refs[key]], `${label}: ${key} does not resolve to configured substrate state`)
-        .toEqual(expect.any(String));
-    }
-  }
-  expect.soft(Object.keys(refs).filter((key) => /(?:^|_)(?:input|facts|graph|vector)_delta$/i.test(key)),
-    `${label}: receipt exposed synthetic delta refs with no configured backing store`).toEqual([]);
+function substratePaths(refs: unknown): string[] {
+  return Array.isArray(refs)
+    ? refs.filter((ref): ref is string => typeof ref === "string" && ref.startsWith("substrate:"))
+      .map((ref) => ref.slice("substrate:".length))
+    : [];
 }
 
 describe("P06 production truthful Markdown memory receipts", () => {
@@ -64,58 +45,66 @@ describe("P06 production truthful Markdown memory receipts", () => {
     const result = await runCli({ project, file });
 
     expect(result.json?.ok, runDiagnostic(result)).toBe(true);
-    const stores = eventsOf(result, "Internalized");
-    const forgotten = eventsOf(result, "Forgotten");
-    expect.soft(stores, "P06: explicit store requires exactly one receipt").toHaveLength(1);
-    expect.soft(forgotten, "P06: explicit forget requires exactly one receipt").toHaveLength(1);
-    const store = stores[0];
-    const forget = forgotten[0];
+    const store = eventsOf(result, "Internalized")[0];
+    const forget = eventsOf(result, "Forgotten")[0];
+    expect.soft(eventsOf(result, "Internalized"), "P06: explicit store requires exactly one receipt").toHaveLength(1);
+    expect.soft(eventsOf(result, "Forgotten"), "P06: explicit forget requires exactly one receipt").toHaveLength(1);
+    const spawnedId = payloadObject(eventsOf(result, "Spawned")[0]).instance_id;
     const storePayload = payloadObject(store);
     const forgetPayload = payloadObject(forget);
 
-    expect.soft(store?.agent).toBe("archivist");
+    expect.soft(spawnedId).toMatch(/^agent-instance-v1:[0-9a-f]{64}$/);
+    expect.soft(store?.agent, "P06: receipt must use the stable concrete instance subject").toBe(spawnedId);
+    expect.soft(forget?.agent).toBe(spawnedId);
     expect.soft(store?.subject).toBe("notes");
+    expect.soft(forget?.subject).toBe("notes");
     expect.soft(storePayload).toMatchObject({
+      operation: "store",
       write_source: "explicit_store",
-      value_hash: expect.any(String),
-      value_ref: expect.any(String),
-      effects: expect.any(Object),
-      refs: expect.any(Object),
+      generation: 0,
+      operation_id: expect.stringMatching(/^memory-operation-v1:[0-9a-f]{64}$/),
+      origin_ref: expect.stringMatching(/^memory-origin-v1:[0-9a-f]{64}$/),
+      value_hash: expect.stringMatching(/^[0-9a-f]{64}$/),
+      effects: {
+        cells: { upserted: 1, tombstoned: 0 },
+        blobs: { archived: 0, deleted: 0 },
+      },
+      refs: expect.any(Array),
     });
-    expect.soft(String(storePayload.value_hash)).not.toContain(secret);
-    expect.soft(String(storePayload.value_ref)).not.toContain(secret);
+    expect.soft(forgetPayload).toMatchObject({
+      operation: "forget",
+      generation: 0,
+      operation_id: expect.stringMatching(/^memory-operation-v1:[0-9a-f]{64}$/),
+      origin_ref: expect.stringMatching(/^memory-origin-v1:[0-9a-f]{64}$/),
+      already_forgotten: false,
+      effects: {
+        cells: { upserted: 0, tombstoned: 1 },
+        blobs: { archived: 1, deleted: 0 },
+      },
+      refs: expect.any(Array),
+    });
     expect.soft(JSON.stringify(store), "P06: Internalized leaked private plaintext").not.toContain(secret);
     expect.soft(JSON.stringify(forget), "P06: Forgotten leaked private plaintext").not.toContain(secret);
-
-    expectNoFabricatedMarkdownModalities(storePayload.effects, "P06 Internalized");
-    const storePositive = positivePaths(storePayload.effects);
-    expect.soft(storePositive.some((path) => /(?:cell|canonical|markdown|chunk)/i.test(path)),
-      "P06: successful store reported no committed canonical/Markdown effect").toBe(true);
-    expect.soft(storePositive.filter((path) => /blobs?\.(?:archived|redacted|deleted)$/i.test(path)),
-      "P06: ordinary Markdown store falsely claimed archival/redaction/deletion").toEqual([]);
-
-    expectNoFabricatedMarkdownModalities(forgetPayload.effects, "P06 Forgotten");
-    const forgetPositive = positivePaths(forgetPayload.effects);
-    expect.soft(forgetPositive.some((path) => /tombston/i.test(path)),
-      "P06: forget did not report the active-cell tombstone").toBe(true);
-    expect.soft(forgetPositive.some((path) => /archiv/i.test(path)),
-      "P06: archive_on_forget=true did not report the committed archive").toBe(true);
-    expect.soft(forgetPositive.filter((path) => /(?:redact|delet)/i.test(path)),
-      "P06: archive-on-forget falsely reported redaction or deletion").toEqual([]);
+    expectNoFabricatedModalities(storePayload.effects, "P06 Internalized");
+    expectNoFabricatedModalities(forgetPayload.effects, "P06 Forgotten");
 
     const tree = await readTree(join(project.root, ".agape", "memory"));
-    const storeRefs = storePayload.refs as Record<string, unknown>;
-    const forgetRefs = forgetPayload.refs as Record<string, unknown>;
-    expectResolvableMarkdownRefs(tree, storeRefs, "P06 Internalized");
-    expectResolvableMarkdownRefs(tree, forgetRefs, "P06 Forgotten");
-    expect.soft(forgetRefs.markdown_archive, "P06: archive receipt omitted the archive ref")
-      .toEqual(expect.any(String));
-    if (typeof forgetRefs.markdown_archive === "string") {
-      expect.soft(tree[forgetRefs.markdown_archive], "P06: archive ref is not resolvable").toContain(secret);
+    const storePaths = substratePaths(storePayload.refs);
+    const forgetPaths = substratePaths(forgetPayload.refs);
+    expect.soft(storePaths, "P06: store must expose canonical and derived projection refs").toHaveLength(2);
+    expect.soft(forgetPaths, "P06: forget must expose canonical, projection, and archive refs").toHaveLength(3);
+    for (const path of new Set([...storePaths, ...forgetPaths])) {
+      expect.soft(tree[path], `P06: substrate ref does not resolve: ${path}`).toEqual(expect.any(String));
     }
-    if (typeof forgetRefs.markdown_file === "string") {
-      expect.soft(tree[forgetRefs.markdown_file], "P06: live topic ref is not resolvable").toContain("agape-forgotten");
-      expect.soft(tree[forgetRefs.markdown_file], "P06: forgotten live topic retained private plaintext").not.toContain(secret);
-    }
+    expect.soft(storePaths).toContain(".agape-memory-v1/state.json");
+    expect.soft(forgetPaths).toContain(".agape-memory-v1/state.json");
+    const archivePath = forgetPaths.find((path) => path.includes("/.archive/") && path.endsWith(".md"));
+    expect.soft(archivePath, "P06: archive receipt omitted its canonical projection ref").toEqual(expect.any(String));
+    if (archivePath) expect.soft(tree[archivePath], "P06: canonical archive lost the forgotten value").toContain(secret);
+    const livePath = forgetPaths.find((path) => path.includes("/generation-0/") && path.endsWith("/MEMORY.md"));
+    expect.soft(livePath, "P06: forget receipt omitted the closed generation projection").toEqual(expect.any(String));
+    expect.soft(livePath ? tree[livePath] : "", "P06: closed generation projection did not record forgotten state")
+      .toContain("- state: closed");
+    expect.soft(livePath ? tree[livePath] : "", "P06: closed generation retained private plaintext").not.toContain(secret);
   });
 });

@@ -30,6 +30,8 @@ const base = `http://127.0.0.1:${PORT}`;
 const get = (p: string) => fetch(base + p);
 const post = (p: string, body: unknown) =>
   fetch(base + p, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+const sessionPost = (p: string, token: string, body: unknown) =>
+  fetch(base + p, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${token}` }, body: JSON.stringify(body) });
 
 const MAIN_SOURCE = `
 prompt text question;
@@ -42,7 +44,7 @@ agent FactChecker {
 
 agent Responder grants { perform Reply } {
   when (Prompt p about question) {
-    text answer = f"verified answer: {p.text}";
+    text answer = f"candidate answer: {p.text}";
     Credence<Verdict> c = self <- f"is this answer safe to send: {answer}";
     Decision<Verdict> d = decide c by confidence 0.5;
     if (d.committed == Accept) {
@@ -58,6 +60,28 @@ awake checker;
 awake responder;
 `;
 
+const ATTESTATION_SOURCE = `
+prompt text message;
+principal reviewer;
+enum Approval { Approve, Deny }
+action ReplyAttested(text answer);
+
+agent Assistant grants { perform ReplyAttested } {
+  when (Prompt p about message) {
+    text answer = self <- f"answer the user: {p.text}";
+    Credence<Approval> c = self <- answer;
+    Decision<Approval> d = reviewer decide c by conformal 0.1 readiness 10;
+    if (d.committed == Approve) {
+      Endorsement<text> e = endorse answer by d;
+      perform ReplyAttested(e);
+    }
+  }
+}
+
+spawn Assistant assistant;
+awake assistant;
+`;
+
 let srv: ChildProcess;
 let proj: string;
 let launchDir: string;
@@ -66,8 +90,9 @@ beforeAll(async () => {
   proj = path.join(mkdtempSync(path.join(tmpdir(), "agape-it-")), "app");
   launchDir = path.join(proj, "src", "nested");
   mkdirSync(launchDir, { recursive: true });
-  writeFileSync(path.join(proj, "agape.toml"), `[project]\nname = "Integration Fixture"\nlanguage = "1.0.0-beta.2026.8.6.0"\n\n[memory]\ndriver = "markdown"\npath = ".agape/memory"\n`, "utf8");
+  writeFileSync(path.join(proj, "agape.toml"), `[project]\nname = "Integration Fixture"\nlanguage = "1.0.0-beta.2026.8.6.0"\n\n[memory]\ndriver = "markdown"\npath = ".agape/memory"\n\n[security.attesters.reviewer]\ndriver = "host"\n`, "utf8");
   writeFileSync(path.join(proj, "main.ag"), MAIN_SOURCE, "utf8");
+  writeFileSync(path.join(proj, "attestation.ag"), ATTESTATION_SOURCE, "utf8");
 
   srv = spawn(process.execPath, [STUDIO_TSX_CLI, "server.ts"], {
     cwd: HERE,
@@ -146,12 +171,111 @@ describe("studio backend - user journeys (integration)", () => {
     });
   });
 
-  it("runs a program (mock) and delivers a verified answer", async () => {
+  it("runs a one-shot program with a runtime endorsement and action", async () => {
     const d = await (await post("/project/run", { rel: "main.ag", prompts: { question: "hi" } })).json();
     expect(d.ok).toBe(true);
     const types = d.events.map((e: any) => e.etype);
     expect(types).toContain("Endorsed");
     expect(types).toContain("Reply");
+  });
+
+  it("pauses and resumes the same runtime session through an authenticated principal ruling", async () => {
+    const hostileOrigin = await fetch(base + "/runtime/sessions", {
+      method: "POST",
+      headers: { "content-type": "application/json", origin: "https://evil.example" },
+      body: JSON.stringify({ rel: "attestation.ag" }),
+    });
+    expect(hostileOrigin.status).toBe(403);
+    expect((await hostileOrigin.json()).code).toBe("untrusted_origin");
+
+    const createdResponse = await post("/runtime/sessions", {
+      rel: "attestation.ag",
+      conversationId: "conversation-integration",
+    });
+    expect(createdResponse.status).toBe(201);
+    const created = await createdResponse.json();
+    expect(created).toMatchObject({ state: "ready", conversationId: "conversation-integration" });
+    expect(created.accessToken).toEqual(expect.any(String));
+
+    const pendingResponse = await sessionPost(`/runtime/sessions/${created.sessionId}/prompts`, created.accessToken, {
+      name: "message",
+      value: "hello",
+    });
+    expect(pendingResponse.status).toBe(200);
+    const pending = await pendingResponse.json();
+    expect(pending).toMatchObject({
+      sessionId: created.sessionId,
+      sessionLineageId: created.sessionLineageId,
+      conversationId: created.conversationId,
+      state: "pending-ruling",
+      pending: { principal: "reviewer", enumName: "Approval" },
+    });
+    expect(pending.ledger.at(-1).etype).toBe("PendingPrincipalDecision");
+    expect(pending.certificates).toEqual([]);
+
+    const wrongPrincipal = await sessionPost(`/runtime/sessions/${created.sessionId}/rulings`, created.accessToken, {
+      requestId: pending.pending.requestId,
+      principal: "somebody-else",
+      outcome: "approve",
+    });
+    expect(wrongPrincipal.status).toBe(403);
+    expect((await wrongPrincipal.json()).code).toBe("wrong_principal");
+
+    const wrongCapability = await sessionPost(`/runtime/sessions/${created.sessionId}/rulings`, "wrong", {
+      requestId: pending.pending.requestId,
+      principal: "reviewer",
+      outcome: "approve",
+    });
+    expect(wrongCapability.status).toBe(401);
+
+    const resumedResponse = await sessionPost(`/runtime/sessions/${created.sessionId}/rulings`, created.accessToken, {
+      requestId: pending.pending.requestId,
+      principal: "reviewer",
+      outcome: "approve",
+    });
+    expect(resumedResponse.status).toBe(200);
+    const resumed = await resumedResponse.json();
+    expect(resumed.state).toBe("ready");
+    expect(resumed.ledger.map((event: any) => event.etype)).toEqual(expect.arrayContaining([
+      "PendingPrincipalDecision", "PrincipalDecision", "Decided", "Endorsed", "ReplyAttested",
+    ]));
+    expect(resumed.certificates).toHaveLength(1);
+    expect(resumed.certificates[0]).toMatchObject({
+      kind: "agape.action-authorization-certificate.v1",
+      sessionId: created.sessionId,
+      ledgerHead: resumed.ledgerHead,
+      basis: "Principal",
+      principalAttestationVerified: true,
+    });
+
+    const unauthorizedEvidence = await sessionPost(`/runtime/sessions/${created.sessionId}/evidence`, "wrong", {
+      evidenceRef: "protected:evidence:v1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      decisionId: resumed.certificates[0].decisionTick,
+    });
+    expect(unauthorizedEvidence.status).toBe(401);
+    expect((await unauthorizedEvidence.json()).code).toBe("invalid_session_capability");
+
+    const mismatchedEvidence = await sessionPost(`/runtime/sessions/${created.sessionId}/evidence`, created.accessToken, {
+      evidenceRef: "protected:evidence:v1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      decisionId: resumed.certificates[0].decisionTick,
+    });
+    expect(mismatchedEvidence.status).toBe(409);
+    expect((await mismatchedEvidence.json()).code).toBe("evidence_mismatch");
+
+    const malformedEvidence = await sessionPost(`/runtime/sessions/${created.sessionId}/evidence`, created.accessToken, {
+      evidenceRef: "",
+      decisionId: -1,
+    });
+    expect(malformedEvidence.status).toBe(400);
+    expect((await malformedEvidence.json()).code).toBe("invalid_evidence_request");
+
+    const duplicate = await sessionPost(`/runtime/sessions/${created.sessionId}/rulings`, created.accessToken, {
+      requestId: pending.pending.requestId,
+      principal: "reviewer",
+      outcome: "approve",
+    });
+    expect(duplicate.status).toBe(409);
+    expect((await duplicate.json()).code).toBe("duplicate_ruling");
   });
 
   it("reports a static rejection as ok:false, not a crash", async () => {

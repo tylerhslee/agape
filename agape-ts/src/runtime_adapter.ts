@@ -109,6 +109,7 @@ interface Recording {
   testMode?: TestMode;
   journal: OracleJournal;
   memoryOps: EnvelopeOp[];
+  ledgerPrefix: LedgerEvent[];
   headHash: string;
 }
 
@@ -350,6 +351,19 @@ function toConformanceEvent(e: KernelLedgerEvent): LedgerEvent {
   });
 }
 
+function toKernelLedgerPrefix(events: readonly LedgerEvent[]): KernelLedgerEvent[] {
+  return events.map((event) => Object.freeze({
+    tick: event.tick,
+    latency_ms: 0,
+    elapsed_ms: 0,
+    etype: event.etype,
+    subject: event.subject,
+    payload: snapshotCanonicalPayload(event.payload) ?? null,
+    corr: event.corr ?? null,
+    agent: event.agent ?? "",
+  }));
+}
+
 // ---------- trace validity (SPEC 16.2): the message lifecycle state machine ----------
 
 function validateTrace(events: LedgerEvent[]): Diagnostic[] {
@@ -482,6 +496,7 @@ class AgapeTsConformanceAdapter {
         if (typeof record.principal_event === "number") out.principal_event = record.principal_event + offset;
       } else if (record.kind === "endorsement") {
         if (typeof record.decision_id === "number") out.decision_id = record.decision_id + offset;
+        if (typeof record.endorsement_tick === "number") out.endorsement_tick = record.endorsement_tick + offset;
       } else if (record.kind === "taskref" && typeof record.corr === "number") {
         out.corr = record.corr + offset;
       }
@@ -493,16 +508,32 @@ class AgapeTsConformanceAdapter {
     const rebaseRoot = (key: string) => {
       if (typeof root[key] === "number") root[key] = (root[key] as number) + offset;
     };
+    const authorizationBindings = root.authorization_bindings;
+    if (Array.isArray(authorizationBindings)) {
+      for (const binding of authorizationBindings) {
+        if (binding === null || typeof binding !== "object" || Array.isArray(binding)) continue;
+        const authorization = binding as Record<string, unknown>;
+        if (typeof authorization.endorsement_tick === "number") authorization.endorsement_tick += offset;
+        if (typeof authorization.decision_id === "number") authorization.decision_id += offset;
+      }
+    }
     switch (event.etype) {
+      case "PendingPrincipalDecision":
+        rebaseRoot("corr");
+        break;
       case "PrincipalDecision":
       case "FailedPrincipalDecision":
         rebaseRoot("pending");
+        rebaseRoot("corr");
         break;
       case "Decided":
         rebaseRoot("decision_id");
         rebaseRoot("principal_event");
         break;
       case "Endorsed": {
+        rebaseRoot("decision_id");
+        rebaseRoot("endorsement_tick");
+        rebaseRoot("principal_event");
         const decision = root.decision;
         if (decision !== null && typeof decision === "object" && !Array.isArray(decision)) {
           const protocol = decision as Record<string, unknown>;
@@ -511,6 +542,12 @@ class AgapeTsConformanceAdapter {
         }
         break;
       }
+      case "ActionAuthorized":
+        rebaseRoot("action_tick");
+        rebaseRoot("endorsement_tick");
+        rebaseRoot("decision_id");
+        rebaseRoot("action_corr");
+        break;
       case "AgentCrashed":
         rebaseRoot("stimulus_or_corr");
         break;
@@ -525,14 +562,15 @@ class AgapeTsConformanceAdapter {
     return payload;
   }
 
-  private absorbRunEvents(events: LedgerEvent[]): void {
-    const offset = this.ledger.length;
+  private appendRunEvents(events: readonly LedgerEvent[]): void {
     for (const e of events) {
+      if (e.tick !== this.ledger.length) {
+        throw new Error(`runtime event tick ${e.tick} does not append at ledger head ${this.ledger.length}`);
+      }
       this.ledger.push(Object.freeze({
         ...e,
-        tick: offset + e.tick,
-        payload: snapshotCanonicalPayload(this.rebaseRunPayload(e, offset)) ?? null,
-        corr: typeof e.corr === "number" ? e.corr + offset : e.corr,
+        payload: snapshotCanonicalPayload(e.payload) ?? null,
+        corr: e.corr ?? null,
       }));
     }
   }
@@ -650,27 +688,32 @@ class AgapeTsConformanceAdapter {
       stochasticSeed?: number;
       absorb?: boolean;
       calibration?: Array<{ scores: Record<string, number>; label: string }>;
+      ledgerPrefix?: LedgerEvent[];
     },
   ): Promise<RunOutcome> {
     const { source: kernelSource, tools } = desugarLegacySurface(source);
     const journal: OracleJournal = { judge: [], structured: [], reply: [], tools: [] };
     const live = !opts2.replayJournal;
+    const ledgerPrefix = opts2.ledgerPrefix ?? (opts2.absorb === false ? [] : this.ledger.slice());
     try {
       const program = parse(kernelSource);
       const runOpts = this.buildRunOptions(tools, program, testMode, journal, opts2.replayJournal, opts2.stochasticSeed);
       // §15.5.6/§16.8: a warm conformal gate calibrates from the compatible label pool the runtime owns.
       if (opts2.calibration) runOpts.calibration = opts2.calibration;
+      runOpts.ledgerPrefix = toKernelLedgerPrefix(ledgerPrefix);
       const session = createSession(program, runOpts);
+      try {
       await session.start();
       for (const arrival of testMode.promptArrivals ?? []) {
         if (live) this.counters.promptArrivals++;
         await session.sendPrompt({ name: arrival.source, value: arrival.value ?? arrival.body });
       }
       const snapshot = session.snapshot();
-      const events = snapshot.ledger.events.map(toConformanceEvent);
+      const fullEvents = snapshot.ledger.events;
+      const events = fullEvents.slice(ledgerPrefix.length).map(toConformanceEvent);
       if (live) this.counters.identityCalls += this.countIdentityConsults(events);
-      if (opts2.absorb !== false) this.absorbRunEvents(events);
-      const headHash = canonicalChainHead(events);
+      if (opts2.absorb !== false) this.appendRunEvents(events);
+      const headHash = canonicalChainHead(fullEvents.map(toConformanceEvent));
       const outcome: RunOutcome = { ok: true, head: this.ledger.length, headHash, events };
       if (opts2.record && live) {
         const recording: Recording = {
@@ -680,10 +723,14 @@ class AgapeTsConformanceAdapter {
           journal,
           memoryOps: this.envelope.snapshotOps(),
           headHash,
+          ledgerPrefix: ledgerPrefix.map((event) => ({ ...event })),
         };
         outcome.recording = recording;
       }
       return outcome;
+      } finally {
+        await session.close();
+      }
     } catch (err) {
       const cls = (err as { cls?: string; name?: string }).cls ?? (err as Error).name ?? "Error";
       return {
@@ -707,7 +754,11 @@ class AgapeTsConformanceAdapter {
     const rec = recording as Recording;
     if (!rec || rec.kind !== "agape-ts-recording") throw new Error("replay requires a recording produced by this adapter");
     const journalCopy: OracleJournal = JSON.parse(JSON.stringify(rec.journal)) as OracleJournal;
-    const outcome = await this.execute(rec.source, rec.testMode ?? {}, { replayJournal: journalCopy, absorb: false });
+    const outcome = await this.execute(rec.source, rec.testMode ?? {}, {
+      replayJournal: journalCopy,
+      absorb: false,
+      ledgerPrefix: rec.ledgerPrefix ?? [],
+    });
     return { ok: outcome.ok, head: outcome.events.length, headHash: outcome.headHash, events: outcome.events };
   }
 
@@ -759,15 +810,18 @@ class AgapeTsConformanceAdapter {
     const journal: OracleJournal = { judge: [], structured: [], reply: [], tools: [] };
     const program = parse(kernelSource);
     const runOpts = this.buildRunOptions(tools, program, testMode, journal);
+    const ledgerPrefix = this.ledger.slice();
+    runOpts.ledgerPrefix = toKernelLedgerPrefix(ledgerPrefix);
     const session = createSession(program, runOpts);
+    try {
     await session.start();
-    const beforeEvents = session.snapshot().ledger.events.map(toConformanceEvent);
+    const beforeEvents = session.snapshot().ledger.events.slice(ledgerPrefix.length).map(toConformanceEvent);
     const hasOpenPrompt =
       program.decls.some((d) => d.kind === "prompt") && !beforeEvents.some((e) => e.etype === "Prompt");
     this.counters.promptArrivals++;
     await session.sendPrompt({ name: input.sourceName, value: input.arrival });
-    const afterEvents = session.snapshot().ledger.events.map(toConformanceEvent);
-    this.absorbRunEvents(afterEvents);
+    const afterEvents = session.snapshot().ledger.events.slice(ledgerPrefix.length).map(toConformanceEvent);
+    this.appendRunEvents(afterEvents);
     const asOutcome = (events: LedgerEvent[]): RunOutcome => ({
       ok: true,
       head: events.length,
@@ -780,6 +834,9 @@ class AgapeTsConformanceAdapter {
       liveBeforeArrival: hasOpenPrompt,
       quiescentAfterArrival: afterEvents.some((e) => e.etype === "Prompt" && e.subject === input.sourceName),
     };
+    } finally {
+      await session.close();
+    }
   }
 
   // ---- SPEC 16.7 memory envelope (adapter test-mode; see runtime_adapter_memory.ts) ----
@@ -1314,7 +1371,10 @@ class AgapeTsConformanceAdapter {
     const journal: OracleJournal = { judge: [], structured: [], reply: [], tools: [] };
     const program = parse(kernelSource);
     const runOpts = this.buildRunOptions(tools, program, testMode, journal);
+    const ledgerPrefix = this.ledger.slice();
+    runOpts.ledgerPrefix = toKernelLedgerPrefix(ledgerPrefix);
     const session = createSession(program, runOpts);
+    try {
     await session.start();
     let delivered = 0;
     for (let i = 0; i < input.repetitions; i++) {
@@ -1327,8 +1387,8 @@ class AgapeTsConformanceAdapter {
       await session.sendPrompt({ name: arrival.source, value: arrival.value ?? arrival.body });
       delivered++;
     }
-    const events = session.snapshot().ledger.events.map(toConformanceEvent);
-    this.absorbRunEvents(events);
+    const events = session.snapshot().ledger.events.slice(ledgerPrefix.length).map(toConformanceEvent);
+    this.appendRunEvents(events);
     const committedOutcomes = events
       .filter((e) => e.etype === "Decided")
       .map((e) => String(((e.payload ?? {}) as Record<string, unknown>).committed ?? "abstained"));
@@ -1339,6 +1399,9 @@ class AgapeTsConformanceAdapter {
       committedOutcomes,
       sideEffectCount,
     };
+    } finally {
+      await session.close();
+    }
   }
 }
 

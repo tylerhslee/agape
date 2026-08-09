@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -15,7 +15,7 @@ import {
   type MemoryStoredCell,
   type MemoryWriteRequest,
 } from "../src/memory.js";
-import { MarkdownMemoryDriver } from "../src/memory_markdown.js";
+
 import { MemoryRuntimeDriver } from "../src/memory_runtime.js";
 
 class RecordingMemory implements MemoryDriver {
@@ -69,15 +69,15 @@ describe("memory-cell provenance threading", () => {
       }
       spawn A a; awake a;
     `;
-    await run(parse(prog), {
+    const result = await run(parse(prog), {
       memory,
       provider: new MockProvider(() => ({})),
       promptInputs: [{ name: "question", value: "the deploy step is npm run deploy", attestation: { attester: "test-harness" } }],
     });
 
-    const store = memory.writes.find((w) => w.metadata?.source === "store");
-    expect(store?.metadata?.provenance).toEqual({ attester: "test-harness", prompt_name: "question" });
-    expect(memory.writes).toHaveLength(1);
+    const stores = result.namedMemoryRecording.operations.filter((operation) => operation.kind === "store");
+    expect(stores[0]?.originEvidence?.prompt).toEqual({ attester: "test-harness", prompt_name: "question" });
+    expect(stores).toHaveLength(1);
   });
 
   it("records the default local attester when the prompt input carries no attestation", async () => {
@@ -97,13 +97,14 @@ describe("memory-cell provenance threading", () => {
       }
       spawn A a; awake a;
     `;
-    await run(parse(prog), {
+    const result = await run(parse(prog), {
       memory,
       provider: new MockProvider(() => ({})),
       promptInputs: [{ name: "question", value: "hello" }],
     });
 
-    expect(memory.writes[0]?.metadata?.provenance).toEqual({ attester: "studio-user", prompt_name: "question" });
+    const store = result.namedMemoryRecording.operations.find((operation) => operation.kind === "store");
+    expect(store?.originEvidence?.prompt).toEqual({ attester: "studio-user", prompt_name: "question" });
   });
 
   it("omits provenance for reactions with no originating prompt delivery", async () => {
@@ -123,11 +124,13 @@ describe("memory-cell provenance threading", () => {
       }
       spawn A a; awake a;
     `;
-    await run(parse(prog), { memory, provider: new MockProvider(() => ({})) });
+    const result = await run(parse(prog), { memory, provider: new MockProvider(() => ({})) });
 
-    expect(memory.writes).toHaveLength(2);
-    for (const w of memory.writes) {
-      expect(w.metadata).not.toHaveProperty("provenance");
+    const stores = result.namedMemoryRecording.operations.filter((operation) => operation.kind === "store");
+    expect(stores).toHaveLength(2);
+    for (const store of stores) {
+      expect(store.originEvidence?.prompt).toBeUndefined();
+      expect(store.originEvidence?.reactionEvent).toEqual(expect.any(Number));
     }
   });
 
@@ -158,14 +161,14 @@ describe("memory-cell provenance threading", () => {
       }
       spawn Lead lead; awake lead;
     `;
-    await run(parse(prog), {
+    const result = await run(parse(prog), {
       memory,
       provider: new MockProvider(() => ({})),
       promptInputs: [{ name: "question", value: "go", attestation: { attester: "test-harness" } }],
     });
 
-    const store = memory.writes.find((w) => w.metadata?.source === "store");
-    expect(store?.metadata?.provenance).toEqual({ attester: "test-harness", prompt_name: "question" });
+    const store = result.namedMemoryRecording.operations.find((operation) => operation.kind === "store");
+    expect(store?.originEvidence?.prompt).toEqual({ attester: "test-harness", prompt_name: "question" });
   });
 
   it("persists provenance in the markdown cell's json metadata block and recalls it", async () => {
@@ -187,30 +190,26 @@ describe("memory-cell provenance threading", () => {
         spawn A a; awake a;
       `;
       const result = await run(parse(prog), {
-        memoryRoot: dir,
+        projectRoot: dir,
         provider: new MockProvider(() => ({})),
         manifest: { provider: { backend: "mock" }, project: { name: "demo" }, memory: { driver: "markdown" } },
         promptInputs: [{ name: "question", value: "remember the deploy command", attestation: { attester: "local-user" } }],
       });
 
-      const spawned = result.ledger.events.find((event) => event.etype === "Spawned");
-      const instanceId = String((spawned?.payload as Record<string, unknown>)?.instance_id);
-      const topic = await readFile(join(dir, ".agape", "memory", "scopes", "test_agape", instanceId.replace(":", "_"), "notes.md"), "utf8");
+      const store = result.namedMemoryRecording.operations.find((operation) => operation.kind === "store");
+      expect(store?.originEvidence?.prompt).toEqual({
+        attester: "local-user",
+        prompt_name: "question",
+      });
+      const root = join(dir, ".agape", "memory");
+      const files = await readdir(root, { recursive: true });
+      const projection = files.find((file) => file.endsWith("MEMORY.md"));
+      expect(projection).toBeDefined();
+      const topic = await readFile(join(root, projection!), "utf8");
       expect(topic).toContain("the deploy command is npm run deploy");
-      expect(topic).toContain('"provenance"');
-      expect(topic).toContain('"attester": "local-user"');
-      expect(topic).toContain('"prompt_name": "question"');
-
-      // The configured substrate preserves provenance on exact recalled candidates.
-      const driver = new MarkdownMemoryDriver({ path: join(dir, ".agape", "memory") });
-      const consulted = await driver.consult({
-        scope: { project: "test://agape", agentInstanceId: instanceId, agentAlias: "a", mem: "notes" },
-        query: "deploy command",
-        topK: 1,
-      });
-      expect(consulted.candidates[0]?.metadata).toMatchObject({
-        provenance: { attester: "local-user", prompt_name: "question" },
-      });
+      expect(topic).not.toContain("local-user");
+      expect(topic).not.toContain("question");
+      expect(files.join(" ")).not.toContain("test://agape");
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

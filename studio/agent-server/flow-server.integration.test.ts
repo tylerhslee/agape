@@ -16,7 +16,13 @@ const base = `http://127.0.0.1:${PORT}`;
 const source = `prompt text question;
 enum Verdict { Accept, Reject }
 action Reply(text answer);
-agent FactChecker grants { perform Reply } {
+action Audit();
+action Admin();
+event Ping();
+event Pong();
+agent FactChecker grants { perform Reply, perform Audit } {
+  when (Ping e) { emit Pong(); }
+  when (Pong e) { say("done"); }
   when (Prompt p about question) {
     Credence<Verdict> c = self <- f"check: \${p.text}";
     Decision<Verdict> d = decide c by confidence 0.5;
@@ -106,5 +112,45 @@ describe("Studio flow HTTP API", () => {
     const expectedWinnerSource = beforeRejected.replace('f"check carefully: ${p.text}"', `f"${winnerValue}"`);
     expect(readFileSync(path.join(project, "main.ag"), "utf8")).toBe(expectedWinnerSource);
     expect(readdirSync(project).filter((name) => name.startsWith(".main.flow-") && name.endsWith(".ag"))).toEqual([]);
-  });
+
+    const createdResponse = await fetch(`${base}/project/flow?rel=main.ag`, {
+      method: "PUT", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ revision: winner.revision, patch: { op: "create_agent", name: "Reviewer" } }),
+    });
+    expect(createdResponse.status).toBe(200);
+    const created: any = await createdResponse.json();
+    expect(created.sourceDiff).toContain("+agent Reviewer {");
+    expect(created.nodes.some((node: any) => node.id === "agent:Reviewer")).toBe(true);
+
+    const reloaded: any = await (await fetch(`${base}/project/flow?rel=main.ag`)).json();
+    expect(reloaded.revision).toBe(created.revision);
+    expect(reloaded.nodes.some((node: any) => node.id === "agent:Reviewer")).toBe(true);
+
+    const deletedResponse = await fetch(`${base}/project/flow?rel=main.ag`, {
+      method: "PUT", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ revision: created.revision, patch: { op: "delete_agent", nodeId: "agent:Reviewer" } }),
+    });
+    expect(deletedResponse.status).toBe(200);
+    const deleted: any = await deletedResponse.json();
+    expect(deleted.nodes.some((node: any) => node.id === "agent:Reviewer")).toBe(false);
+
+    const assertRejectedRollback = async (patch: any, expectedCode: string) => {
+      const before = readFileSync(path.join(project, "main.ag"), "utf8");
+      const response = await fetch(`${base}/project/flow?rel=main.ag`, {
+        method: "PUT", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ revision: deleted.revision, patch }),
+      });
+      expect(response.status).toBe(422);
+      const payload: any = await response.json();
+      expect(payload).toMatchObject({ code: "invalid_structural_edit", diagnostics: [expect.objectContaining({ code: expectedCode })] });
+      expect(readFileSync(path.join(project, "main.ag"), "utf8")).toBe(before);
+      expect(readdirSync(project).filter((name) => name.startsWith(".main.flow-") && name.endsWith(".ag"))).toEqual([]);
+    };
+
+    await assertRejectedRollback({ op: "delete_agent", nodeId: "agent:Reviewer", changes: [] }, "invalid_structural_patch");
+    await assertRejectedRollback({ op: "reorder_step", nodeId: "event:FactChecker:Pong", beforeNodeId: "action:FactChecker:Reply" }, "cross_context_reorder");
+    await assertRejectedRollback({ op: "reconnect_handoff", nodeId: "action:FactChecker:Reply", target: "Audit" }, "incompatible_handoff_type");
+    await assertRejectedRollback({ op: "add_handoff", contextNodeId: "agent:FactChecker", handoff: "action", target: "Admin" }, "structural_authority");
+    await assertRejectedRollback({ op: "reconnect_handoff", nodeId: "event:FactChecker:Pong", target: "Ping" }, "structural_cycle");
+  }, 15_000);
 });

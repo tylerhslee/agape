@@ -1,7 +1,19 @@
 agent Worker(text primary, text secondary) {
+  mem notes {
+    type text;
+    modality opaque;
+    scope project;
+    retention durable;
+  }
+  mem scratch {
+    type text;
+    modality opaque;
+    scope project;
+    retention durable;
+  }
   on awake {
-    mem notes <- primary;
-    mem scratch <- secondary;
+    notes <- f"${primary}";
+    scratch <- f"${secondary}";
   }
 }
 

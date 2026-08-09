@@ -43,7 +43,7 @@ export function applyCompilerGraphToDocument(document: FlowDocument, graph: Comp
     );
     if (candidates.length !== 1) continue;
     const node = candidates[0];
-    node.metadata = compilerMetadata(compilerNode);
+    node.metadata = { ...node.metadata, ...compilerMetadata(compilerNode), compilerMeta: { ...(node.metadata?.compilerMeta || {}), ...(compilerNode.meta || {}) } };
     compilerToFlow.set(compilerNode.id, node.id);
   }
 

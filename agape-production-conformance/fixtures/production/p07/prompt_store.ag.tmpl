@@ -1,9 +1,14 @@
 prompt text question;
 
 agent Rememberer {
+  mem notes {
+    type text;
+    modality opaque;
+    scope project;
+    retention durable;
+  }
   when (Prompt p about question) {
-    mem notes;
-    notes <- p.text;
+    notes <- f"${p.text}";
   }
 }
 

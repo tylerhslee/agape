@@ -109,7 +109,7 @@ describe("authenticated runtime identity and spawn allocation", () => {
   });
 
   it("uses stable instance identity for constructor memory scope and alias only for display", async () => {
-    const memory = new ScopeSpyMemory();
+    const memory = new ScopeSpyMemory(); // the legacy host envelope is intentionally not source memory
     const result = await run(parse(`
       agent Writer {
         mem notes {
@@ -127,14 +127,14 @@ describe("authenticated runtime identity and spawn allocation", () => {
     });
     const spawned = result.ledger.events.find((event) => event.etype === "Spawned")!;
     const instanceId = (spawned.payload as { instance_id: string }).instance_id;
-    expect(memory.declared).toHaveLength(1);
-    expect(memory.declared[0]).toMatchObject({
+    const store = result.namedMemoryRecording.operations.find((operation) => operation.kind === "store");
+    expect(store).toMatchObject({
+      kind: "store",
       agentInstanceId: instanceId,
-      agentAlias: "writer",
-      project: IDENTITY.projectSubject,
-      mem: "notes",
+      descriptorHash: expect.any(String),
     });
-    expect(memory.declared[0]).not.toHaveProperty("agent");
+    expect(memory.declared).toEqual([]);
+    expect(JSON.stringify(result.ledger.events)).not.toContain(IDENTITY.projectSubject);
   });
 
   it("crashes a user-scoped operation before any driver access when kappa lacks user", async () => {

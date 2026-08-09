@@ -4,6 +4,7 @@
 
 import { createHash } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { homedir } from "node:os";
 import { readFile } from "node:fs/promises";
 import { isAbsolute, relative, resolve as resolvePath } from "node:path";
 import type * as A from "./ast.js";
@@ -12,11 +13,29 @@ import {
   type Provider, type StructuredSchema, type Value, type Committed, type Variant, type Trust, type IngressProvenance,
   type CognitionContext, type CognitionDataSegment, type CognitionMemoryHit,
   type LedgerEvent,
+  type EndorsementAuthorizationLineage,
 } from "./runtime.js";
 import { check, linkModules, type ModuleInput, type Resolution } from "./check.js";
 import { createMemoryDriver, type Manifest, type ToolBindingConfig, type BindingConfig } from "./config.js";
-import type { MemoryDriver, MemoryProvenance, MemoryReceipt, MemoryScope } from "./memory.js";
-import { renderStoreRecollection } from "./memory_runtime.js";
+import type { MemoryDriver, MemoryProvenance } from "./memory.js";
+import {
+  NamedMemoryRuntime,
+  type NamedMemoryRuntimeOptions,
+  type NamedMemoryRuntimeRecording,
+  type NamedMemoryOperationInput,
+} from "./named_memory_runtime.js";
+import {
+  decodeExactValue,
+  type PersistedSchema,
+  type ResolvedMemoryDescriptor,
+} from "./named_memory.js";
+import { NamedMemoryScopeError } from "./named_memory_coordinator.js";
+import { MarkdownTransactionalNamedMemoryDriver } from "./named_memory_markdown.js";
+import {
+  FileProtectedEvidenceStore,
+  validateJudgmentEvidenceLink,
+  type JudgmentEvidenceLink,
+} from "./protected_evidence.js";
 import { parse } from "./parser.js";
 import { typeError, taintViolation, authorityViolation, configError } from "./errors.js";
 import { createToolHandlers, type ToolHandler } from "./tool_adapters.js";
@@ -85,7 +104,7 @@ const TASK_ALIASES: Record<string, string> = {
   TaskExpired: "Expired",
 };
 
-interface QualifiedMemoryDescriptor {
+interface QualifiedMemoryDescriptorParts {
   type: A.TypeRef;
   modality: "opaque" | "episodic" | "semantic";
   scopes: ("project" | "user")[];
@@ -93,10 +112,7 @@ interface QualifiedMemoryDescriptor {
 }
 
 interface MemRegion {
-  writes: Value[];
-  closed: boolean;
-  generation: number;
-  descriptor: QualifiedMemoryDescriptor;
+  descriptor: ResolvedMemoryDescriptor;
 }
 
 interface AgentInstance {
@@ -180,6 +196,27 @@ class Scope {
   }
 }
 
+function declaredScoreOrder(scores: Record<Variant, number>, variants: Variant[]): Record<Variant, number> {
+  const ordered: Record<Variant, number> = {};
+  for (const variant of variants) {
+    if (Object.prototype.hasOwnProperty.call(scores, variant)) ordered[variant] = scores[variant]!;
+  }
+  for (const [variant, score] of Object.entries(scores)) {
+    if (!Object.prototype.hasOwnProperty.call(ordered, variant)) ordered[variant] = score;
+  }
+  return ordered;
+}
+
+function exactDeclaredScores(left: Record<Variant, number>, right: Record<Variant, number>, variants: Variant[]): boolean {
+  const declared = new Set(variants);
+  const leftKeys = Object.keys(left);
+  const rightKeys = Object.keys(right);
+  return leftKeys.length === variants.length && rightKeys.length === variants.length
+    && leftKeys.every((variant) => declared.has(variant))
+    && rightKeys.every((variant) => declared.has(variant))
+    && variants.every((variant) => left[variant] === right[variant]);
+}
+
 function scoreSummary(scores: Record<Variant, number>) {
   const top = topVariant(scores);
   const sorted = Object.entries(scores).sort((a, b) => b[1] - a[1]);
@@ -202,7 +239,10 @@ function valueSummary(v: Value): Record<string, unknown> {
     basis: v.basis,
     margin: v.margin,
     decision_id: v.decisionId,
+    rule_hash: v.ruleHash,
+    evidence_ref: v.evidenceRef,
     principal_event: v.principalEvent,
+    principal_request: v.principalRequest,
     rule: v.rule,
   };
   if (v.kind === "endorsement") {
@@ -214,6 +254,12 @@ function valueSummary(v: Value): Record<string, unknown> {
       basis: v.basis,
       margin: v.margin,
       decision_id: v.decisionId,
+      endorsement_tick: v.endorsementTick,
+      subject_hash: v.subjectHash,
+      rule_hash: v.ruleHash,
+      evidence_ref: v.evidenceRef,
+      principal_event: v.principalEvent,
+      principal_request: v.principalRequest,
       subject: valueSummary(v.subject),
       committedNarrowed: v.committedNarrowed,
     };
@@ -229,6 +275,51 @@ function valueSummary(v: Value): Record<string, unknown> {
   }
   if (v.kind === "array") return { ...base, items: v.items.map(valueSummary) };
   return base;
+}
+
+// Canonical typed value commitment. Authorization binds semantic bytes only: trust,
+// ingress, rendering, authorization lineage, and other runtime diagnostics are excluded.
+function valueCommitment(v: Value): Record<string, unknown> {
+  if (v.kind === "text") return { kind: v.kind, value: v.v };
+  if (v.kind === "int" || v.kind === "float" || v.kind === "bool") return { kind: v.kind, value: v.v };
+  if (v.kind === "null") return { kind: v.kind, value: null };
+  if (v.kind === "enumval") return { kind: v.kind, enum: v.enumName, variant: v.variant };
+  if (v.kind === "credence") return { kind: v.kind, enum: v.enumName, scores: v.scores };
+  if (v.kind === "decision") return {
+    kind: v.kind,
+    enum: v.enumName,
+    committed: v.committed,
+    basis: v.basis,
+    margin: v.margin,
+  };
+  if (v.kind === "endorsement") return { kind: v.kind, subject: valueCommitment(v.subject) };
+  if (v.kind === "agentref") return { kind: v.kind, name: v.name, agent_type: v.agentType };
+  if (v.kind === "memref") return { kind: v.kind, name: v.name };
+  if (v.kind === "taskref") return {
+    kind: v.kind,
+    subject: v.subject,
+    corr: v.corr,
+  };
+  if (v.kind === "struct") return {
+    kind: v.kind,
+    ...(v.typeName === undefined ? {} : { type: v.typeName }),
+    fields: Object.fromEntries([...v.fields].map(([name, value]) => [name, valueCommitment(value)])),
+  };
+  if (v.kind === "array") return { kind: v.kind, items: v.items.map(valueCommitment) };
+  throw new RuntimeError("unsupported runtime value in canonical commitment");
+}
+
+function projectedValueCommitment(root: unknown, path: readonly string[]): unknown | undefined {
+  let current = root;
+  for (const segment of path) {
+    if (current === null || typeof current !== "object" || Array.isArray(current)) return undefined;
+    const record = current as Record<string, unknown>;
+    if (record.kind !== "struct" || record.fields === null || typeof record.fields !== "object" || Array.isArray(record.fields)) return undefined;
+    const fields = record.fields as Record<string, unknown>;
+    if (!Object.prototype.hasOwnProperty.call(fields, segment)) return undefined;
+    current = fields[segment];
+  }
+  return current;
 }
 
 function isRuntimeValue(raw: unknown): raw is Value {
@@ -251,8 +342,16 @@ function typeLabel(t: A.TypeRef): string {
 
 function ruleSummary(rule: A.Rule): Record<string, unknown> {
   switch (rule.kind) {
-    case "confidence": return { kind: "confidence", threshold: rule.theta, margin: rule.margin, floor: rule.floor };
-    case "conformal": return { kind: "conformal", alpha: rule.alpha, readiness: rule.readiness, floor: rule.floor };
+    case "confidence": return {
+      kind: "confidence", threshold: rule.theta,
+      ...(rule.margin === undefined ? {} : { margin: rule.margin }),
+      ...(rule.floor === undefined ? {} : { floor: rule.floor }),
+    };
+    case "conformal": return {
+      kind: "conformal", alpha: rule.alpha,
+      ...(rule.readiness === undefined ? {} : { readiness: rule.readiness }),
+      ...(rule.floor === undefined ? {} : { floor: rule.floor }),
+    };
     case "policy": return { kind: "policy", name: rule.name };
     case "expr": return { kind: "expr" };
   }
@@ -262,6 +361,7 @@ function stableJson(v: unknown): string {
   if (v === null || typeof v !== "object") return JSON.stringify(v);
   if (Array.isArray(v)) return `[${v.map(stableJson).join(",")}]`;
   return `{${Object.entries(v as Record<string, unknown>)
+    .filter(([, value]) => value !== undefined)
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([k, val]) => `${JSON.stringify(k)}:${stableJson(val)}`)
     .join(",")}}`;
@@ -300,6 +400,7 @@ export interface RunResult {
   ledger: Ledger;
   stdout: string[];
   warnings: RuntimeWarning[];
+  namedMemoryRecording: NamedMemoryRuntimeRecording;
 }
 
 export interface RuntimeWarning {
@@ -334,6 +435,8 @@ export interface RuntimeSession {
   start(): Promise<RunResult>;
   sendPrompt(input: PromptInput): Promise<RunResult>;
   snapshot(): RunResult;
+  assertProtectedEvidenceReplayConsumed(): void;
+  close(): Promise<RunResult>;
 }
 
 // §13/§16.4 — the identity dependency's consult request. When a principal-prefixed `decide` escalates
@@ -382,6 +485,16 @@ export interface RuntimeIdentityContext {
   user?: { issuer: string; subject: string; verified: true };
 }
 
+export interface ProtectedEvidenceRuntimeOptions {
+  store: FileProtectedEvidenceStore;
+  principal: string;
+  replay?: boolean;
+}
+
+export interface ProtectedEvidenceReplayOptions {
+  links: readonly JudgmentEvidenceLink[];
+}
+
 export type RunOptions = {
   provider?: Provider;
   modules?: ModuleInput[];
@@ -398,6 +511,9 @@ export type RunOptions = {
   toolHandlers?: Record<string, ToolHandler>;
   memory?: MemoryDriver;
   memoryRoot?: string;
+  namedMemory?: NamedMemoryRuntimeOptions;
+  protectedEvidence?: ProtectedEvidenceRuntimeOptions;
+  protectedEvidenceReplay?: ProtectedEvidenceReplayOptions;
   projectRoot?: string;
   identity: RuntimeIdentityContext;
   strictConfig?: boolean;
@@ -409,16 +525,81 @@ export type RunOptions = {
   // after the event is committed (§16.2). Read-only — it adds no authority and changes no semantics; an
   // exception it throws is contained by the runtime and never corrupts the run.
   onEvent?: (event: LedgerEvent) => void;
+  // Host-only append context. The restored prefix establishes final global ticks before
+  // this session creates authenticated correlations and is never re-emitted through onEvent.
+  // Source programs cannot observe or configure this option.
+  ledgerPrefix?: readonly LedgerEvent[];
 };
+
+function clampMemoryTopK(value: unknown): number {
+  const integer = typeof value === "number" && Number.isFinite(value) ? Math.trunc(value) : 10;
+  return Math.min(1_000, Math.max(1, integer));
+}
+
+const MARKDOWN_MEMORY_PATH_TOKEN = /\{(?:project|lineage|agent|mem|user|generation)\}/g;
+const MARKDOWN_MEMORY_PATH_SEGMENT = /^\{(?:project|lineage|agent|mem|user|generation)\}$/;
+
+export interface MarkdownMemoryPathBinding {
+  root: string;
+  pathTemplate?: string;
+}
+
+/** Resolve only the static prefix; operation-scoped tokens stay private until the durable driver binds them. */
+export function resolveMarkdownMemoryPathBinding(
+  configured: unknown,
+  projectRoot: string,
+): MarkdownMemoryPathBinding {
+  const candidate = configured === undefined ? ".agape/memory" : configured;
+  if (typeof candidate !== "string" || candidate.trim().length === 0) {
+    throw configError("Markdown memory path must be a nonblank string");
+  }
+  const expanded = candidate === "~"
+    ? homedir()
+    : candidate.replace(/^~(?=$|[/\\])/, homedir());
+  const stripped = expanded.replace(MARKDOWN_MEMORY_PATH_TOKEN, "");
+  if (stripped.includes("{") || stripped.includes("}")) {
+    throw configError("Markdown memory path contains an unsupported placeholder");
+  }
+  MARKDOWN_MEMORY_PATH_TOKEN.lastIndex = 0;
+  const token = MARKDOWN_MEMORY_PATH_TOKEN.exec(expanded);
+  MARKDOWN_MEMORY_PATH_TOKEN.lastIndex = 0;
+  if (!token) {
+    return { root: resolvePath(projectRoot, expanded) };
+  }
+
+  const separator = Math.max(
+    expanded.lastIndexOf("/", token.index),
+    expanded.lastIndexOf("\\", token.index),
+  );
+  const staticPrefix = separator < 0 ? "." : expanded.slice(0, separator) || resolvePath(projectRoot, "/");
+  const pathTemplate = expanded.slice(separator + 1);
+  const templateSegments = pathTemplate.split(/[/\\]+/);
+  if (templateSegments.some((segment) => segment === "..")) {
+    throw configError("Markdown memory path template may not traverse above its static root");
+  }
+  if (templateSegments.some((segment) => (segment.includes("{") || segment.includes("}"))
+    && !MARKDOWN_MEMORY_PATH_SEGMENT.test(segment))) {
+    throw configError("Markdown memory path placeholders must occupy complete path segments");
+  }
+  return {
+    root: resolvePath(projectRoot, staticPrefix),
+    pathTemplate,
+  };
+}
 
 export async function run(
   program: A.Program,
   opts: RunOptions,
 ): Promise<RunResult> {
   const session = createSession(program, opts);
-  await session.start();
-  for (const input of opts.promptInputs ?? []) await session.sendPrompt(input);
-  return session.snapshot();
+  try {
+    await session.start();
+    for (const input of opts.promptInputs ?? []) await session.sendPrompt(input);
+    session.assertProtectedEvidenceReplayConsumed();
+    return session.snapshot();
+  } finally {
+    await session.close();
+  }
 }
 
 export function createSession(program: A.Program, opts: RunOptions): RuntimeSession {
@@ -430,13 +611,43 @@ export function createSession(program: A.Program, opts: RunOptions): RuntimeSess
   // The memory runtime shares the session's provider so reflection (when the
   // manifest opts in) runs behind the same seam as every other cognition call.
   const memory = opts.memory ?? createMemoryDriver(manifest, { cwd: opts.memoryRoot ?? projectRoot, provider });
-  validateMemoryRetentions(program, memory);
+  const configuredNamedBinding = manifest.memory?.driver === "markdown" ? "markdown" : "local";
+  const memoryTopK = clampMemoryTopK(manifest.memory?.top_k);
+  const namedMemory = {
+    binding: configuredNamedBinding,
+    ...(opts.namedMemory ?? {}),
+    maxRecallCap: memoryTopK,
+  } satisfies NamedMemoryRuntimeOptions;
+  if (
+    configuredNamedBinding === "markdown"
+    && namedMemory.driver === undefined
+    && namedMemory.driverFactory === undefined
+  ) {
+    const configuredRoot = manifest.memory?.path ?? manifest.memory?.root ?? manifest.memory?.directory;
+    const pathBinding = resolveMarkdownMemoryPathBinding(configuredRoot, projectRoot);
+    const entrypoint = typeof manifest.memory?.entrypoint === "string"
+      ? manifest.memory.entrypoint
+      : undefined;
+    const archiveOnForget = typeof manifest.memory?.archive_on_forget === "boolean"
+      ? manifest.memory.archive_on_forget
+      : undefined;
+    namedMemory.driverFactory = async () => MarkdownTransactionalNamedMemoryDriver.open({
+      ...pathBinding,
+      ...(entrypoint === undefined ? {} : { entrypoint }),
+      ...(archiveOnForget === undefined ? {} : { archiveOnForget }),
+    });
+  }
+  if (manifest.profiles?.advertised?.includes("studio-fact-checker")
+    && opts.protectedEvidence === undefined && opts.protectedEvidenceReplay === undefined) {
+    throw configError("the studio-fact-checker profile requires a host-authenticated protected evidence store");
+  }
   const toolHandlers = { ...createToolHandlers(manifest), ...(opts.toolHandlers ?? {}) };
   return new Interpreter(
     program,
     provider,
     opts.modules ?? [],
     memory,
+    namedMemory,
     identity,
     opts.principal,
     opts.principalAttestations ?? [],
@@ -448,35 +659,23 @@ export function createSession(program: A.Program, opts: RunOptions): RuntimeSess
     opts.calibration ?? [],
     opts.onEvent,
     opts.attesterVerifier,
+    opts.protectedEvidence,
+    opts.protectedEvidenceReplay,
+    opts.ledgerPrefix,
   );
 }
 
-function normalizeMemoryDescriptor(d: A.MemoryDescriptor): QualifiedMemoryDescriptor {
+function normalizeMemoryDescriptor(d: A.MemoryDescriptor): QualifiedMemoryDescriptorParts {
   const type = d.clauses.find((c): c is Extract<A.MemoryClause, { kind: "type" }> => c.kind === "type")!.type;
   const modality = d.clauses.find((c): c is Extract<A.MemoryClause, { kind: "modality" }> => c.kind === "modality")!.value;
   const scopes = d.clauses.find((c): c is Extract<A.MemoryClause, { kind: "scope" }> => c.kind === "scope")!.values;
   const retention = d.clauses.find((c): c is Extract<A.MemoryClause, { kind: "retention" }> => c.kind === "retention")!.value;
   return {
     type,
-    modality: modality as QualifiedMemoryDescriptor["modality"],
-    scopes: scopes as QualifiedMemoryDescriptor["scopes"],
-    retention: retention as QualifiedMemoryDescriptor["retention"],
+    modality: modality as QualifiedMemoryDescriptorParts["modality"],
+    scopes: scopes as QualifiedMemoryDescriptorParts["scopes"],
+    retention: retention as QualifiedMemoryDescriptorParts["retention"],
   };
-}
-
-function validateMemoryRetentions(program: A.Program, memory: MemoryDriver): void {
-  const required = new Set<"session" | "durable">();
-  for (const d of program.decls) {
-    if (d.kind !== "agent") continue;
-    for (const m of d.mems) required.add(normalizeMemoryDescriptor(m).retention);
-  }
-  if (required.size === 0) return;
-  const supported = new Set(memory.capabilities?.retentions ?? []);
-  for (const retention of required) {
-    if (!supported.has(retention)) {
-      throw configError(`configured memory driver does not advertise required '${retention}' retention`);
-    }
-  }
 }
 
 export function deriveStableAgentInstanceId(
@@ -544,9 +743,12 @@ function freezeRuntimeIdentity(
 
 class Interpreter {
   private ledger: Ledger;
+  private namedMemory: NamedMemoryRuntime;
   private stdout: string[] = [];
   private warnings: RuntimeWarning[] = [];
   private started = false;
+  private closed = false;
+  private closePromise?: Promise<void>;
   private enums = new Map<string, string[]>();
   private structs = new Map<string, A.Field[]>();
   private actions = new Map<string, A.ActionDecl>();
@@ -579,6 +781,10 @@ class Interpreter {
   // the delivery's cascade records it (metadata.provenance, additive); reactions with no prompt
   // origin (heartbeat ticks, spawn/awake hooks) leave the store empty and the key absent.
   private promptProvenanceALS = new AsyncLocalStorage<MemoryProvenance>();
+  private memoryInvocationALS = new AsyncLocalStorage<{
+    correlation: string;
+    nextEvaluationOrdinal: number;
+  }>();
   private drainingTasks = false;
   private ownerDrainALS = new AsyncLocalStorage<boolean>();
   private dispatchDepth = 0; // reentrancy guard: a handler's appends cascade, but bounded (events are finite).
@@ -623,7 +829,8 @@ class Interpreter {
     private program: A.Program,
     private provider: Provider,
     modules: ModuleInput[],
-    private memory: MemoryDriver,
+    private _memory: MemoryDriver,
+    namedMemoryOptions: NamedMemoryRuntimeOptions,
     private readonly identity: Readonly<RuntimeIdentityContext>,
     private principalOutcome?: string,
     private principalAttestations: PrincipalAttestation[] = [],
@@ -635,8 +842,17 @@ class Interpreter {
     private calibrationPool: ConformalLabel[] = [],
     onEvent?: (event: LedgerEvent) => void,
     private attesterVerifier: AttesterVerifier | undefined = undefined,
+    private protectedEvidence: ProtectedEvidenceRuntimeOptions | undefined = undefined,
+    private protectedEvidenceReplay: ProtectedEvidenceReplayOptions | undefined = undefined,
+    ledgerPrefix: readonly LedgerEvent[] | undefined = undefined,
   ) {
-    this.ledger = new Ledger(timingOriginMs, onEvent);
+    this.protectedEvidenceReplayCursor = 0;
+    this.ledger = ledgerPrefix ? Ledger.restore(ledgerPrefix, onEvent) : new Ledger(timingOriginMs, onEvent);
+    this.namedMemory = new NamedMemoryRuntime({
+      ledger: this.ledger,
+      identity: this.identity,
+      options: namedMemoryOptions,
+    });
     // §3: register the declared principal names so a `decide c by p` (the parser's {policy} rule form)
     // can be reinterpreted as a principal escalation by evalGate.
     for (const d of program.decls) if (d.kind === "principal") this.principals.add(d.name);
@@ -675,6 +891,8 @@ class Interpreter {
     }
   }
 
+  private protectedEvidenceReplayCursor: number;
+
   // register one declaration under a (possibly qualified) name in the runtime decl tables.
   private registerDecl(name: string, d: A.Decl): void {
     switch (d.kind) {
@@ -689,6 +907,7 @@ class Interpreter {
   }
 
   async start(): Promise<RunResult> {
+    if (this.closed || this.closePromise) throw new RuntimeError("runtime session is closed");
     if (this.started) return this.snapshot();
     this.started = true;
     for (const d of this.program.decls) {
@@ -718,6 +937,14 @@ class Interpreter {
     }
     this.enums.set("Basis", ["Threshold", "Conformal", "Principal"]); // built-in gate-basis enum (§20.4)
     this.enums.set("Entailment", ["Entails", "Contradicts", "Neutral"]); // built-in semantic-judgment enum (§9)
+    try {
+      await this.namedMemory.validateDescriptors(
+        [...this.agents.values()].flatMap((agent) =>
+          this.memoryDeclsOf(agent).map((descriptor) => this.resolveMemoryDescriptor(descriptor, agent))),
+      );
+    } catch (error) {
+      throw configError(error instanceof Error ? error.message : String(error));
+    }
     // §5b PROMPT SENSORS: a `prompt T NAME;` DECLARATION opens a standing external input sensor. The sensor
     // opens because the source is declared (not because an agent subscribes), and it opens exactly ONCE per
     // declared prompt, when the program's sensors come online. So `PromptOpened(NAME)` is appended once here,
@@ -744,6 +971,7 @@ class Interpreter {
   }
 
   async sendPrompt(input: PromptInput): Promise<RunResult> {
+    if (this.closed || this.closePromise) throw new RuntimeError("runtime session is closed");
     const previous = this.promptTurnChain;
     let release!: () => void;
     this.promptTurnChain = new Promise<void>((resolve) => { release = resolve; });
@@ -760,7 +988,34 @@ class Interpreter {
   }
 
   snapshot(): RunResult {
-    return { ledger: this.ledger, stdout: this.stdout, warnings: this.warnings };
+    return {
+      ledger: this.ledger,
+      stdout: this.stdout,
+      warnings: this.warnings,
+      namedMemoryRecording: this.namedMemory.recording(),
+    };
+  }
+
+  assertProtectedEvidenceReplayConsumed(): void {
+    if (this.protectedEvidenceReplay
+      && this.protectedEvidenceReplayCursor !== this.protectedEvidenceReplay.links.length) {
+      throw configError(
+        `authenticated replay has ${this.protectedEvidenceReplay.links.length - this.protectedEvidenceReplayCursor} unconsumed protected evidence link(s)`,
+      );
+    }
+  }
+
+  async close(): Promise<RunResult> {
+    if (this.closed) return this.snapshot();
+    this.closePromise ??= this.namedMemory.close();
+    try {
+      await this.closePromise;
+      this.closed = true;
+    } catch (error) {
+      this.closePromise = undefined;
+      throw error;
+    }
+    return this.snapshot();
   }
 
   // §19.2: qualify a bare event/action/struct/agent name against the CURRENT agent's home module — a bare
@@ -1055,18 +1310,12 @@ class Interpreter {
     const agent = scope.currentAgent();
     const region = agent?.mems.get(s.name);
     if (!region) throw typeError(`'forget ${s.name}': not a mem handle`);
-    const memScope = this.memoryScope(agent!, s.name);
-    await this.memory.declare?.(memScope);
-    const alreadyForgotten = region.closed;
-    const receipt = await this.memory.forget({ scope: memScope });
-    const payload = this.memoryForgottenPayload(s.name, region, receipt);
-    if (!alreadyForgotten) {
-      region.writes = [];
-      region.closed = true;
+    const operation = this.memoryOperationInput(s, agent!, region.descriptor, "forget");
+    try {
+      await this.namedMemory.forget(operation);
+    } catch (error) {
+      this.raiseMemoryFault(error);
     }
-    payload.generation = region.generation;
-    payload.already_forgotten = alreadyForgotten;
-    this.ledger.append("Forgotten", s.name, payload, agent?.name);
   }
 
   private async execSpawn(s: A.SpawnStmt, scope: Scope): Promise<void> {
@@ -1129,8 +1378,7 @@ class Interpreter {
     };
     for (const f of decl.fields) inst.fields.set(f.name, this.zeroOf(f.type));
     for (const m of this.memoryDeclsOf(decl)) {
-      const descriptor = normalizeMemoryDescriptor(m);
-      inst.mems.set(m.name, { writes: [], closed: false, generation: 0, descriptor });
+      inst.mems.set(m.name, { descriptor: this.resolveMemoryDescriptor(m, decl) });
     }
     // E-Spawn (§15.4.2): bind constructor arguments positionally to the agent's declared params, evaluated
     // in the SPAWNING scope (the args are the caller's expressions). These become instance fields visible to
@@ -1149,9 +1397,10 @@ class Interpreter {
     const ctorScope = new Scope(undefined, inst);
     try {
       const ctor = this.ctorOf(inst);
-      await this.subscriptionScopeALS.run(undefined, () => this.withScopeWhens(ctor, ctorScope, inst, async () => {
-        for (const st of ctor) await this.execStmt(st, ctorScope);
-      }));
+      await this.withMemoryInvocation(`constructor:${instanceId}:${spawnTick}`, () =>
+        this.subscriptionScopeALS.run(undefined, () => this.withScopeWhens(ctor, ctorScope, inst, async () => {
+          for (const st of ctor) await this.execStmt(st, ctorScope);
+        })));
       inst.constructed = true;
     } catch (err) {
       this.ledger.append("AgentCrashed", instanceId, {
@@ -1202,7 +1451,8 @@ class Interpreter {
     // DECLARATION, not from an agent's awakening or subscription. Awakening only starts this agent's own
     // `on awake` hook and arms its `when` subscriptions.
     try {
-      await this.reactionEventALS.run(awakeEvent.tick, () => this.runHook(inst, "awake"));
+      await this.withMemoryInvocation(`awake:${inst.instanceId}:${awakeEvent.tick}`, () =>
+        this.reactionEventALS.run(awakeEvent.tick, () => this.runHook(inst, "awake")));
     } catch (err) {
       if (!(err instanceof CrashError)) throw err;
       // §5: a crash is CONTAINED — record AgentCrashed (with the fault reason, so the ledger names WHY the
@@ -1322,11 +1572,14 @@ class Interpreter {
     // run the handler inside this task's async context; nested delegation nests the context, and
     // concurrent deliveries to the same agent each keep their own active task (no clobbering).
     try {
-      const runHandler = () => this.reactionEventALS.run(deliveredEvent.tick, () => this.subscriptionScopeALS.run(undefined, () => this.activeTaskALS.run(t, async () => {
-        await this.withScopeWhens(hook.body, hscope, inst, async () => {
-          for (const st of hook.body) await this.execStmt(st, hscope);
-        });
-      })));
+      const runHandler = () => this.withMemoryInvocation(
+        `assigned:${inst.instanceId}:${deliveredEvent.tick}:${t.corr}`,
+        () => this.reactionEventALS.run(deliveredEvent.tick, () => this.subscriptionScopeALS.run(undefined, () => this.activeTaskALS.run(t, async () => {
+          await this.withScopeWhens(hook.body, hscope, inst, async () => {
+            for (const st of hook.body) await this.execStmt(st, hscope);
+          });
+        }))),
+      );
       // restore the delegating reaction's prompt provenance (captured at the task-send).
       await (t.provenance ? this.promptProvenanceALS.run(t.provenance, runHandler) : runHandler());
     } catch (err) {
@@ -1356,7 +1609,7 @@ class Interpreter {
       ["payload_hash", settledText(String(attestation.payload_hash))],
       ["signature", settledText(String(attestation.signature))],
     ]);
-    this.ledger.append("Prompt", input.name, {
+    const promptEvent = this.ledger.append("Prompt", input.name, {
       input: this.receiptValue(summary, true),
       attestation: {
         kind: attestation.kind,
@@ -1369,7 +1622,8 @@ class Interpreter {
     // the reaction records which attested prompt input it traces to (the dogfood contamination
     // fix: a test-harness attester is distinguishable from the real user at recall time).
     const provenance: MemoryProvenance = { attester: String(attestation.attester), prompt_name: input.name };
-    await this.promptProvenanceALS.run(provenance, () => this.fireSubscriptions("Prompt", input.name, fields));
+    await this.reactionEventALS.run(promptEvent.tick, () =>
+      this.promptProvenanceALS.run(provenance, () => this.fireSubscriptions("Prompt", input.name, fields)));
   }
 
   // §7/§16.3: fire every armed subscription that MATCHES an appended event, in registration order. Matching is
@@ -1416,9 +1670,11 @@ class Interpreter {
         // mirrors the awake-hook (execAwake) and task-handler (deliverTask) crash paths — without it, a
         // reaction crash escaped `run()` entirely, bypassing the program's `on crash`.
         try {
-          await this.subscriptionScopeALS.run(sub.owner, () => this.withScopeWhens(sub.when.body, hscope, sub.inst, async () => {
-            for (const st of sub.when.body) await this.execStmt(st, hscope);
-          }));
+          const invocation = `when:${sub.inst?.instanceId ?? "top"}:${evEtype}:${evSubject}:${String(evCorr)}:${sub.when.pos.line}:${sub.when.pos.col}:${this.ledger.events.length}`;
+          await this.withMemoryInvocation(invocation, () =>
+            this.subscriptionScopeALS.run(sub.owner, () => this.withScopeWhens(sub.when.body, hscope, sub.inst, async () => {
+              for (const st of sub.when.body) await this.execStmt(st, hscope);
+            })));
         } catch (err) {
           if (!(err instanceof CrashError)) throw err;
           if (sub.inst) {
@@ -1471,15 +1727,186 @@ class Interpreter {
   // MarginFloorViolation is appended before the action row, so no perform is recorded. Same shape and handling
   // as the task-scope enablement check (§6c). A rule with no floor raises nothing.
   private enforceMarginFloor(v: Value, action: string, agent: AgentInstance | undefined): void {
-    if (v.kind !== "endorsement" || v.floor === undefined || v.margin >= v.floor) return;
-    const subject = v.binding ?? render(v.subject);
+    const margin = v.kind === "endorsement" ? v.margin : v.authorization?.margin;
+    const floor = v.kind === "endorsement" ? v.floor : v.authorization?.floor;
+    if (floor === undefined || margin === undefined || margin >= floor) return;
+    const subject = v.kind === "endorsement" ? (v.binding ?? render(v.subject)) : render(v);
     this.ledger.append(
       "MarginFloorViolation",
       subject,
-      { action, margin: v.margin, floor: v.floor },
+      { action, margin, floor },
       agent?.name,
     );
-    throw new CrashError(`margin floor violation: the endorsed value for '${subject}' has margin ${v.margin}, below the floor ${v.floor} the gate requires to perform '${action}'; the action is refused (§13/§16.6)`);
+    throw new CrashError(`margin floor violation: the endorsed value for '${subject}' has margin ${margin}, below the floor ${floor} the gate requires to perform '${action}'; the action is refused (§13/§16.6)`);
+  }
+
+  private authorizationLineage(v: Value): EndorsementAuthorizationLineage | undefined {
+    if (v.kind === "endorsement") {
+      return Object.freeze({
+        subjectHash: v.subjectHash,
+        endorsementTick: v.endorsementTick,
+        decisionId: v.decisionId,
+        ruleHash: v.ruleHash,
+        evidenceRef: v.evidenceRef,
+        margin: v.margin,
+        ...(v.floor === undefined ? {} : { floor: v.floor }),
+        derivationPath: Object.freeze([] as string[]),
+      });
+    }
+    return v.authorization;
+  }
+
+  private validateAuthorizationLineage(lineage: EndorsementAuthorizationLineage): void {
+    const endorsement = this.ledger.events[lineage.endorsementTick];
+    const decision = this.ledger.events[lineage.decisionId];
+    if (!endorsement || endorsement.etype !== "Endorsed" || !decision || decision.etype !== "Decided"
+      || lineage.decisionId >= lineage.endorsementTick) {
+      throw new CrashError("authorization lineage does not reference an earlier Decided -> Endorsed chain");
+    }
+    const ep = endorsement.payload as Record<string, unknown> | null;
+    const dp = decision.payload as Record<string, unknown> | null;
+    if (!ep || !dp
+      || ep.subject_hash !== lineage.subjectHash
+      || ep.decision_id !== lineage.decisionId
+      || ep.variant !== dp.committed
+      || ep.rule_hash !== lineage.ruleHash
+      || (ep.evidence_ref ?? null) !== lineage.evidenceRef
+      || (ep.principal_event ?? null) !== (dp.principal_event ?? null)
+      || (ep.principal_request ?? null) !== (dp.principal_request ?? null)
+      || dp.decision_id !== lineage.decisionId
+      || dp.rule_hash !== lineage.ruleHash
+      || (dp.evidence_ref ?? null) !== lineage.evidenceRef) {
+      throw new CrashError("authorization lineage does not exactly match its Endorsed and Decided receipts");
+    }
+  }
+
+  private validateAuthorizationArgument(lineage: EndorsementAuthorizationLineage, argumentHash: string): void {
+    const endorsement = this.ledger.events[lineage.endorsementTick];
+    const payload = endorsement?.payload as Record<string, unknown> | null;
+    const root = payload?.subject_commitment;
+    if (root === null || typeof root !== "object" || Array.isArray(root)) {
+      throw new CrashError("authorization lineage has no canonical subject commitment");
+    }
+    const protectedHash = typeof (root as Record<string, unknown>).content_hash === "string"
+      ? (root as Record<string, unknown>).content_hash as string
+      : undefined;
+    const rootHash = protectedHash ?? sha256(root);
+    if (rootHash !== lineage.subjectHash) {
+      throw new CrashError("authorization subject commitment does not match its Endorsed receipt");
+    }
+    if (lineage.derivationPath.length === 0) {
+      if (argumentHash !== rootHash) throw new CrashError("authorized action argument does not match its endorsed subject");
+      return;
+    }
+    if (protectedHash !== undefined) {
+      throw new CrashError("a private endorsed projection requires a separate endorsement before consequential use");
+    }
+    const projected = projectedValueCommitment(root, lineage.derivationPath);
+    if (projected === undefined || sha256(projected) !== argumentHash) {
+      throw new CrashError("authorized action argument does not match its endorsed structural projection");
+    }
+  }
+
+  private async preparePerformArguments(
+    args: readonly A.Expr[],
+    name: string,
+    agent: AgentInstance | undefined,
+    scope: Scope,
+  ): Promise<{
+    values: Value[];
+    publicArguments: (string | Record<string, string>)[];
+    argumentCommitments: Record<string, unknown>[];
+    argumentHashes: string[];
+    requestHash: string;
+    links: { argumentIndex: number; lineage: EndorsementAuthorizationLineage }[];
+  }> {
+    const values: Value[] = [];
+    const publicArguments: (string | Record<string, string>)[] = [];
+    const argumentCommitments: Record<string, unknown>[] = [];
+    const argumentHashes: string[] = [];
+    const links: { argumentIndex: number; lineage: EndorsementAuthorizationLineage }[] = [];
+    for (let argumentIndex = 0; argumentIndex < args.length; argumentIndex++) {
+      const v = await this.evalExpr(args[argumentIndex]!, scope);
+      this.enforceMarginFloor(v, name, agent);
+      const lineage = this.authorizationLineage(v);
+      if (lineage) this.validateAuthorizationLineage(lineage);
+      if (v.privateMemory && !lineage) {
+        throw new CrashError("a private endorsed projection requires a separate endorsement before consequential use");
+      }
+      const sunk = this.sinkValue(v, name);
+      values.push(sunk);
+      const publicArgument = this.publicLedgerText(sunk);
+      publicArguments.push(publicArgument);
+      const commitment = this.publicLedgerCommitment(sunk);
+      argumentCommitments.push(commitment);
+      const protectedHash = typeof commitment.content_hash === "string" ? commitment.content_hash : undefined;
+      const argumentHash = protectedHash ?? sha256(commitment);
+      argumentHashes.push(argumentHash);
+      if (lineage) {
+        this.validateAuthorizationArgument(lineage, argumentHash);
+        links.push({ argumentIndex, lineage });
+      }
+    }
+    return {
+      values,
+      publicArguments,
+      argumentCommitments,
+      argumentHashes,
+      requestHash: sha256({ action: name, argument_hashes: argumentHashes }),
+      links,
+    };
+  }
+
+  private appendAuthorizedAction(
+    name: string,
+    agent: AgentInstance | undefined,
+    prepared: Awaited<ReturnType<Interpreter["preparePerformArguments"]>>,
+  ): void {
+    const actionTick = this.ledger.events.length;
+    const actionAgent = agent?.name ?? "";
+    const actionSubject = agent?.name ?? "<top>";
+    const actionCorr = null;
+    const actionPayload = {
+      arguments: prepared.publicArguments,
+      argument_commitments: prepared.argumentCommitments,
+      argument_hashes: prepared.argumentHashes,
+      authorization_argument_indices: prepared.links.map(({ argumentIndex }) => argumentIndex),
+      authorization_bindings: prepared.links.map(({ argumentIndex, lineage }) => ({
+        argument_index: argumentIndex,
+        argument_hash: prepared.argumentHashes[argumentIndex],
+        derivation_path: [...lineage.derivationPath],
+        subject_hash: lineage.subjectHash,
+        endorsement_tick: lineage.endorsementTick,
+        decision_id: lineage.decisionId,
+        rule_hash: lineage.ruleHash,
+        evidence_ref: lineage.evidenceRef,
+      })),
+      request_hash: prepared.requestHash,
+    };
+    this.ledger.appendBatch([
+      { etype: name, subject: actionSubject, payload: actionPayload, agent: actionAgent, corr: actionCorr },
+      ...prepared.links.map(({ argumentIndex, lineage }) => ({
+        etype: "ActionAuthorized",
+        subject: actionSubject,
+        agent: actionAgent,
+        corr: actionTick,
+        payload: {
+          action_tick: actionTick,
+          action: name,
+          action_agent: actionAgent,
+          action_corr: actionCorr,
+          request_hash: prepared.requestHash,
+          argument_index: argumentIndex,
+          argument_hash: prepared.argumentHashes[argumentIndex],
+          derivation_path: [...lineage.derivationPath],
+          subject_hash: lineage.subjectHash,
+          endorsement_tick: lineage.endorsementTick,
+          decision_id: lineage.decisionId,
+          rule_hash: lineage.ruleHash,
+          evidence_ref: lineage.evidenceRef,
+        },
+      })),
+    ]);
   }
 
   private async execPerform(s: A.PerformStmt, scope: Scope): Promise<void> {
@@ -1506,22 +1933,15 @@ class Interpreter {
         throw new CrashError(`task-scope violation: agent '${agent.name}' cannot perform '${name}' — the active assigned task '${active.subject}' ${!active.endorsed ? "is not endorsed" : `does not name '${name}' in its scope`}; the action is refused (§6c/§13/§16.6)`);
       }
     }
-    const argValues: Value[] = [];
-    const payload: string[] = [];
-    for (const a of s.args) {
-      const v = await this.evalExpr(a, scope);
-      this.enforceMarginFloor(v, name, agent); // §13/§16.6 sink margin floor (before the action row is appended)
-      const sunk = this.sinkValue(v, name);
-      argValues.push(sunk);
-      payload.push(render(sunk));
-    }
-    this.ledger.append(name, agent?.name ?? "<top>", argValues.map((value) => this.publicLedgerText(value)), agent?.name);
+    const wiring = this.actionWiring(name);
+    if (wiring?.tool !== undefined) this.catalogBinding(String(wiring.tool));
+    const prepared = await this.preparePerformArguments(s.args, name, agent, scope);
+    this.appendAuthorizedAction(name, agent, prepared);
     // §6b the world interface: a WIRED action's perform invokes its catalog effector (the replay-journal
     // ToolStarted/ToolResolved pair) and lands the configured result event, if any.
-    const wiring = this.actionWiring(name);
     if (wiring) {
       const reply = wiring.tool !== undefined
-        ? await this.invokeWired(String(wiring.tool), argValues, scope, typeof wiring.result_event === "string" ? wiring.result_event : undefined)
+        ? await this.invokeWired(String(wiring.tool), prepared.values, scope, typeof wiring.result_event === "string" ? wiring.result_event : undefined)
         : undefined;
       if (typeof wiring.result_event === "string") {
         await this.landResultEvent(wiring.result_event, reply, "settled", agent?.name ?? name, scope);
@@ -1552,21 +1972,14 @@ class Interpreter {
     const life = await this.evalExpr(e.expires, scope);
     if (life.kind !== "int" && life.kind !== "float") throw typeError("`expires` requires a numeric lifetime (§6)");
     if (life.trust !== "settled") throw taintViolation("`expires` requires a SETTLED numeric expression (§6, §6b)");
-    const argValues: Value[] = [];
-    const payload: string[] = [];
-    for (const a of e.args) {
-      const v = await this.evalExpr(a, scope);
-      this.enforceMarginFloor(v, name, agent); // §13/§16.6 sink margin floor (before the action row is appended)
-      const sunk = this.sinkValue(v, name);
-      argValues.push(sunk);
-      payload.push(render(sunk));
-    }
     const wiring = this.actionWiring(name);
     if (typeof wiring?.result_event !== "string") {
       throw configError(`a result-bound perform of '${name}' requires an [actions.${name}] wiring with a result_event — there is nothing to bind (§6b, §17.1)`);
     }
-    this.ledger.append(name, agent?.name ?? "<top>", argValues.map((value) => this.publicLedgerText(value)), agent?.name);
-    const reply = wiring.tool !== undefined ? await this.invokeWired(String(wiring.tool), argValues, scope, wiring.result_event) : undefined;
+    if (wiring.tool !== undefined) this.catalogBinding(String(wiring.tool));
+    const prepared = await this.preparePerformArguments(e.args, name, agent, scope);
+    this.appendAuthorizedAction(name, agent, prepared);
+    const reply = wiring.tool !== undefined ? await this.invokeWired(String(wiring.tool), prepared.values, scope, wiring.result_event) : undefined;
     return this.landResultEvent(wiring.result_event, reply, "settled", agent?.name ?? name, scope);
   }
 
@@ -1768,17 +2181,18 @@ class Interpreter {
   }
 
   private sinkValue(v: Value, sink: string): Value {
+    let sunk = v;
     if (v.kind === "endorsement") {
       if (!v.committedNarrowed) throw taintViolation(`an abstained/un-narrowed Endorsement cannot reach sink '${sink}'`);
-      return v.subject;
+      sunk = this.settledEndorsedValue(v.subject, this.authorizationLineage(v));
     }
-    // a bare Decision or Credence is a gate intermediate, not a settled datum: only a
-    // committed-narrowed Endorsement may settle a subject into a consequential sink (§13 kernel safety).
-    if (v.kind === "decision" || v.kind === "credence") {
-      throw taintViolation(`a ${v.kind} cannot reach sink '${sink}' — endorse the subject first`);
+    // Gate wrappers are never sink data, including when nested as an endorsed subject.
+    if (sunk.kind === "decision" || sunk.kind === "credence" || sunk.kind === "endorsement") {
+      throw taintViolation(`a ${sunk.kind} cannot reach sink '${sink}' — endorse concrete data instead`);
     }
-    if (v.trust !== "settled") throw taintViolation(`a ${v.trust} value cannot reach sink '${sink}' (gate it through decide/endorse)`);
-    return v;
+    if (sunk.kind === "memref") throw taintViolation(`a memory handle cannot reach sink '${sink}' — pass recalled typed data instead`);
+    if (sunk.trust !== "settled") throw taintViolation(`a ${sunk.trust} value cannot reach sink '${sink}' (gate it through decide/endorse)`);
+    return sunk;
   }
 
   private async execDispatch(s: A.DispatchStmt, scope: Scope): Promise<void> {
@@ -1865,24 +2279,28 @@ class Interpreter {
       const byFormPrincipal = gate.rule.kind === "policy" && this.principals.has(gate.rule.name) ? gate.rule.name : undefined;
       const principalName = gate.principal ?? byFormPrincipal;
       const pureByForm = byFormPrincipal !== undefined && gate.principal === undefined;
+      const rule = ruleSummary(gate.rule);
+      const ruleHash = sha256(rule);
       let committed: Committed;
       let margin: number;
       let basis: string;
       let floor: number | undefined;
       let predictionSet: string[] | undefined;
       let principalEvent: number | undefined;
+      let principalRequest: string | null = null;
       if (pureByForm) {
         // route directly to the principal; no rule collapse (the "rule" IS the principal name).
-        ({ committed, margin, basis, principalEvent } = await this.principalRule(cred, scope, principalName!));
+        ({ committed, margin, basis, principalEvent, principalRequest } = await this.principalRule(cred, scope, principalName!, ruleHash));
       } else {
         ({ committed, margin, basis, floor, predictionSet } = this.collapse(cred, gate.rule));
         // prefix form: escalate to the principal ONLY when the rule could not commit (§13).
         if (committed === "abstained" && principalName) {
-          ({ committed, margin, basis, principalEvent } = await this.principalRule(cred, scope, principalName));
+          ({ committed, margin, basis, principalEvent, principalRequest } = await this.principalRule(cred, scope, principalName, ruleHash));
         }
       }
       const decisionSubject = bindName ?? (gate.credence.kind === "ident" ? gate.credence.name : this.agentSubject(scope));
       const decisionId = this.ledger.events.length;
+      const evidenceRef = cred.calibrationEvidence?.evidence_ref ?? null;
       const decidedPayload: Record<string, unknown> = {
         decision_id: decisionId,
         credence: cred.enumName,
@@ -1891,14 +2309,48 @@ class Interpreter {
         committed,
         basis,
         margin,
-        rule: ruleSummary(gate.rule),
+        rule,
+        rule_hash: ruleHash,
+        evidence_ref: evidenceRef,
         source: scoreSummary(cred.scores),
-        principal_event: principalEvent,
+        principal_event: principalEvent ?? null,
+        principal_request: principalRequest,
       };
       // the consequential floor and the conformal prediction set are recorded only when the rule produces
       // them, so a plain threshold decision's canonical payload is byte-for-byte unchanged (§16.2).
       if (floor !== undefined) decidedPayload.floor = floor;
       if (predictionSet !== undefined) decidedPayload.prediction_set = predictionSet;
+      if (cred.calibrationEvidence) {
+        const summary = scoreSummary(cred.scores);
+        const winner = summary.top.variant;
+        const runnerUp = summary.runnerUp?.variant ?? null;
+        const winnerScore = summary.top.score;
+        const runnerUpScore = summary.runnerUp?.score ?? 0;
+        const threshold = gate.rule.kind === "confidence" ? gate.rule.theta : 0.5;
+        const minimumMargin = gate.rule.kind === "confidence" ? (gate.rule.margin ?? 0) : 0;
+        const thresholdPass = winnerScore >= threshold;
+        const marginPass = margin >= minimumMargin;
+        const passed = thresholdPass && marginPass;
+        Object.assign(decidedPayload, cred.calibrationEvidence, {
+          gate_scores: scoreSummary(cred.scores),
+          winner,
+          runner_up: runnerUp,
+          threshold,
+          minimum_margin: minimumMargin,
+          floor: floor ?? 0,
+          arithmetic: { winner_score: winnerScore, runner_up_score: runnerUpScore, threshold_pass: thresholdPass, margin_pass: marginPass, passed },
+        });
+        if (this.protectedEvidence) await this.protectedEvidence.store.bindDecision(cred.calibrationEvidence.evidence_ref, {
+          decision_id: decisionId,
+          winner,
+          runner_up: runnerUp,
+          threshold,
+          required_margin: minimumMargin,
+          floor: floor ?? 0,
+          actual_margin: margin,
+          passed,
+        }, false);
+      }
       this.ledger.append("Decided", decisionSubject, decidedPayload, scope.currentAgent()?.name);
       // §8/§11: committing a Credence<Entailment> to Contradicts also appends a first-class Contradiction,
       // subjected at the judged credence, so a downstream `when (Contradiction c)` / `when (Error e)` reacts
@@ -1918,7 +2370,10 @@ class Interpreter {
         predictionSet,
         decisionId,
         principalEvent,
-        rule: ruleSummary(gate.rule),
+        principalRequest,
+        rule,
+        ruleHash,
+        evidenceRef,
         trust: "settled",
         binding: bindName,
         source: cred,
@@ -1948,32 +2403,31 @@ class Interpreter {
       throw taintViolation("endorse requires a committed Decision; an abstained Decision has no endorsement to give (§13)");
     }
     const subjId = this.containsPrivateMemory(subject)
-      ? `#private:${sha256(valueSummary(subject)).slice(0, 16)}`
+      ? `#private:${sha256(valueCommitment(subject)).slice(0, 16)}`
       : gate.subject.kind === "ident" ? gate.subject.name
       : gate.subject.kind === "string" ? gate.subject.value // a string-literal subject IS its own identifier
       : `#${render(subject).slice(0, 12)}`;
+    const subjectCommitment = this.publicLedgerCommitment(subject);
+    const subjectHash = typeof subjectCommitment.content_hash === "string"
+      ? subjectCommitment.content_hash
+      : sha256(subjectCommitment);
+    const evidenceRef = dec.evidenceRef;
     const endorsementPayload = {
-      decision: {
-        decision_id: dec.decisionId,
-        enum: dec.enumName,
-        binding: dec.binding,
-        committed: dec.committed,
-        basis: dec.basis,
-        margin: dec.margin,
-        rule: dec.rule,
-        source: dec.source?.kind === "credence" ? scoreSummary(dec.source.scores) : undefined,
-      },
-      endorsement: {
-        subject: this.publicLedgerValue(subject),
-        binding: bindName,
-        committed,
-        branch: `${committed}`,
-      },
+      subject_commitment: subjectCommitment,
+      subject_hash: subjectHash,
+      decision_id: dec.decisionId,
+      variant: committed,
+      rule_hash: dec.ruleHash,
+      evidence_ref: evidenceRef,
+      principal_event: dec.principalEvent ?? null,
+      principal_request: dec.principalRequest,
     };
-    this.ledger.append("Endorsed", subjId, endorsementPayload, scope.currentAgent()?.name);
+    const endorsedEvent = this.ledger.append("Endorsed", subjId, endorsementPayload, scope.currentAgent()?.name);
     const value: Value = {
       kind: "endorsement", subject, enumName: dec.enumName, committed,
       basis: dec.basis, margin: dec.margin, floor: dec.floor, committedNarrowed: true, trust: "settled", binding: bindName, decisionId: dec.decisionId,
+      subjectHash, endorsementTick: endorsedEvent.tick, ruleHash: dec.ruleHash, evidenceRef,
+      principalEvent: dec.principalEvent, principalRequest: dec.principalRequest,
       ingress: ingressOf(subject),
     };
     return { value: this.privateDerived(value, [subject, dec]), committed };
@@ -2093,7 +2547,8 @@ class Interpreter {
     cred: Extract<Value, { kind: "credence" }>,
     scope: Scope,
     who: string,
-  ): Promise<{ committed: Committed; margin: number; basis: string; principalEvent?: number }> {
+    ruleHash: string,
+  ): Promise<{ committed: Committed; margin: number; basis: string; principalEvent?: number; principalRequest: string }> {
     const { variant, score } = topVariant(cred.scores);
     const margin = score - secondScore(cred.scores);
     const agent = scope.currentAgent()?.name;
@@ -2101,11 +2556,29 @@ class Interpreter {
     // ruling is resolved. Its tick is the correlation id `corr` that the notifying action, the attested
     // response, and the resulting PrincipalDecision / FailedPrincipalDecision all reference.
     const corr = this.ledger.events.length;
-    const pending = this.ledger.append("PendingPrincipalDecision", who, { credence: cred.enumName, ...scoreSummary(cred.scores) }, agent, corr);
+    const requestFields = {
+      corr,
+      who,
+      credence_id: cred.enumName,
+      evidence_hash: cred.calibrationEvidence?.evidence_hash ?? null,
+      rule_hash: ruleHash,
+      subject_hash: sha256(valueCommitment(cred)),
+      governed_operation: null,
+      governed_request_hash: null,
+    };
+    const principalRequest = sha256({ domain: "agape/principal-request/v1", request: requestFields });
+    const pending = this.ledger.append("PendingPrincipalDecision", who, {
+      ...requestFields, request_hash: principalRequest, credence: cred.enumName, ...scoreSummary(cred.scores),
+    }, agent, corr);
     const failed = (kind: string, extra: Record<string, unknown>, att?: PrincipalAttestation) => {
       const attestation = localAttestation(kind, { principal: who, credence: cred.enumName, ...extra }, att);
-      const ev = this.ledger.append("FailedPrincipalDecision", who, { credence: cred.enumName, ...extra, ...scoreSummary(cred.scores), pending: corr, attestation }, agent, corr);
-      return { committed: "abstained" as Committed, margin, basis: "Principal", principalEvent: ev.tick };
+      const ev = this.ledger.append("FailedPrincipalDecision", who, {
+        corr, request_hash: principalRequest, who,
+        evidence_hash: requestFields.evidence_hash,
+        governed_request_hash: requestFields.governed_request_hash,
+        credence: cred.enumName, ...extra, ...scoreSummary(cred.scores), pending: corr, attestation,
+      }, agent, corr);
+      return { committed: "abstained" as Committed, margin, basis: "Principal", principalEvent: ev.tick, principalRequest };
     };
     // apply one attestation (pre-supplied by the harness/UI, or returned live by the consult seam):
     // an explicit decline / an out-of-enum ruling → FailedPrincipalDecision (fail closed); a valid
@@ -2124,8 +2597,13 @@ class Interpreter {
         return failed("principal-attester-mismatch", { decision, attester_verification: check.label, resolved_attester: check.resolved ?? null }, att);
       }
       const attestation = localAttestation("principal-decision", { principal: who, credence: cred.enumName, decision, scores: cred.scores }, { ...att, attester_verification: check.label });
-      const ev = this.ledger.append("PrincipalDecision", who, { credence: cred.enumName, decision, ...scoreSummary(cred.scores), pending: corr, attestation }, agent, corr);
-      return { committed: decision as Committed, margin, basis: "Principal", principalEvent: ev.tick };
+      const ev = this.ledger.append("PrincipalDecision", who, {
+        corr, request_hash: principalRequest, who,
+        evidence_hash: requestFields.evidence_hash,
+        governed_request_hash: requestFields.governed_request_hash,
+        credence: cred.enumName, decision, ruled_variant: decision, ...scoreSummary(cred.scores), pending: corr, attestation,
+      }, agent, corr);
+      return { committed: decision as Committed, margin, basis: "Principal", principalEvent: ev.tick, principalRequest };
     };
     const attested = this.principalAttestations.find((a) => a.principal === who);
     if (attested) return applyRuling(attested);
@@ -2245,7 +2723,7 @@ class Interpreter {
         const trust = arr.trust ?? "raw";
         if (arr.kind === "array") {
           const el = arr.items[idx.kind === "int" ? idx.v : 0];
-          if (el) return this.privateDerived({ ...el, trust: el.trust ?? trust } as Value, [arr]);
+          if (el) return this.privateDerived({ ...this.withoutAuthorization(el), trust: el.trust ?? trust } as Value, [arr]);
         }
         return this.privateDerived({ kind: "null", trust, ingress: ingressOf(arr) }, [arr]);
       }
@@ -2253,7 +2731,8 @@ class Interpreter {
       case "unary": {
         const o = await this.evalExpr(e.operand, scope);
         if (e.op === "!" && o.kind === "bool") return this.privateDerived({ kind: "bool", v: !o.v, trust: o.trust, ingress: ingressOf(o) }, [o]);
-        if (e.op === "-" && (o.kind === "int" || o.kind === "float")) return this.privateDerived({ ...o, v: -o.v }, [o]);
+        if (e.op === "-" && o.kind === "int") return this.privateDerived({ kind: "int", v: -o.v, trust: o.trust, ingress: ingressOf(o) }, [o]);
+        if (e.op === "-" && o.kind === "float") return this.privateDerived({ kind: "float", v: -o.v, trust: o.trust, ingress: ingressOf(o) }, [o]);
         throw new RuntimeError(`bad unary ${e.op}`);
       }
       case "call": {
@@ -2646,6 +3125,13 @@ class Interpreter {
     ) as Record<string, unknown>;
   }
 
+  private publicLedgerCommitment(value: Value): Record<string, unknown> {
+    return this.receiptValue(
+      valueCommitment(value),
+      this.containsPrivateMemory(value),
+    ) as Record<string, unknown>;
+  }
+
   private privateFaultReason(message: string): string {
     const protectedFault = this.protectedEnvelope(message);
     return `private-memory-derived failure protected as ${protectedFault.protected_ref} (content_hash ${protectedFault.content_hash})`;
@@ -2655,112 +3141,102 @@ class Interpreter {
     return `blob:sha256:${sha256(parts)}`;
   }
 
-  private memoryScope(agent: AgentInstance, mem: string): MemoryScope {
-    const region = agent.mems.get(mem);
-    if (!region) throw typeError(`'${mem}': not a qualified memory descriptor`);
-    const needsProject = region.descriptor.scopes.includes("project");
-    const needsUser = region.descriptor.scopes.includes("user");
-    const user = this.identity?.user;
-    if (needsUser && (!user || !user.verified)) {
-      throw new CrashError(`memory '${mem}' requires a verified user scope subject`);
+  private resolveMemoryDescriptor(
+    descriptor: A.MemoryDescriptor,
+    owner: A.AgentDecl,
+  ): ResolvedMemoryDescriptor {
+    const parts = normalizeMemoryDescriptor(descriptor);
+    return {
+      name: descriptor.name,
+      schema: this.resolvePersistedSchema(parts.type, owner),
+      modality: parts.modality,
+      scopes: parts.scopes,
+      retention: parts.retention,
+    };
+  }
+
+  private resolvePersistedSchema(
+    type: A.TypeRef,
+    owner: A.AgentDecl,
+    active = new Set<string>(),
+  ): PersistedSchema {
+    if (type.kind === "scalar") return { kind: "scalar", name: type.name };
+    if (type.kind === "array") {
+      return { kind: "array", items: this.resolvePersistedSchema(type.inner, owner, active) };
     }
+    if (type.kind !== "named") throw new Error("memory descriptor contains a non-persistable runtime type");
+    const module = this.agentModuleOf.get(owner.name);
+    const qualified = module && !type.name.includes(".") ? `${module}.${type.name}` : type.name;
+    const name = this.enums.has(qualified) || this.structs.has(qualified) ? qualified : type.name;
+    if (active.has(name)) throw new Error(`memory schema '${name}' is recursive`);
+    const variants = this.enums.get(name);
+    if (variants) return { kind: "enum", name, variants: [...variants] };
+    const fields = this.structs.get(name);
+    if (!fields) throw new Error(`memory schema '${name}' is not a resolved enum or struct`);
+    active.add(name);
+    try {
+      return {
+        kind: "struct",
+        name,
+        fields: fields.map((field) => ({
+          name: field.name,
+          schema: this.resolvePersistedSchema(field.type, owner, active),
+        })),
+      };
+    } finally {
+      active.delete(name);
+    }
+  }
+
+  private withMemoryInvocation<T>(correlation: string, run: () => Promise<T>): Promise<T> {
+    return this.memoryInvocationALS.run({
+      correlation: `${this.identity.sessionId}:${this.identity.conversationId}:${correlation}`,
+      nextEvaluationOrdinal: 0,
+    }, run);
+  }
+
+  private memoryOperationInput(
+    node: A.Node,
+    agent: AgentInstance,
+    descriptor: ResolvedMemoryDescriptor,
+    kind: "store" | "forget" | "recall",
+  ): NamedMemoryOperationInput {
+    const invocation = this.memoryInvocationALS.getStore();
+    if (!invocation) throw new RuntimeError("named memory operation has no runtime invocation context");
+    const evaluationOrdinal = invocation.nextEvaluationOrdinal++;
+    const site = `${agent.agentType}:${node.pos.line}:${node.pos.col}:${kind}`;
+    const operationResultId = createHash("sha256")
+      .update("agape.named-memory-operation-result.v1", "utf8")
+      .update("\0", "utf8")
+      .update(invocation.correlation, "utf8")
+      .update("\0", "utf8")
+      .update(site, "utf8")
+      .update("\0", "utf8")
+      .update(String(evaluationOrdinal), "utf8")
+      .digest("hex");
     return {
       agentInstanceId: agent.instanceId,
-      agentAlias: agent.name,
-      mem,
-      project: needsProject ? this.identity?.projectSubject : undefined,
-      user: needsUser ? deriveUserMemoryScopeId(user!.issuer, user!.subject) : undefined,
+      descriptor,
+      invocationCorrelation: invocation.correlation,
+      evaluationOrdinal,
+      operationResultId,
+      site,
+      originEvidence: {
+        ...(this.reactionEventALS.getStore() === undefined
+          ? {}
+          : { reactionEvent: this.reactionEventALS.getStore() }),
+        ...(this.promptProvenanceALS.getStore() === undefined
+          ? {}
+          : { prompt: this.promptProvenanceALS.getStore() }),
+      },
     };
   }
 
-  // Provenance metadata for a memory write inside the current reaction. Additive only: existing
-  // metadata keys are untouched, and a reaction with no originating prompt delivery omits the
-  // key entirely rather than inventing an attester.
-  private memoryProvenance(): { provenance: MemoryProvenance } | Record<string, never> {
-    const p = this.promptProvenanceALS.getStore();
-    return p ? { provenance: p } : {};
-  }
-
-  private memoryDriverRefs(receipt?: MemoryReceipt): Record<string, unknown> {
-    if (!receipt) return {};
-    const safeKeys = [
-      "markdown_file", "markdown_index", "markdown_archive",
-      "duplicate_of", "duplicate_score",
-    ] as const;
-    const publicRefs: Record<string, unknown> = {};
-    for (const key of safeKeys) {
-      const value = receipt.refs?.[key];
-      if (value !== undefined) publicRefs[key] = value;
+  private raiseMemoryFault(error: unknown): never {
+    if (error instanceof NamedMemoryScopeError) {
+      throw new CrashError(`memory requires a verified ${error.scope} scope subject`);
     }
-    return {
-      ...(receipt.eventId ? { driver_event: receipt.eventId } : {}),
-      ...(receipt.ids?.length ? { driver_ids: receipt.ids } : {}),
-      ...publicRefs,
-    };
-  }
-
-  private memoryInternalizedPayload(mem: string, value: Value, receipt?: MemoryReceipt): Record<string, unknown> {
-    const summary = valueSummary(value);
-    const refs = {
-      input: this.blobRef({ mem, view: "input", value: summary }),
-      ...this.memoryDriverRefs(receipt),
-    };
-    const policy = receipt?.policy ?? {};
-    return {
-      region: mem,
-      source_operation: "store",
-      effects: receipt?.effects ?? {
-        cells: { upserted: 0, tombstoned: 0, deleted: 0 },
-        facts: { upserted: 0, tombstoned: 0, deleted: 0 },
-        graph: {
-          nodes_upserted: 0,
-          edges_upserted: 0,
-          nodes_tombstoned: 0,
-          edges_tombstoned: 0,
-          nodes_deleted: 0,
-          edges_deleted: 0,
-        },
-        vectors: { chunks_upserted: 0, chunks_deleted: 0, embeddings_deleted: 0 },
-        blobs: { archived: 0, redacted: 0, deleted: 0 },
-      },
-      refs,
-      policy,
-      ...(receipt?.status ? { driver_status: receipt.status } : {}),
-    };
-  }
-
-
-  private memoryForgottenPayload(mem: string, region: MemRegion, receipt?: MemoryReceipt): Record<string, unknown> {
-    const n = region.writes.length;
-    return {
-      mode: "cascade",
-      region: mem,
-      source_operation: "forget",
-      effects: receipt?.effects ?? {
-        cells: { upserted: 0, tombstoned: n, deleted: 0 },
-        facts: { upserted: 0, tombstoned: 0, deleted: 0 },
-        graph: {
-          nodes_upserted: 0,
-          edges_upserted: 0,
-          nodes_tombstoned: 0,
-          edges_tombstoned: 0,
-          nodes_deleted: 0,
-          edges_deleted: 0,
-        },
-        vectors: { chunks_upserted: 0, chunks_deleted: 0, embeddings_deleted: 0 },
-        blobs: { archived: 0, redacted: 0, deleted: 0 },
-      },
-      refs: {
-        ...this.memoryDriverRefs(receipt),
-      },
-      policy: {
-        graph_forget: "cascade",
-        redaction: "separate-operation",
-        archive: "runtime-configured",
-        ...(receipt?.policy ?? {}),
-      },
-      ...(receipt?.status ? { driver_status: receipt.status } : {}),
-    };
+    throw error;
   }
 
   private jsonValue(raw: unknown, typeName = "Json"): Value {
@@ -2800,39 +3276,23 @@ class Interpreter {
       const region = agent?.mems.get(dest.name);
       const v = await this.evalExpr(e.message, scope);
       if (!region) throw typeError(`'${dest.name} <-': not a mem handle`);
-      const memScope = this.memoryScope(agent!, dest.name);
-      await this.memory.declare?.(memScope);
-      const generation = region.closed ? region.generation + 1 : region.generation;
-      const receipt = await this.memory.internalize({
-        scope: memScope,
-        value: v,
-        memory: renderStoreRecollection(dest.name, v),
-        episode: { act: "store" },
-        summary: valueSummary(v),
-        metadata: {
-          source: "store",
-          subject: dest.name,
-          generation,
-          modality: region.descriptor.modality,
-          retention: region.descriptor.retention,
-          ...this.memoryProvenance(),
-        },
-      });
-      if (region.closed) {
-        region.generation = generation;
-        region.closed = false;
-        region.writes = [];
+      const operation = this.memoryOperationInput(e, agent!, region.descriptor, "store");
+      let stored;
+      try {
+        stored = await this.namedMemory.store({ ...operation, value: v });
+      } catch (error) {
+        this.raiseMemoryFault(error);
       }
-      region.writes.push(v);
-      const payload = this.memoryInternalizedPayload(dest.name, v, receipt);
-      payload.generation = region.generation;
-      const ev = this.ledger.append("Internalized", dest.name, payload, agent?.name);
-      return this.ledgerEntryValue(ev, "Internalized", {
+      const payload = stored.event.payload as Record<string, unknown>;
+      return this.ledgerEntryValue(stored.event, "Internalized", {
         mem: settledText(dest.name),
         input: v,
         effects: this.jsonValue(payload.effects, "MemoryEffects"),
-        refs: this.jsonValue(payload.refs, "MemoryRefs"),
-        policy: this.jsonValue(payload.policy, "MemoryPolicy"),
+        refs: this.jsonValue({
+          input: stored.stage.refs.value,
+          ...stored.stage.refs,
+        }, "MemoryRefs"),
+        policy: this.jsonValue({}, "MemoryPolicy"),
       });
     }
     // The DESTINATION MUST BE AN ADDRESS (§6: "A send `dest <- p` goes to the agent at `dest`" / "the
@@ -2891,20 +3351,49 @@ class Interpreter {
     if (expected?.kind === "credence") {
       const variants = this.variantsOf(expected.enumName);
       if (!variants) throw new RuntimeError(`unknown enum '${expected.enumName}'`);
-      const { scores } = await this.inResolutionOrder(
+      let calibrationEvidence: JudgmentEvidenceLink | undefined;
+      const { scores: providerScores } = await this.inResolutionOrder(
         this.provider.judge(prompt, expected.enumName, variants, cognitionContext),
-        ({ scores: resolvedScores }) => {
-          const resolvedValue = this.privateDerived<Value>({ kind: "credence", enumName: expected.enumName, scores: resolvedScores, trust: "graded", derivedFrom: promptSources, ingress: ingressJoin(promptSources) }, [msgVal, ...promptSources]);
+        async ({ scores: rawScores, evidence }) => {
+          const resolvedScores = declaredScoreOrder(rawScores, variants);
+          if (evidence) {
+            if (evidence.enum_name !== expected.enumName
+              || evidence.enum_variants.length !== variants.length
+              || evidence.enum_variants.some((variant, index) => variant !== variants[index])
+              || !exactDeclaredScores(evidence.gate_scores, resolvedScores, variants)) {
+              throw configError("provider judgment evidence does not exactly match the requested enum and resolved gate scores");
+            }
+            if (this.protectedEvidenceReplay) {
+              const link = this.protectedEvidenceReplay.links[this.protectedEvidenceReplayCursor++];
+              if (!link) throw configError("authenticated replay is missing a protected evidence link");
+              calibrationEvidence = validateJudgmentEvidenceLink(evidence, link);
+              const replayScores = declaredScoreOrder(link.gate_scores, evidence.enum_variants);
+              if (JSON.stringify(scoreSummary(resolvedScores)) !== JSON.stringify(scoreSummary(replayScores))) {
+                throw configError("authenticated replay gate scores do not match protected evidence");
+              }
+            } else {
+              if (!this.protectedEvidence) throw configError("provider returned protected judgment evidence without a host-authenticated evidence store");
+              calibrationEvidence = await this.protectedEvidence.store.retain({
+                evidence,
+                ownerPrincipal: this.protectedEvidence.principal,
+                scope: [this.identity.projectSubject, this.identity.sessionLineageId, String(corr), subj].join("/"),
+              });
+            }
+          }
+          const resolvedValue = this.privateDerived<Value>({ kind: "credence", enumName: expected.enumName, scores: resolvedScores, trust: "graded", derivedFrom: promptSources, calibrationEvidence, ingress: ingressJoin(promptSources) }, [msgVal, ...promptSources]);
           this.ledger.append("Resolved", subj, {
             kind: "credence",
-            prompt: this.receiptContent(prompt, protectCognition),
+            ...(calibrationEvidence ? {} : { prompt: this.receiptContent(prompt, protectCognition) }),
             reply: this.receiptValue(valueSummary(resolvedValue), protectCognition),
             enum: expected.enumName,
+            gate_scores: scoreSummary(resolvedScores),
+            ...(calibrationEvidence ?? {}),
             ...scoreSummary(resolvedScores),
           }, scope.currentAgent()?.name, corr);
         },
       );
-      const value = this.privateDerived<Value>({ kind: "credence", enumName: expected.enumName, scores, trust: "graded", derivedFrom: promptSources, ingress: ingressJoin(promptSources) }, [msgVal, ...promptSources]);
+      const scores = declaredScoreOrder(providerScores, variants);
+      const value = this.privateDerived<Value>({ kind: "credence", enumName: expected.enumName, scores, trust: "graded", derivedFrom: promptSources, calibrationEvidence, ingress: ingressJoin(promptSources) }, [msgVal, ...promptSources]);
       // §13 dependency scope: record which in-scope values fed this credence's prompt, so a later
       // `endorse subject by (decide c)` can confirm the decision is ABOUT the subject (see evalGate).
       return value;
@@ -3111,58 +3600,21 @@ class Interpreter {
     if (!region) throw typeError(`'${e.mem.name} ->': not a mem handle`);
     const queryValue = await this.evalExpr(e.query, scope);
     const query = render(queryValue);
-    const memScope = this.memoryScope(agent!, e.mem.name);
-    await this.memory.declare?.(memScope);
-    const cap = this.manifest?.memory?.top_k ?? 10;
-    const consulted = await this.memory.consult({ scope: memScope, query, topK: cap });
-    const sourceHits = region.closed ? [] : consulted.hits.length > 0
-      ? consulted.hits
-      : region.writes.map((value, index) => ({
-          id: `overlay:${index + 1}`,
-          memory: render(value),
-          typed: valueSummary(value),
-          value,
-          metadata: { source: "live_overlay" },
-        }));
-    const typedHits: CognitionMemoryHit[] = sourceHits.map((hit, index) => {
-      const content = hit.memory;
-      const contentHash = createHash("sha256").update(content).digest("hex");
-      const metadata = hit.metadata as Record<string, unknown> | undefined;
-      const origin = metadata?.origin_tick ?? metadata?.source_event;
-      const provenance = metadata?.provenance;
-      const typedProvenance = provenance && typeof provenance === "object"
-        && typeof (provenance as Record<string, unknown>).attester === "string"
-        && typeof (provenance as Record<string, unknown>).prompt_name === "string"
-        ? provenance as { attester: string; prompt_name: string }
-        : undefined;
-      return {
-        cell_id: hit.id ?? `memory:${index + 1}`,
-        content,
-        content_hash: contentHash,
-        score: "score" in hit ? hit.score : undefined,
-        origin_ref: typeof origin === "number" ? `event:${origin}` : `sha256:${contentHash}`,
-        ...((hit.typed ?? hit.value) ? { value: hit.typed ?? valueSummary(hit.value!) } : {}),
-        ...(typedProvenance ? { provenance: typedProvenance } : {}),
-      };
-    });
-    const queryHash = createHash("sha256").update(query).digest("hex");
-    this.ledger.append("MemoryConsulted", memName, {
-      consult_kind: "explicit_recall",
-      reaction_event: this.reactionEventALS.getStore() ?? null,
-      query_hash: queryHash,
-      budget: { top_k: cap },
-      cap,
-      empty: typedHits.length === 0,
-      limited: false,
-      hit_ids: typedHits.map((hit) => hit.cell_id),
-      content_hashes: typedHits.map((hit) => hit.content_hash),
-      scores: typedHits.map((hit) => hit.score ?? null),
-      origins: typedHits.map((hit) => hit.origin_ref),
-      origin_refs: typedHits.map((hit) => hit.origin_ref),
-    }, agent?.name);
-    const items = sourceHits.flatMap((hit, index) => {
-      const value = hit.value ?? region.writes[index];
-      return value ? [this.withTrust(value, "raw", true)] : [];
+    const cap = clampMemoryTopK(this.manifest?.memory?.top_k);
+    const operation = this.memoryOperationInput(e, agent!, region.descriptor, "recall");
+    let recalled;
+    try {
+      recalled = await this.namedMemory.recall({ ...operation, query, cap });
+    } catch (error) {
+      this.raiseMemoryFault(error);
+    }
+    const items = recalled.hits.map((hit) => {
+      const decoded = decodeExactValue(hit.cell.value, region.descriptor.schema);
+      const evidence = this.namedMemory.originEvidence(hit.cell.originId);
+      const value = evidence?.prompt
+        ? { ...decoded, ingress: "external_unscreened" as const }
+        : decoded;
+      return this.withTrust(value, "raw", true);
     });
     return { kind: "array", items, trust: "raw", privateMemory: true };
   }
@@ -3217,7 +3669,14 @@ class Interpreter {
     const o = await this.evalExpr(e.obj, scope);
     if (o.kind === "struct") {
       const f = o.fields.get(e.field);
-      if (f) return f;
+      if (f) {
+        if (this.containsPrivateMemory(o)) return this.settledEndorsedValue(f);
+        if (!o.authorization) return f;
+        return this.settledEndorsedValue(f, Object.freeze({
+          ...o.authorization,
+          derivationPath: Object.freeze([...o.authorization.derivationPath, e.field]),
+        }));
+      }
       throw new RuntimeError(`no field '${e.field}' on struct ${o.typeName ?? ""}`);
     }
     if (o.kind === "decision" || o.kind === "endorsement") {
@@ -3229,11 +3688,17 @@ class Interpreter {
         case "basis": return { kind: "enumval", enumName: "Basis", variant: o.basis, trust: "settled" };
         case "margin": return { kind: "float", v: o.margin, trust: "settled" };
         case "decision_id": return { kind: "int", v: o.decisionId, trust: "settled" };
+        case "principal_event": return o.principalEvent === undefined
+          ? { kind: "null", trust: "settled" }
+          : { kind: "int", v: o.principalEvent, trust: "settled" };
+        case "principal_request": return o.principalRequest === null
+          ? { kind: "null", trust: "settled" }
+          : { kind: "text", v: o.principalRequest, trust: "settled" };
         case "subject": if (o.kind === "endorsement") {
           // a committed-narrowed endorsement exposes its subject as the CERTIFIED (settled) datum —
           // for DATA subjects; a gate-object subject (credence/decision/endorsement) keeps its own
           // nature (sinkValue rejects those regardless).
-          return o.committedNarrowed ? this.settledEndorsedValue(o.subject) : o.subject;
+          return o.committedNarrowed ? this.settledEndorsedValue(o.subject, this.authorizationLineage(o)) : o.subject;
         } break;
       }
       // §13/§9: the metadata accessors (committed/basis/margin/decision_id/subject) WIN a name collision;
@@ -3243,29 +3708,44 @@ class Interpreter {
       // is exactly what the endorsement settled); an un-narrowed endorsement never upgrades trust.
       if (o.kind === "endorsement" && o.subject.kind === "struct") {
         const f = o.subject.fields.get(e.field);
-        if (f) return o.committedNarrowed ? this.settledEndorsedValue(f) : f;
+        if (f) {
+          if (this.containsPrivateMemory(o.subject)) return this.settledEndorsedValue(f);
+          const lineage = this.authorizationLineage(o);
+          return o.committedNarrowed && lineage
+            ? this.settledEndorsedValue(f, Object.freeze({
+              ...lineage,
+              derivationPath: Object.freeze([e.field]),
+            }))
+            : f;
+        }
       }
     }
     throw new RuntimeError(`no field '${e.field}' on ${o.kind}`);
   }
 
-  private settledEndorsedValue(v: Value): Value {
+  private withoutAuthorization(v: Value): Value {
+    const { authorization: _authorization, ...value } = v;
+    return value as Value;
+  }
+
+  private settledEndorsedValue(v: Value, authorization?: EndorsementAuthorizationLineage): Value {
+    const lineage = authorization ? { authorization } : {};
     switch (v.kind) {
       case "credence":
       case "decision":
       case "endorsement":
         return v;
-      case "text": return { ...v, trust: "settled" };
-      case "int": return { ...v, trust: "settled" };
-      case "float": return { ...v, trust: "settled" };
-      case "bool": return { ...v, trust: "settled" };
-      case "null": return { ...v, trust: "settled" };
-      case "enumval": return { ...v, trust: "settled" };
+      case "text": return { ...v, ...lineage, trust: "settled" };
+      case "int": return { ...v, ...lineage, trust: "settled" };
+      case "float": return { ...v, ...lineage, trust: "settled" };
+      case "bool": return { ...v, ...lineage, trust: "settled" };
+      case "null": return { ...v, ...lineage, trust: "settled" };
+      case "enumval": return { ...v, ...lineage, trust: "settled" };
       case "agentref": return v;
       case "memref": return v;
       case "taskref": return v;
-      case "struct": return { ...v, trust: "settled" };
-      case "array": return { ...v, trust: "settled" };
+      case "struct": return { ...v, ...lineage, trust: "settled" };
+      case "array": return { ...v, ...lineage, trust: "settled" };
     }
   }
 

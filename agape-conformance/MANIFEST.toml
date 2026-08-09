@@ -573,6 +573,15 @@ manifest = ["tools.t1.driver=mock", "events.Q.tool=t1", "events.Q.result_event=A
 spec = "§6b (emit is not a consequential sink, so an emit-trigger wiring is the loose observation channel: a RAW payload may flow out — an explicit, manifest-visible opt-out of the perform path's guarantee)"
 
 [[test]]
+id = "world_foreground_action_authorized_accept"
+section = "06b_world"
+path = "tests/06b_world/world_foreground_action_authorized_accept.ag"
+expect = "accept"
+order = ["Decided", "Endorsed", "Ask", "ActionAuthorized", "ToolStarted(t1)", "ToolResolved(t1)", "Answer"]
+manifest = ["tools.t1.driver=mock", "actions.Ask.tool=t1", "actions.Ask.result_event=Answer"]
+spec = "§6b, §13 (a result-bound perform records its authorization receipt before invoking the wired effector)"
+
+[[test]]
 id = "world_foreground_binding_no_result_event_reject"
 section = "06b_world"
 path = "tests/06b_world/world_foreground_binding_no_result_event_reject.ag"
@@ -1622,6 +1631,15 @@ error = "TypeError"
 spec = "§12 (fusion — incl. quorum — requires a total independent/dependent declaration)"
 
 [[test]]
+id = "gov_action_authorized_projection_accept"
+section = "13_governance"
+path = "tests/13_governance/gov_action_authorized_projection_accept.ag"
+expect = "accept"
+contains = ["ActionAuthorized"]
+order = ["Decided", "Endorsed", "Publish", "ActionAuthorized", "ActionAuthorized"]
+spec = "§13, §14 (a consequential action records one authorization receipt per exact endorsed or structurally projected argument)"
+
+[[test]]
 id = "gov_attester_unverified_accepted"
 section = "13_governance"
 path = "tests/13_governance/gov_attester_unverified_accepted.ag"
@@ -1823,6 +1841,16 @@ principal = "grant"
 spec = "§13, §16.4 (a granted `p decide c by r` records PrincipalDecision, then the canonical Decided outcome)"
 
 [[test]]
+id = "gov_principal_request_portable_accept"
+section = "13_governance"
+path = "tests/13_governance/gov_principal_request_portable_accept.ag"
+expect = "accept"
+contains = ["PendingPrincipalDecision", "PrincipalDecision", "Decided", "Endorsed"]
+order = ["PendingPrincipalDecision", "PrincipalDecision", "Decided", "Endorsed"]
+principal = "grant"
+spec = "§13 (principal_request is the portable request commitment on principal decisions and endorsements)"
+
+[[test]]
 id = "gov_raw_subject_to_sink_reject"
 section = "13_governance"
 path = "tests/13_governance/gov_raw_subject_to_sink_reject.ag"
@@ -1837,6 +1865,24 @@ path = "tests/13_governance/gov_reach_ungranted_reject.ag"
 expect = "reject"
 error = "AuthorityViolation"
 spec = "§13 (sending into another agent requires a `reach` grant)"
+
+[[test]]
+id = "gov_transformed_endorsement_no_action_receipt"
+section = "13_governance"
+path = "tests/13_governance/gov_transformed_endorsement_no_action_receipt.ag"
+expect = "accept"
+contains = ["Endorsed", "Spend"]
+absent = ["ActionAuthorized"]
+spec = "§13, §14 (arithmetic over an endorsed structural projection is settled but does not retain authorization lineage)"
+
+[[test]]
+id = "gov_unrelated_endorsement_no_action_receipt"
+section = "13_governance"
+path = "tests/13_governance/gov_unrelated_endorsement_no_action_receipt.ag"
+expect = "accept"
+contains = ["Endorsed", "Log"]
+absent = ["ActionAuthorized"]
+spec = "§13, §14 (an unrelated earlier endorsement never certifies a literal-only consequential action)"
 
 [[test]]
 id = "repro_chain_head_equal"

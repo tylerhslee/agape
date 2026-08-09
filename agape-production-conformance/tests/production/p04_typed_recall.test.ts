@@ -1,17 +1,9 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { createTempProject, eventsOf, fixture, payloadObject, runCli, runDiagnostic, sentinel, type TempProject } from "./harness.js";
+import {
+  createTempProject, eventsOf, fixture, payloadObject, runCli, runDiagnostic, sentinel,
+  type TempProject,
+} from "./harness.js";
 import { chatCompletion, messagesText, OpenAILoopback, twoVariantCandidates } from "./openai-loopback.js";
-
-function distinctiveOriginTokens(value: unknown): string[] {
-  if (typeof value === "string") {
-    return value.match(/(?:protected|sha256|origin|tick|event|md):[A-Za-z0-9._:-]{4,}|[a-f0-9]{32,}/gi) ?? [];
-  }
-  if (Array.isArray(value)) return value.flatMap(distinctiveOriginTokens);
-  if (value !== null && typeof value === "object") {
-    return Object.values(value as Record<string, unknown>).flatMap(distinctiveOriginTokens);
-  }
-  return [];
-}
 
 describe("P04 production typed recall", () => {
   let project: TempProject | undefined;
@@ -22,22 +14,17 @@ describe("P04 production typed recall", () => {
     await project?.cleanup();
   });
 
-  it("[P04.typed-recall] judges protected retrieved content and provenance in one process and one agent", async () => {
+  it("[P04.typed-recall] preserves exact typed values while storage identity stays runtime-derived", async () => {
     const factKey = sentinel("P04_FACT_KEY");
     const factAnswer = sentinel("P04_COBALT_ANSWER");
     const fact = `${factKey} resolves to ${factAnswer}`;
     const query = `What does ${factKey} resolve to?`;
     project = await createTempProject(sentinel("p04-project"));
-    let requestCellId: string | undefined;
-    let requestOriginMarkers: string[] = [];
 
     loopback = new OpenAILoopback(({ body }) => {
       const data = messagesText(body, "user");
-      requestCellId = data.match(/\bmd:[A-Za-z0-9._:-]+\b/)?.[0];
-      requestOriginMarkers = data.match(/(?:protected|sha256|origin|tick|event|md):[A-Za-z0-9._:-]{4,}|[a-f0-9]{32,}/gi) ?? [];
-      const hasNonCellOriginMarker = requestOriginMarkers.some((marker) => !marker.toLowerCase().startsWith("md:"));
-      const hasTypedEvidence = data.includes(query) && data.includes(fact)
-        && Boolean(requestCellId) && hasNonCellOriginMarker;
+      const noStorageEnvelope = !/memory-(?:cell|origin|operation|region)-v1:/i.test(data);
+      const hasTypedEvidence = data.includes(query) && data.includes(fact) && noStorageEnvelope;
       return {
         body: chatCompletion({
           content: hasTypedEvidence ? "Correct" : "Wrong",
@@ -52,70 +39,55 @@ describe("P04 production typed recall", () => {
     const result = await runCli({ project, file, env: loopback.env() });
 
     expect(result.json?.ok, runDiagnostic(result)).toBe(true);
-    expect(loopback.transcript, "P04: explicit constructor store and typed recall must use one production process").toHaveLength(1);
+    expect(loopback.transcript, "P04: explicit constructor store and typed recall must use one process").toHaveLength(1);
     const request = loopback.transcript[0]!.body;
     const providerData = messagesText(request, "user");
-    expect.soft(providerData, "P04: typed recall omitted the query data").toContain(query);
-    expect.soft(providerData, "P04: typed recall sent only the query; protected retrieved content never reached cognition")
-      .toContain(fact);
+    expect.soft(providerData, "P04: typed recall omitted the query").toContain(query);
+    expect.soft(providerData, "P04: typed recall did not preserve the exact protected text value").toContain(fact);
+    expect.soft(providerData, "P04: storage envelope identifiers leaked into the recalled source value")
+      .not.toMatch(/memory-(?:cell|origin|operation|region)-v1:/i);
     expect.soft(messagesText(request, "system"), "P04: recalled protected content was promoted into instructions")
       .not.toContain(fact);
 
-    const events = eventsOf(result);
-    const automaticConsults = events.filter((event) => event.etype === "MemoryConsulted"
-      && payloadObject(event).consult_kind === "automatic_reaction");
-    const explicitRecalls = events.filter((event) => event.etype === "MemoryConsulted"
-      && payloadObject(event).consult_kind === "explicit_recall");
-    expect.soft(automaticConsults, "P04: awake reaction requires its separate automatic consultation").toHaveLength(1);
-    expect.soft(explicitRecalls, "P04: typed mem -> query requires one explicit-recall consultation").toHaveLength(1);
-    const recalled = explicitRecalls[0];
-    if (automaticConsults[0] && recalled) {
-      const automaticPayload = payloadObject(automaticConsults[0]);
-      const recallPayload = payloadObject(recalled);
-      expect(requestCellId, "P04: provider request contained no typed memory cell id").toBeTruthy();
-      if (!requestCellId) return;
-      const hitIds = Array.isArray(recallPayload.hit_ids) ? recallPayload.hit_ids : [];
-      expect.soft(hitIds, "P04: explicit recall hit ids must include the exact cell id sent to cognition")
-        .toContain(requestCellId);
-      const originTokens = distinctiveOriginTokens(recallPayload.origin_refs);
-      expect.soft(originTokens, "P04: explicit recall must expose at least one distinctive origin hash/ref token")
-        .not.toHaveLength(0);
-      for (const token of originTokens) {
-        expect.soft(providerData, "P04: recalled origin token was not supplied to cognition: " + token).toContain(token);
-        expect.soft(requestOriginMarkers, "P04: loopback did not recognize recalled origin marker: " + token).toContain(token);
-      }
-      expect.soft(recallPayload.reaction_event, "P04: explicit recall must correlate to the enclosing reaction")
-        .toBe(automaticPayload.reaction_event);
-      expect.soft(recallPayload).toMatchObject({
-        consult_kind: "explicit_recall",
-        reaction_event: expect.any(Number),
-        query_hash: expect.any(String),
-        budget: expect.anything(),
-        empty: false,
-        limited: expect.any(Boolean),
-        hit_ids: expect.arrayContaining([requestCellId]),
-        content_hashes: expect.arrayContaining([expect.any(String)]),
-        scores: expect.anything(),
-        origin_refs: expect.arrayContaining([expect.anything()]),
-      });
-      const publicPayload = JSON.stringify(recallPayload);
-      expect.soft(publicPayload, "P04: public MemoryConsulted leaked protected fact plaintext").not.toContain(fact);
-      expect.soft(publicPayload, "P04: public MemoryConsulted leaked protected answer plaintext").not.toContain(factAnswer);
+    const stores = eventsOf(result, "Internalized");
+    const recalls = eventsOf(result, "MemoryConsulted");
+    expect.soft(stores, "P04: exactly one explicit typed value must be stored").toHaveLength(1);
+    expect.soft(recalls, "P04: exactly one explicit typed recall must run").toHaveLength(1);
+    expect.soft(eventsOf(result, "MemoryWriteEvaluated"), "P04: no implicit write evaluation may run")
+      .toHaveLength(0);
+    const storePayload = payloadObject(stores[0]);
+    const recallPayload = payloadObject(recalls[0]);
+    const hitIds = Array.isArray(recallPayload.hit_ids) ? recallPayload.hit_ids : [];
+    expect.soft(hitIds).toHaveLength(1);
+    expect.soft(storePayload.refs, "P04: recall hit must be a canonical store ref")
+      .toEqual(expect.arrayContaining(hitIds));
+    expect.soft(recallPayload).toMatchObject({
+      descriptor_hash: storePayload.descriptor_hash,
+      schema_hash: storePayload.schema_hash,
+      scope_hash: storePayload.scope_hash,
+      generation: storePayload.generation,
+      hit_hashes: [storePayload.value_hash],
+      origins: [storePayload.origin_ref],
+      retrieval: { algorithm: expect.any(String), version: expect.any(Number) },
+    });
+    for (const id of [storePayload.operation_id, storePayload.origin_ref, ...hitIds]) {
+      expect.soft(id, "P04: canonical runtime identity is not opaque and domain-separated")
+        .toMatch(/^memory-(?:operation|origin|cell)-v1:[0-9a-f]{64}$/);
     }
+    expect.soft(JSON.stringify(recallPayload), "P04: public MemoryConsulted leaked protected plaintext")
+      .not.toContain(fact);
 
-    const resolved = events.find((event) => event.etype === "Resolved"
-      && payloadObject(event).kind === "credence");
-    expect.soft(resolved, "P04: typed recall cognition must close with JudgmentEvidence-linked Resolved").toBeTruthy();
-    if (recalled && resolved) {
-      expect.soft(recalled.tick, "P04: explicit MemoryConsulted must precede the provider close").toBeLessThan(resolved.tick);
+    const resolved = eventsOf(result, "Resolved").find((event) => payloadObject(event).kind === "credence");
+    expect.soft(resolved, "P04: typed recall cognition must close with judgment evidence").toBeTruthy();
+    if (recalls[0] && resolved) {
+      expect.soft(recalls[0].tick).toBeLessThan(resolved.tick);
       const resolvedPayload = payloadObject(resolved);
-      const scores = resolvedPayload.gate_scores as Record<string, number> | undefined;
-      expect.soft(scores?.Correct ?? 0, "P04: enum gate scores must favor Correct only from recalled evidence")
-        .toBeGreaterThan(scores?.Wrong ?? 1);
+      const scores = resolvedPayload.scores as Record<string, number> | undefined;
+      expect.soft(scores?.Correct ?? 0).toBeGreaterThan(scores?.Wrong ?? 1);
       expect.soft(resolvedPayload).toMatchObject({
-        evidence_id: expect.any(String),
-        evidence_hash: expect.any(String),
-        evidence_ref: expect.any(String),
+        prompt: { content_hash: expect.stringMatching(/^[0-9a-f]{64}$/), protected_ref: expect.any(String) },
+        reply: { content_hash: expect.stringMatching(/^[0-9a-f]{64}$/), protected_ref: expect.any(String) },
+        top: { variant: "Correct", score: expect.any(Number) },
       });
     }
   });

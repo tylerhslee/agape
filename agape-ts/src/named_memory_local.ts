@@ -27,9 +27,14 @@ export interface LedgerCommitBinding {
 }
 
 export interface NamedMemoryEffects {
-  cells: {
-    upserted: number;
-    tombstoned: number;
+  readonly cells: {
+    readonly upserted: number;
+    readonly tombstoned: number;
+    readonly deleted?: number;
+  };
+  readonly blobs?: {
+    readonly archived: number;
+    readonly deleted: number;
   };
 }
 

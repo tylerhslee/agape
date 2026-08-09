@@ -1,9 +1,16 @@
 enum Answer { Correct, Wrong }
 
 agent Rememberer {
-  mem facts <- "{{FACT}}";
+  mem facts {
+    type text;
+    modality opaque;
+    scope project;
+    retention durable;
+  }
   on awake {
-    Credence<Answer> answer = facts -> "{{QUERY}}";
+    facts <- "{{FACT}}";
+    text[] recalled = facts -> "{{QUERY}}";
+    Credence<Answer> answer = self <- f"Use this recalled evidence to answer {{QUERY}}: ${recalled}";
     Decision<Answer> decision = decide answer by confidence 0.5;
   }
 }

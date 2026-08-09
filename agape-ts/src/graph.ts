@@ -385,7 +385,25 @@ export function buildGraph(program: A.Program, programName = ""): ProgramGraph {
           if (e.decision.kind === "ident") {
             const g = gates.get(e.decision.name);
             const gn = g && nodes.get(g.nodeId);
-            if (gn) gn.meta = { ...gn.meta, endorses: exprLabel(e.subject) };
+            if (gn) {
+              const subject = exprLabel(e.subject);
+              const prior = Array.isArray(gn.meta?.endorsements)
+                ? gn.meta.endorsements as Array<{ subject: string; variant?: string; line: number }>
+                : [];
+              const endorsement = {
+                subject,
+                ...(at.variant ? { variant: at.variant } : {}),
+                line: line(e),
+              };
+              const endorsements = [...prior, endorsement];
+              const subjects = new Set(endorsements.map((entry) => entry.subject));
+              const { endorses: _priorSubject, ...rest } = gn.meta ?? {};
+              gn.meta = {
+                ...rest,
+                endorsements,
+                ...(subjects.size === 1 ? { endorses: subject } : {}),
+              };
+            }
             // the endorsed SUBJECT flows from the ask that produced it into the gate that settles it.
             if (g) {
               const subjectAsks = [...identRefs(e.subject, new Set<string>())]
@@ -428,6 +446,30 @@ export function buildGraph(program: A.Program, programName = ""): ProgramGraph {
           }
           if (bindName && declType) replyTypes.set(bindName, typeLabel(declType));
           visitExpr(e.message, at);
+          return;
+        }
+        case "performexpr": {
+          // A result-bound perform is still a consequential action site. Keep it
+          // in the active handler/function context, then attribute downstream
+          // consumers of the bound result to this exact sink node.
+          const action = actions.get(e.name);
+          const site = siteSeq++;
+          const sid = `do:${ctx.nodeId}#${site}`;
+          addNode({
+            id: sid, kind: "sink", label: `perform ${e.name}`, context: ctx.context, site, line: line(e),
+            meta: {
+              action: e.name,
+              resultBound: true,
+              ...(bindName ? { binding: bindName } : {}),
+              ...(action ? { reversible: action.reversible } : {}),
+              ...(at.variant ? { variant: at.variant } : {}),
+              ...(ctx.instance ? { agent: ctx.instance.name } : {}),
+            },
+          });
+          addEdge({ from: at.nodeId, to: sid, kind: "sink", variant: at.variant, line: line(e) });
+          e.args.forEach((arg) => visitExpr(arg, at));
+          if (e.expires) visitExpr(e.expires, at);
+          if (bindName) bindingNode.set(bindName, sid);
           return;
         }
         case "recall": {

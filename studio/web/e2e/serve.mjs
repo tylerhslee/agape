@@ -66,6 +66,52 @@ writeFileSync(path.join(proj, "main.ag"), [
   "awake responder;",
   "",
 ].join("\n"), "utf8");
+// The marquee runtime journey uses the repository proof application itself.
+// main.ag remains only for the independent Monaco save smoke.
+writeFileSync(path.join(proj, "agape.toml"), [
+  "[project]",
+  'name = "E2E Fixture"',
+  `language = "${agapeVersion}"`,
+  "",
+  "[provider]",
+  'backend = "mock"',
+  "",
+  "[tools.web_search]",
+  'driver = "mock"',
+  "",
+  "[actions.Search]",
+  'tool = "web_search"',
+  'result_event = "SearchEvidence"',
+  "",
+  "[memory]",
+  'driver = "markdown"',
+  'path = ".agape/memory"',
+  "",
+  "[security.attesters.reviewer]",
+  'driver = "host"',
+  "",
+].join("\n"), "utf8");
+writeFileSync(path.join(proj, "fact_checker.ag"), readFileSync(path.join(agapeTs, "examples", "fact_checker.ag"), "utf8"), "utf8");
+writeFileSync(path.join(proj, "attestation.ag"), `prompt text message;
+principal reviewer;
+enum Approval { Approve, Deny }
+action ReplyAttested(text answer);
+
+agent Assistant grants { perform ReplyAttested } {
+  when (Prompt p about message) {
+    text answer = self <- f"answer the user: \${p.text}";
+    Credence<Approval> c = self <- answer;
+    Decision<Approval> d = reviewer decide c by conformal 0.1 readiness 10;
+    if (d.committed == Approve) {
+      Endorsement<text> e = endorse answer by d;
+      perform ReplyAttested(e);
+    }
+  }
+}
+
+spawn Assistant assistant;
+awake assistant;
+`, "utf8");
 
 const srv = spawn(process.execPath, [tsxCli, "server.ts"], {
   cwd: agentDir,

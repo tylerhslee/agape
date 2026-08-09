@@ -116,8 +116,7 @@ describe("provider-neutral cognition context", () => {
     expect(context.data.find((segment) => segment.kind === "recalled_memory")).toBeUndefined();
 
     const consultation = result.ledger.events.find((event) =>
-      event.etype === "MemoryConsulted"
-      && (event.payload as Record<string, unknown>)?.consult_kind === "explicit_recall");
+      event.etype === "MemoryConsulted");
     expect(consultation).toBeTruthy();
     expect(JSON.stringify(consultation?.payload)).not.toContain(fact);
     const resolved = result.ledger.events.find((event) => event.etype === "Resolved");
@@ -182,6 +181,7 @@ describe("provider-neutral cognition context", () => {
           retention session;
         }
         on awake {
+          examples <- DraftMemory { outcome: Rejected, draft: "counterexample draft" };
           DraftMemory[] hits = examples -> "find prior rejected drafts";
           Credence<Usefulness> result = self <- f"judge recalled counterexamples: \${hits}";
         }
@@ -243,7 +243,7 @@ describe("provider-neutral cognition context", () => {
     });
     const endorsed = result.ledger.events.find((event) => event.etype === "Endorsed");
     expect(endorsed?.subject).not.toContain(secret);
-    expect(((endorsed?.payload as Record<string, any>)?.endorsement?.subject)).toMatchObject({
+    expect(((endorsed?.payload as Record<string, any>)?.subject_commitment)).toMatchObject({
       content_hash: expect.any(String),
       protected_ref: expect.stringMatching(/^blob:sha256:/),
     });

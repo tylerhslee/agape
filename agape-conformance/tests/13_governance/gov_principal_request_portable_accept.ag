@@ -1,0 +1,24 @@
+//! id:        gov_principal_request_portable_accept
+//! section:   13_governance
+//! expect:    accept
+//! principal: grant
+//! contains:  PendingPrincipalDecision; PrincipalDecision; Decided; Endorsed
+//! order:     PendingPrincipalDecision; PrincipalDecision; Decided; Endorsed
+//! spec:      §13 (principal_request is the portable request commitment on principal decisions and endorsements)
+//! ---
+enum Approval { Approve, Decline }
+principal alice;
+agent Clerk {
+  on awake {
+    text request = "refund";
+    Credence<Approval> c = self <- f"assess: ${request}";
+    Decision<Approval> d = alice decide c by conformal 0.05;
+    if (d.committed == Approve) {
+      Endorsement<text> e = endorse request by d;
+      say(f"${d.principal_request}:${e.principal_request}");
+    } else if (d.committed == Decline) {
+      Endorsement<text> e = endorse request by d;
+    }
+  }
+}
+spawn Clerk clerk; awake clerk;

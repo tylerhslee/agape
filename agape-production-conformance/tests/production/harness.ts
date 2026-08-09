@@ -148,23 +148,14 @@ function parseCliJson(stdout: string): { json?: CliJson; parseError?: string } {
   return { parseError: stdout.trim() ? "stdout contained no JSON object" : "stdout was empty" };
 }
 
-export async function runCli(args: {
+export async function runCliCommand(args: {
   project: TempProject;
-  file: string;
-  extraArgs?: string[];
+  commandArgs: string[];
   env?: NodeJS.ProcessEnv;
   timeoutMs?: number;
 }): Promise<CliResult> {
   const target = invocation();
-  const cliArgs = [
-    ...target.prefix,
-    "run",
-    args.file,
-    "--manifest",
-    join(args.project.root, "agape.toml"),
-    "--json",
-    ...(args.extraArgs ?? []),
-  ];
+  const cliArgs = [...target.prefix, ...args.commandArgs];
   const windowsPlan = target.cmdShim ? windowsCmdSpawnPlan(target.command, cliArgs) : undefined;
   const spawnCommand = windowsPlan?.command ?? target.command;
   const spawnArgs = windowsPlan?.args ?? cliArgs;
@@ -201,6 +192,28 @@ export async function runCli(args: {
       const parsed = parseCliJson(stdout);
       done({ command: spawnCommand, args: spawnArgs, exitCode, signal, stdout, stderr, ...parsed });
     });
+  });
+}
+
+export async function runCli(args: {
+  project: TempProject;
+  file: string;
+  extraArgs?: string[];
+  env?: NodeJS.ProcessEnv;
+  timeoutMs?: number;
+}): Promise<CliResult> {
+  return runCliCommand({
+    project: args.project,
+    commandArgs: [
+      "run",
+      args.file,
+      "--manifest",
+      join(args.project.root, "agape.toml"),
+      "--json",
+      ...(args.extraArgs ?? []),
+    ],
+    env: args.env,
+    timeoutMs: args.timeoutMs,
   });
 }
 

@@ -35,4 +35,5 @@ export const file = (rel) => get("/project/file?rel=" + encodeURIComponent(rel))
 export const saveFile = (rel, body) => post("/project/file", { rel, body });
 export const flow = (rel) => get("/project/flow?rel=" + encodeURIComponent(rel));
 export const saveFlow = (rel, revision, changes) => put("/project/flow?rel=" + encodeURIComponent(rel), { revision, changes });
+export const saveFlowStructure = (rel, revision, patch) => put("/project/flow?rel=" + encodeURIComponent(rel), { revision, patch });
 export const run = (rel, prompts, opts) => post("/project/run", { rel, prompts, ...(opts || {}) });

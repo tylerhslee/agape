@@ -11,6 +11,12 @@ import { check } from "./check.js";
 import { run, type PromptInput } from "./interp.js";
 import { createMemoryDriver, createProvider, loadManifest } from "./config.js";
 import { show, type LedgerEvent } from "./runtime.js";
+import { FileProtectedEvidenceStore } from "./protected_evidence.js";
+import {
+  RecordingProvider, ReplayProvider, decodeRuntimeSecret, readRuntimeRecording,
+  runtimeRecordingHash, writeRuntimeRecording,
+  type RuntimeRecording,
+} from "./runtime_recording.js";
 
 function errorClass(e: unknown, fallback = "RuntimeError"): string {
   const cls = (e as { cls?: string })?.cls;
@@ -67,6 +73,24 @@ function manifestForProject(projectRoot: string, explicit?: string): string | un
   if (explicit) return resolve(explicit);
   const candidate = resolve(projectRoot, "agape.toml");
   return existsSync(candidate) ? candidate : undefined;
+}
+
+async function openProtectedEvidence(projectRoot: string, runtimePath: unknown): Promise<{
+  store: FileProtectedEvidenceStore;
+  principal: string;
+  key: Buffer;
+}> {
+  const principal = process.env.AGAPE_AUTHENTICATED_PRINCIPAL;
+  if (typeof principal !== "string" || principal.trim().length === 0 || /[\0\r\n]/.test(principal)) {
+    throw new Error("AGAPE_AUTHENTICATED_PRINCIPAL must be set by the authenticated host session");
+  }
+  const key = decodeRuntimeSecret(process.env.AGAPE_PROTECTED_EVIDENCE_KEY, "AGAPE_PROTECTED_EVIDENCE_KEY");
+  const configured = runtimePath === undefined ? ".agape/protected-evidence" : runtimePath;
+  if (typeof configured !== "string" || configured.trim().length === 0) {
+    throw new Error("runtime.protected_evidence_path must be nonblank text");
+  }
+  const store = await FileProtectedEvidenceStore.open({ root: resolve(projectRoot, configured), key, authenticatedPrincipal: principal });
+  return { store, principal, key };
 }
 
 async function main(argv: string[]): Promise<number> {
@@ -188,8 +212,95 @@ async function main(argv: string[]): Promise<number> {
       return 1;
     }
   }
+  if (cmd === "evidence") {
+    const [operation, ...args] = rest;
+    const operations = ["authorize", "inspect", "export", "delete", "verify-export"] as const;
+    if (!operations.includes(operation as (typeof operations)[number])) {
+      console.error("usage: agape-ts evidence authorize|inspect|export|delete|verify-export --manifest agape.toml [operation arguments] [--json]");
+      return 2;
+    }
+    let manifestPath: string | undefined;
+    let requester = "";
+    let authorization = "";
+    let evidenceRef = "";
+    let decisionId = Number.NaN;
+    let authorizedOperation: "inspect" | "export" | "delete" | undefined;
+    let bundlePath = "";
+    let json = false;
+    for (let index = 0; index < args.length; index++) {
+      const arg = args[index]!;
+      if (arg === "--manifest") manifestPath = args[++index];
+      else if (arg === "--requester") requester = args[++index] ?? "";
+      else if (arg === "--authorization") authorization = args[++index] ?? "";
+      else if (arg === "--evidence-ref") evidenceRef = args[++index] ?? "";
+      else if (arg === "--decision-id") decisionId = Number(args[++index]);
+      else if (arg === "--operation") {
+        const value = args[++index];
+        if (value !== "inspect" && value !== "export" && value !== "delete") {
+          console.error("--operation must be inspect, export, or delete");
+          return 2;
+        }
+        authorizedOperation = value;
+      }
+      else if (arg === "--bundle") bundlePath = args[++index] ?? "";
+      else if (arg === "--json") json = true;
+      else { console.error(`unknown evidence ${operation} argument: ${arg}`); return 2; }
+    }
+    try {
+      const projectRoot = manifestPath ? dirname(resolve(manifestPath)) : process.cwd();
+      loadEnv(projectRoot);
+      const manifest = loadManifest(manifestForProject(projectRoot, manifestPath));
+      if (!manifest.profiles?.advertised?.includes("studio-fact-checker")) {
+        throw new Error("calibration evidence operations require the advertised studio-fact-checker profile");
+      }
+      const protectedEvidence = await openProtectedEvidence(projectRoot, manifest.runtime?.protected_evidence_path);
+      try {
+        if (operation === "authorize") {
+          if (!authorizedOperation) throw new Error("evidence authorize requires --operation inspect|export|delete");
+          const token = await protectedEvidence.store.authorize({
+            requester,
+            operation: authorizedOperation,
+            evidence_ref: evidenceRef,
+            decision_id: decisionId,
+          });
+          if (json) console.log(JSON.stringify({ ok: true, authorization: token }));
+          else console.log(token);
+        } else if (operation === "verify-export") {
+          if (!bundlePath) throw new Error("evidence verify-export requires --bundle");
+          let bundle: unknown;
+          try { bundle = JSON.parse(readFileSync(resolve(bundlePath), "utf8")); }
+          catch { bundle = undefined; }
+          const valid = protectedEvidence.store.verifyExport(bundle as Parameters<typeof protectedEvidence.store.verifyExport>[0]);
+          if (json) console.log(JSON.stringify({ ok: true, valid }));
+          else console.log(valid ? "valid" : "invalid");
+        } else {
+          const request = { requester, authorization, evidence_ref: evidenceRef, decision_id: decisionId };
+          if (operation === "inspect") {
+            const evidence = await protectedEvidence.store.inspect(request);
+            if (json) console.log(JSON.stringify({ ok: true, evidence }));
+            else console.log(JSON.stringify(evidence, null, 2));
+          } else if (operation === "export") {
+            const exported = await protectedEvidence.store.export(request);
+            if (json) console.log(JSON.stringify({ ok: true, export: exported }));
+            else console.log(JSON.stringify(exported, null, 2));
+          } else {
+            await protectedEvidence.store.delete(request);
+            if (json) console.log(JSON.stringify({ ok: true, deleted: true }));
+            else console.log("deleted");
+          }
+        }
+        return 0;
+      } finally {
+        await protectedEvidence.store.close();
+      }
+    } catch (error) {
+      if (json) console.log(JSON.stringify({ ok: false, class: errorClass(error), error: errorMessage(error) }));
+      else printError(error);
+      return 1;
+    }
+  }
   if (cmd !== "run" || rest.length === 0) {
-    console.error("usage: agape-ts run <file.ag> [--manifest agape.toml] [--provider mock|anthropic|openai|gemini] [--json] [--prompt name=value]");
+    console.error("usage: agape-ts run <file.ag> [--manifest agape.toml] [--provider mock|anthropic|openai|gemini] [--session-lineage-id opaque-id] [--record artifact|--replay artifact] [--json] [--prompt name=value]");
     console.error("       agape-ts check <file.ag> [--manifest agape.toml] [--provider mock|anthropic|openai|gemini] [--json]");
     console.error("       agape-ts graph <file.ag> [--format json|dot]                      # derived orchestration graph");
     console.error("       agape-ts studio [--port 4317] [--inspector] [--share|--live] [--token secret]   # full Studio when a web build is staged, else the embedded inspector");
@@ -198,13 +309,26 @@ async function main(argv: string[]): Promise<number> {
   let file = "";
   let manifestPath: string | undefined;
   let backendOverride: string | undefined;
+  let sessionLineageId: string | undefined;
+  let recordPath: string | undefined;
+  let replayPath: string | undefined;
   let json = false;
   const promptInputs: PromptInput[] = [];
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i]!;
     if (a === "--manifest") manifestPath = rest[++i];
     else if (a === "--provider") backendOverride = rest[++i];
+    else if (a === "--record") recordPath = rest[++i];
+    else if (a === "--replay") replayPath = rest[++i];
     else if (a === "--json") json = true;
+    else if (a === "--session-lineage-id") {
+      const supplied = rest[++i];
+      if (typeof supplied !== "string" || supplied.trim().length === 0 || supplied.length > 1_024 || /[\0\r\n]/.test(supplied)) {
+        console.error("--session-lineage-id expects a nonblank opaque id without control characters (maximum 1024 characters)");
+        return 2;
+      }
+      sessionLineageId = supplied;
+    }
     else if (a === "--prompt") {
       const raw = rest[++i] ?? "";
       const eq = raw.indexOf("=");
@@ -215,31 +339,98 @@ async function main(argv: string[]): Promise<number> {
     else file = a;
   }
 
+  if (recordPath && replayPath) { console.error("--record and --replay are mutually exclusive"); return 2; }
+
   try {
     const projectRoot = manifestPath ? dirname(resolve(manifestPath)) : findProjectRootForFile(file);
     loadEnv(projectRoot);
     const source = readFileSync(file, "utf8");
     const manifest = loadManifest(manifestForProject(projectRoot, manifestPath), backendOverride);
-    const provider = createProvider(manifest);
+    const sourceHash = runtimeRecordingHash(source);
+    const manifestHash = runtimeRecordingHash(manifest);
+    const recordingKey = (recordPath || replayPath)
+      ? decodeRuntimeSecret(process.env.AGAPE_RECORDING_KEY ?? process.env.AGAPE_PROTECTED_EVIDENCE_KEY, "AGAPE_RECORDING_KEY")
+      : undefined;
+    const replayRecording: RuntimeRecording | undefined = replayPath
+      ? await readRuntimeRecording(resolve(replayPath), recordingKey!)
+      : undefined;
+    if (replayRecording && (replayRecording.source_hash !== sourceHash || replayRecording.manifest_hash !== manifestHash)) {
+      throw new Error("runtime recording source or manifest commitment does not match this replay");
+    }
+    if (replayRecording && sessionLineageId && sessionLineageId !== replayRecording.identity.sessionLineageId) {
+      throw new Error("--session-lineage-id does not match the authenticated replay recording");
+    }
+    const liveProvider = replayRecording ? undefined : createProvider(manifest);
+    const recordingProvider = recordPath ? new RecordingProvider(liveProvider!) : undefined;
+    const replayProvider = replayRecording ? new ReplayProvider(replayRecording.provider) : undefined;
+    const provider = replayProvider ?? recordingProvider ?? liveProvider!;
     const memory = createMemoryDriver(manifest, { cwd: projectRoot, provider });
 
     const program = parse(source);
-    const identity = {
+    const identity = replayRecording?.identity ?? {
       projectSubject: `project:sha256:${createHash("sha256").update(projectRoot, "utf8").digest("hex")}`,
-      sessionLineageId: randomUUID(),
+      sessionLineageId: sessionLineageId ?? randomUUID(),
       sessionId: randomUUID(),
       conversationId: randomUUID(),
     };
-    const { ledger, stdout, warnings } = await run(program, {
-      identity, provider, manifest, memory, promptInputs, projectRoot,
-    });
+    const protectedEvidence = manifest.profiles?.advertised?.includes("studio-fact-checker")
+      && !replayRecording ? await openProtectedEvidence(projectRoot, manifest.runtime?.protected_evidence_path)
+      : undefined;
+    try {
+      const { ledger, stdout, warnings, namedMemoryRecording } = await run(program, {
+        identity, provider, manifest, memory, promptInputs, projectRoot,
+        ...(replayRecording ? { namedMemory: { replay: replayRecording.named_memory } } : {}),
+        ...(protectedEvidence ? { protectedEvidence: { store: protectedEvidence.store, principal: protectedEvidence.principal, replay: replayRecording !== undefined } } : {}),
+        ...(replayRecording ? { protectedEvidenceReplay: { links: replayRecording.protected_evidence ?? [] } } : {}),
+      });
+      replayProvider?.assertConsumed();
+      if (replayRecording && ledger.head() !== replayRecording.head) throw new Error("runtime replay head does not match the authenticated recording");
+      if (replayRecording && replayRecording.ledger_timing.length !== ledger.events.length) {
+        throw new Error("runtime replay ledger length does not match the authenticated recording");
+      }
+      if (recordPath) {
+        const protectedEvidenceLinks = ledger.events.flatMap((event) => {
+          const payload = event.payload as Record<string, unknown> | undefined;
+          if (event.etype !== "Resolved" || typeof payload?.evidence_id !== "string"
+            || typeof payload.evidence_hash !== "string" || typeof payload.evidence_ref !== "string"
+            || !payload.gate_scores || typeof payload.gate_scores !== "object") return [];
+          return [{
+            evidence_id: payload.evidence_id,
+            evidence_hash: payload.evidence_hash,
+            evidence_ref: payload.evidence_ref,
+            gate_scores: payload.gate_scores as Record<string, number>,
+          }];
+        });
+        await writeRuntimeRecording(resolve(recordPath), recordingKey!, {
+          kind: "agape-runtime-recording", version: 1, source_hash: sourceHash, manifest_hash: manifestHash,
+          identity, provider: recordingProvider!.snapshot(), named_memory: namedMemoryRecording, protected_evidence: protectedEvidenceLinks,
+          ledger_timing: ledger.events.map(({ latency_ms, elapsed_ms }) => ({ latency_ms, elapsed_ms })),
+          head: ledger.head(),
+        });
+      }
+      const outputEvents = replayRecording
+        ? ledger.events.map((event, index) => ({ ...event, ...replayRecording.ledger_timing[index]! }))
+        : ledger.events;
+      const evidenceAccess: Array<{ evidence_ref: string; decision_id: number; authorization: string }> = [];
+      if (protectedEvidence) {
+        for (const event of ledger.events) {
+          const payload = event.payload as Record<string, unknown> | undefined;
+          if (event.etype !== "Decided" || typeof payload?.evidence_ref !== "string" || !Number.isSafeInteger(payload.decision_id)) continue;
+          const evidence_ref = payload.evidence_ref;
+          const decision_id = payload.decision_id as number;
+          const authorization = await protectedEvidence.store.authorize({
+            requester: protectedEvidence.principal, operation: "inspect", evidence_ref, decision_id,
+          });
+          evidenceAccess.push({ evidence_ref, decision_id, authorization });
+        }
+      }
 
-    if (json) {
-      console.log(JSON.stringify({ ok: true, file, provider: manifest.provider.backend, events: ledger.events, stdout, warnings, head: ledger.head() }));
-      return 0;
-    }
+      if (json) {
+        console.log(JSON.stringify({ ok: true, file, provider: manifest.provider.backend, events: outputEvents, stdout, warnings, head: ledger.head(), evidence_access: evidenceAccess }));
+        return 0;
+      }
 
-    const modelNote = manifest.provider.model ? ` / ${manifest.provider.model}` : "";
+      const modelNote = manifest.provider.model ? ` / ${manifest.provider.model}` : "";
     console.log(`# agape-ts — ran ${file}  (provider: ${manifest.provider.backend}${modelNote})\n`);
     if (stdout.length) {
       console.log("say:");
@@ -252,9 +443,12 @@ async function main(argv: string[]): Promise<number> {
       console.log();
     }
     console.log("ledger:");
-    for (const e of ledger.events) console.log(`  ${fmt(e)}`);
+    for (const e of outputEvents) console.log(`  ${fmt(e)}`);
     console.log(`\nchain-head: ${ledger.head()}`);
     return 0;
+    } finally {
+      await protectedEvidence?.store.close();
+    }
   } catch (e) {
     if (json) console.log(JSON.stringify({ ok: false, file, class: errorClass(e), error: errorMessage(e) }));
     else printError(e);

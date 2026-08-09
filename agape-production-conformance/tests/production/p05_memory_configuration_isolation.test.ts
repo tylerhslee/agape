@@ -1,13 +1,7 @@
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  createTempProject,
-  eventsOf,
-  fixture,
-  readTree,
-  runCli,
-  runDiagnostic,
-  sentinel,
+  createTempProject, eventsOf, fixture, payloadObject, readTree, runCli, runDiagnostic, sentinel,
   type TempProject,
 } from "./harness.js";
 
@@ -70,7 +64,7 @@ driver = "not-a-real-memory-driver"
       FIRST_PRIMARY: sentinel("P05_FIRST_PRIMARY"),
       FIRST_SECONDARY: sentinel("P05_FIRST_SECONDARY"),
       SECOND_PRIMARY: sentinel("P05_SECOND_PRIMARY"),
-      SECOND_SECONDARY: sentinel("P05_SECOND_SECONDARY"),
+      SECOND_SECONDARY: sentinel("P05_SECONDARY"),
     };
     const secrets = Object.values(values);
     project = await createTempProject(sentinel("p05-isolation-project"));
@@ -78,48 +72,62 @@ driver = "not-a-real-memory-driver"
     const result = await runCli({ project, file });
 
     expect(result.json?.ok, runDiagnostic(result)).toBe(true);
+    const spawned = eventsOf(result, "Spawned");
+    const instanceByAlias = new Map(spawned.map((event) =>
+      [String(payloadObject(event).alias), payloadObject(event).instance_id]));
+    const firstId = instanceByAlias.get("first_agent");
+    const secondId = instanceByAlias.get("second_agent");
+    expect.soft(firstId).toMatch(/^agent-instance-v1:[0-9a-f]{64}$/);
+    expect.soft(secondId).toMatch(/^agent-instance-v1:[0-9a-f]{64}$/);
+    expect.soft(firstId, "P05: distinct concrete spawns reused one stable instance id").not.toBe(secondId);
+
     const stored = eventsOf(result, "Internalized");
     expect.soft(stored, "P05: two instances with two handles each require four explicit stores").toHaveLength(4);
     expect.soft(new Set(stored.map((event) => `${event.agent}:${event.subject}`)),
-      "P05: receipts must retain both instance and handle identity")
+      "P05: receipts must retain concrete stable instance and handle identity")
       .toEqual(new Set([
-        "first_agent:notes",
-        "first_agent:scratch",
-        "second_agent:notes",
-        "second_agent:scratch",
+        `${String(firstId)}:notes`,
+        `${String(firstId)}:scratch`,
+        `${String(secondId)}:notes`,
+        `${String(secondId)}:scratch`,
       ]));
+    const payloads = stored.map(payloadObject);
+    const regionRefs = payloads.map((payload) => (payload.refs as unknown[]).find((ref) =>
+      typeof ref === "string" && ref.startsWith("memory-region-v1:")));
+    expect.soft(new Set(regionRefs),
+      "P05: every concrete instance/handle pair must resolve to a distinct canonical region").toHaveLength(4);
+    expect.soft(new Set(payloads.map((payload) => payload.descriptor_hash)),
+      "P05: the two declared handles must retain distinct descriptors across instances").toHaveLength(2);
+    expect.soft(new Set(payloads.map((payload) => payload.scope_hash)),
+      "P05: equal declared project scopes must resolve to one authenticated scope tuple").toHaveLength(1);
+    for (const payload of payloads) {
+      expect.soft(payload).toMatchObject({
+        operation: "store",
+        write_source: "explicit_store",
+        operation_id: expect.stringMatching(/^memory-operation-v1:[0-9a-f]{64}$/),
+        origin_ref: expect.stringMatching(/^memory-origin-v1:[0-9a-f]{64}$/),
+        scope_hash: expect.stringMatching(/^[0-9a-f]{64}$/),
+        refs: expect.any(Array),
+      });
+    }
     const publicReceipts = JSON.stringify(stored);
     for (const secret of secrets) {
       expect.soft(publicReceipts, "P05: public Internalized receipt leaked private plaintext").not.toContain(secret);
     }
 
     const tree = await readTree(join(project.root, ".agape", "memory"));
-    const topic = (agent: string, mem: string): [string, string] => {
-      const entries = Object.entries(tree).filter(([path]) =>
-        path.includes(`/${agent}/`) && path.endsWith(`/${mem}.md`) && !path.includes("/.archive/"));
-      expect(entries, `P05: expected one durable topic for ${agent}/${mem}`).toHaveLength(1);
-      return entries[0]!;
-    };
-    const firstNotes = topic("first_agent", "notes")[1];
-    const firstScratch = topic("first_agent", "scratch")[1];
-    const secondNotes = topic("second_agent", "notes")[1];
-    const secondScratch = topic("second_agent", "scratch")[1];
-
-    expect.soft(firstNotes).toContain(values.FIRST_PRIMARY);
-    expect.soft(firstNotes).not.toContain(values.FIRST_SECONDARY);
-    expect.soft(firstNotes).not.toContain(values.SECOND_PRIMARY);
-    expect.soft(firstNotes).not.toContain(values.SECOND_SECONDARY);
-    expect.soft(firstScratch).toContain(values.FIRST_SECONDARY);
-    expect.soft(firstScratch).not.toContain(values.FIRST_PRIMARY);
-    expect.soft(firstScratch).not.toContain(values.SECOND_PRIMARY);
-    expect.soft(firstScratch).not.toContain(values.SECOND_SECONDARY);
-    expect.soft(secondNotes).toContain(values.SECOND_PRIMARY);
-    expect.soft(secondNotes).not.toContain(values.SECOND_SECONDARY);
-    expect.soft(secondNotes).not.toContain(values.FIRST_PRIMARY);
-    expect.soft(secondNotes).not.toContain(values.FIRST_SECONDARY);
-    expect.soft(secondScratch).toContain(values.SECOND_SECONDARY);
-    expect.soft(secondScratch).not.toContain(values.SECOND_PRIMARY);
-    expect.soft(secondScratch).not.toContain(values.FIRST_PRIMARY);
-    expect.soft(secondScratch).not.toContain(values.FIRST_SECONDARY);
+    const projections = Object.entries(tree).filter(([path]) =>
+      /^regions\/[0-9a-f]{64}\/generation-0\/MEMORY\.md$/.test(path));
+    expect.soft(projections, "P05: every isolated canonical region requires one opaque projection")
+      .toHaveLength(4);
+    for (const [path, contents] of projections) {
+      expect.soft(path).not.toMatch(/first_agent|second_agent|notes|scratch|p05-isolation-project/i);
+      expect.soft(secrets.filter((secret) => contents.includes(secret)),
+        `P05: projection ${path} must contain exactly one region's private value`).toHaveLength(1);
+    }
+    for (const secret of secrets) {
+      expect.soft(projections.filter(([, contents]) => contents.includes(secret)),
+        "P05: a private value crossed region boundaries or was omitted").toHaveLength(1);
+    }
   });
 });

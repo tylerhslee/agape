@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { createSession } from "../src/interp.js";
 import { LocalMemoryDriver } from "../src/memory.js";
@@ -5,6 +6,17 @@ import { parse } from "../src/parser.js";
 import { MockProvider, type CognitionContext, type StructuredSchema } from "../src/runtime.js";
 import { createAdapter } from "../src/runtime_adapter.js";
 import { TEST_RUNTIME_IDENTITY } from "./runtime_harness.js";
+const stableJson = (value: unknown): string => {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  return `{${Object.entries(value as Record<string, unknown>)
+    .filter(([, member]) => member !== undefined)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, member]) => `${JSON.stringify(key)}:${stableJson(member)}`)
+    .join(",")}}`;
+};
+const receiptHash = (value: unknown): string => createHash("sha256").update(stableJson(value)).digest("hex");
+
 
 describe("SPEC 16.2 dynamic correlation identity", () => {
   it("keeps concurrent same-source task handles isolated by opening correlation while preserving their subject", async () => {
@@ -157,31 +169,49 @@ describe("SPEC 16.2 dynamic correlation identity", () => {
   });
 
 
-  it("rebases numeric correlations and protocol tick references across absorbed adapter runs", async () => {
+  it("creates authenticated principal correlations at final global ticks across adapter runs", async () => {
     const adapter = createAdapter();
     const principalSource = `
       enum Approval { Approve, Decline }
       principal alice;
-      agent Clerk {
+      action Publish(text value);
+      agent Clerk grants { perform Publish } {
         on awake {
-          Credence<Approval> c = self <- "assess";
+          text candidate = "assess";
+          Credence<Approval> c = self <- candidate;
           Decision<Approval> d = alice decide c by conformal 0.05;
+          if (d.committed == Approve) {
+            Endorsement<text> e = endorse candidate by d;
+            perform Publish(e);
+          }
         }
       }
       spawn Clerk clerk;
       awake clerk;
     `;
 
-    expect((await adapter.run({ source: principalSource, testMode: { principal: "grant" } })).ok).toBe(true);
-    expect((await adapter.run({ source: principalSource, testMode: { principal: "grant" } })).ok).toBe(true);
+    const first = await adapter.run({ source: principalSource, testMode: { principal: "grant" } });
+    const second = await adapter.run({ source: principalSource, record: true, testMode: { principal: "grant" } });
+    expect(first.ok).toBe(true);
+    expect(second.ok).toBe(true);
+    expect(second.events[0]?.tick).toBe(first.events.length);
 
     const global = await adapter.ledgerRead();
     const pending = global.filter((event) => event.etype === "PendingPrincipalDecision");
     const ruling = global.filter((event) => event.etype === "PrincipalDecision");
     const decided = global.filter((event) => event.etype === "Decided");
+    const endorsed = global.filter((event) => event.etype === "Endorsed");
+    const authorized = global.filter((event) => event.etype === "ActionAuthorized");
     expect(pending).toHaveLength(2);
     expect(ruling).toHaveLength(2);
     expect(decided).toHaveLength(2);
+    expect(endorsed).toHaveLength(2);
+    expect(authorized).toHaveLength(2);
+    expect(global.slice(first.events.length)).toEqual(second.events);
+    const replay = await adapter.replay(second.recording);
+    expect(replay.ok).toBe(true);
+    expect(replay.events).toEqual(second.events);
+    expect(replay.headHash).toBe(second.headHash);
     expect(pending.map((event) => event.corr)).toEqual(pending.map((event) => event.tick));
     expect(new Set(pending.map((event) => event.corr)).size).toBe(2);
     for (let index = 0; index < 2; index++) {
@@ -189,9 +219,28 @@ describe("SPEC 16.2 dynamic correlation identity", () => {
       expect((ruling[index]!.payload as { pending?: number }).pending).toBe(pending[index]!.tick);
       expect((decided[index]!.payload as { decision_id?: number }).decision_id).toBe(decided[index]!.tick);
       expect((decided[index]!.payload as { principal_event?: number }).principal_event).toBe(ruling[index]!.tick);
+      const requestHash = (pending[index]!.payload as { request_hash?: string }).request_hash;
+      expect(requestHash).toMatch(/^[0-9a-f]{64}$/);
+      const requestPayload = pending[index]!.payload as Record<string, unknown>;
+      const request = {
+        corr: requestPayload.corr,
+        who: requestPayload.who,
+        credence_id: requestPayload.credence_id,
+        evidence_hash: requestPayload.evidence_hash,
+        rule_hash: requestPayload.rule_hash,
+        subject_hash: requestPayload.subject_hash,
+        governed_operation: requestPayload.governed_operation,
+        governed_request_hash: requestPayload.governed_request_hash,
+      };
+      expect(requestHash).toBe(receiptHash({ domain: "agape/principal-request/v1", request }));
+      expect((authorized[index]!.payload as { endorsement_tick?: number }).endorsement_tick)
+        .toBe(endorsed[index]!.tick);
+      expect((authorized[index]!.payload as { decision_id?: number }).decision_id).toBe(decided[index]!.tick);
+      expect((ruling[index]!.payload as { request_hash?: string }).request_hash).toBe(requestHash);
+      expect((decided[index]!.payload as { principal_request?: string }).principal_request).toBe(requestHash);
     }
   });
-  it("rebases tool and refusal correlations across a second absorbed run", async () => {
+  it("returns second-run tool and refusal correlations at their final global ticks", async () => {
     const adapter = createAdapter();
     const source = `
       action Search(text query);
@@ -219,15 +268,16 @@ describe("SPEC 16.2 dynamic correlation identity", () => {
     expect(absorbed).toHaveLength(second.events.length);
     const localStarts = second.events.filter((event) => event.etype === "ToolStarted");
     const localResolves = second.events.filter((event) => event.etype === "ToolResolved");
+    expect(absorbed).toEqual(second.events);
     const starts = absorbed.filter((event) => event.etype === "ToolStarted");
     const resolves = absorbed.filter((event) => event.etype === "ToolResolved");
     expect(starts).toHaveLength(2);
     expect(resolves).toHaveLength(2);
 
     for (let index = 0; index < starts.length; index++) {
-      expect(starts[index]!.tick).toBe(offset + localStarts[index]!.tick);
-      expect(starts[index]!.corr).toBe(offset + (localStarts[index]!.corr as number));
-      expect(resolves[index]!.tick).toBe(offset + localResolves[index]!.tick);
+      expect(starts[index]!.tick).toBe(localStarts[index]!.tick);
+      expect(starts[index]!.corr).toBe(localStarts[index]!.corr);
+      expect(resolves[index]!.tick).toBe(localResolves[index]!.tick);
       expect(resolves[index]!.corr).toBe(starts[index]!.corr);
     }
 
@@ -235,14 +285,68 @@ describe("SPEC 16.2 dynamic correlation identity", () => {
     const localRefused = second.events.find((event) => event.etype === "DeliveryRefused")!;
     const sent = absorbed.find((event) => event.etype === "Sent" && event.subject === "reply")!;
     const refused = absorbed.find((event) => event.etype === "DeliveryRefused")!;
-    expect(sent.tick).toBe(offset + localSent.tick);
-    expect(sent.corr).toBe(offset + (localSent.corr as number));
-    expect(refused.tick).toBe(offset + localRefused.tick);
+    expect(sent.tick).toBe(localSent.tick);
+    expect(sent.corr).toBe(localSent.corr);
+    expect(refused.tick).toBe(localRefused.tick);
     expect(refused.corr).toBe(refused.tick);
     expect((refused.payload as { original_corr?: number }).original_corr).toBe(sent.corr);
   });
 
-  it("never rebases user-authored nested record keys that resemble protocol references", async () => {
+  it("keeps triggerExternalSource on final ticks after prior absorbed history", async () => {
+    const adapter = createAdapter();
+    const seeded = await adapter.run({ source: `event Seed(); emit Seed();` });
+    expect(seeded.ok).toBe(true);
+    const offset = (await adapter.ledgerRead()).length;
+    const source = `
+      prompt text request;
+      event Seen(text value);
+      agent Listener {
+        when (Prompt p about request) { emit Seen(p.text); }
+      }
+      spawn Listener listener;
+      awake listener;
+    `;
+    const result = await adapter.triggerExternalSource({
+      source,
+      sourceName: "request",
+      arrival: "hello",
+    });
+    expect(result.beforeArrival.events[0]?.tick).toBe(offset);
+    expect(result.afterArrival.events[0]?.tick).toBe(offset);
+    expect(result.afterArrival.events.filter((event) => event.etype === "Seen")).toHaveLength(1);
+    expect((await adapter.ledgerRead()).slice(offset)).toEqual(result.afterArrival.events);
+  });
+
+  it("keeps idempotencyScenario on final ticks after prior absorbed history", async () => {
+    const adapter = createAdapter();
+    const seeded = await adapter.run({ source: `event Seed(); emit Seed();` });
+    expect(seeded.ok).toBe(true);
+    const offset = (await adapter.ledgerRead()).length;
+    const source = `
+      prompt text request;
+      event Seen(text value);
+      agent Listener {
+        when (Prompt p about request) { emit Seen(p.text); }
+      }
+      spawn Listener listener;
+      awake listener;
+    `;
+    const result = await adapter.idempotencyScenario({
+      source,
+      repeatedInput: {
+        source: "request",
+        idempotencyKey: "same-request",
+        body: "hello",
+      },
+      repetitions: 2,
+    });
+    expect(result.deduped).toBe(true);
+    expect(result.events[0]?.tick).toBe(offset);
+    expect(result.events.filter((event) => event.etype === "Seen")).toHaveLength(1);
+    expect((await adapter.ledgerRead()).slice(offset)).toEqual(result.events);
+  });
+
+  it("preserves user-authored nested record keys that resemble protocol references", async () => {
     const adapter = createAdapter();
     const source = `
       enum Rating { decision_id, pending, corr, original_corr }
@@ -283,10 +387,10 @@ describe("SPEC 16.2 dynamic correlation identity", () => {
     }
     const localEndorsed = second.events.find((event) => event.etype === "Endorsed")!;
     const globalEndorsed = absorbed.find((event) => event.etype === "Endorsed")!;
-    const localSubject = (localEndorsed.payload as { endorsement: { subject: { fields: Record<string, { value: number }> } } })
-      .endorsement.subject.fields;
-    const globalSubject = (globalEndorsed.payload as { endorsement: { subject: { fields: Record<string, { value: number }> } } })
-      .endorsement.subject.fields;
+    const localSubject = (localEndorsed.payload as { subject_commitment: { fields: Record<string, { value: number }> } })
+      .subject_commitment.fields;
+    const globalSubject = (globalEndorsed.payload as { subject_commitment: { fields: Record<string, { value: number }> } })
+      .subject_commitment.fields;
     expect(globalSubject).toEqual(localSubject);
   });
 

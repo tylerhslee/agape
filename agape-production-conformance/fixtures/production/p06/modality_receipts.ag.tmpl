@@ -1,6 +1,11 @@
 agent Archivist {
+  mem notes {
+    type text;
+    modality opaque;
+    scope project;
+    retention durable;
+  }
   on awake {
-    mem notes;
     LedgerEntry<Internalized> receipt = notes <- "{{SENTINEL}}";
     forget notes;
   }

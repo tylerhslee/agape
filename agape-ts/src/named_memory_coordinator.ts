@@ -8,6 +8,7 @@ import { snapshotCanonicalPayload } from "./ledger_hash.js";
 import {
   type LedgerCommitBinding,
   type NamedMemoryCell,
+  type NamedMemoryEffects,
   type NamedMemoryMutationContext,
   type NamedMemoryMutationReceipt,
   type NamedMemoryOperationStatus,
@@ -38,7 +39,8 @@ export interface NamedMemoryMutationAck {
   operationId: string;
   operation: "store" | "forget";
   generation: number;
-  effects: Readonly<Record<string, number | boolean | string>>;
+  effects: NamedMemoryEffects;
+  alreadyForgotten?: boolean;
   refs: readonly string[];
 }
 
@@ -150,10 +152,130 @@ function opaqueCorrelation(correlation: string): string {
     .digest("hex")}`;
 }
 
+function exactObjectKeys(value: object, expected: readonly string[], label: string): void {
+  if (Object.getPrototypeOf(value) !== Object.prototype || Object.getOwnPropertySymbols(value).length !== 0) {
+    throw new Error(`${label} must be a plain exact object`);
+  }
+  const actual = Object.keys(value).sort(bytewiseCompare);
+  const canonical = [...expected].sort(bytewiseCompare);
+  if (actual.length !== canonical.length || actual.some((key, index) => key !== canonical[index])) {
+    throw new Error(`${label} has unexpected fields`);
+  }
+}
+
+function effectCounter(value: number, label: string): number {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new Error(`${label} must be a nonnegative safe integer`);
+  }
+  return value;
+}
+
+function validateMutationEvidence(stage: PreparedNamedMemoryMutation): void {
+  exactObjectKeys(stage.effects, ["cells", ...(stage.effects.blobs === undefined ? [] : ["blobs"])],
+    "named-memory effects");
+  exactObjectKeys(stage.effects.cells,
+    ["upserted", "tombstoned", ...(stage.effects.cells.deleted === undefined ? [] : ["deleted"])],
+    "named-memory cell effects");
+  const upserted = effectCounter(stage.effects.cells.upserted, "named-memory cells.upserted");
+  const tombstoned = effectCounter(stage.effects.cells.tombstoned, "named-memory cells.tombstoned");
+  const deleted = stage.effects.cells.deleted === undefined
+    ? 0 : effectCounter(stage.effects.cells.deleted, "named-memory cells.deleted");
+  let archived = 0;
+  let blobsDeleted = 0;
+  if (stage.effects.blobs !== undefined) {
+    exactObjectKeys(stage.effects.blobs, ["archived", "deleted"], "named-memory blob effects");
+    archived = effectCounter(stage.effects.blobs.archived, "named-memory blobs.archived");
+    blobsDeleted = effectCounter(stage.effects.blobs.deleted, "named-memory blobs.deleted");
+    if (archived > 0 && blobsDeleted > 0) {
+      throw new Error("named-memory effects cannot archive and delete blobs in one operation");
+    }
+  }
+  if (stage.kind === "store" && (upserted !== 1 || tombstoned !== 0 || deleted !== 0
+    || archived !== 0 || blobsDeleted !== 0)) {
+    throw new Error("named-memory store effects are inconsistent with one exact canonical upsert");
+  }
+  if (stage.kind === "forget" && upserted !== 0) {
+    throw new Error("named-memory forget effects cannot upsert cells");
+  }
+  if (stage.alreadyForgotten === true
+    && (upserted + tombstoned + deleted + archived + blobsDeleted !== 0)) {
+    throw new Error("an already-forgotten memory operation cannot report changed effects");
+  }
+  exactObjectKeys(stage.refs, Object.keys(stage.refs), "named-memory refs");
+  const requiredRefs = stage.kind === "store"
+    ? ["region", "value", "origin", "cell"] as const
+    : ["region", "origin"] as const;
+  for (const required of requiredRefs) {
+    if (!Object.prototype.hasOwnProperty.call(stage.refs, required)) {
+      throw new Error(`named-memory ${stage.kind} receipt is missing required ${required} ref`);
+    }
+  }
+  for (const [key, value] of Object.entries(stage.refs)) {
+    if (key.trim().length === 0 || typeof value !== "string" || value.trim().length === 0
+      || /[\u0000-\u001f]/.test(value)
+      || (!/^memory-(?:region|value|origin|cell)-v1:[0-9a-f]{64}$/.test(value)
+        && !/^substrate:[^\u0000-\u001f]+$/.test(value))
+      || (value.startsWith("substrate:") && value.split(/[\\/]/).includes(".."))) {
+      throw new Error("named-memory refs must be exact nonblank opaque references");
+    }
+  }
+  if (stage.refs.region !== stage.regionKey || stage.refs.origin !== stage.originId) {
+    throw new Error("named-memory region/origin refs do not match their prepared stage");
+  }
+  if (stage.kind === "store" && (
+    stage.refs.value !== `memory-value-v1:${stage.valueHash}`
+    || stage.refs.cell !== stage.cellId
+  )) {
+    throw new Error("named-memory value/cell refs do not match their prepared store stage");
+  }
+}
+
+function snapshotEffects(effects: NamedMemoryEffects): NamedMemoryEffects {
+  return Object.freeze({
+    cells: Object.freeze({
+      upserted: effects.cells.upserted,
+      tombstoned: effects.cells.tombstoned,
+      ...(effects.cells.deleted === undefined ? {} : { deleted: effects.cells.deleted }),
+    }),
+    ...(effects.blobs === undefined ? {} : {
+      blobs: Object.freeze({
+        archived: effects.blobs.archived,
+        deleted: effects.blobs.deleted,
+      }),
+    }),
+  });
+}
+
+function stableEvidenceJson(value: unknown): string {
+  if (value === null || typeof value === "string" || typeof value === "boolean" || typeof value === "number") {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) return `[${value.map(stableEvidenceJson).join(",")}]`;
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record).sort(bytewiseCompare).map((key) =>
+    `${JSON.stringify(key)}:${stableEvidenceJson(record[key])}`).join(",")}}`;
+}
+
+function validateFinalizedReceipt(
+  stage: PreparedNamedMemoryMutation,
+  receipt: NamedMemoryMutationReceipt,
+  binding?: LedgerCommitBinding,
+): void {
+  validateMutationEvidence(receipt);
+  const { ledger, ...receiptStage } = receipt;
+  if (stableEvidenceJson(receiptStage) !== stableEvidenceJson(stage)) {
+    throw new Error("named-memory finalized receipt does not exactly match its prepared stage");
+  }
+  if (binding !== undefined && (ledger.tick !== binding.tick || ledger.head !== binding.head)) {
+    throw new Error("named-memory finalized receipt does not match its supplied ledger binding");
+  }
+}
+
 function publicMutationPayload(
   descriptorName: string,
   stage: PreparedNamedMemoryMutation,
 ): Readonly<Record<string, unknown>> {
+  validateMutationEvidence(stage);
   return Object.freeze({
     operation_id: stage.operationId,
     operation: stage.kind,
@@ -165,10 +287,7 @@ function publicMutationPayload(
     generation: stage.generation,
     origin_ref: stage.originId,
     ...(stage.valueHash === undefined ? {} : { value_hash: stage.valueHash }),
-    effects: Object.freeze({
-      upserted: stage.effects.cells.upserted,
-      tombstoned: stage.effects.cells.tombstoned,
-    }),
+    effects: snapshotEffects(stage.effects),
     refs: Object.freeze(Object.values(stage.refs)),
     ...(stage.alreadyForgotten === undefined
       ? {}
@@ -177,17 +296,15 @@ function publicMutationPayload(
 }
 
 function mutationAck(receipt: NamedMemoryMutationReceipt): NamedMemoryMutationAck {
+  validateMutationEvidence(receipt);
   return Object.freeze({
     operationId: receipt.operationId,
     operation: receipt.kind,
     generation: receipt.generation,
-    effects: Object.freeze({
-      upserted: receipt.effects.cells.upserted,
-      tombstoned: receipt.effects.cells.tombstoned,
-      ...(receipt.alreadyForgotten === undefined
-        ? {}
-        : { already_forgotten: receipt.alreadyForgotten }),
-    }),
+    effects: snapshotEffects(receipt.effects),
+    ...(receipt.alreadyForgotten === undefined
+      ? {}
+      : { alreadyForgotten: receipt.alreadyForgotten }),
     refs: Object.freeze(Object.values(receipt.refs)),
   });
 }
@@ -206,7 +323,10 @@ export class NamedMemoryCoordinator {
   readonly #retrievalIndex: NamedMemoryRetrievalIndex;
   readonly #barrier: NamedMemorySessionBarrier;
   readonly #trace: NamedMemoryTraceEntry[] = [];
-  readonly #pending = new Map<string, LedgerCommitBinding>();
+  readonly #pending = new Map<string, Readonly<{
+    stage: PreparedNamedMemoryMutation;
+    binding: LedgerCommitBinding;
+  }>>();
   #sequence = 0;
   #closed = false;
 
@@ -434,11 +554,14 @@ export class NamedMemoryCoordinator {
   private async reconcileOwnPending(): Promise<void> {
     if (this.#pending.size === 0) return;
     this.assertOpenAndScoped();
-    for (const [operationId, binding] of [...this.#pending]) {
+    for (const [operationId, pending] of [...this.#pending]) {
       this.count("mutation");
-      const status = await this.#driver.reconcile(operationId, binding);
+      const status = await this.#driver.reconcile(operationId, pending.binding);
       this.pushTrace("reconcile", operationId);
-      if (status.status === "finalized") this.#pending.delete(operationId);
+      if (status.status === "finalized") {
+        validateFinalizedReceipt(pending.stage, status.receipt, pending.binding);
+        this.#pending.delete(operationId);
+      }
     }
     if (this.#pending.size !== 0) {
       throw new NamedMemoryReconciliationPendingError(this.#pending.keys().next().value!);
@@ -451,6 +574,7 @@ export class NamedMemoryCoordinator {
     this.count("mutation");
     const status = await this.#driver.status(stage.operationId);
     if (status.status !== "finalized") return undefined;
+    validateFinalizedReceipt(stage, status.receipt);
     return Object.freeze({
       stage,
       receipt: status.receipt,
@@ -482,7 +606,7 @@ export class NamedMemoryCoordinator {
       throw error;
     }
     const binding = Object.freeze({ tick: event.tick, head: this.#ledger.head() });
-    this.#pending.set(stage.operationId, binding);
+    this.#pending.set(stage.operationId, Object.freeze({ stage, binding }));
     this.pushTrace("ledger-commit", stage.operationId, operationResultId, etype);
     this.pushTrace("finalize", stage.operationId, operationResultId);
     this.count("mutation");
@@ -503,25 +627,25 @@ export class NamedMemoryCoordinator {
           throw new NamedMemoryReconciliationPendingError(stage.operationId);
         }
         receipt = reconciled.receipt;
-        this.#pending.delete(stage.operationId);
       }
     }
     if (loseFinalizeAck) {
       this.count("mutation");
       const observed = await this.#driver.status(stage.operationId);
       if (observed.status !== "finalized") {
-        this.#pending.set(stage.operationId, binding);
+        this.#pending.set(stage.operationId, Object.freeze({ stage, binding }));
         return Object.freeze({ stage, event, pending: true, reused: false });
       }
       receipt = observed.receipt;
-    } else {
-      this.#pending.delete(stage.operationId);
     }
+    validateFinalizedReceipt(stage, receipt, binding);
+    const ack = mutationAck(receipt);
+    if (!loseFinalizeAck) this.#pending.delete(stage.operationId);
     return Object.freeze({
       stage,
       receipt,
       event,
-      ack: mutationAck(receipt),
+      ack,
       pending: loseFinalizeAck,
       reused: false,
     });

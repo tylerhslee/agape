@@ -8,6 +8,7 @@ import {
   canonicalLedgerHead,
   snapshotCanonicalPayload,
 } from "./ledger_hash.js";
+import type { JudgmentEvidence, JudgmentEvidenceLink } from "./protected_evidence.js";
 
 // ---- Trust lattice: settled ⊑ graded ⊑ raw ----
 export type Trust = "settled" | "graded" | "raw";
@@ -16,7 +17,22 @@ export type IngressProvenance = "internal" | "external_unscreened" | "external_s
 export type Variant = string;
 export type Committed = Variant | "abstained";
 
-type ValueIngress = { ingress?: IngressProvenance; privateMemory?: true };
+export interface EndorsementAuthorizationLineage {
+  readonly subjectHash: string;
+  readonly endorsementTick: number;
+  readonly decisionId: number;
+  readonly ruleHash: string;
+  readonly evidenceRef: string | null;
+  readonly margin: number;
+  readonly floor?: number;
+  readonly derivationPath: readonly string[];
+}
+
+type ValueIngress = {
+  ingress?: IngressProvenance;
+  privateMemory?: true;
+  authorization?: EndorsementAuthorizationLineage;
+};
 
 export type Value =
   | ({ kind: "text"; v: string; trust: Trust } & ValueIngress)
@@ -34,6 +50,7 @@ export type Value =
       // where `d = decide c` is ABOUT `subject` when `subject` is `c` itself OR fed `c`'s prompt — the
       // endorse runtime backstop accepts exactly those, and fails closed on any other raw/graded subject.
       derivedFrom?: Value[];
+      calibrationEvidence?: JudgmentEvidenceLink;
     } & ValueIngress)
   | ({
       kind: "decision";
@@ -44,8 +61,11 @@ export type Value =
       trust: "settled";
       decisionId: number;
       rule?: Record<string, unknown>;
+      ruleHash: string;
+      evidenceRef: string | null;
       binding?: string;
       principalEvent?: number;
+      principalRequest: string | null;
       // the rule's consequential margin `floor m` (§13), threaded so the endorse it authorizes carries it
       // to the sink, where a committed decision whose margin is below `m` faults (MarginFloorViolation, §16.6).
       floor?: number;
@@ -71,6 +91,12 @@ export type Value =
       // inherited from the authorizing decision's rule (§13): the consequential margin floor checked when
       // this endorsed value reaches a `perform` sink (MarginFloorViolation, §16.6).
       floor?: number;
+      subjectHash: string;
+      endorsementTick: number;
+      ruleHash: string;
+      evidenceRef: string | null;
+      principalEvent?: number;
+      principalRequest: string | null;
     } & ValueIngress)
   | ({ kind: "agentref"; name: string; agentType: string; trust: "settled" } & ValueIngress)
   | ({ kind: "memref"; name: string; trust: "settled" } & ValueIngress) // a handle into private memory (§10)
@@ -162,12 +188,17 @@ export function render(v: Value): string {
     default: return show(v);
   }
 }
+export interface ProviderJudgment {
+  scores: Record<Variant, number>;
+  evidence?: JudgmentEvidence;
+}
+
 
 // ---- The provider seam (cognition). The runtime never names a concrete model. ----
 // Cognition is inherently asynchronous (a model call), so the seam is async even for the mock.
 export interface Provider {
   // a typed judgment: forced categorical choice over the enum's variants -> a scored distribution.
-  judge(prompt: string, enumName: string, variants: Variant[], context?: CognitionContext): Promise<{ scores: Record<Variant, number> }>;
+  judge(prompt: string, enumName: string, variants: Variant[], context?: CognitionContext): Promise<ProviderJudgment>;
   // a typed reply: constrained structured output for a declared scalar/array/struct schema.
   structured?(prompt: string, schema: StructuredSchema, name?: string, context?: CognitionContext): Promise<unknown>;
   // a bare reply (raw text).
@@ -430,6 +461,42 @@ export class Ledger {
     return ledger;
   }
 
+  appendBatch(entries: readonly {
+    etype: string;
+    subject: string;
+    payload?: unknown;
+    agent?: string;
+    corr?: string | number | null;
+  }[]): LedgerEvent[] {
+    if (entries.length === 0) return [];
+    const now = Math.max(Date.now(), this.lastMs);
+    const start = this.#committedEvents.length;
+    const elapsed = Math.max(0, now - this.originMs);
+    const events = entries.map((entry, index): LedgerEvent => {
+      const event: LedgerEvent = Object.freeze({
+        tick: start + index,
+        latency_ms: index === 0 ? Math.max(0, now - this.lastMs) : 0,
+        elapsed_ms: elapsed,
+        etype: entry.etype,
+        subject: entry.subject,
+        payload: snapshotCanonicalPayload(entry.payload) ?? null,
+        corr: entry.corr ?? null,
+        agent: entry.agent ?? "",
+      });
+      canonicalLedgerEventJson(event);
+      return event;
+    });
+    this.lastMs = now;
+    this.#committedEvents.push(...events);
+    this.#visibleEvents = Object.freeze(this.#committedEvents.slice()) as LedgerEvent[];
+    if (this.onEvent) {
+      for (const event of events) {
+        try { this.onEvent(event); } catch { /* observation is best-effort */ }
+      }
+    }
+    return events;
+  }
+
   append(
     etype: string,
     subject: string,
@@ -437,25 +504,7 @@ export class Ledger {
     agent?: string,
     corr?: string | number | null,
   ): LedgerEvent {
-    const now = Math.max(Date.now(), this.lastMs);
-    const ev: LedgerEvent = Object.freeze({
-      tick: this.#committedEvents.length,
-      latency_ms: Math.max(0, now - this.lastMs),
-      elapsed_ms: Math.max(0, now - this.originMs),
-      etype,
-      subject,
-      payload: snapshotCanonicalPayload(payload) ?? null,
-      corr: corr ?? null,
-      agent: agent ?? "",
-    });
-    canonicalLedgerEventJson(ev);
-    this.lastMs = now;
-    this.#committedEvents.push(ev);
-    this.#visibleEvents = Object.freeze(this.#committedEvents.slice()) as LedgerEvent[];
-    if (this.onEvent) {
-      try { this.onEvent(ev); } catch { /* observation is best-effort */ }
-    }
-    return ev;
+    return this.appendBatch([{ etype, subject, payload, agent, corr }])[0]!;
   }
 
   head(): string {

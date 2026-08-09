@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -10,7 +10,7 @@ import {
   normalizedLedger,
   requireEvent,
   withAgapeRun,
-  TEST_AGENT_INSTANCE_ID,
+
 } from "../src/testkit.js";
 
 const GATED_REPLY = `
@@ -34,9 +34,10 @@ awake g;
 describe("Agape core certification suite", () => {
   it("certifies the typed gate chain reaches a granted sink only after endorsement", async () => {
     await withAgapeRun(GATED_REPLY, (run) => {
-      assertEventOrder(run, ["Spawned", "AgentAwake", "Sent", "Delivered", "Resolved", "Decided", "Endorsed", "Announce"]);
+      assertEventOrder(run, ["Spawned", "AgentAwake", "Sent", "Delivered", "Resolved", "Decided", "Endorsed", "Announce", "ActionAuthorized"]);
       expect(eventTypes(run)).toContain("Endorsed");
-      expect(requireEvent(run, "Announce").payload).toEqual(["hello from testkit"]);
+      expect(requireEvent(run, "Announce").payload).toMatchObject({ arguments: ["hello from testkit"] });
+      expect(requireEvent(run, "ActionAuthorized").corr).toBe(requireEvent(run, "Announce").tick);
       expect(normalizedLedger(run)[0]).toMatchObject({ tick: 0, etype: "Spawned" });
     });
   });
@@ -59,18 +60,25 @@ describe("Agape core certification suite", () => {
         spawn A a;
         awake a;
       `, {
-        memoryRoot: dir,
+        projectRoot: dir,
         manifest: { provider: { backend: "mock" }, project: { name: "demo" }, memory: { driver: "markdown" } },
       }, (run) => {
         const internalized = requireEvent(run, "Internalized");
         const payload = assertPayloadObject(internalized);
-        expect(payload.policy).toMatchObject({ driver: "markdown", format: "markdown" });
+        expect(payload).toMatchObject({
+          operation: "store",
+          write_source: "explicit_store",
+          effects: { cells: { upserted: 1, tombstoned: 0 } },
+        });
       });
 
-      await expect(readFile(join(dir, ".agape", "memory", "MEMORY.md"), "utf8"))
-        .resolves.toContain(`[test://agape/a/notes](scopes/test_agape/${TEST_AGENT_INSTANCE_ID.replace(":", "_")}/notes.md)`);
-      await expect(readFile(join(dir, ".agape", "memory", "scopes", "test_agape", TEST_AGENT_INSTANCE_ID.replace(":", "_"), "notes.md"), "utf8"))
+      const root = join(dir, ".agape", "memory");
+      const files = await readdir(root, { recursive: true });
+      const projections = files.filter((file) => file.endsWith("MEMORY.md"));
+      expect(projections).toHaveLength(1);
+      await expect(readFile(join(root, projections[0]!), "utf8"))
         .resolves.toContain("certification writes project markdown");
+      expect(files.join(" ")).not.toContain("test://agape");
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

@@ -1,0 +1,24 @@
+//! id:        gov_action_authorized_projection_accept
+//! section:   13_governance
+//! expect:    accept
+//! contains:  ActionAuthorized
+//! order:     Decided; Endorsed; Publish; ActionAuthorized; ActionAuthorized
+//! spec:      §13, §14 (a consequential action records one authorization receipt per exact endorsed or structurally projected argument)
+//! ---
+enum Verdict { Publish, Revise }
+struct Draft { body: text, title: text }
+action Publish(text body, text title);
+agent A grants { perform Publish } {
+  on awake {
+    Draft draft = Draft { body: "body", title: "title" };
+    Credence<Verdict> c = self <- f"ready: ${draft.body}";
+    Decision<Verdict> d = decide c by confidence 0.5;
+    if (d.committed == Publish) {
+      Endorsement<Draft> e = endorse draft by d;
+      perform Publish(e.body, e.subject.title);
+    } else if (d.committed == Revise) {
+      Endorsement<Draft> e = endorse draft by d;
+    }
+  }
+}
+spawn A a; awake a;

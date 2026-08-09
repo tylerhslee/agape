@@ -73,6 +73,30 @@ can internalize selected artifacts into their own private memory:
 Every step appends to the ledger, so the whole run is replayable and the agent's
 competence is literally the fold of its memory.
 
+## Persistent application runtime sessions
+
+Studio owns a registry of live `agape-ts` `RuntimeSession` objects. A session has
+one immutable project subject, lineage ID, session ID, conversation ID, and
+host-verified application-user identity. Prompt turns reuse that exact runtime,
+so ledger ticks and named-memory recording continue instead of restarting a CLI
+process for every message.
+
+A principal gate appends `PendingPrincipalDecision` before the runtime invokes
+Studio's `onConsult` hook. Studio returns that pending state to the client while
+the runtime promise remains blocked. A ruling can resume it only with the opaque
+bearer capability for that session, the current request ID, and the exact pending
+principal. Accepted rulings carry a host HMAC over the session, lineage,
+conversation, project, application user, request, decision, and pending tick;
+the runtime's attester verifier checks every binding. Wrong, stale, duplicate,
+or tampered rulings fail closed.
+
+Studio exposes **action authorization certificates** only after restoring and
+hashing the canonical ledger and independently validating the exact
+`Decided -> Endorsed -> ActionAuthorized -> action` links, typed argument and request
+commitments, receipt sequence, principal attestation, and protected-envelope bindings.
+A certificate proves kernel admission and a committed action attempt; only a separate
+`ToolResolved` row proves that a wired external effector completed.
+
 ## The runner
 
 `Runner` is pluggable. `AgapeTsRunner` shells out to the TypeScript Agape CLI
@@ -88,6 +112,11 @@ internalizes, and writes; it just cannot get execution feedback, and says so.
 | POST | `/learn/step` | run one task through retrieve → write → run → reflect |
 | GET | `/learn/state` | ledger size + per-store counts + recent lessons |
 | GET | `/learn/recall?q=` | `match` the query and return grounded hits (debug the vector store) |
+| POST | `/runtime/sessions` | start one project runtime session and receive its one-time bearer capability |
+| GET | `/runtime/sessions/:id` | inspect the authenticated session, ledger, pending ruling, and validated action authorization certificates |
+| POST | `/runtime/sessions/:id/prompts` | deliver another prompt to the same runtime session |
+| POST | `/runtime/sessions/:id/rulings` | decide or decline the exact pending principal request, then resume that session |
+| POST | `/runtime/sessions/:id/close` | close a quiescent session and its runtime-owned resources |
 
 ## Run / test
 

@@ -1,6 +1,6 @@
 {
-  "passed": 217,
-  "total": 217,
+  "passed": 259,
+  "total": 259,
   "bySection": {
     "00_lexical": {
       "pass": 11,
@@ -27,8 +27,8 @@
       "total": 7
     },
     "06b_world": {
-      "pass": 14,
-      "total": 14
+      "pass": 15,
+      "total": 15
     },
     "06c_delegation": {
       "pass": 31,
@@ -47,8 +47,8 @@
       "total": 6
     },
     "10_memory": {
-      "pass": 11,
-      "total": 11
+      "pass": 45,
+      "total": 45
     },
     "11_control": {
       "pass": 8,
@@ -59,16 +59,16 @@
       "total": 6
     },
     "13_governance": {
-      "pass": 25,
-      "total": 25
+      "pass": 29,
+      "total": 29
     },
     "15_reproducibility": {
       "pass": 2,
       "total": 2
     },
     "16_config": {
-      "pass": 13,
-      "total": 13
+      "pass": 16,
+      "total": 16
     },
     "22_gate": {
       "pass": 14,
@@ -469,6 +469,17 @@
       "directives": []
     },
     {
+      "id": "fn_local_memory_descriptor_reject",
+      "section": "04_functions",
+      "expect": "reject",
+      "pass": true,
+      "reason": "rejected with ParseError",
+      "errorClass": "ParseError",
+      "phase": "parse",
+      "hadMatchers": false,
+      "directives": []
+    },
+    {
       "id": "fn_pure_calls_async_reject",
       "section": "04_functions",
       "expect": "reject",
@@ -522,17 +533,6 @@
     },
     {
       "id": "fn_pure_reaches_seam_reject",
-      "section": "04_functions",
-      "expect": "reject",
-      "pass": true,
-      "reason": "rejected with ColorViolation",
-      "errorClass": "ColorViolation",
-      "phase": "run",
-      "hadMatchers": false,
-      "directives": []
-    },
-    {
-      "id": "fn_pure_store_reject",
       "section": "04_functions",
       "expect": "reject",
       "pass": true,
@@ -821,6 +821,18 @@
     },
     {
       "id": "world_emit_wired_tainted_ok",
+      "section": "06b_world",
+      "expect": "accept",
+      "pass": true,
+      "reason": "accepted + ledger ok",
+      "phase": "run",
+      "hadMatchers": true,
+      "directives": [
+        "manifest"
+      ]
+    },
+    {
+      "id": "world_foreground_action_authorized_accept",
       "section": "06b_world",
       "expect": "accept",
       "pass": true,
@@ -1558,6 +1570,111 @@
       "directives": []
     },
     {
+      "id": "mem_authority_payload_reject",
+      "section": "10_memory",
+      "expect": "reject",
+      "pass": true,
+      "reason": "rejected with TypeError",
+      "errorClass": "TypeError",
+      "phase": "run",
+      "hadMatchers": false,
+      "directives": []
+    },
+    {
+      "id": "mem_clause_order_accept",
+      "section": "10_memory",
+      "expect": "accept",
+      "pass": true,
+      "reason": "accepted + ledger ok",
+      "phase": "run",
+      "hadMatchers": true,
+      "directives": []
+    },
+    {
+      "id": "mem_descriptor_typed_store_recall_accept",
+      "section": "10_memory",
+      "expect": "accept",
+      "pass": true,
+      "reason": "accepted + ledger ok",
+      "phase": "run",
+      "hadMatchers": true,
+      "directives": []
+    },
+    {
+      "id": "mem_duplicate_clause_reject",
+      "section": "10_memory",
+      "expect": "reject",
+      "pass": true,
+      "reason": "rejected with TypeError",
+      "errorClass": "TypeError",
+      "phase": "run",
+      "hadMatchers": false,
+      "directives": []
+    },
+    {
+      "id": "mem_duplicate_name_reject",
+      "section": "10_memory",
+      "expect": "reject",
+      "pass": true,
+      "reason": "rejected with TypeError",
+      "errorClass": "TypeError",
+      "phase": "run",
+      "hadMatchers": false,
+      "directives": []
+    },
+    {
+      "id": "mem_duplicate_scope_reject",
+      "section": "10_memory",
+      "expect": "reject",
+      "pass": true,
+      "reason": "rejected with TypeError",
+      "errorClass": "TypeError",
+      "phase": "run",
+      "hadMatchers": false,
+      "directives": []
+    },
+    {
+      "id": "mem_empty_typed_recall_accept",
+      "section": "10_memory",
+      "expect": "accept",
+      "pass": true,
+      "reason": "accepted + ledger ok",
+      "phase": "run",
+      "hadMatchers": true,
+      "directives": []
+    },
+    {
+      "id": "mem_episodic_equal_writes_receipts_accept",
+      "section": "10_memory",
+      "expect": "accept",
+      "pass": true,
+      "reason": "accepted + ledger ok",
+      "phase": "run",
+      "hadMatchers": true,
+      "directives": []
+    },
+    {
+      "id": "mem_event_binder_member_store_accept",
+      "section": "10_memory",
+      "expect": "accept",
+      "pass": true,
+      "reason": "accepted",
+      "phase": "run",
+      "hadMatchers": false,
+      "directives": []
+    },
+    {
+      "id": "mem_event_binder_member_store_mismatch_reject",
+      "section": "10_memory",
+      "expect": "reject",
+      "pass": true,
+      "reason": "rejected with TypeError",
+      "errorClass": "TypeError",
+      "phase": "run",
+      "hadMatchers": false,
+      "directives": []
+    },
+    {
       "id": "mem_expr_query_no_ledger_event",
       "section": "10_memory",
       "expect": "accept",
@@ -1588,6 +1705,48 @@
       "directives": []
     },
     {
+      "id": "mem_forget_reopen_operations_accept",
+      "section": "10_memory",
+      "expect": "accept",
+      "pass": true,
+      "reason": "accepted + ledger ok",
+      "phase": "run",
+      "hadMatchers": true,
+      "directives": []
+    },
+    {
+      "id": "mem_generic_syntax_reject",
+      "section": "10_memory",
+      "expect": "reject",
+      "pass": true,
+      "reason": "rejected with ParseError",
+      "errorClass": "ParseError",
+      "phase": "parse",
+      "hadMatchers": false,
+      "directives": []
+    },
+    {
+      "id": "mem_inherited_descriptor_access_accept",
+      "section": "10_memory",
+      "expect": "accept",
+      "pass": true,
+      "reason": "accepted",
+      "phase": "run",
+      "hadMatchers": false,
+      "directives": []
+    },
+    {
+      "id": "mem_inherited_descriptor_redeclaration_reject",
+      "section": "10_memory",
+      "expect": "reject",
+      "pass": true,
+      "reason": "rejected with TypeError",
+      "errorClass": "TypeError",
+      "phase": "run",
+      "hadMatchers": false,
+      "directives": []
+    },
+    {
       "id": "mem_ledger_recall_reject",
       "section": "10_memory",
       "expect": "reject",
@@ -1599,7 +1758,93 @@
       "directives": []
     },
     {
-      "id": "mem_recall_after_forget_reject",
+      "id": "mem_legacy_direct_reject",
+      "section": "10_memory",
+      "expect": "reject",
+      "pass": true,
+      "reason": "rejected with TypeError",
+      "errorClass": "TypeError",
+      "phase": "run",
+      "hadMatchers": false,
+      "directives": []
+    },
+    {
+      "id": "mem_legacy_local_initialized_reject",
+      "section": "10_memory",
+      "expect": "reject",
+      "pass": true,
+      "reason": "rejected with TypeError",
+      "errorClass": "TypeError",
+      "phase": "run",
+      "hadMatchers": false,
+      "directives": []
+    },
+    {
+      "id": "mem_local_descriptor_reject",
+      "section": "10_memory",
+      "expect": "reject",
+      "pass": true,
+      "reason": "rejected with ParseError",
+      "errorClass": "ParseError",
+      "phase": "parse",
+      "hadMatchers": false,
+      "directives": []
+    },
+    {
+      "id": "mem_local_shadow_not_store_reject",
+      "section": "10_memory",
+      "expect": "reject",
+      "pass": true,
+      "reason": "rejected with TypeError",
+      "errorClass": "TypeError",
+      "phase": "run",
+      "hadMatchers": false,
+      "directives": []
+    },
+    {
+      "id": "mem_missing_clause_reject",
+      "section": "10_memory",
+      "expect": "reject",
+      "pass": true,
+      "reason": "rejected with TypeError",
+      "errorClass": "TypeError",
+      "phase": "run",
+      "hadMatchers": false,
+      "directives": []
+    },
+    {
+      "id": "mem_modalities_names_no_magic_accept",
+      "section": "10_memory",
+      "expect": "accept",
+      "pass": true,
+      "reason": "accepted + ledger ok",
+      "phase": "run",
+      "hadMatchers": true,
+      "directives": []
+    },
+    {
+      "id": "mem_recall_after_forget_empty",
+      "section": "10_memory",
+      "expect": "accept",
+      "pass": true,
+      "reason": "accepted + ledger ok",
+      "phase": "run",
+      "hadMatchers": true,
+      "directives": []
+    },
+    {
+      "id": "mem_recall_later_scalar_assignment_reject",
+      "section": "10_memory",
+      "expect": "reject",
+      "pass": true,
+      "reason": "rejected with TypeError",
+      "errorClass": "TypeError",
+      "phase": "run",
+      "hadMatchers": false,
+      "directives": []
+    },
+    {
+      "id": "mem_recall_non_text_query_reject",
       "section": "10_memory",
       "expect": "reject",
       "pass": true,
@@ -1621,6 +1866,28 @@
       "directives": []
     },
     {
+      "id": "mem_recall_scalar_action_argument_reject",
+      "section": "10_memory",
+      "expect": "reject",
+      "pass": true,
+      "reason": "rejected with TypeError",
+      "errorClass": "TypeError",
+      "phase": "run",
+      "hadMatchers": false,
+      "directives": []
+    },
+    {
+      "id": "mem_recall_scalar_event_argument_reject",
+      "section": "10_memory",
+      "expect": "reject",
+      "pass": true,
+      "reason": "rejected with TypeError",
+      "errorClass": "TypeError",
+      "phase": "run",
+      "hadMatchers": false,
+      "directives": []
+    },
+    {
       "id": "mem_recall_taint_perform_reject",
       "section": "10_memory",
       "expect": "reject",
@@ -1632,11 +1899,44 @@
       "directives": []
     },
     {
+      "id": "mem_recall_undeclared_handle_reject",
+      "section": "10_memory",
+      "expect": "reject",
+      "pass": true,
+      "reason": "rejected with TypeError",
+      "errorClass": "TypeError",
+      "phase": "run",
+      "hadMatchers": false,
+      "directives": []
+    },
+    {
+      "id": "mem_recall_wrong_binding_reject",
+      "section": "10_memory",
+      "expect": "reject",
+      "pass": true,
+      "reason": "rejected with TypeError",
+      "errorClass": "TypeError",
+      "phase": "run",
+      "hadMatchers": false,
+      "directives": []
+    },
+    {
       "id": "mem_select_boolean_ops_ok",
       "section": "10_memory",
       "expect": "accept",
       "pass": true,
       "reason": "accepted",
+      "phase": "run",
+      "hadMatchers": false,
+      "directives": []
+    },
+    {
+      "id": "mem_store_function_result_type_mismatch_reject",
+      "section": "10_memory",
+      "expect": "reject",
+      "pass": true,
+      "reason": "rejected with TypeError",
+      "errorClass": "TypeError",
       "phase": "run",
       "hadMatchers": false,
       "directives": []
@@ -1662,13 +1962,91 @@
       "directives": []
     },
     {
+      "id": "mem_store_struct_field_type_mismatch_reject",
+      "section": "10_memory",
+      "expect": "reject",
+      "pass": true,
+      "reason": "rejected with TypeError",
+      "errorClass": "TypeError",
+      "phase": "run",
+      "hadMatchers": false,
+      "directives": []
+    },
+    {
+      "id": "mem_store_type_mismatch_reject",
+      "section": "10_memory",
+      "expect": "reject",
+      "pass": true,
+      "reason": "rejected with TypeError",
+      "errorClass": "TypeError",
+      "phase": "run",
+      "hadMatchers": false,
+      "directives": []
+    },
+    {
+      "id": "mem_top_level_descriptor_reject",
+      "section": "10_memory",
+      "expect": "reject",
+      "pass": true,
+      "reason": "rejected with ParseError",
+      "errorClass": "ParseError",
+      "phase": "parse",
+      "hadMatchers": false,
+      "directives": []
+    },
+    {
+      "id": "mem_unknown_modality_reject",
+      "section": "10_memory",
+      "expect": "reject",
+      "pass": true,
+      "reason": "rejected with TypeError",
+      "errorClass": "TypeError",
+      "phase": "run",
+      "hadMatchers": false,
+      "directives": []
+    },
+    {
+      "id": "mem_unknown_retention_reject",
+      "section": "10_memory",
+      "expect": "reject",
+      "pass": true,
+      "reason": "rejected with TypeError",
+      "errorClass": "TypeError",
+      "phase": "run",
+      "hadMatchers": false,
+      "directives": []
+    },
+    {
+      "id": "mem_unknown_scope_reject",
+      "section": "10_memory",
+      "expect": "reject",
+      "pass": true,
+      "reason": "rejected with TypeError",
+      "errorClass": "TypeError",
+      "phase": "run",
+      "hadMatchers": false,
+      "directives": []
+    },
+    {
+      "id": "mem_user_scope_missing_subject_crashes",
+      "section": "10_memory",
+      "expect": "accept",
+      "pass": true,
+      "reason": "accepted + ledger ok",
+      "phase": "run",
+      "hadMatchers": true,
+      "directives": [
+        "manifest"
+      ]
+    },
+    {
       "id": "mem_write_recall_accept",
       "section": "10_memory",
       "expect": "accept",
       "pass": true,
-      "reason": "accepted",
+      "reason": "accepted + ledger ok",
       "phase": "run",
-      "hadMatchers": false,
+      "hadMatchers": true,
       "directives": []
     },
     {
@@ -1817,6 +2195,16 @@
       "errorClass": "TypeError",
       "phase": "run",
       "hadMatchers": false,
+      "directives": []
+    },
+    {
+      "id": "gov_action_authorized_projection_accept",
+      "section": "13_governance",
+      "expect": "accept",
+      "pass": true,
+      "reason": "accepted + ledger ok",
+      "phase": "run",
+      "hadMatchers": true,
       "directives": []
     },
     {
@@ -2077,6 +2465,18 @@
       ]
     },
     {
+      "id": "gov_principal_request_portable_accept",
+      "section": "13_governance",
+      "expect": "accept",
+      "pass": true,
+      "reason": "accepted + ledger ok",
+      "phase": "run",
+      "hadMatchers": true,
+      "directives": [
+        "principal"
+      ]
+    },
+    {
       "id": "gov_raw_subject_to_sink_reject",
       "section": "13_governance",
       "expect": "reject",
@@ -2096,6 +2496,26 @@
       "errorClass": "AuthorityViolation",
       "phase": "run",
       "hadMatchers": false,
+      "directives": []
+    },
+    {
+      "id": "gov_transformed_endorsement_no_action_receipt",
+      "section": "13_governance",
+      "expect": "accept",
+      "pass": true,
+      "reason": "accepted + ledger ok",
+      "phase": "run",
+      "hadMatchers": true,
+      "directives": []
+    },
+    {
+      "id": "gov_unrelated_endorsement_no_action_receipt",
+      "section": "13_governance",
+      "expect": "accept",
+      "pass": true,
+      "reason": "accepted + ledger ok",
+      "phase": "run",
+      "hadMatchers": true,
       "directives": []
     },
     {
@@ -2134,6 +2554,31 @@
       ]
     },
     {
+      "id": "cfg_memory_durable_local_reject",
+      "section": "16_config",
+      "expect": "reject",
+      "pass": true,
+      "reason": "rejected with ConfigError",
+      "errorClass": "ConfigError",
+      "phase": "run",
+      "hadMatchers": false,
+      "directives": [
+        "manifest"
+      ]
+    },
+    {
+      "id": "cfg_memory_markdown_mixed_retention_accept",
+      "section": "16_config",
+      "expect": "accept",
+      "pass": true,
+      "reason": "accepted",
+      "phase": "run",
+      "hadMatchers": false,
+      "directives": [
+        "manifest"
+      ]
+    },
+    {
       "id": "cfg_missing_principal_binding_reject",
       "section": "16_config",
       "expect": "reject",
@@ -2153,6 +2598,16 @@
       "errorClass": "ConfigError",
       "phase": "run",
       "hadMatchers": false,
+      "directives": []
+    },
+    {
+      "id": "cfg_no_implicit_internalization",
+      "section": "16_config",
+      "expect": "accept",
+      "pass": true,
+      "reason": "accepted + ledger ok",
+      "phase": "run",
+      "hadMatchers": true,
       "directives": []
     },
     {

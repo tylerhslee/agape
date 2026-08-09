@@ -199,7 +199,7 @@ describe("the trusted kernel — gate chain", () => {
     expect(etypes(r)).toContain("Endorsed");
     const announce = r.ledger.events.find((e) => e.etype === "Announce");
     expect(announce).toBeDefined();
-    expect(announce!.payload).toEqual(["hello, world"]); // Endorsement<text> coerced to its subject
+    expect(announce!.payload).toMatchObject({ arguments: ["hello, world"] }); // Endorsement<text> coerced to its subject
     expect(etypes(r)).not.toContain("Revised");
   });
 
@@ -352,10 +352,10 @@ describe("structured provider replies", () => {
       `;
       const r = await run(parse(prog), { memoryRoot: dir });
       expect(r.stdout[0]).toBe("Internalized");
-      expect(r.stdout[1]).toMatch(/^blob:sha256:/);
+      expect(r.stdout[1]).toMatch(/^memory-value-v1:[0-9a-f]{64}$/);
       const internalized = r.ledger.events.find((e) => e.etype === "Internalized" && e.subject === "notes");
       expect((internalized?.payload as any)?.effects?.cells?.upserted).toBe(1);
-      expect((internalized?.payload as any)?.effects?.facts?.upserted).toBe(0);
+      expect((internalized?.payload as any)?.operation).toBe("store");
       expect((internalized?.payload as any)?.memory).toBeUndefined();
       expect((internalized?.payload as any)?.value).toBeUndefined();
     } finally {
@@ -390,6 +390,46 @@ describe("the consequential-action rule", () => {
       spawn A a; awake a;
     `;
     await expect(run(parse(prog), {})).rejects.toMatchObject({ cls: "AuthorityViolation" });
+  });
+
+  it("fails closed before a private endorsed field projection reaches an action", async () => {
+    const prog = `
+      enum Verdict { Yes, No }
+      struct Secret { body: text }
+      action Publish(text body);
+      agent A grants { perform Publish } {
+        mem notes {
+          type Secret;
+          modality opaque;
+          scope project;
+          retention session;
+        }
+        on awake {
+          notes <- Secret { body: "private answer" };
+          Secret[] hits = notes -> "answer";
+          Secret candidate = hits[0];
+          Credence<Verdict> c = self <- f"approve \${candidate.body}";
+          Decision<Verdict> d = decide c by confidence 0.8;
+          if (d.committed == Yes) {
+            Endorsement<Secret> e = endorse candidate by d;
+            perform Publish(e.body);
+          }
+          else if (d.committed == No) {
+            Endorsement<Secret> e = endorse candidate by d;
+            perform Publish(e.body);
+          }
+        }
+      }
+      spawn A a; awake a;
+    `;
+    const result = await run(parse(prog), {
+      provider: new MockProvider(() => ({ Yes: 0.9, No: 0.1 })),
+    });
+    const etypes = result.ledger.events.map((event) => event.etype);
+    expect(etypes).toContain("Endorsed");
+    expect(etypes).toContain("AgentCrashed");
+    expect(etypes).not.toContain("Publish");
+    expect(etypes).not.toContain("ActionAuthorized");
   });
 });
 
@@ -453,6 +493,14 @@ describe("the identity dependency fails closed (§13)", () => {
     expect(seq.indexOf("PrincipalDecision")).toBeLessThan(seq.indexOf("Decided"));
     const pending = evt(r, "PendingPrincipalDecision")!;
     const ruling = evt(r, "PrincipalDecision")!;
+    const decided = evt(r, "Decided")!;
+    const endorsed = evt(r, "Endorsed")!;
+    const requestHash = (pending.payload as { request_hash?: string }).request_hash;
+    expect(requestHash).toMatch(/^[0-9a-f]{64}$/);
+    expect((ruling.payload as { request_hash?: string }).request_hash).toBe(requestHash);
+    expect((ruling.payload as { ruled_variant?: string }).ruled_variant).toBe("Approve");
+    expect((decided.payload as { principal_request?: string }).principal_request).toBe(requestHash);
+    expect((endorsed.payload as { principal_request?: string }).principal_request).toBe(requestHash);
     // the PrincipalDecision references the pending receipt's tick as its correlation id
     expect((ruling.payload as { pending?: number }).pending).toBe(pending.tick);
   });
@@ -589,7 +637,7 @@ describe("the prompt sensor opens from its declaration (§5b)", () => {
     expect((principal?.payload as any)?.decision).toBe("Notify");
     expect((principal?.payload as any)?.attestation?.attester).toBe("local-user");
     const notify = r.ledger.events.find((e) => e.etype === "NotifyUser");
-    expect(notify?.payload).toEqual(["send a notification"]);
+    expect(notify?.payload).toMatchObject({ arguments: ["send a notification"] });
   });
 });
 
@@ -650,7 +698,7 @@ describe("manifest-level ingress provenance", () => {
       promptInputs: [{ name: "request", value: "ship it" }],
     });
     const notify = r.ledger.events.find((e) => e.etype === "Notify");
-    expect(notify?.payload).toEqual(["ship it"]);
+    expect(notify?.payload).toMatchObject({ arguments: ["ship it"] });
     expect(r.warnings).toEqual([]);
   });
 

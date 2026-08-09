@@ -2,6 +2,8 @@ import { useState, useEffect, useMemo, useRef } from "react";
 import Editor from "@monaco-editor/react";
 import { registerAgape, AGAPE_LANG_ID } from "../agapeLanguage.js";
 import * as project from "./projectApi.js";
+import RuntimeRunView from "./RuntimeRunView.jsx";
+import { runtimeSessions } from "./runtimeSessionClient.js";
 
 // Monaco options tuned to read like a real IDE: minimap, indent + bracket-pair
 // guides, bracket-pair colorization, sticky scroll, a smooth caret, and ligatures.
@@ -40,6 +42,9 @@ export default function ProjectView({ info, provider, editorPrefs, setEditorPref
   const [result, setResult] = useState(null);
   const [running, setRunning] = useState(false);
   const [msg, setMsg] = useState(null);
+  const [rulingBusy, setRulingBusy] = useState(false);
+  const [rulingError, setRulingError] = useState(null);
+  const [evidenceState, setEvidenceState] = useState({});
   // Provider config is studio-level (Studio -> Settings); consumed here.
   const {
     cognitionProvider = "mock",
@@ -47,6 +52,7 @@ export default function ProjectView({ info, provider, editorPrefs, setEditorPref
     temp = 0,
     openaiTopLogprobs = 5,
   } = provider;
+  const srcRef = useRef("");          // synchronously tracks Monaco edits for save/run commands
   const judgeProvider = judgeProviderForCognition(cognitionProvider);
   const liveProvider = cognitionProvider !== "mock";
   const vim = !!editorPrefs?.vim;
@@ -82,51 +88,101 @@ export default function ProjectView({ info, provider, editorPrefs, setEditorPref
     return { calls, tokIn, tokOut, cost };
   }, [result]);
 
-  // The conversation: what was asked, and the verified answer the system delivered.
-  const convo = useMemo(() => {
-    if (!result || !result.ok) return null;
-    const actions = [...(src || "").matchAll(/^\s*action\s+([A-Za-z_]\w*)/gm)].map((m) => m[1]);
-    const acts = result.events.filter((e) => actions.includes(e.etype));
-    const answer = acts.length ? acts[acts.length - 1] : null;
-    const abstained = result.events.some((e) => e.etype === "Abstained");
-    const rejected = !answer && result.events.some((e) => /reject/i.test(fmtPayload(e.payload)));
-    return { asked: result.asked || {}, answer, abstained, rejected };
-  }, [result, src]);
-
   // Load the selected file's source.
   useEffect(() => {
     if (!sel) return;
     let live = true;
-    project.file(sel).then((d) => { if (live) { setSrc(d.body); setDirty(false); dirtyRef.current = false; } });
+    project.file(sel).then((d) => { if (live) { srcRef.current = d.body; setSrc(d.body); setDirty(false); dirtyRef.current = false; } });
     setResult(null);
     setMsg(null);
+    setRulingError(null);
+    setEvidenceState({});
     return () => { live = false; };
   }, [sel]);
 
   const pickFile = (rel) => setSel(rel);
   const save = async () => {
     if (!sel) return;
-    try { await project.saveFile(sel, src); setDirty(false); dirtyRef.current = false; setMsg({ ok: true, t: "saved" }); }
+    try {
+      if (dirtyRef.current) {
+        await runtimeSessions.reset(info.root || info.name, sel);
+      }
+      const source = srcRef.current;
+      await project.saveFile(sel, source);
+      if (srcRef.current === source) { setDirty(false); dirtyRef.current = false; setMsg({ ok: true, t: "saved" }); }
+      else setMsg({ ok: true, t: "saved previous edit; newer changes remain" });
+    }
     catch (e) { setMsg({ ok: false, t: e.message }); }
   };
   const runIt = async () => {
     if (!sel) return;
     onShowRun?.();           // reveal the run panel (Run space) for the output
     setRunning(true); setMsg(null);
+    let runSource = srcRef.current;
     try {
-      if (dirtyRef.current) await project.saveFile(sel, src); // run what you see
-      const r = await project.run(sel, prompts, {
-        live: liveProvider,
-        cognitionProvider,
-        judgeProvider,
-        samples,
-        temperature: temp,
-        openaiTopLogprobs,
+      if (dirtyRef.current) {
+        await runtimeSessions.reset(info.root || info.name, sel);
+        runSource = srcRef.current;
+        await project.saveFile(sel, runSource);
+      }
+      const entries = Object.entries(prompts).filter(([, value]) => value !== "");
+      let view;
+      if (entries.length === 0) {
+        ({ view } = await runtimeSessions.session(info.root || info.name, sel));
+      } else {
+        for (const [name, value] of entries) {
+          view = await runtimeSessions.sendPrompt(info.root || info.name, sel, { name, value });
+          if (view.state === "pending-ruling") break;
+        }
+      }
+      setResult({
+        ok: true,
+        events: view.ledger,
+        head: view.ledgerHead,
+        stdout: view.stdout,
+        certificates: view.certificates,
+        runtimeView: view,
+        provider: { cognitionProvider, judgeProvider, samples, temp, openaiTopLogprobs },
+        asked: { ...prompts },
       });
-      setResult({ ...r, provider: { cognitionProvider, judgeProvider, samples, temp, openaiTopLogprobs }, asked: { ...prompts } });
-      setDirty(false); dirtyRef.current = false;
-    } catch (e) { setResult({ ok: false, error: e.message }); }
+      if (srcRef.current === runSource) { setDirty(false); dirtyRef.current = false; }
+      setRulingError(null);
+    } catch (e) { setResult({ ok: false, error: e.message, class: e.code }); }
     setRunning(false);
+  };
+
+  const rule = async (outcome, decision) => {
+    const view = result?.runtimeView;
+    if (!sel || !view?.pending) return;
+    setRulingBusy(true);
+    setRulingError(null);
+    try {
+      const next = await runtimeSessions.rule(info.root || info.name, sel, view.pending, outcome, decision);
+      setResult((current) => ({
+        ...current,
+        events: next.ledger,
+        head: next.ledgerHead,
+        stdout: next.stdout,
+        certificates: next.certificates,
+        runtimeView: next,
+      }));
+    } catch (error) {
+      setRulingError({ message: error.message, code: error.code });
+    } finally {
+      setRulingBusy(false);
+    }
+  };
+
+  const inspectEvidence = async ({ decisionId, evidenceRef }) => {
+    if (!sel) return;
+    const key = `${decisionId}:${evidenceRef}`;
+    setEvidenceState((current) => ({ ...current, [key]: { loading: true } }));
+    try {
+      const evidence = await runtimeSessions.inspectEvidence(info.root || info.name, sel, evidenceRef, decisionId);
+      setEvidenceState((current) => ({ ...current, [key]: { evidence } }));
+    } catch (error) {
+      setEvidenceState((current) => ({ ...current, [key]: { error: { message: error.message, code: error.code } } }));
+    }
   };
 
   // Keep the Vim ex-commands bound to the freshest closures.
@@ -215,22 +271,16 @@ export default function ProjectView({ info, provider, editorPrefs, setEditorPref
           <div className="pj-dim" style={{ padding: 12 }}>▶ Run to see the LLM calls, cost, and the ledger - the append-only log of everything the agents do.</div>
         ) : result.ok ? (
           <>
-            <div className="pj-qa">
-              {Object.entries(convo.asked).filter(([, v]) => v).map(([k, v]) => (
-                <div key={k} className="pj-msg-row"><span className="pj-who you">you</span><span className="pj-bubble">{v}</span></div>
-              ))}
-              {convo.answer ? (
-                <div className="pj-msg-row">
-                  <span className="pj-who agape">agape</span>
-                  <span className="pj-bubble"><span className="pj-verified">✓ verified</span>{fmtPayload(convo.answer.payload)}</span>
-                </div>
-              ) : (
-                <div className="pj-msg-row">
-                  <span className="pj-who warn">agape</span>
-                  <span className="pj-bubble pj-dim">{convo.abstained ? "abstained — the gate couldn't commit, no answer delivered" : convo.rejected ? "rejected — the answer failed fact-check, not delivered" : "no answer delivered"}</span>
-                </div>
-              )}
-            </div>
+            <RuntimeRunView
+              view={result.runtimeView}
+              asked={result.asked}
+              rulingBusy={rulingBusy}
+              rulingError={rulingError}
+              onRule={rule}
+              evidenceState={evidenceState}
+              onInspectEvidence={inspectEvidence}
+              SpineRow={SpineRow}
+            />
 
             <div className="pj-section-h">under the hood</div>
             <div className="pj-metrics">
@@ -250,9 +300,6 @@ export default function ProjectView({ info, provider, editorPrefs, setEditorPref
               </div>
             ))}
 
-            <div className="pj-section-h">ledger</div>
-            {result.events.map((e, i) => <SpineRow key={i} e={e} />)}
-            <div className="pj-dim" style={{ padding: "8px 12px" }}>{result.events.length} events · {result.head?.slice(0, 16)}</div>
           </>
         ) : (
           <div className="pj-err">✗ {result.class ? result.class + ": " : ""}{result.error}</div>
@@ -268,7 +315,7 @@ export default function ProjectView({ info, provider, editorPrefs, setEditorPref
         <main className="pj-editor">
           {sel ? (
             <Editor height="100%" language={AGAPE_LANG_ID} theme="agape-dark" path={sel} value={src}
-              onChange={(v) => { setSrc(v ?? ""); setDirty(true); dirtyRef.current = true; }}
+              onChange={(v) => { const next = v ?? ""; srcRef.current = next; setSrc(next); setDirty(true); dirtyRef.current = true; }}
               beforeMount={registerAgape} onMount={onEditorMount} options={EDITOR_OPTIONS} />
           ) : (
             <div className="pj-empty">
@@ -443,7 +490,27 @@ const STYLE = `
 .pj-who{flex:none;width:46px;font:600 10px var(--mono);text-transform:uppercase;letter-spacing:.3px;padding-top:6px}
 .pj-who.you{color:var(--accent)}.pj-who.agape{color:var(--ok)}.pj-who.warn{color:var(--warn)}
 .pj-bubble{flex:1;background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:8px 11px;font-size:13px;line-height:1.5;white-space:pre-wrap;word-break:break-word}
-.pj-verified{display:inline-block;font:600 10px var(--mono);color:var(--ok);background:rgba(63,185,80,.14);border-radius:5px;padding:1px 6px;margin-right:7px;vertical-align:1px}
+.pj-certificate-state{display:inline-block;font:600 10px var(--mono);color:var(--ok);background:rgba(63,185,80,.14);border-radius:5px;padding:1px 6px;margin-right:7px;vertical-align:1px}
+.pj-output-provenance{display:block;color:var(--muted);font:600 10px var(--mono);letter-spacing:.02em;margin-bottom:4px;text-transform:uppercase}
+.pj-certificate-state.is-qualified,.pj-certificate-state.is-abstained,.pj-certificate-state.is-rejected{color:var(--warn);background:rgba(210,153,34,.14)}
+.pj-certificate-state.is-noverifiableclaims{color:var(--accent);background:var(--accent-soft)}
+.pj-proof-note{margin:0 12px 8px;padding:7px 9px;border-left:2px solid var(--accent);background:var(--surface-2);color:var(--muted);font-size:11px}
+.pj-certificate,.pj-evidence{margin:0 12px 8px;padding:8px 9px;border:1px solid var(--border-soft);border-radius:var(--radius-sm);background:var(--surface-2);font:11px/1.5 var(--mono)}
+.pj-certificate{display:flex;flex-wrap:wrap;gap:5px 12px}
+.pj-ruling{margin:0 12px 10px;padding:10px;border:1px solid var(--warn);border-radius:var(--radius-sm);background:rgba(210,153,34,.08)}
+.pj-ruling-title{font:600 12px var(--mono);color:var(--warn);margin-bottom:5px}
+.pj-ruling-meta{font:11px var(--mono);color:var(--muted)}
+.pj-ruling-scores{display:flex;flex-wrap:wrap;gap:8px;margin:6px 0;font:11px var(--mono)}
+.pj-ruling-actions{display:flex;gap:6px}.pj-ruling-actions button{padding:3px 8px;font-size:11px}
+.pj-ruling-error,.pj-evidence-error{margin-top:7px;color:var(--err);font:11px var(--mono)}
+.pj-evidence-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.pj-evidence-head button{padding:3px 8px;font-size:10px}
+.pj-evidence-state{margin-top:7px;color:var(--muted)}
+.pj-evidence-detail{margin-top:8px;border-top:1px solid var(--border-soft);padding-top:8px}
+.pj-evidence-thresholds{display:grid;grid-template-columns:1fr 1fr;gap:3px 8px}
+.pj-evidence-candidate{margin-top:8px;padding-top:7px;border-top:1px solid var(--border-soft)}
+.pj-evidence-candidate>code{display:block;margin:4px 0;color:var(--text);white-space:pre-wrap;word-break:break-word}
+.pj-evidence-tokens{display:flex;flex-wrap:wrap;gap:4px 10px;color:var(--muted)}
 .pj-metrics{display:flex;gap:8px;padding:10px 12px 4px}
 .pj-metric{flex:1;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:7px 6px;text-align:center;display:flex;flex-direction:column;gap:1px}
 .pj-metric b{font:600 15px var(--mono);color:var(--text)}

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as project from "./projectApi.js";
 import { FLOW_KINDS, canvasBounds, changedFields, edgePath, kindIcon, layoutFlow, visibleFlow } from "./flowModel.js";
+import { runtimeSessions } from "./runtimeSessionClient.js";
 
 function positionKey(rel) { return `agape.flow.positions:${rel}`; }
 function loadPositions(rel) {
@@ -56,17 +57,51 @@ export default function FlowBuilder({ info, onOpenCode }) {
 
   const save = async () => {
     if (!document || !changes.length) return;
+    const submitted = new Map(changes.map((change) => [`${change.nodeId}:${change.field}`, change.value]));
     setState({ phase: "saving", message: `Saving ${changes.length} change${changes.length === 1 ? "" : "s"}…` });
     try {
+      await runtimeSessions.reset(info.root || info.name, rel);
       const next = await project.saveFlow(rel, document.revision, changes);
       setDocument(next);
-      setDraft({});
+      setDraft((current) => {
+        const remaining = { ...current };
+        for (const [key, value] of submitted) {
+          if (Object.is(current[key], value)) delete remaining[key];
+        }
+        return remaining;
+      });
       setSelected((id) => next.nodes.some((node) => node.id === id) ? id : next.nodes[0]?.id || null);
       setState({ phase: "saved", message: "Saved to Agape source" });
     } catch (error) {
       const suffix = error.code === "stale_revision" ? " Reload before saving again." : "";
       setState({ phase: "error", message: `${error.message}${suffix}`, diagnostics: error.diagnostics || [] });
     }
+  };
+
+  const saveStructure = async (patch) => {
+    if (!document || !patch) return;
+    if (changes.length) {
+      setState({ phase: "error", message: "Save or reload property drafts before applying a structural source patch." });
+      return;
+    }
+    setState({ phase: "saving", message: "Checking structural source patch…" });
+    try {
+      await runtimeSessions.reset(info.root || info.name, rel);
+      const next = await project.saveFlowStructure(rel, document.revision, patch);
+      setDocument(next);
+      setSelected((id) => next.nodes.some((node) => node.id === id) ? id : next.nodes[0]?.id || null);
+      setPositions((current) => ({ ...layoutFlow(next.nodes, next.edges), ...current }));
+      setState({ phase: "saved", message: "Compiled and saved to Agape source", sourceDiff: next.sourceDiff || "" });
+    } catch (error) {
+      const suffix = error.code === "stale_revision" ? " Reload before editing again." : "";
+      setState({ phase: "error", message: `${error.message}${suffix}`, diagnostics: error.diagnostics || [] });
+    }
+  };
+
+  const createAgent = () => {
+    if (!document?.capabilities?.createNodes) return;
+    const name = window.prompt("New agent identifier");
+    if (name) saveStructure({ op: "create_agent", name: name.trim() });
   };
 
   const resetLayout = () => {
@@ -80,7 +115,7 @@ export default function FlowBuilder({ info, onOpenCode }) {
       <header className="flow-toolbar">
         <div className="flow-title">
           <span className="flow-title-icon"><i className="ti ti-route" /></span>
-          <div><b>Agentic flow</b><span>Property edits rewrite <code>.ag</code>; dragging arranges this canvas only.</span></div>
+          <div><b>Agentic flow</b><span>Properties and explicit port drops rewrite <code>.ag</code>; dragging a card header arranges only this canvas.</span></div>
         </div>
         <label className="flow-file-select">
           <span>Program</span>
@@ -89,6 +124,7 @@ export default function FlowBuilder({ info, onOpenCode }) {
           </select>
         </label>
         <div className="flow-toolbar-actions">
+          <button onClick={createAgent} disabled={!document?.capabilities?.createNodes || state.phase === "saving"}><i className="ti ti-robot-plus" /> New agent</button>
           <button onClick={() => load()} disabled={!rel || state.phase === "loading"}><i className="ti ti-refresh" /> Reload</button>
           <button onClick={onOpenCode}><i className="ti ti-code" /> Open code</button>
           <button className="primary" onClick={save} disabled={!changes.length || state.phase === "saving" || document?.readOnly}>
@@ -108,6 +144,7 @@ export default function FlowBuilder({ info, onOpenCode }) {
                   {(state.diagnostics || document.diagnostics || []).slice(0, 2).map((d, index) => <em key={index}>{d.message}</em>)}
                 </div>
               )}
+              {state.sourceDiff && <details className="flow-source-diff"><summary>Source diff</summary><pre>{state.sourceDiff}</pre></details>}
               <div className="flow-workspace">
                 <aside className="flow-filter-panel">
                   <label className="flow-search"><i className="ti ti-search" /><input aria-label="Search flow" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search this flow…" /></label>
@@ -129,21 +166,22 @@ export default function FlowBuilder({ info, onOpenCode }) {
                   <div className="flow-capabilities">
                     <b>Safe edit scope</b>
                     <span>{document.capabilities?.editProperties ? 'Unlocked prompt text, thresholds, and literal say templates rewrite source when saved.' : 'This flow is inspect-only.'}</span>
-                    <span>Drag cards to arrange this canvas. Creating, deleting, reconnecting, or reordering the program remains Code-only.</span>
+                    <span>Card headers move layout only. Drag an output port onto an explicit compatible input port to reconnect; drag a step handle onto another step to reorder.</span>
+                    <span>Unsupported argument synthesis, dependency-bearing deletion, and ambiguous AST shapes remain Code-only.</span>
                   </div>
                 </aside>
 
                 <FlowCanvas nodes={filtered.nodes} edges={filtered.edges} positions={displayPositions} setPositions={setPositions}
-                  rel={rel} selected={selected} setSelected={setSelected} bounds={bounds} compact={compact} draggable={!filteredActive} />
+                  rel={rel} selected={selected} setSelected={setSelected} bounds={bounds} compact={compact} draggable={!filteredActive} onStructuralPatch={saveStructure} />
 
-                <Inspector node={selectedNode} draft={draft} setDraft={setDraft} documentReadOnly={document.readOnly} />
+                <Inspector node={selectedNode} draft={draft} setDraft={setDraft} documentReadOnly={document.readOnly || state.phase === "saving"} capabilities={document.capabilities} onStructuralPatch={saveStructure} />
               </div>
             </>}
     </div>
   );
 }
 
-function FlowCanvas({ nodes, edges, positions, setPositions, rel, selected, setSelected, bounds, compact, draggable = true }) {
+function FlowCanvas({ nodes, edges, positions, setPositions, rel, selected, setSelected, bounds, compact, draggable = true, onStructuralPatch = () => {} }) {
   const drag = useRef(null);
   const move = (event) => {
     if (!drag.current) return;
@@ -166,7 +204,14 @@ function FlowCanvas({ nodes, edges, positions, setPositions, rel, selected, setS
         {nodes.map((node) => {
           const p = positions[node.id] || { x: 42, y: 42 };
           return <article key={node.id} data-kind={node.kind} className={'flow-node ' + (selected === node.id ? 'selected ' : '') + (compact ? 'compact ' : '') + (draggable ? '' : 'locked-layout')}
-            style={{ transform: `translate(${p.x}px, ${p.y}px)` }} onClick={() => setSelected(node.id)}>
+            style={{ transform: `translate(${p.x}px, ${p.y}px)` }} onClick={() => setSelected(node.id)} onDragOver={(event) => {
+              if (event.dataTransfer.types.includes("application/x-agape-flow-structure")) event.preventDefault();
+            }} onDrop={(event) => {
+              const payload = readStructuralDrag(event);
+              if (payload?.mode === "reorder" && payload.nodeId !== node.id && isStructuralStep(node)) {
+                event.preventDefault(); onStructuralPatch({ op: "reorder_step", nodeId: payload.nodeId, beforeNodeId: node.id });
+              }
+            }}>
             <div className='flow-node-head' title={draggable ? 'Drag to arrange this canvas' : 'Clear filters or focus mode to arrange the canvas'} onPointerDown={(event) => {
               if (!draggable) return;
               event.currentTarget.setPointerCapture(event.pointerId);
@@ -174,11 +219,29 @@ function FlowCanvas({ nodes, edges, positions, setPositions, rel, selected, setS
               setSelected(node.id);
             }}>
               <span><i className={`ti ${kindIcon(node.kind)}`} />{node.kind}</span>
-              {node.readOnly && <i className="ti ti-lock" title={node.readOnlyReason || "Read-only construct"} />}
+              <span className="flow-node-tools">
+                {isStructuralStep(node) && <i className="ti ti-arrows-sort flow-reorder-handle" draggable="true" title="Drag onto another source-backed step to reorder" onPointerDown={(event) => event.stopPropagation()} onDragStart={(event) => writeStructuralDrag(event, { mode: "reorder", nodeId: node.id })} />}
+                {node.readOnly && <i className="ti ti-lock" title={node.readOnlyReason || "Read-only construct"} />}
+              </span>
             </div>
             <b className="flow-node-label">{node.label}</b>
             {!compact && <div className="flow-node-fields">{(node.fields || []).slice(0, 2).map((field) => <span key={field.key}><em>{field.label}</em>{String(field.value ?? "") || "—"}</span>)}</div>}
-            <span className="flow-port in" /><span className="flow-port out" />
+            <span className="flow-port in" title="Drop an explicit structural connection here" onDragOver={(event) => { event.preventDefault(); event.stopPropagation(); }} onDrop={(event) => {
+              event.preventDefault(); event.stopPropagation();
+              const payload = readStructuralDrag(event);
+              const source = nodes.find((candidate) => candidate.id === payload?.nodeId);
+              let patch = connectionPatch(source, node);
+              if (patch?.op === "add_handoff" && patch.handoff === "message") {
+                const message = window.prompt("Text payload for this message handoff");
+                if (message === null) return;
+                patch = { ...patch, message };
+              }
+              if (patch) onStructuralPatch(patch);
+            }} />
+            <span className="flow-port out" draggable={isConnectionSource(node) ? "true" : undefined} title={isConnectionSource(node) ? "Drag onto a compatible input port to rewrite source" : "Visual output port"} onDragStart={(event) => {
+              if (!isConnectionSource(node)) return;
+              event.stopPropagation(); writeStructuralDrag(event, { mode: "connect", nodeId: node.id });
+            }} />
           </article>;
         })}
       </div>
@@ -186,13 +249,17 @@ function FlowCanvas({ nodes, edges, positions, setPositions, rel, selected, setS
   );
 }
 
-function Inspector({ node, draft, setDraft, documentReadOnly }) {
+function Inspector({ node, draft, setDraft, documentReadOnly, capabilities = {}, onStructuralPatch = () => {} }) {
   if (!node) return <aside className="flow-inspector"><Empty icon="ti-click" title="Select a construct" detail="Inspect its properties and safe edit surface." /></aside>;
   return <aside className="flow-inspector">
     <div className="flow-inspector-head"><span data-kind={node.kind}><i className={`ti ${kindIcon(node.kind)}`} />{node.kind}</span><b>{node.label}</b><code>{node.id}</code></div>
     <div className="flow-inspector-body">
       {node.readOnly && <div className='flow-readonly'><i className='ti ti-lock' /><b>Visible, not editable</b><span>{node.readOnlyReason || 'This construct is compiler-derived and must be edited in Code.'}</span></div>}
       {!node.readOnly && !node.fields?.length && <div className='flow-readonly'><i className='ti ti-lock' /><b>Visible, not editable</b><span>This construct has no safe source-preserving properties yet.</span></div>}
+      <div className="flow-structural-actions">
+        {capabilities.deleteNodes && node.metadata?.compilerMeta?.deletable === true && <button onClick={() => onStructuralPatch({ op: "delete_agent", nodeId: node.id })}><i className="ti ti-trash" /> Delete unreferenced agent</button>}
+        {isStructuralStep(node) && <button onClick={() => onStructuralPatch({ op: "remove_handoff", nodeId: node.id })}><i className="ti ti-unlink" /> Remove handoff</button>}
+      </div>
       {(node.fields || []).map((field) => {
         const key = `${node.id}:${field.key}`;
         const value = Object.prototype.hasOwnProperty.call(draft, key) ? draft[key] : field.value;
@@ -215,4 +282,43 @@ function Empty({ icon, title, detail, action }) {
   return <div className="flow-empty"><i className={`ti ${icon}`} /><b>{title}</b><span>{detail}</span>{action}</div>;
 }
 
-export { FlowCanvas, Inspector };
+function isStructuralStep(node) {
+  return Boolean(node?.metadata?.compilerMeta?.invocation) && ["event", "action", "message"].includes(node.kind);
+}
+function isConnectionSource(node) {
+  return node?.kind === "agent" || isStructuralStep(node);
+}
+function declarationTarget(node) {
+  if (node?.metadata?.compilerMeta?.declaration) return { handoff: node.metadata.compilerMeta.handoffKind, target: node.metadata.compilerMeta.name };
+  const compilerId = node?.metadata?.compilerNodeId || "";
+  if (node?.kind === "agent" && compilerId.startsWith("agent:")) return { handoff: "message", target: compilerId.slice(6) };
+  return null;
+}
+
+function connectionPatch(source, target) {
+  const destination = declarationTarget(target);
+  if (!source || !destination) return null;
+  if (source.kind === "agent" && (destination.handoff === "event" || destination.handoff === "action")) {
+    return { op: "add_handoff", contextNodeId: source.id, handoff: destination.handoff, target: destination.target };
+  }
+  if (source.kind === "agent" && destination.handoff === "message") {
+    const compilerId = source.metadata?.compilerNodeId || "";
+    if (!compilerId.startsWith("agent:")) return null;
+    return { op: "add_handoff", contextNodeId: `instance:${compilerId.slice(6)}`, handoff: "message", target: destination.target };
+  }
+  if (!isStructuralStep(source)) return null;
+  const sourceKind = source.metadata.compilerMeta.handoffKind;
+  if (sourceKind !== destination.handoff) return null;
+  return { op: "reconnect_handoff", nodeId: source.id, target: destination.target };
+}
+
+function writeStructuralDrag(event, payload) {
+  event.dataTransfer.setData("application/x-agape-flow-structure", JSON.stringify(payload));
+  event.dataTransfer.effectAllowed = "move";
+}
+function readStructuralDrag(event) {
+  try { return JSON.parse(event.dataTransfer.getData("application/x-agape-flow-structure") || "null"); }
+  catch { return null; }
+}
+
+export { FlowCanvas, Inspector, connectionPatch };

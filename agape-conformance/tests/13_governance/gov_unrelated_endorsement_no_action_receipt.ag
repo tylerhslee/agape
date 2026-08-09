@@ -1,0 +1,23 @@
+//! id:        gov_unrelated_endorsement_no_action_receipt
+//! section:   13_governance
+//! expect:    accept
+//! contains:  Endorsed; Log
+//! absent:    ActionAuthorized
+//! spec:      §13, §14 (an unrelated earlier endorsement never certifies a literal-only consequential action)
+//! ---
+enum Verdict { Accept, Reject }
+action Log(text body);
+agent A grants { perform Log } {
+  on awake {
+    text draft = "reviewed";
+    Credence<Verdict> c = self <- f"accept: ${draft}";
+    Decision<Verdict> d = decide c by confidence 0.5;
+    if (d.committed == Accept) {
+      Endorsement<text> e = endorse draft by d;
+      perform Log("literal");
+    } else if (d.committed == Reject) {
+      Endorsement<text> e = endorse draft by d;
+    }
+  }
+}
+spawn A a; awake a;

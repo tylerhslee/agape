@@ -26,7 +26,7 @@ key — so integration/E2E tests assert *exact* outputs without flakiness.
 | # | User journey | Layer · test |
 |---|---|---|
 | J1 | Open the studio → see my agents & sensors | integration `lists the scaffolded project's agents`; unit `agentsAndPrompts` |
-| J2 | Ask a question → get a **verified** answer | integration `runs a program … delivers a verified answer`; E2E `marquee` |
+| J2 | Ask a question → get an authorized response; show a certificate only when its exact typed ledger links validate | integration `runs a one-shot program with a runtime endorsement and action`; E2E `marquee` |
 | J3 | A program that fails the static checks → a clear error, no crash | integration `reports a static rejection as ok:false` |
 | J4 | Edit an agent → save → re-run | E2E (planned); backend `POST /project/file` covered by J3's save |
 | J5 | Turn on 🧠 Claude / tune samples-temp | E2E (planned); backend wiring in `runProjectFile` |
@@ -36,6 +36,10 @@ key — so integration/E2E tests assert *exact* outputs without flakiness.
 | J9 | `agape studio` from a packaged bundle serves the app | bundle smoke `studio-smoke.sh` |
 | J10 | Open a visual flow → edit a literal prompt/gate → compile-check and save; stale/unsafe edits leave source untouched | unit flow-model.test.ts; integration flow-server.integration.test.ts; web component FlowBuilder.test.jsx |
 | J11 | Open Code -> Monaco loads -> edit and save the attached .ag file | E2E open Code -> edit and save through Monaco |
+| J12 | Keep one runtime conversation across turns → pause at a principal gate → approve/deny/decline with the exact capability → reject stale, wrong-principal, and duplicate rulings fail-closed | unit `runtime-session.test.ts`, `runtimeSessionClient.test.js`, `RuntimeRunView.test.jsx`; integration `pauses and resumes the same runtime session through an authenticated principal ruling` |
+| J13 | Drag an explicit typed flow port or step target → produce a structured source patch → compile and atomically persist; invalid type, authority, cycle, or stale revision leaves source untouched | unit `flow-structural-edit.test.ts`, `FlowStructuralEditor.test.jsx`; integration `flow-server.integration.test.ts` |
+| J14 | Inspect exact logprob evidence → authenticate the protected reference against the exact Decided receipt and decision id → show thresholds, margins, candidates, and tokens; tampered/cross-decision references fail closed | unit `runtime-session.test.ts`, `runtimeSessionClient.test.js`, `RuntimeRunView.test.jsx`; integration protected-evidence session route |
+| J15 | Read response outcomes without invented proof → show an action authorization certificate after exact receipt validation regardless of application outcome label; withhold it for stdout prose or an absent/unlinked action | unit `RuntimeRunView.test.jsx`; E2E repository fact-checker withholding journey |
 
 `(planned)` = not yet automated; tracked here so the gap is visible, not implied.
 

@@ -31,6 +31,11 @@ describe("Agape flow model", () => {
     const decision = doc.nodes.find((node) => node.kind === "decision");
     expect(decision?.fields.find((field) => field.key === "threshold")?.value).toBe(0.8);
     expect(doc.nodes.every((node) => Array.isArray(node.fields) && Number.isFinite(node.position.x))).toBe(true);
+    expect(doc.nodes.find((node) => node.id === "agent:FactChecker")?.metadata?.compilerMeta?.deletable).toBe(true);
+    const referenced = buildFlowDocument("referenced.ag", SOURCE + "\nspawn FactChecker checker;\n");
+    expect(referenced.nodes.find((node) => node.id === "agent:FactChecker")?.metadata?.compilerMeta?.deletable).toBe(false);
+    const detached = buildFlowDocument("detached.ag", "agent Detached {}\n");
+    expect(detached.nodes.find((node) => node.id === "agent:Detached")?.metadata?.compilerMeta?.deletable).toBe(true);
     const ids = new Set(doc.nodes.map((node) => node.id));
     expect(doc.edges.every((edge) => ids.has(edge.source) && ids.has(edge.target))).toBe(true);
   });
@@ -64,5 +69,44 @@ describe("Agape flow model", () => {
     expect(node).toBeTruthy();
     expect(node?.readOnly).toBe(true);
     expect(doc.diagnostics).toEqual(expect.arrayContaining([expect.objectContaining({ code: "computed_prompt_read_only", nodeId: node?.id })]));
+  });
+
+  it("never exposes a named-memory store as a reconnectable message handoff", () => {
+    const source = `agent Archivist {
+      mem notes {
+        type text;
+        modality semantic;
+        scope project;
+        retention durable;
+      }
+      on awake {
+        notes <- "remember this";
+      }
+    }
+    spawn Archivist archivist;
+    awake archivist;
+    `;
+    const doc = buildFlowDocument("memory.ag", source);
+    expect(doc.nodes.filter((node) => node.kind === "message")).toHaveLength(0);
+    expect(doc.edges.filter((edge) => edge.kind.startsWith("handoff:"))).toHaveLength(0);
+
+    const crossAgent = buildFlowDocument("scoped-memory.ag", `
+      agent Reviewer {}
+      agent Archivist {
+        mem reviewer {
+          type text;
+          modality semantic;
+          scope project;
+          retention durable;
+        }
+      }
+      agent Sender(Reviewer reviewer) grants { reach Reviewer } {
+        on awake { reviewer <- "review this"; }
+      }
+      spawn Reviewer reviewer_instance;
+      spawn Sender sender(reviewer_instance);
+      awake sender;
+    `);
+    expect(crossAgent.nodes.filter((node) => node.kind === "message")).toHaveLength(1);
   });
 });

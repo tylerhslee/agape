@@ -1,0 +1,25 @@
+//! id:        world_foreground_action_authorized_accept
+//! section:   06b_world
+//! expect:    accept
+//! order:     Decided; Endorsed; Ask; ActionAuthorized; ToolStarted(t1); ToolResolved(t1); Answer
+//! manifest:  tools.t1.driver=mock; actions.Ask.tool=t1; actions.Ask.result_event=Answer
+//! spec:      §6b, §13 (a result-bound perform records its authorization receipt before invoking the wired effector)
+//! ---
+enum Verdict { AskNow, Wait }
+event Answer(text body);
+action Ask(text q);
+agent A grants { perform Ask } {
+  on awake {
+    text query = "prior art";
+    Credence<Verdict> c = self <- f"search now: ${query}";
+    Decision<Verdict> d = decide c by confidence 0.5;
+    if (d.committed == AskNow) {
+      Endorsement<text> e = endorse query by d;
+      text hits = perform Ask(e) expires 5;
+      say(hits);
+    } else if (d.committed == Wait) {
+      Endorsement<text> e = endorse query by d;
+    }
+  }
+}
+spawn A a; awake a;

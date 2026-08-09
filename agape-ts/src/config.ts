@@ -6,10 +6,11 @@
 // the sampling fallback (§16.8). Secrets come from the environment, never the manifest.
 
 import { existsSync, readFileSync } from "node:fs";
-import { MockProvider, type CognitionContext, type Provider, type StructuredSchema, type Variant } from "./runtime.js";
+import { MockProvider, type CognitionContext, type Provider, type ProviderJudgment, type StructuredSchema, type Variant } from "./runtime.js";
 import { configError } from "./errors.js";
 import { LocalMemoryDriver, type MemoryDriver } from "./memory.js";
 import { MarkdownMemoryDriver } from "./memory_markdown.js";
+import type { JudgmentEvidence } from "./protected_evidence.js";
 
 export interface ProviderConfig {
   backend: "mock" | "anthropic" | "openai" | "gemini" | string;
@@ -19,6 +20,10 @@ export interface ProviderConfig {
   sampling_fallback?: boolean; // default true
   fallback_samples?: number; // min 10
   fallback_temperature?: number;
+  preserve_judgment_evidence?: boolean;
+  evidence_candidates?: number;
+  evidence_top_logprobs?: number;
+  evidence_max_tokens?: number;
 }
 export interface ProviderSecrets {
   openaiApiKey?: string;
@@ -72,6 +77,9 @@ export interface SecurityConfig {
   // implementation-defined verifier) enforces the attester-match check at the identity seam (§16.4).
   attesters?: Record<string, BindingConfig>;
 }
+export interface ProfilesConfig {
+  advertised?: string[];
+}
 export interface Manifest {
   provider: ProviderConfig;
   project?: Record<string, ManifestValue>;
@@ -90,6 +98,7 @@ export interface Manifest {
   security?: SecurityConfig;
   // §17.2 — decision policy lives in SOURCE, never the manifest; any `policy.*` key here is a ConfigError.
   policy?: Record<string, ManifestValue>;
+  profiles?: ProfilesConfig;
 }
 
 export function loadManifest(path?: string, backendOverride?: string): Manifest {
@@ -108,6 +117,17 @@ export function loadManifest(path?: string, backendOverride?: string): Manifest 
   }
   applyProviderDefaults(raw);
   applySecurityDefaults(manifest);
+  const advertisedValue = manifest.profiles?.advertised;
+  if (advertisedValue !== undefined && (!Array.isArray(advertisedValue) || !advertisedValue.every((profile) => typeof profile === "string"))) {
+    throw configError("[profiles].advertised must be an array of profile names");
+  }
+  const advertised = advertisedValue ?? [];
+  if (advertised.includes("studio-fact-checker")) {
+    if (raw.backend !== "openai" || raw.exposes_logprobs !== true) {
+      throw configError("the studio-fact-checker profile requires an OpenAI-compatible connector with logprobs");
+    }
+    raw.preserve_judgment_evidence = true;
+  }
   return manifest;
 }
 
@@ -227,6 +247,11 @@ function setManifestValue(manifest: Manifest, tablePath: string[], keyPath: stri
   if (table === "project" || table === "memory" || table === "runtime" || table === "policy") {
     const group = manifest[table] ?? (manifest[table] = {});
     group[first] = value as ManifestValue;
+    return;
+  }
+  if (table === "profiles") {
+    const group = manifest.profiles ?? (manifest.profiles = {});
+    (group as unknown as Record<string, unknown>)[first] = value;
     return;
   }
   if (table === "security") {
@@ -359,6 +384,22 @@ function matchVariant(text: string, variants: Variant[]): Variant {
   return "";
 }
 
+function exactStructuredVariant(text: string, variants: Variant[]): Variant | null {
+  const exact = text.trim();
+  if (variants.includes(exact)) return exact;
+  try {
+    const decoded = JSON.parse(exact) as unknown;
+    const value = typeof decoded === "string"
+      ? decoded
+      : decoded !== null && typeof decoded === "object" && !Array.isArray(decoded)
+        ? (decoded as Record<string, unknown>).value
+        : undefined;
+    return typeof value === "string" && variants.includes(value) ? value : null;
+  } catch {
+    return null;
+  }
+}
+
 function freqOf(choices: Variant[], variants: Variant[]): Record<Variant, number> {
   const counts: Record<Variant, number> = {};
   for (const v of variants) counts[v] = 0;
@@ -367,6 +408,14 @@ function freqOf(choices: Variant[], variants: Variant[]): Record<Variant, number
   const scores: Record<Variant, number> = {};
   for (const v of variants) scores[v] = (counts[v] ?? 0) / n;
   return scores;
+}
+
+function boundedInteger(value: unknown, fallback: number, minimum: number, maximum: number): number {
+  const resolved = value === undefined ? fallback : value;
+  if (!Number.isSafeInteger(resolved) || (resolved as number) < minimum || (resolved as number) > maximum) {
+    throw configError(`provider evidence bound must be a safe integer in ${minimum}..${maximum}`);
+  }
+  return resolved as number;
 }
 
 function parseJsonPayload(raw: string): unknown {
@@ -395,10 +444,10 @@ function safeSchemaName(name = "Reply"): string {
 abstract class RemoteProvider implements Provider {
   constructor(protected cfg: ProviderConfig, protected secrets: ProviderSecrets = {}) {}
 
-  async judge(prompt: string, enumName: string, variants: Variant[], context?: CognitionContext): Promise<{ scores: Record<Variant, number> }> {
+  async judge(prompt: string, enumName: string, variants: Variant[], context?: CognitionContext): Promise<ProviderJudgment> {
     if (this.cfg.exposes_logprobs) {
       const lp = await this.scoreLogprobs(prompt, enumName, variants, context);
-      if (lp) return { scores: lp };
+      if (lp) return lp;
     }
     if (this.cfg.sampling_fallback === false) {
       // no distribution available and fallback disabled → a degenerate distribution (the gate will
@@ -423,7 +472,7 @@ abstract class RemoteProvider implements Provider {
   // one forced categorical choice over the enum's variants (constrained decoding / structured output).
   protected abstract pickOnce(prompt: string, enumName: string, variants: Variant[], temperature: number, context?: CognitionContext): Promise<Variant>;
   // optional per-variant logprob scores (logprob backends only); undefined → fall to the sampling fallback.
-  protected async scoreLogprobs(_p: string, _e: string, _v: Variant[], _context?: CognitionContext): Promise<Record<Variant, number> | undefined> {
+  protected async scoreLogprobs(_p: string, _e: string, _v: Variant[], _context?: CognitionContext): Promise<ProviderJudgment | undefined> {
     return undefined;
   }
   async structured(prompt: string, schema: StructuredSchema, name?: string, context?: CognitionContext): Promise<unknown> {
@@ -508,9 +557,90 @@ class OpenAIProvider extends RemoteProvider {
     }));
   }
 
-  // read the first-token distribution and fold its mass onto the enum's variants.
-  protected override async scoreLogprobs(prompt: string, enumName: string, variants: Variant[], context?: CognitionContext): Promise<Record<Variant, number> | undefined> {
+  protected override async scoreLogprobs(prompt: string, enumName: string, variants: Variant[], context?: CognitionContext): Promise<ProviderJudgment | undefined> {
     const client = await this.client();
+    if (this.cfg.preserve_judgment_evidence) {
+      const candidateBound = boundedInteger(this.cfg.evidence_candidates, 3, 1, 16);
+      const topLogprobs = boundedInteger(this.cfg.evidence_top_logprobs, 20, 1, 20);
+      const maxTokens = boundedInteger(this.cfg.evidence_max_tokens, 16, 1, 128);
+      const resp = await client.chat.completions.create({
+        model: this.model,
+        max_tokens: maxTokens,
+        temperature: 0,
+        n: candidateBound,
+        logprobs: true,
+        top_logprobs: topLogprobs,
+        response_format: {
+          type: "json_schema",
+          json_schema: {
+            name: safeSchemaName(enumName),
+            strict: true,
+            schema: {
+              type: "object",
+              properties: { value: { type: "string", enum: variants } },
+              required: ["value"],
+              additionalProperties: false,
+            },
+          },
+        },
+        messages: openAIMessages(prompt, context, `Classify into exactly one ${enumName} label: ${variants.join(", ")}. Reply with only the single label word.`),
+      } as any);
+      const choices = Array.isArray(resp.choices) ? resp.choices.slice(0, candidateBound) : [];
+      if (choices.length === 0) return undefined;
+      const candidates: JudgmentEvidence["candidates"] = choices.map((choice: any, index: number) => {
+        const content = choice?.message?.content;
+        const tokens = choice?.logprobs?.content;
+        if (typeof content !== "string" || !Array.isArray(tokens) || tokens.length === 0) {
+          throw new Error(`provider candidate ${index} omitted its complete token/logprob sequence`);
+        }
+        const exactTokens = tokens.map((token: any, tokenIndex: number) => {
+          if (typeof token?.token !== "string" || typeof token?.logprob !== "number" || !Number.isFinite(token.logprob)) {
+            throw new Error(`provider candidate ${index} token ${tokenIndex} has invalid logprob evidence`);
+          }
+          const bytes = token.bytes === null
+            ? null
+            : Array.isArray(token.bytes) && token.bytes.every((byte: unknown) => Number.isInteger(byte) && (byte as number) >= 0 && (byte as number) <= 255)
+              ? [...token.bytes] as number[]
+              : null;
+          return { token: token.token, logprob: token.logprob, bytes };
+        });
+        if (exactTokens.map((token) => token.token).join("") !== content) {
+          throw new Error(`provider candidate ${index} token sequence does not reconstruct its content`);
+        }
+        const aggregateLogprob = exactTokens.reduce((sum, token) => sum + token.logprob, 0);
+        const variant = exactStructuredVariant(content, variants);
+        return {
+          content,
+          variant,
+          tokens: exactTokens,
+          aggregate_logprob: aggregateLogprob,
+          aggregate_score: Math.exp(aggregateLogprob),
+          finish_reason: typeof choice?.finish_reason === "string" ? choice.finish_reason : null,
+        };
+      });
+      const mass: Record<Variant, number> = {};
+      for (const variant of variants) mass[variant] = 0;
+      for (const candidate of candidates) {
+        if (candidate.variant !== null) mass[candidate.variant] = (mass[candidate.variant] ?? 0) + candidate.aggregate_score;
+      }
+      const matchedMass = variants.reduce((sum, variant) => sum + (mass[variant] ?? 0), 0);
+      if (!(matchedMass > 0)) return undefined;
+      const scores: Record<Variant, number> = {};
+      for (const variant of variants) scores[variant] = (mass[variant] ?? 0) / matchedMass;
+      const evidence: JudgmentEvidence = {
+        version: 1,
+        method: "bounded-complete-sequence-logprobs",
+        connector: "openai-chat-completions",
+        enum_name: enumName,
+        enum_variants: [...variants],
+        candidate_bound: candidates.length,
+        candidates,
+        mapping_version: "exact-enum-v1",
+        normalization_version: "matched-sequence-mass-v1",
+        gate_scores: scores,
+      };
+      return { scores, evidence };
+    }
     const resp = await client.chat.completions.create({
       model: this.model,
       max_tokens: 1,
@@ -536,7 +666,7 @@ class OpenAIProvider extends RemoteProvider {
     if (sum <= 0) return undefined; // nothing landed on a variant → sampling fallback
     const scores: Record<Variant, number> = {};
     for (const v of variants) scores[v] = (mass[v] ?? 0) / sum;
-    return scores;
+    return { scores };
   }
 
   protected async pickOnce(prompt: string, enumName: string, variants: Variant[], temperature: number, context?: CognitionContext): Promise<Variant> {

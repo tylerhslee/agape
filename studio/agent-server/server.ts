@@ -13,10 +13,23 @@ import { makeRunner } from "./runner.ts";
 import { Learner } from "./learner.ts";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import os from "node:os";
+import { parse } from "../../agape-ts/src/parser.ts";
+import { createProvider as createRuntimeProvider, loadManifest } from "../../agape-ts/src/config.ts";
+import { createSession as createRuntimeSession } from "../../agape-ts/src/interp.ts";
 import { applyFlowChanges, buildFlowDocument, flowRevision, FlowEditError } from "./flow-model.ts";
+import { applyFlowStructuralPatch, FlowStructuralEditError } from "./flow-structural-edit.ts";
 import { agentsAndPrompts, safeProjectPath as resolveSafe } from "./lib.ts";
 import { makeGrader, type Grader } from "./gate.ts";
+import { FileProtectedEvidenceStore, ProtectedEvidenceError } from "../../agape-ts/src/protected_evidence.ts";
+import { decodeRuntimeSecret } from "../../agape-ts/src/runtime_recording.ts";
+import {
+  RuntimeSessionApiError,
+  StudioRuntimeSessionRegistry,
+  type RuntimeSessionFactory,
+  type VerifiedApplicationUser,
+} from "./runtime-session.ts";
 const pExecFile = promisify(execFile);
 
 const PORT = Number(process.env.AGENT_PORT) || 8799;
@@ -325,7 +338,7 @@ function send(res: http.ServerResponse, code: number, body: unknown): void {
   res.writeHead(code, {
     "content-type": "application/json",
     "access-control-allow-origin": "*",
-    "access-control-allow-headers": "content-type",
+    "access-control-allow-headers": "content-type, authorization",
     "access-control-allow-methods": "POST, PUT, GET, OPTIONS",
   });
   res.end(JSON.stringify(body));
@@ -373,6 +386,147 @@ const TESTS_DIR = path.resolve(REPO, "agape-conformance", "tests");
 // ── project: the user's own Agape project, opened via `agape studio` ──────────
 // `AGAPE_PROJECT` is set by the CLI launcher; null ⇒ no project (Review only).
 const PROJECT = process.env.AGAPE_PROJECT ? resolveProjectRoot(process.env.AGAPE_PROJECT) : null;
+function studioApplicationUser(): VerifiedApplicationUser {
+  const issuer = String(process.env.AGAPE_STUDIO_USER_ISSUER || "urn:agape:studio:local-os").trim();
+  const local = os.userInfo();
+  const subject = String(process.env.AGAPE_STUDIO_USER_SUBJECT || `${local.username}:${typeof process.getuid === "function" ? process.getuid() : "local"}`).trim();
+  if (!issuer || !subject) throw new Error("Studio application-user identity configuration is blank");
+  return Object.freeze({ issuer, subject, verified: true });
+}
+
+function projectSubject(root: string): string {
+  const digest = createHash("sha256").update(path.resolve(root), "utf8").digest("hex");
+  return `agape-project:${digest}`;
+}
+
+class ProjectRuntimeSessionFactory implements RuntimeSessionFactory {
+  private readonly evidence = new Map<string, {
+    store: FileProtectedEvidenceStore;
+    principal: string;
+    identityBinding: string;
+  }>();
+
+  async open(request: Parameters<RuntimeSessionFactory["open"]>[0]) {
+    const full = resolveSafe(request.projectRoot, request.sourceRef);
+    if (!full || !fs.existsSync(full)) throw new RuntimeSessionApiError(404, "source_not_found", `no such project source: ${request.sourceRef}`);
+    const manifestPath = path.join(request.projectRoot, "agape.toml");
+    const runtimeManifest = loadManifest(
+      fs.existsSync(manifestPath) ? manifestPath : undefined,
+      providerConfig.cognitionProvider,
+    );
+    const identityBinding = runtimeIdentityBinding(request.identity);
+    let protectedEvidence: { store: FileProtectedEvidenceStore; principal: string } | undefined;
+    if (runtimeManifest.profiles?.advertised?.includes("studio-fact-checker")) {
+      const user = request.identity.user;
+      if (user?.verified !== true) throw new RuntimeSessionApiError(401, "unverified_application_user", "protected evidence requires a verified application user");
+      const principal = `agape-user:sha256:${createHash("sha256").update(`${user.issuer}\0${user.subject}`, "utf8").digest("hex")}`;
+      const key = decodeRuntimeSecret(process.env.AGAPE_PROTECTED_EVIDENCE_KEY, "AGAPE_PROTECTED_EVIDENCE_KEY");
+      const configured = runtimeManifest.runtime?.protected_evidence_path ?? ".agape/protected-evidence";
+      if (typeof configured !== "string" || !configured.trim()) throw new RuntimeSessionApiError(500, "evidence_configuration", "runtime.protected_evidence_path must be nonblank text");
+      const store = await FileProtectedEvidenceStore.open({
+        root: path.resolve(request.projectRoot, configured),
+        key,
+        authenticatedPrincipal: principal,
+      });
+      protectedEvidence = { store, principal };
+      this.evidence.set(request.identity.sessionId, { store, principal, identityBinding });
+    }
+    try {
+      const session = createRuntimeSession(parse(fs.readFileSync(full, "utf8")), {
+        identity: request.identity,
+        manifest: runtimeManifest,
+        provider: createRuntimeProvider(runtimeManifest),
+        projectRoot: request.projectRoot,
+        onConsult: request.onConsult,
+        attesterVerifier: request.attesterVerifier,
+        ...(protectedEvidence ? { protectedEvidence } : {}),
+      });
+      return {
+        start: () => session.start(),
+        sendPrompt: (input: Parameters<typeof session.sendPrompt>[0]) => session.sendPrompt(input),
+        snapshot: () => session.snapshot(),
+        close: async () => {
+          try { return await session.close(); }
+          finally {
+            this.evidence.delete(request.identity.sessionId);
+            await protectedEvidence?.store.close();
+          }
+        },
+      };
+    } catch (error) {
+      this.evidence.delete(request.identity.sessionId);
+      await protectedEvidence?.store.close();
+      throw error;
+    }
+  }
+
+  async inspectEvidence(request: Parameters<NonNullable<RuntimeSessionFactory["inspectEvidence"]>>[0]) {
+    const retained = this.evidence.get(request.identity.sessionId);
+    if (!retained || retained.identityBinding !== runtimeIdentityBinding(request.identity)) {
+      throw new RuntimeSessionApiError(404, "evidence_unavailable", "protected evidence is unavailable for this runtime session");
+    }
+    try {
+      const authorization = retained.store.issueAuthorization({
+        requester: retained.principal,
+        operation: "inspect",
+        evidence_ref: request.evidenceRef,
+        decision_id: request.decisionId,
+      });
+      return await retained.store.inspect({
+        requester: retained.principal,
+        authorization,
+        evidence_ref: request.evidenceRef,
+        decision_id: request.decisionId,
+      });
+    } catch (error) {
+      if (error instanceof ProtectedEvidenceError) {
+        const status = error.code === "Forbidden" ? 403 : error.code === "EvidenceUnavailable" ? 404 : 409;
+        const code = error.code === "Forbidden" ? "evidence_forbidden" : error.code === "EvidenceUnavailable" ? "evidence_unavailable" : "evidence_mismatch";
+        throw new RuntimeSessionApiError(status, code, error.message);
+      }
+      throw error;
+    }
+  }
+}
+
+function runtimeIdentityBinding(identity: Parameters<RuntimeSessionFactory["open"]>[0]["identity"]): string {
+  return createHash("sha256").update(JSON.stringify({
+    projectSubject: identity.projectSubject,
+    sessionLineageId: identity.sessionLineageId,
+    sessionId: identity.sessionId,
+    conversationId: identity.conversationId,
+    user: identity.user ?? null,
+  }), "utf8").digest("hex");
+}
+
+const runtimeSessions = PROJECT
+  ? new StudioRuntimeSessionRegistry(new ProjectRuntimeSessionFactory())
+  : null;
+
+function requireRuntimeSessions(): StudioRuntimeSessionRegistry {
+  if (!runtimeSessions || !PROJECT) throw new RuntimeSessionApiError(409, "project_not_attached", "no Agape project is attached to Studio");
+  return runtimeSessions;
+}
+
+function bearerToken(req: http.IncomingMessage): string {
+  const authorization = req.headers.authorization;
+  const match = typeof authorization === "string" ? authorization.match(/^Bearer\s+([^\s]+)$/i) : null;
+  if (!match) throw new RuntimeSessionApiError(401, "missing_session_capability", "Authorization: Bearer <session capability> is required");
+  return match[1]!;
+}
+function assertStudioSessionOrigin(req: http.IncomingMessage): void {
+  const origin = req.headers.origin;
+  if (origin === undefined) return;
+  if (typeof origin !== "string") throw new RuntimeSessionApiError(403, "untrusted_origin", "runtime-session requests require a local Studio origin");
+  try {
+    const parsed = new URL(origin);
+    if (["localhost", "127.0.0.1", "::1"].includes(parsed.hostname)) return;
+  } catch {
+    // fall through to the fail-closed error
+  }
+  throw new RuntimeSessionApiError(403, "untrusted_origin", "runtime-session requests require a local Studio origin");
+}
+
 
 // In a packaged bundle the agent-server also serves the built web app (one
 // process, no Vite). `AGAPE_WEB_DIST` points at the static `dist/`.
@@ -1090,13 +1244,21 @@ const server = http.createServer(async (req, res) => {
           return send(res, 409, { error: "The Agape source changed after this flow was loaded.", code: "stale_revision", currentRevision });
         }
         try {
-          const changed = applyFlowChanges(rel, current, input.changes);
+          if (input.patch !== undefined && input.changes !== undefined) {
+            throw new FlowStructuralEditError([{ severity: "error", code: "ambiguous_flow_edit", message: "Send either one structural patch or property changes, never both." }]);
+          }
+          const structural = input.patch === undefined ? undefined : applyFlowStructuralPatch(rel, current, input.patch);
+          const changed = structural || applyFlowChanges(rel, current, input.changes);
           await checkAndReplaceProjectFile(full, changed.source, currentRevision);
           const compilerGraph = await compilerGraphForProjectFile(full);
-          return send(res, 200, flowDocumentWithCompilerGraph(rel, changed.source, compilerGraph));
+          return send(res, 200, {
+            ...flowDocumentWithCompilerGraph(rel, changed.source, compilerGraph),
+            ...(structural ? { sourceDiff: structural.diff } : {}),
+          });
         } catch (error: any) {
           if (error instanceof StaleFlowRevisionError) return send(res, 409, { error: error.message, code: "stale_revision", currentRevision: error.currentRevision });
           if (error instanceof FlowEditError) return send(res, 422, { error: "Flow edit was not applied.", code: "invalid_flow_edit", diagnostics: error.diagnostics });
+          if (error instanceof FlowStructuralEditError) return send(res, 422, { error: "Structural flow edit was not applied.", code: "invalid_structural_edit", diagnostics: error.diagnostics });
           throw error;
         }
       });
@@ -1107,6 +1269,71 @@ const server = http.createServer(async (req, res) => {
       if (!full) return send(res, 400, { error: "path must be a .ag under the project root" });
       fs.writeFileSync(full, String(body ?? ""), "utf8");
       return send(res, 200, { ok: true });
+    }
+    // Persistent runtime sessions keep one agape-ts execution and ledger alive
+    // across prompt turns. Application-user identity is supplied only by the host.
+    if (req.method === "POST" && url === "/runtime/sessions") {
+      assertStudioSessionOrigin(req);
+      const input = (await readJson(req)) || {};
+      const rel = String(input.rel || "");
+      if (!rel) return send(res, 400, { error: "rel (a project .ag file) is required", code: "invalid_request" });
+      const initialPrompt = input.initialPrompt === undefined ? undefined : {
+        name: String(input.initialPrompt?.name || ""),
+        value: input.initialPrompt?.value,
+        ...(input.initialPrompt?.attestation === undefined ? {} : { attestation: input.initialPrompt.attestation }),
+      };
+      if (initialPrompt && !initialPrompt.name) return send(res, 400, { error: "initialPrompt.name is required", code: "invalid_request" });
+      return send(res, 201, await requireRuntimeSessions().create({
+        sourceRef: rel,
+        projectRoot: PROJECT!,
+        projectSubject: projectSubject(PROJECT!),
+        user: studioApplicationUser(),
+        ...(typeof input.conversationId === "string" ? { conversationId: input.conversationId } : {}),
+        ...(initialPrompt ? { initialPrompt } : {}),
+      }));
+    }
+
+    const sessionRoute = url.match(/^\/runtime\/sessions\/([^/]+)(?:\/(prompts|rulings|evidence|close))?$/);
+    if (sessionRoute) {
+      assertStudioSessionOrigin(req);
+      const sessionId = decodeURIComponent(sessionRoute[1]!);
+      const operation = sessionRoute[2];
+      const accessToken = bearerToken(req);
+      if (req.method === "GET" && operation === undefined) {
+        return send(res, 200, requireRuntimeSessions().inspect(sessionId, accessToken));
+      }
+      if (req.method === "POST" && operation === "prompts") {
+        const input = (await readJson(req)) || {};
+        if (typeof input.name !== "string" || !input.name.trim()) return send(res, 400, { error: "name is required", code: "invalid_request" });
+        return send(res, 200, await requireRuntimeSessions().sendPrompt(sessionId, accessToken, {
+          name: input.name,
+          value: input.value,
+          ...(input.attestation === undefined ? {} : { attestation: input.attestation }),
+        }));
+      }
+      if (req.method === "POST" && operation === "rulings") {
+        const input = (await readJson(req)) || {};
+        return send(res, 200, await requireRuntimeSessions().rule({
+          sessionId,
+          accessToken,
+          requestId: String(input.requestId || ""),
+          principal: String(input.principal || ""),
+          outcome: input.outcome,
+          ...(input.decision === undefined ? {} : { decision: String(input.decision) }),
+        }));
+      }
+      if (req.method === "POST" && operation === "evidence") {
+        const input = (await readJson(req)) || {};
+        return send(res, 200, await requireRuntimeSessions().inspectEvidence(
+          sessionId,
+          accessToken,
+          String(input.evidenceRef || ""),
+          Number(input.decisionId),
+        ));
+      }
+      if (req.method === "POST" && operation === "close") {
+        return send(res, 200, await requireRuntimeSessions().close(sessionId, accessToken));
+      }
     }
     if (req.method === "POST" && url === "/project/run") {
       const body = (await readJson(req)) || {};
@@ -1121,7 +1348,6 @@ const server = http.createServer(async (req, res) => {
         openaiTopLogprobs,
       });
       const out = await runProjectFile(String(rel), prompts || {}, !!(live ?? claude), Number(samples) || 0, Number(temperature) || 0);
-      await recordAgentExperience(String(agent || DEFAULT_AGENT_ID), "project-run", String(rel), JSON.stringify(out).slice(0, 8000), { ok: !!out.ok, rel: String(rel) });
       return send(res, 200, out);
     }
 
@@ -1139,6 +1365,9 @@ const server = http.createServer(async (req, res) => {
     return send(res, 404, { error: "not found" });
   } catch (e: any) {
     console.error("agent-server:", e?.message || e);
+    if (e instanceof RuntimeSessionApiError) {
+      return send(res, e.status, { error: e.message, code: e.code });
+    }
     return send(res, 502, { error: e?.message || "request failed" });
   }
 });

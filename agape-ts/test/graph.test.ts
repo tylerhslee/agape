@@ -57,6 +57,10 @@ describe("graph: the gated-sink chain", () => {
     expect(gate?.meta?.enum).toBe("Verdict");
     expect(String(gate?.meta?.rule)).toContain("confidence 0.85");
     expect(String(gate?.meta?.rule)).toContain("margin 0.1");
+    expect(gate?.meta?.endorsements).toEqual([
+      expect.objectContaining({ subject: "claim", variant: "Approve" }),
+    ]);
+    expect(gate?.meta?.endorses).toBe("claim");
   });
 
   it("shows both model asks and chains them by dataflow into the gate", () => {
@@ -111,6 +115,36 @@ describe("graph: the gated-sink chain", () => {
   it("omits the boilerplate program node (top level is only spawn/awake/when)", () => {
     expect(node(g, "top")).toBeUndefined();
     expect(edges(g, "spawn").length).toBe(0);
+  });
+});
+
+describe("graph: variant-aware endorsements", () => {
+  it("retains every endorsed subject and omits ambiguous legacy metadata", () => {
+    const g = graphOf(`
+enum Verdict { Approve, Deny }
+agent Worker {
+  on awake {
+    text first = "alpha";
+    text second = "beta";
+    Credence<Verdict> c = self <- "judge";
+    Decision<Verdict> d = decide c by confidence 0.8;
+    if (d.committed == Approve) {
+      Endorsement<text> accepted = endorse first by d;
+    } else if (d.committed == Deny) {
+      Endorsement<text> declined = endorse second by d;
+    }
+  }
+}
+spawn Worker worker;
+awake worker;
+`);
+    const gate = g.nodes.find((candidate) => candidate.kind === "gate")!;
+    expect(gate.meta?.endorsements).toEqual(expect.arrayContaining([
+      expect.objectContaining({ subject: "first", variant: "Approve" }),
+      expect.objectContaining({ subject: "second", variant: "Deny" }),
+    ]));
+    expect(gate.meta?.endorsements).toHaveLength(2);
+    expect(gate.meta?.endorses).toBeUndefined();
   });
 });
 

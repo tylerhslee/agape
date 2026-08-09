@@ -1,6 +1,6 @@
 # Agape v1.0.0-beta.2026.8.6.0 — Conformance Test Index
 
-**254 tests** — accept: 149, reject: 105
+**259 tests** — accept: 154, reject: 105
 
 A conformant implementation must satisfy every `accept`/`reject` test (rejects with the declared error class; accepts matching any asserted spine).
 
@@ -110,6 +110,7 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 |---|---|---|---|
 | `world_emit_wired_result_taint_join_reject` | reject | TaintViolation | §6b, §13 (no laundering: a result_event payload carries the JOIN of the triggering emit's payload trust — a raw query taints its own results, which then cannot drive a consequential perform un-gated) |
 | `world_emit_wired_tainted_ok` | accept | — | §6b (emit is not a consequential sink, so an emit-trigger wiring is the loose observation channel: a RAW payload may flow out — an explicit, manifest-visible opt-out of the perform path's guarantee) |
+| `world_foreground_action_authorized_accept` | accept | — | §6b, §13 (a result-bound perform records its authorization receipt before invoking the wired effector) |
 | `world_foreground_binding_no_result_event_reject` | reject | ConfigError | §6b, §17.1 (a foreground binding on an action wired with no result_event is a ConfigError — there is nothing to bind the reply to) |
 | `world_foreground_binding_requires_expires_reject` | reject | TypeError | §6b, §6c (`expires` is mandatory on the result-binding form of perform — terminal by construction, like every delegation) |
 | `world_foreground_perform_binding_ok` | accept | — | §6b, §13 (foreground perform binding: a wired action with a result_event binds its reply like a §6c delegation; a judgment-settled request yields judgment-settled external ingress, which may drive a further perform) |
@@ -276,6 +277,7 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 
 | id | expect | error | spec |
 |---|---|---|---|
+| `gov_action_authorized_projection_accept` | accept | — | §13, §14 (a consequential action records one authorization receipt per exact endorsed or structurally projected argument) |
 | `gov_attester_unverified_accepted` | accept | — | §13, §17.1 (the default `none` attester authenticator is ACCEPTED, not rejected: the ruling's attester is taken on trust and recorded — marked unverified in the PrincipalDecision attestation — so a fresh local-dev gate still defers, rules, and resumes without a bound authenticator) |
 | `gov_attester_verified_resumes` | accept | — | §13, §17.7 (a host authenticator is bound; the attested ruling's verified identity resolves to the deferred principal, so the attester-match passes, PrincipalDecision is recorded, and the reaction resumes through endorse to the sink) |
 | `gov_attester_wrong_principal_rejected` | accept | — | §13, §16.4 (a host authenticator is bound; the attested ruling's verified identity resolves to a DIFFERENT principal than the gate deferred to, so the attester-match rejects the ruling — FailedPrincipalDecision, the decision stays abstained, fail-closed, and no subject reaches the sink) |
@@ -299,8 +301,11 @@ A conformant implementation must satisfy every `accept`/`reject` test (rejects w
 | `gov_principal_decision_deny_fails` | accept | — | §13 (when the principal declines, `p decide c by r` records FailedPrincipalDecision and a Decided abstention) |
 | `gov_principal_decision_ok` | accept | — | §13 (`p decide c by r` reaches identity when the rule cannot commit, records PrincipalDecision, records Decided, then may endorse the subject) |
 | `gov_principal_decision_records` | accept | — | §13, §16.4 (a granted `p decide c by r` records PrincipalDecision, then the canonical Decided outcome) |
+| `gov_principal_request_portable_accept` | accept | — | §13 (principal_request is the portable request commitment on principal decisions and endorsements) |
 | `gov_raw_subject_to_sink_reject` | reject | TaintViolation | §13 (endorse never settles the raw subject variable; only the endorsement binder reaches a sink — performing the raw subject is rejected, in any branch) |
 | `gov_reach_ungranted_reject` | reject | AuthorityViolation | §13 (sending into another agent requires a `reach` grant) |
+| `gov_transformed_endorsement_no_action_receipt` | accept | — | §13, §14 (arithmetic over an endorsed structural projection is settled but does not retain authorization lineage) |
+| `gov_unrelated_endorsement_no_action_receipt` | accept | — | §13, §14 (an unrelated earlier endorsement never certifies a literal-only consequential action) |
 
 ## 15_reproducibility
 

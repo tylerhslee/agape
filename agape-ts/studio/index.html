@@ -2147,6 +2147,7 @@ function runDetailForEvent(e, r) {
   if (["Decided","Endorsed","PrincipalDecision","FailedPrincipalDecision"].includes(e.etype)) {
     const d = p.decision ? hydrateDecisionPayload(e, r.map) : p;
     const endorsement = p.endorsement || {};
+    const subjectCommitment = p.subject_commitment || endorsement.subject || {};
     return eventDetail(`${e.etype} · ${eventValue(e, r.map)}`, [
       ...eventMetaRows(e),
       ["decision value", p.decision ? decisionValue(d) : ""],
@@ -2158,8 +2159,8 @@ function runDetailForEvent(e, r) {
       ["committed", d.effectiveCommitted || d.committed || p.decision],
       ["margin", d.margin],
       ["branch", endorsement.branch],
-      ["subject", endorsement.subject?.rendered],
-      ["subject trust", endorsement.subject?.trust],
+      ["subject", subjectCommitment.rendered || (subjectCommitment.protected_ref ? "[protected]" : "")],
+      ["subject trust", subjectCommitment.trust],
       ["attester", p.attestation?.attester || d.attestation?.attester],
       ["payload hash", p.attestation?.payload_hash || d.attestation?.payload_hash],
       ["signature", p.attestation?.signature || d.attestation?.signature],

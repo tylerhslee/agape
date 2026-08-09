@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { access, readFile } from "node:fs/promises";
+import { access, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { createTempProject, eventsOf, fixture, payloadObject, readTree, runCli, runDiagnostic, sentinel, type TempProject } from "./harness.js";
+import { createTempProject, eventsOf, fixture, payloadObject, readTree, runCli, runCliCommand, runDiagnostic, sentinel, type TempProject } from "./harness.js";
 import { chatCompletion, messagesText, OpenAILoopback, type CompletionChoice, type ContentTokenEvidence, type RawCandidate } from "./openai-loopback.js";
 
 interface CandidateSequence {
@@ -14,6 +14,9 @@ const EXTRA_TOKEN = " unmatched-evidence-token";
 const EXTRA_SUFFIX = " unmatched-suffix";
 const RAW_RESPONSE_ID = "chatcmpl-p11-exact-evidence";
 const RAW_CREATED = "1700000000";
+const AUTHENTICATED_PRINCIPAL = "principal:p11-reviewer";
+const PROTECTED_EVIDENCE_KEY = "51".repeat(32);
+const PROTECTED_ENV = { AGAPE_AUTHENTICATED_PRINCIPAL: AUTHENTICATED_PRINCIPAL, AGAPE_PROTECTED_EVIDENCE_KEY: PROTECTED_EVIDENCE_KEY };
 const RAW_USAGE_KEYS = ["usage", "prompt_tokens", "completion_tokens", "total_tokens"];
 const SEQUENCES: CandidateSequence[] = [
   { content: "Approve", variant: "Approve", tokens: [
@@ -101,6 +104,9 @@ describe("P11 production JudgmentEvidence", () => {
 
   async function setup(): Promise<{ file: string; prompt: string }> {
     project = await createTempProject(sentinel("p11-project"));
+    const manifestPath = join(project.root, "agape.toml");
+    const manifest = await readFile(manifestPath, "utf8");
+    await writeFile(manifestPath, manifest + "\n[profiles]\nadvertised = [\"studio-fact-checker\"]\n", "utf8");
     const prompt = sentinel("P11_CLOSE_GATE_PROMPT");
     const file = await project.write("main.ag", await fixture("p11/evidence.ag.tmpl", { PROMPT: prompt }));
     loopback = new OpenAILoopback(({ body }) => {
@@ -135,7 +141,7 @@ describe("P11 production JudgmentEvidence", () => {
 
   it("[P11.sequence-evidence] links public gate arithmetic to protected complete multi-token sequences", async () => {
     const { file, prompt } = await setup();
-    const result = await runCli({ project: project!, file, env: loopback!.env() });
+    const result = await runCli({ project: project!, file, env: { ...loopback!.env(), ...PROTECTED_ENV } });
     expect(loopback!.transcript.length, "P11: production connector made no request").toBeGreaterThan(0);
     expect.soft(loopback!.transcript, "P11: one logical judgment must use one bounded request").toHaveLength(1);
     const request = loopback!.transcript[0]!.body;
@@ -191,7 +197,7 @@ describe("P11 production JudgmentEvidence", () => {
   it("[P11.record-replay] keeps the protected recording opaque and replays without calls or durable mutation", async () => {
     const { file, prompt } = await setup();
     const recordingPath = join(project!.root, "run.agape-recording");
-    const recorded = await runCli({ project: project!, file, env: loopback!.env(), extraArgs: ["--record", recordingPath] });
+    const recorded = await runCli({ project: project!, file, env: { ...loopback!.env(), ...PROTECTED_ENV }, extraArgs: ["--record", recordingPath] });
     expect.soft(recorded.json?.ok, `P11: shipped CLI must accept --record and produce a protected recording:\n${runDiagnostic(recorded)}`).toBe(true);
     let exists = true;
     try { await access(recordingPath); } catch { exists = false; }
@@ -212,7 +218,7 @@ describe("P11 production JudgmentEvidence", () => {
       .toSatisfy((value) => typeof value === "string" && value.length > 0);
     const liveCalls = loopback!.transcript.length;
     const beforeReplay = await readTree(project!.root);
-    const replayed = await runCli({ project: project!, file, env: loopback!.env(), extraArgs: ["--replay", recordingPath] });
+    const replayed = await runCli({ project: project!, file, env: { ...loopback!.env(), ...PROTECTED_ENV }, extraArgs: ["--replay", recordingPath] });
     const afterReplay = await readTree(project!.root);
     expect.soft(replayed.json?.ok, `P11: replay failed:\n${runDiagnostic(replayed)}`).toBe(true);
     expect.soft(replayed.json?.head, "P11: replay head must be a nonempty canonical hash")
@@ -232,7 +238,67 @@ describe("P11 production JudgmentEvidence", () => {
     expect.soft(afterReplay, "P11: read-only verification replay mutated durable project state").toEqual(beforeReplay);
   });
 
-  it("[P11.principal-resolution] requires principal-bound lossless resolution through the real protected-content transport", () => {
-    expect.fail("P11/P16 required gap: no production principal-proof transport fixture can yet authorize and resolve raw_candidates_ref losslessly");
+  it("[P11.principal-resolution] requires principal-bound lossless resolution through the real protected-content transport", async () => {
+    const { file } = await setup();
+    const env = { ...loopback!.env(), ...PROTECTED_ENV };
+    const result = await runCli({ project: project!, file, env });
+    expect(result.json?.ok, runDiagnostic(result)).toBe(true);
+    const accessList = result.json?.evidence_access as Array<{ evidence_ref?: unknown; decision_id?: unknown; authorization?: unknown }> | undefined;
+    expect(accessList, "P11: authenticated run did not return a non-ledger evidence capability").toHaveLength(1);
+    const granted = accessList?.[0];
+    expect(granted).toMatchObject({ evidence_ref: expect.any(String), decision_id: expect.any(Number), authorization: expect.any(String) });
+    if (!granted || typeof granted.evidence_ref !== "string" || typeof granted.decision_id !== "number" || typeof granted.authorization !== "string") return;
+
+    const inspectArgs = [
+      "evidence", "inspect",
+      "--manifest", join(project!.root, "agape.toml"),
+      "--requester", AUTHENTICATED_PRINCIPAL,
+      "--authorization", granted.authorization,
+      "--evidence-ref", granted.evidence_ref,
+      "--decision-id", String(granted.decision_id),
+      "--json",
+    ];
+    const inspected = await runCliCommand({ project: project!, commandArgs: inspectArgs, env });
+    expect(inspected.json?.ok, `P11 authorized inspect failed:\n${runDiagnostic(inspected)}`).toBe(true);
+    const exact = inspected.json?.evidence as Record<string, unknown> | undefined;
+    expect(exact).toMatchObject({
+      evidence_ref: granted.evidence_ref,
+      decision_id: granted.decision_id,
+      enum_name: "Verdict",
+      enum_variants: ["Approve", "Reject"],
+      candidate_bound: SEQUENCES.length,
+      mapping_version: "exact-enum-v1",
+      normalization_version: "matched-sequence-mass-v1",
+      winner: "Approve",
+      runner_up: "Reject",
+      threshold: 0.5,
+      required_margin: 0.03,
+      floor: 0.015,
+      actual_margin: expect.closeTo(0.02, 12),
+      passed: false,
+    });
+    const candidates = exact?.candidates as Array<Record<string, unknown>> | undefined;
+    expect(candidates).toHaveLength(SEQUENCES.length);
+    for (const [index, sequence] of SEQUENCES.entries()) {
+      expect(candidates?.[index]).toMatchObject({
+        content: sequence.content,
+        variant: sequence.variant ?? null,
+        aggregate_logprob: expect.closeTo(sequence.tokens.reduce((sum, token) => sum + token.logprob, 0), 12),
+        aggregate_score: expect.closeTo(sequenceMass(sequence), 12),
+        tokens: sequence.tokens.map((token) => ({ token: token.token, logprob: token.logprob, bytes: [...Buffer.from(token.token)] })),
+      });
+    }
+
+    const wrongPrincipal = [...inspectArgs];
+    wrongPrincipal[wrongPrincipal.indexOf("--requester") + 1] = "principal:not-p11-reviewer";
+    const forbidden = await runCliCommand({ project: project!, commandArgs: wrongPrincipal, env });
+    expect(forbidden.json).toMatchObject({ ok: false, class: "Forbidden" });
+
+    const noEnumeration = await runCliCommand({
+      project: project!,
+      commandArgs: ["evidence", "inspect", "--manifest", join(project!.root, "agape.toml"), "--requester", AUTHENTICATED_PRINCIPAL, "--authorization", granted.authorization, "--decision-id", String(granted.decision_id), "--json"],
+      env,
+    });
+    expect(noEnumeration.json?.ok).toBe(false);
   });
 });

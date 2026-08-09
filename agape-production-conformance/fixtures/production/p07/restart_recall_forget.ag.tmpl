@@ -1,7 +1,16 @@
+// Preserve the original source's standing sensor so the resumed singleton is
+// allocated at the same Spawned tick within the explicit session lineage.
+prompt text question;
+
 agent Rememberer {
+  mem notes {
+    type text;
+    modality opaque;
+    scope project;
+    retention durable;
+  }
   on awake {
-    mem notes;
-    text recalled = notes -> "{{QUERY}}";
+    text[] recalled = notes -> "{{QUERY}}";
     self <- f"Recalled memory with its origin context: ${recalled}";
     forget notes;
   }

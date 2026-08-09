@@ -164,6 +164,186 @@ describe("runtime-owned named-memory coordinator", async () => {
     ]);
   });
 
+  it("preserves the driver's exact nested effects in the ledger payload and acknowledgement", async () => {
+    const { ledger } = harness();
+    const base = new LocalTransactionalNamedMemoryDriver();
+    const decorate = <T extends {
+      kind: "store" | "forget";
+      alreadyForgotten?: boolean;
+      effects: { cells: { upserted: number; tombstoned: number } };
+    }>(value: T) => ({
+      ...value,
+      effects: {
+        cells: { ...value.effects.cells, deleted: 0 },
+        blobs: { archived: value.kind === "forget" && value.alreadyForgotten !== true ? 1 : 0, deleted: 0 },
+      },
+    });
+    const decorateStatus = (status: Awaited<ReturnType<typeof base.status>>) => {
+      if (status.status === "prepared") return { status: "prepared" as const, stage: decorate(status.stage) };
+      if (status.status === "finalized") return { status: "finalized" as const, receipt: decorate(status.receipt) };
+      return status;
+    };
+    const driver = {
+      capabilities: base.capabilities,
+      prepareStore: (...args: Parameters<typeof base.prepareStore>) => decorate(base.prepareStore(...args)),
+      prepareForget: (...args: Parameters<typeof base.prepareForget>) => decorate(base.prepareForget(...args)),
+      finalize: (...args: Parameters<typeof base.finalize>) => decorate(base.finalize(...args)),
+      abort: (...args: Parameters<typeof base.abort>) => decorateStatus(base.abort(...args)),
+      status: (...args: Parameters<typeof base.status>) => decorateStatus(base.status(...args)),
+      reconcile: (...args: Parameters<typeof base.reconcile>) => decorateStatus(base.reconcile(...args)),
+      recall: (...args: Parameters<typeof base.recall>) => base.recall(...args),
+      snapshot: () => base.snapshot(),
+    } as TransactionalNamedMemoryDriver;
+    const runtime = coordinator({ ledger, driver });
+    const stored = await runtime.store({
+      invocationCorrelation: "effects",
+      evaluationOrdinal: 0,
+      operationResultId: "effects-store",
+      site: "effects-site",
+      value: { kind: "text", v: "private", trust: "raw" },
+    });
+
+    const expected = {
+      cells: { upserted: 1, tombstoned: 0, deleted: 0 },
+      blobs: { archived: 0, deleted: 0 },
+    };
+    expect((ledger.events[0]!.payload as Record<string, unknown>).effects).toEqual(expected);
+    expect(stored.ack?.effects).toEqual(expected);
+    expect(Object.isFrozen((ledger.events[0]!.payload as Record<string, unknown>).effects)).toBe(true);
+    expect(Object.isFrozen(stored.ack?.effects)).toBe(true);
+    expect(Object.isFrozen(stored.ack?.effects.cells)).toBe(true);
+    expect(Object.isFrozen(stored.ack?.effects.blobs)).toBe(true);
+
+    const forgotten = await runtime.forget({
+      invocationCorrelation: "effects",
+      evaluationOrdinal: 1,
+      operationResultId: "effects-forget",
+      site: "effects-site",
+    });
+    const repeated = await runtime.forget({
+      invocationCorrelation: "effects",
+      evaluationOrdinal: 2,
+      operationResultId: "effects-forget-repeat",
+      site: "effects-site",
+    });
+    expect(forgotten.ack?.alreadyForgotten).toBe(false);
+    expect(repeated.ack?.alreadyForgotten).toBe(true);
+    expect(Object.keys(forgotten.ack?.effects ?? {})).toEqual(["cells", "blobs"]);
+  });
+
+  it("rejects malicious driver effects and refs before a ledger commit", async () => {
+    for (const corrupt of ["effects", "refs", "receipt"] as const) {
+      const { ledger } = harness();
+      const base = new LocalTransactionalNamedMemoryDriver();
+      const driver = {
+        capabilities: base.capabilities,
+        prepareStore: (...args: Parameters<typeof base.prepareStore>) => {
+          const stage = base.prepareStore(...args);
+          if (corrupt === "effects") {
+            return { ...stage, effects: { cells: { upserted: -1, tombstoned: 0 } } };
+          }
+          return corrupt === "refs"
+            ? { ...stage, refs: { ...stage.refs, projection: "substrate:../../escape" } }
+            : stage;
+        },
+        prepareForget: (...args: Parameters<typeof base.prepareForget>) => base.prepareForget(...args),
+        finalize: (...args: Parameters<typeof base.finalize>) => {
+          const receipt = base.finalize(...args);
+          return corrupt === "receipt"
+            ? { ...receipt, refs: { ...receipt.refs, extra: "substrate:opaque-extra" } }
+            : receipt;
+        },
+        abort: (...args: Parameters<typeof base.abort>) => base.abort(...args),
+        status: (...args: Parameters<typeof base.status>) => base.status(...args),
+        reconcile: (...args: Parameters<typeof base.reconcile>) => base.reconcile(...args),
+        recall: (...args: Parameters<typeof base.recall>) => base.recall(...args),
+        snapshot: () => base.snapshot(),
+      } as TransactionalNamedMemoryDriver;
+      const runtime = coordinator({ ledger, driver });
+      await expect(runtime.store({
+        invocationCorrelation: corrupt,
+        evaluationOrdinal: 0,
+        operationResultId: corrupt,
+        site: corrupt,
+        value: { kind: "text", v: "private", trust: "raw" },
+      })).rejects.toThrow(/effects|refs|opaque|upserted|receipt/i);
+      expect(ledger.events).toHaveLength(corrupt === "receipt" ? 1 : 0);
+    }
+  });
+
+  it("binds every required opaque ref to the exact prepared stage identity", async () => {
+    for (const field of ["region", "origin", "value", "cell"] as const) {
+      const { ledger } = harness();
+      const base = new LocalTransactionalNamedMemoryDriver();
+      const driver = {
+        capabilities: base.capabilities,
+        prepareStore: (...args: Parameters<typeof base.prepareStore>) => {
+          const stage = base.prepareStore(...args);
+          const prefix = field === "region" ? "memory-region-v1"
+            : field === "origin" ? "memory-origin-v1"
+              : field === "value" ? "memory-value-v1" : "memory-cell-v1";
+          return { ...stage, refs: { ...stage.refs, [field]: `${prefix}:${"0".repeat(64)}` } };
+        },
+        prepareForget: (...args: Parameters<typeof base.prepareForget>) => base.prepareForget(...args),
+        finalize: (...args: Parameters<typeof base.finalize>) => base.finalize(...args),
+        abort: (...args: Parameters<typeof base.abort>) => base.abort(...args),
+        status: (...args: Parameters<typeof base.status>) => base.status(...args),
+        reconcile: (...args: Parameters<typeof base.reconcile>) => base.reconcile(...args),
+        recall: (...args: Parameters<typeof base.recall>) => base.recall(...args),
+        snapshot: () => base.snapshot(),
+      } as TransactionalNamedMemoryDriver;
+      await expect(coordinator({ ledger, driver }).store({
+        invocationCorrelation: `ref-${field}`,
+        evaluationOrdinal: 0,
+        operationResultId: field,
+        site: field,
+        value: { kind: "text", v: "private", trust: "raw" },
+      })).rejects.toThrow(/ref|stage|region|origin|value|cell/i);
+      expect(ledger.events).toEqual([]);
+    }
+  });
+
+  it("retains pending reconciliation until the receipt exactly matches its stage and ledger binding", async () => {
+    const { ledger } = harness();
+    const base = new DurableTransactionalNamedMemoryDriver();
+    let corruptReconcile = false;
+    const driver = {
+      capabilities: base.capabilities,
+      prepareStore: (...args: Parameters<typeof base.prepareStore>) => base.prepareStore(...args),
+      prepareForget: (...args: Parameters<typeof base.prepareForget>) => base.prepareForget(...args),
+      finalize: (...args: Parameters<typeof base.finalize>) => base.finalize(...args),
+      abort: (...args: Parameters<typeof base.abort>) => base.abort(...args),
+      status: (...args: Parameters<typeof base.status>) => base.status(...args),
+      reconcile: (...args: Parameters<typeof base.reconcile>) => {
+        const status = base.reconcile(...args);
+        if (!corruptReconcile || status.status !== "finalized") return status;
+        return {
+          status: "finalized" as const,
+          receipt: { ...status.receipt, ledger: { ...status.receipt.ledger, head: "forged-head" } },
+        };
+      },
+      recall: (...args: Parameters<typeof base.recall>) => base.recall(...args),
+      snapshot: () => base.snapshot(),
+    } as TransactionalNamedMemoryDriver;
+    const runtime = coordinator({ ledger, driver, descriptor: descriptor("durable") });
+    const stored = await runtime.store({
+      invocationCorrelation: "lost-ack",
+      evaluationOrdinal: 0,
+      operationResultId: "lost-ack",
+      site: "lost-ack",
+      value: { kind: "text", v: "committed", trust: "raw" },
+      loseFinalizeAck: true,
+    });
+    expect(stored.pending).toBe(true);
+    corruptReconcile = true;
+    const consult = () => runtime.recall({
+      invocationCorrelation: "later", operationResultId: "later", query: "committed",
+    });
+    await expect(consult()).rejects.toThrow(/ledger binding|receipt/i);
+    await expect(consult()).rejects.toThrow(/ledger binding|receipt/i);
+    expect(ledger.events).toHaveLength(1);
+  });
+
   it("fails malformed or missing scope subjects before any seam access", async () => {
     const { ledger, calls, onDriverCall } = harness();
     const runtime = coordinator({
